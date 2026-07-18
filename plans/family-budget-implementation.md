@@ -83,9 +83,9 @@ File scope исполнителей:
 
 ## Фаза 1. Канонические fixtures, parity и domain-инварианты
 
-Статус: [ ] готово  
+Статус: [x] готово  
 Checkpoint: `feat(domain): align golden fixtures and planning rules`  
-SHA/доказательство: —
+SHA/доказательство: implementation `cd334a2`; точный pathspec из 17 файлов без этого плана: `contracts/README.md`, `contracts/fixtures/g-002.json`, `contracts/schemas/budget-fixture.schema.json`, `contracts/schemas/planning-fixture.schema.json`, `docs/DECISIONS.md`, `docs/IMPLEMENTATION_STATUS.md`, `docs/QA_ACCEPTANCE.md`, `packages/domain/package.json`, `packages/domain/src/calculate.ts`, `packages/domain/src/index.ts`, `packages/domain/src/types.ts`, `packages/domain/tests/calculate.test.ts`, `packages/test-fixtures/package.json`, `packages/test-fixtures/src/index.ts`, `packages/test-fixtures/tests/fixtures.test.ts`, `packages/test-fixtures/tsconfig.json`, `pnpm-lock.yaml`; `pnpm verify` — fixtures `6/6`, domain `17/17`, storage `2/2`, web `14/14`, всего `39/39`, пять TypeScript typechecks и production PWA build с `13` precache entries; `pnpm audit` и `pnpm audit --prod` — `0` vulnerabilities. Точные канонические результаты: G-000 — доход/расходы/капитал `100 000 / 76 500 / 23 500 ₽`, основной/накопительный `23 500 / 0 ₽`, продукты `105%` и `−1 500 ₽`; G-001 — те же `100 000 / 76 500 / 23 500 ₽`, основной/накопительный `13 500 / 10 000 ₽`, прогресс цели `10 000 ₽`, планово свободно `10 000 ₽`; G-002 — июль 2026 резерв/свободно `19 809 / 44 191 ₽`, сентябрь сезонное/всего по расписанию/свободно `31 000 / 84 000 / 13 191 ₽`, январь 2027 due `72 000 ₽`, июнь 2027 due `90 000 ₽`, январь 2028 due `72 000 ₽`, июнь 2028 due `0 ₽`, первые 12 месяцев горизонтов 12/24 совпадают до копейки. Excess-refund gate сохранил gross/refund/net `76 500 / 40 000 / 36 500 ₽`, факт продуктов `−8 500 ₽`, перелимит `0 ₽`; schema/runtime gates отклоняют `status: "posted "`, `kind: "__proto__"`, unsafe integer movement, перевёрнутые movements, split `1`, duplicate/unknown references и bounded-input нарушения. Финальные свежие code review и security review — `APPROVE`, blocker/high/medium/low `0/0/0/0`. Excel, browser live/offline, iPhone/iPad, Android, RuStore и deploy этой фазой не подтверждались.
 
 File scope исполнителя:
 
@@ -97,14 +97,14 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Добавить versioned `G-002` в `contracts/fixtures` и сделать `packages/test-fixtures` типизированным адаптером без копирования данных.
-- [ ] Зафиксировать округление ежемесячного резерва вверх до целого рубля на каждый commitment и устранить расхождение domain/Excel/docs.
-- [ ] Добавить domain-проверки: первые 12 месяцев равны для горизонтов 12/24 до копейки; 28/29 февраля; due day 30/31; смена года/timezone-independent local date; 80%, 100%, 100% + 1 копейка; zero plan; возврат больше расхода; перевод в тот же счёт; duplicate UUID; safe-integer overflow.
-- [ ] `pnpm --filter @family-budget/domain test` и `pnpm verify` зелёные.
-- [ ] Live-check через тест/небольшой read-only runner: G-000 — `100 000 / 76 500 / 23 500 ₽`, продукты `105%`, `−1 500 ₽`; G-002 — июль 2026 резерв `19 809 ₽`, свободно `44 191 ₽`; сентябрь сезонное `31 000 ₽`, свободно `13 191 ₽`; январь 2027 due `72 000 ₽`; январь 2028 due `72 000 ₽`; июнь 2028 due `0 ₽`.
-- [ ] Свежий code review проверяет математику, границы дат и отсутствие double counting.
-- [ ] Свежий security review проверяет неконтролируемые размеры входа, duplicate IDs, unsafe integers и валидацию внешних fixtures.
-- [ ] Коммит A содержит только подтверждённые файлы этой фазы; коммит B содержит только план с SHA/доказательством A.
+- [x] Добавить versioned `G-002` в `contracts/fixtures` и сделать `packages/test-fixtures` типизированным адаптером без копирования данных.
+- [x] Зафиксировать округление ежемесячного резерва вверх до целого рубля на каждый commitment и устранить расхождение domain/Excel/docs.
+- [x] Добавить domain-проверки: первые 12 месяцев равны для горизонтов 12/24 до копейки; 28/29 февраля; due day 30/31; смена года/timezone-independent local date; 80%, 100%, 100% + 1 копейка; zero plan; возврат больше расхода; перевод в тот же счёт; duplicate UUID; safe-integer overflow.
+- [x] `pnpm --filter @family-budget/domain test` и `pnpm verify` зелёные.
+- [x] Live-check через тест/небольшой read-only runner: G-000 — `100 000 / 76 500 / 23 500 ₽`, продукты `105%`, `−1 500 ₽`; G-002 — июль 2026 резерв `19 809 ₽`, свободно `44 191 ₽`; сентябрь сезонное `31 000 ₽`, свободно `13 191 ₽`; январь 2027 due `72 000 ₽`; январь 2028 due `72 000 ₽`; июнь 2028 due `0 ₽`.
+- [x] Свежий code review проверяет математику, границы дат и отсутствие double counting.
+- [x] Свежий security review проверяет неконтролируемые размеры входа, duplicate IDs, unsafe integers и валидацию внешних fixtures.
+- [x] Коммит A содержит только подтверждённые файлы этой фазы; коммит B содержит только план с SHA/доказательством A.
 
 ## Фаза 2. Excel parity и полный автоматизируемый QA
 
