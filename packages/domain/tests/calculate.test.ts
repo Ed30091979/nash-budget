@@ -96,6 +96,123 @@ describe("calculateAnnualPlan", () => {
     expect(plan.months[23]).toMatchObject({ month: "2028-06", annualDueMinor: 0 });
   });
 
+  it("rolls annual commitment metrics and upcoming order to the next anniversary", () => {
+    const state = makePlanningSeed();
+    const insuranceId = PLANNING_IDS.commitments.carInsurance;
+    const houseId = PLANNING_IDS.commitments.countryHouse;
+    const campId = PLANNING_IDS.commitments.summerCamp;
+
+    const february = calculateAnnualPlan(state, "2027-02", 12);
+    expect(february.commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 12,
+      remainingToReserveMinor: 7_200_000,
+      monthlyReserveMinor: 600_000,
+      status: "on_track",
+    });
+    expect(february.months[11]).toMatchObject({
+      month: "2028-01",
+      annualDueMinor: 7_200_000,
+    });
+    expect(february.upcomingCommitmentIds).toEqual([houseId, campId, insuranceId]);
+
+    const december = calculateAnnualPlan(state, "2027-12", 2);
+    expect(december.commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 2,
+      monthlyReserveMinor: 3_600_000,
+      status: "due_soon",
+    });
+    expect(december.commitments[campId]).toMatchObject({
+      monthsUntilDue: -5,
+      monthlyReserveMinor: 0,
+      status: "overdue",
+    });
+    expect(december.currentMonth.annualReserveMinor).toBe(4_200_000);
+    expect(december.months[1]).toMatchObject({
+      month: "2028-01",
+      annualReserveMinor: 4_200_000,
+      annualDueMinor: 7_200_000,
+    });
+    expect(december.upcomingCommitmentIds).toEqual([insuranceId, houseId]);
+
+    const january = calculateAnnualPlan(state, "2028-01", 13);
+    expect(january.commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 1,
+      monthlyReserveMinor: 7_200_000,
+      status: "due_soon",
+    });
+    expect(january.commitments[campId]).toMatchObject({
+      monthsUntilDue: -6,
+      monthlyReserveMinor: 0,
+      status: "overdue",
+    });
+    expect(january.upcomingCommitmentIds).toEqual([insuranceId, houseId]);
+    expect(january.months[12]).toMatchObject({
+      month: "2029-01",
+      annualDueMinor: 7_200_000,
+    });
+  });
+
+  it("carries the explicit unspent reserve balance across an annual anniversary", () => {
+    const seed = makePlanningSeed();
+    const insuranceId = PLANNING_IDS.commitments.carInsurance;
+    const withInsuranceReserve = (reservedMinor: number): BudgetState => ({
+      ...seed,
+      annualCommitments: seed.annualCommitments.map((item) =>
+        item.id === insuranceId ? { ...item, reservedMinor } : item,
+      ),
+    });
+
+    expect(calculateAnnualPlan(withInsuranceReserve(7_200_000), "2027-02", 12).commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 12,
+      remainingToReserveMinor: 0,
+      monthlyReserveMinor: 0,
+      status: "funded",
+    });
+    expect(calculateAnnualPlan(withInsuranceReserve(1_200_000), "2027-02", 12).commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 12,
+      remainingToReserveMinor: 6_000_000,
+      monthlyReserveMinor: 500_000,
+      status: "on_track",
+    });
+    expect(calculateAnnualPlan(withInsuranceReserve(0), "2027-02", 12).commitments[insuranceId]).toMatchObject({
+      monthsUntilDue: 12,
+      remainingToReserveMinor: 7_200_000,
+      monthlyReserveMinor: 600_000,
+      status: "on_track",
+    });
+  });
+
+  it("orders same-month upcoming commitments by due day and then stable id", () => {
+    const state = makePlanningSeed();
+    const template = state.annualCommitments[0]!;
+    const late = { ...template, id: "same-month-late", dueDate: "2027-01-25" };
+    const earlyB = { ...template, id: "same-date-b", dueDate: "2027-01-05" };
+    const earlyA = { ...template, id: "same-date-a", dueDate: "2027-01-05" };
+
+    const plan = calculateAnnualPlan(
+      { ...state, annualCommitments: [late, earlyB, earlyA] },
+      "2027-02",
+      12,
+    );
+
+    expect(plan.upcomingCommitmentIds).toEqual([earlyA.id, earlyB.id, late.id]);
+  });
+
+  it("keeps horizons and annual recurrences inside the four-digit calendar", () => {
+    const state = { ...makePlanningSeed(), annualCommitments: [] };
+
+    expect(() => calculateAnnualPlan(state, "9999-12", 2)).toThrow(
+      "planning horizon exceeds supported calendar range",
+    );
+    expect(() => calculateAnnualPlan(makePlanningSeed(), "9999-12", 1)).toThrow(
+      "annual recurrence exceeds supported calendar range",
+    );
+
+    const boundary = calculateAnnualPlan(state, "9999-12", 1);
+    expect(boundary.months).toHaveLength(1);
+    expect(boundary.currentMonth.month).toBe("9999-12");
+  });
+
   it("matches every canonical G-002 checkpoint", () => {
     const plan = calculateAnnualPlan(toDomainBudgetState(G002), G002.startMonth, G002.horizonMonths);
     for (const expected of G002.expected.months) {
@@ -251,6 +368,46 @@ describe("calculateBudget", () => {
     }
     const noPlan = { ...seed, budgets: [{ ...seed.budgets[0]!, lines: seed.budgets[0]!.lines.filter((line) => line.categoryId !== category) }] };
     expect(calculateBudget(noPlan).categoryMetrics[category]?.status).toBe("over_limit");
+  });
+
+  it("soft-archives a category without losing its budget line or transaction history", () => {
+    const seed = makeSeedBudget();
+    const housingId = SEED_IDS.categories.housing;
+    const housingLine = seed.budgets[0]!.lines.find((line) => line.categoryId === housingId)!;
+    const active = {
+      ...seed,
+      budgets: [{ ...seed.budgets[0]!, lines: [housingLine] }],
+    };
+
+    expect(calculateBudget(active).plannedExpenseMinor).toBe(4_000_000);
+    expect(calculateAnnualPlan(active).currentMonth.flexiblePlanMinor).toBe(4_000_000);
+
+    const archived = {
+      ...active,
+      categories: active.categories.map((category) =>
+        category.id === housingId ? { ...category, active: false } : category,
+      ),
+    };
+    const archivedBudget = calculateBudget(archived);
+    expect(archivedBudget.plannedExpenseMinor).toBe(0);
+    expect(archivedBudget.categoryMetrics[housingId]).toMatchObject({
+      availableMinor: 0,
+      expenseMinor: 4_000_000,
+      actualMinor: 4_000_000,
+      status: "over_limit",
+    });
+    expect(calculateAnnualPlan(archived).currentMonth.flexiblePlanMinor).toBe(0);
+    expect(archived.budgets[0]!.lines[0]).toEqual(housingLine);
+
+    const reactivated = {
+      ...archived,
+      categories: archived.categories.map((category) =>
+        category.id === housingId ? { ...category, active: true } : category,
+      ),
+    };
+    expect(calculateBudget(reactivated).plannedExpenseMinor).toBe(4_000_000);
+    expect(calculateAnnualPlan(reactivated).currentMonth.flexiblePlanMinor).toBe(4_000_000);
+    expect(reactivated.budgets[0]!.lines[0]).toEqual(housingLine);
   });
 
   it("keeps an excess refund as explicit negative net actual and aggregate expense", () => {

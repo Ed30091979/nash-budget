@@ -24,6 +24,7 @@ import type {
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_MONTH_PATTERN = /^\d{4}-\d{2}$/;
+const MAX_LOCAL_MONTH_INDEX = 9999 * 12 + 11;
 
 function assertEnum(value: unknown, allowed: readonly string[], label: string): asserts value is string {
   if (typeof value !== "string" || !allowed.includes(value)) {
@@ -221,7 +222,7 @@ function validateBudget(
     if (availableMinor < 0) {
       throw new Error(`budget line ${line.id} availableMinor must not be negative`);
     }
-    availableByCategory.set(line.categoryId, availableMinor);
+    availableByCategory.set(line.categoryId, category.active ? availableMinor : 0);
   }
 
   return availableByCategory;
@@ -473,6 +474,24 @@ function monthFromIndex(value: number): string {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
 }
 
+function effectiveCommitmentDueIndex(
+  item: AnnualCommitment,
+  startIndex: number,
+): number {
+  const originalDueIndex = monthIndex(
+    item.dueDate.slice(0, 7),
+    `annual commitment ${item.id} due month`,
+  );
+  if (item.recurrence === "one_time" || originalDueIndex >= startIndex) {
+    return originalDueIndex;
+  }
+  const nextDueIndex = originalDueIndex + Math.ceil((startIndex - originalDueIndex) / 12) * 12;
+  if (nextDueIndex > MAX_LOCAL_MONTH_INDEX) {
+    throw new Error("annual recurrence exceeds supported calendar range");
+  }
+  return nextDueIndex;
+}
+
 /** A due day beyond the month end is charged on that month's final calendar day. */
 export function normalizeScheduledDueDate(month: string, dueDay: number): string {
   monthIndex(month, "month");
@@ -541,6 +560,9 @@ export function calculateAnnualPlan(
   if (!Number.isSafeInteger(monthCount) || monthCount < 1 || monthCount > 24) {
     throw new Error("monthCount must be an integer from 1 to 24");
   }
+  if (startIndex > MAX_LOCAL_MONTH_INDEX - (monthCount - 1)) {
+    throw new Error("planning horizon exceeds supported calendar range");
+  }
 
   const accounts = indexById(state.accounts, "accounts");
   const categories = indexById(state.categories, "categories");
@@ -573,9 +595,14 @@ export function calculateAnnualPlan(
     .reduce((total, goal) => addMinor(total, goal.plannedContributionMinor, "goalPlanMinor"), 0);
 
   const commitmentMetrics = createIdRecord<AnnualCommitmentId, AnnualCommitmentMetrics>();
+  const effectiveDueByCommitment = new Map<AnnualCommitmentId, number>();
   for (const item of annualCommitments.values()) {
-    const dueIndex = monthIndex(item.dueDate.slice(0, 7), `annual commitment ${item.id} due month`);
+    const dueIndex = effectiveCommitmentDueIndex(item, startIndex);
+    effectiveDueByCommitment.set(item.id, dueIndex);
     const monthsUntilDue = dueIndex - startIndex + 1;
+    // reservedMinor is the current unspent reserve balance. It intentionally carries
+    // across annual anniversaries: the calendar cannot infer payment or consumption,
+    // so a user edit or transaction flow must update the balance explicitly.
     const remainingToReserveMinor = Math.max(0, item.amountMinor - item.reservedMinor);
     const monthlyReserveMinor = item.active && monthsUntilDue > 0 && remainingToReserveMinor > 0
       ? reservePerMonth(remainingToReserveMinor, monthsUntilDue)
@@ -610,7 +637,7 @@ export function calculateAnnualPlan(
     const annualReserveMinor = [...annualCommitments.values()]
       .filter((item) => item.active)
       .reduce((total, item) => {
-        const dueIndex = monthIndex(item.dueDate.slice(0, 7), `annual commitment ${item.id} due month`);
+        const dueIndex = effectiveDueByCommitment.get(item.id)!;
         const reserve = currentIndex <= dueIndex
           ? commitmentMetrics[item.id]?.monthlyReserveMinor ?? 0
           : item.recurrence === "annual"
@@ -641,8 +668,14 @@ export function calculateAnnualPlan(
   }
 
   const upcomingCommitmentIds = [...annualCommitments.values()]
-    .filter((item) => item.active && monthIndex(item.dueDate.slice(0, 7), `annual commitment ${item.id} due month`) >= startIndex)
-    .sort((left, right) => left.dueDate.localeCompare(right.dueDate))
+    .filter((item) => item.active && effectiveDueByCommitment.get(item.id)! >= startIndex)
+    .sort((left, right) => {
+      const monthDifference = effectiveDueByCommitment.get(left.id)! - effectiveDueByCommitment.get(right.id)!;
+      if (monthDifference !== 0) return monthDifference;
+      const dayDifference = Number(left.dueDate.slice(8, 10)) - Number(right.dueDate.slice(8, 10));
+      if (dayDifference !== 0) return dayDifference;
+      return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    })
     .map((item) => item.id);
 
   return {
