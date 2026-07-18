@@ -410,6 +410,140 @@ describe("calculateBudget", () => {
     expect(reactivated.budgets[0]!.lines[0]).toEqual(housingLine);
   });
 
+  it("soft-archives one flexible line without disabling a shared category", () => {
+    const seed = makePlanningSeed();
+    const childrenId = PLANNING_IDS.categories.children;
+    const archivedLine = {
+      id: "74444444-4444-4444-8444-444444444455",
+      categoryId: childrenId,
+      plannedMinor: 900_000,
+      rolloverMinor: 200_000,
+      adjustmentMinor: -100_000,
+      active: false,
+    } as const;
+    const historicalExpense: Transaction = {
+      id: "75555555-5555-4555-8555-555555555559",
+      occurredOn: "2026-07-10",
+      status: "posted",
+      kind: "expense",
+      amountMinor: 120_000,
+      accountId: SEED_IDS.accounts.main,
+      categoryId: childrenId,
+    };
+    const archived: BudgetState = {
+      ...seed,
+      budgets: [{
+        ...seed.budgets[0]!,
+        lines: [...seed.budgets[0]!.lines, archivedLine],
+      }],
+      transactions: [...seed.transactions, historicalExpense],
+    };
+
+    const archivedBudget = calculateBudget(archived);
+    expect(archivedBudget.plannedExpenseMinor).toBe(5_300_000);
+    expect(archivedBudget.categoryMetrics[childrenId]).toMatchObject({
+      availableMinor: 0,
+      expenseMinor: 120_000,
+      actualMinor: 120_000,
+      status: "over_limit",
+    });
+
+    const archivedPlan = calculateAnnualPlan(archived, "2026-09", 12);
+    expect(archivedPlan.currentMonth).toMatchObject({
+      flexiblePlanMinor: 5_300_000,
+      scheduledExpenseMinor: 8_400_000,
+      seasonalExpenseMinor: 3_100_000,
+    });
+    expect(archivedPlan.commitments[PLANNING_IDS.commitments.summerCamp]).toMatchObject({
+      remainingToReserveMinor: 7_500_000,
+      monthlyReserveMinor: 750_000,
+    });
+    expect(archived.scheduledExpenses.filter((item) => item.categoryId === childrenId)).toEqual(
+      seed.scheduledExpenses.filter((item) => item.categoryId === childrenId),
+    );
+    expect(archived.annualCommitments.find((item) => item.id === PLANNING_IDS.commitments.summerCamp)).toEqual(
+      seed.annualCommitments.find((item) => item.id === PLANNING_IDS.commitments.summerCamp),
+    );
+    expect(archived.budgets[0]!.lines.at(-1)).toEqual(archivedLine);
+
+    const editedRelatedItems: BudgetState = {
+      ...archived,
+      scheduledExpenses: archived.scheduledExpenses.map((item) =>
+        item.name === "Обучение детей" ? { ...item, amountMinor: 2_600_000 } : item,
+      ),
+      annualCommitments: archived.annualCommitments.map((item) =>
+        item.id === PLANNING_IDS.commitments.summerCamp
+          ? { ...item, amountMinor: 9_100_000 }
+          : item,
+      ),
+    };
+    const editedPlan = calculateAnnualPlan(editedRelatedItems, "2026-09", 12);
+    expect(editedPlan.currentMonth.scheduledExpenseMinor).toBe(8_500_000);
+    expect(editedPlan.commitments[PLANNING_IDS.commitments.summerCamp]).toMatchObject({
+      remainingToReserveMinor: 7_600_000,
+      monthlyReserveMinor: 760_000,
+    });
+
+    const reactivated: BudgetState = {
+      ...archived,
+      budgets: [{
+        ...archived.budgets[0]!,
+        lines: archived.budgets[0]!.lines.map((line) =>
+          line.id === archivedLine.id ? { ...line, active: true } : line,
+        ),
+      }],
+    };
+    expect(calculateBudget(reactivated).plannedExpenseMinor).toBe(6_300_000);
+    expect(calculateAnnualPlan(reactivated, "2026-09", 12).currentMonth.flexiblePlanMinor).toBe(6_300_000);
+    expect(reactivated.budgets[0]!.lines.at(-1)).toMatchObject({
+      id: archivedLine.id,
+      plannedMinor: archivedLine.plannedMinor,
+      rolloverMinor: archivedLine.rolloverMinor,
+      adjustmentMinor: archivedLine.adjustmentMinor,
+      active: true,
+    });
+  });
+
+  it("treats an omitted budget-line active flag as active and rejects invalid runtime values", () => {
+    const seed = makeSeedBudget();
+    const firstLine = seed.budgets[0]!.lines[0]!;
+    expect(firstLine.active).toBeUndefined();
+    expect(calculateBudget(seed).categoryMetrics[firstLine.categoryId]?.availableMinor).toBe(
+      firstLine.plannedMinor,
+    );
+
+    const invalidLine = { ...firstLine, active: "false" } as unknown as typeof firstLine;
+    const invalid: BudgetState = {
+      ...seed,
+      budgets: [{
+        ...seed.budgets[0]!,
+        lines: [invalidLine, ...seed.budgets[0]!.lines.slice(1)],
+      }],
+    };
+    expect(() => calculateBudget(invalid)).toThrow(/active must be a boolean/);
+
+    const inactiveInvalidAmount = {
+      ...firstLine,
+      plannedMinor: -1,
+      active: false,
+    };
+    expect(() => calculateBudget({
+      ...seed,
+      budgets: [{
+        ...seed.budgets[0]!,
+        lines: [inactiveInvalidAmount, ...seed.budgets[0]!.lines.slice(1)],
+      }],
+    })).toThrow(/plannedMinor must not be negative/);
+
+    expect(() => calculateBudget({
+      ...seed,
+      budgets: [{
+        ...seed.budgets[0]!,
+        lines: [firstLine, { ...firstLine, id: "duplicate-inactive-line", active: false }],
+      }],
+    })).toThrow(/multiple lines for category/);
+  });
+
   it("keeps an excess refund as explicit negative net actual and aggregate expense", () => {
     const seed = makeSeedBudget();
     const refund: Transaction = { id: "refund-large", occurredOn: "2026-07-15", status: "posted", kind: "refund", amountMinor: 4_000_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food, originalTransactionId: SEED_IDS.transactions.food };

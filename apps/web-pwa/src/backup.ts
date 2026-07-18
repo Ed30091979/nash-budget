@@ -90,6 +90,10 @@ function requireOptionalNumber(value: unknown, label: string): void {
   if (value !== undefined) requireNumber(value, label);
 }
 
+function requireOptionalBoolean(value: unknown, label: string): void {
+  if (value !== undefined) requireBoolean(value, label);
+}
+
 function requireLocalDate(value: string, label: string): void {
   if (!LOCAL_DATE_PATTERN.test(value)) throw new Error(`${label}: дата должна иметь формат YYYY-MM-DD.`);
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -167,6 +171,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
       requireNumber(line.plannedMinor, `budgets[${index}].lines[${lineIndex}].plannedMinor`);
       requireOptionalNumber(line.rolloverMinor, `budgets[${index}].lines[${lineIndex}].rolloverMinor`);
       requireOptionalNumber(line.adjustmentMinor, `budgets[${index}].lines[${lineIndex}].adjustmentMinor`);
+      requireOptionalBoolean(line.active, `budgets[${index}].lines[${lineIndex}].active`);
     });
   });
 
@@ -265,6 +270,9 @@ function validateAllBudgets(state: BudgetState): void {
       const category = categories.get(line.categoryId);
       if (!category) throw new Error(`budget line ${line.id}: неизвестная категория ${line.categoryId}.`);
       if (category.type !== "expense") throw new Error(`budget line ${line.id}: категория должна быть расходной.`);
+      if (line.active !== undefined && typeof line.active !== "boolean") {
+        throw new Error(`budget line ${line.id}: active должен быть логическим значением.`);
+      }
       requireSafeMinor(line.plannedMinor, `budget line ${line.id} plannedMinor`);
       requireSafeMinor(line.rolloverMinor ?? 0, `budget line ${line.id} rolloverMinor`);
       requireSafeMinor(line.adjustmentMinor ?? 0, `budget line ${line.id} adjustmentMinor`, true);

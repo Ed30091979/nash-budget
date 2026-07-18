@@ -207,6 +207,9 @@ function validateBudget(
     if (availableByCategory.has(line.categoryId)) {
       throw new Error(`budget ${budget.id} has multiple lines for category ${line.categoryId}`);
     }
+    if (line.active !== undefined && typeof line.active !== "boolean") {
+      throw new Error(`budget line ${line.id} active must be a boolean when provided`);
+    }
 
     const rolloverMinor = line.rolloverMinor ?? 0;
     const adjustmentMinor = line.adjustmentMinor ?? 0;
@@ -222,7 +225,10 @@ function validateBudget(
     if (availableMinor < 0) {
       throw new Error(`budget line ${line.id} availableMinor must not be negative`);
     }
-    availableByCategory.set(line.categoryId, category.active ? availableMinor : 0);
+    availableByCategory.set(
+      line.categoryId,
+      category.active && line.active !== false ? availableMinor : 0,
+    );
   }
 
   return availableByCategory;

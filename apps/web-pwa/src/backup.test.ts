@@ -153,6 +153,48 @@ describe("восстановление бюджета", () => {
     expect(events).toEqual(["saved", "published"]);
   });
 
+  it("сохраняет optional active строки бюджета и legacy-отсутствие флага при round-trip", () => {
+    const seed = makePlanningSeed();
+    const firstBudget = seed.budgets[0]!;
+    const state: BudgetState = {
+      ...seed,
+      budgets: [{
+        ...firstBudget,
+        lines: firstBudget.lines.map((line, index) => (
+          index === 0 ? { ...line, active: false } : line
+        )),
+      }],
+    };
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(state));
+
+    expect(restored).toEqual(state);
+    expect(restored.budgets[0]!.lines[0]!.active).toBe(false);
+    expect(restored.budgets[0]!.lines[1]!.active).toBeUndefined();
+  });
+
+  it("отклоняет не-boolean active строки бюджета до save/publish", async () => {
+    const seed = makePlanningSeed();
+    const firstBudget = seed.budgets[0]!;
+    const malformed = {
+      ...seed,
+      budgets: [{
+        ...firstBudget,
+        lines: firstBudget.lines.map((line, index) => (
+          index === 0 ? { ...line, active: "false" } : line
+        )),
+      }],
+    };
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(
+      /active.*логическое значение/,
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("не публикует state, если IndexedDB не сохранил восстановление", async () => {
     const publish = vi.fn<(_: BudgetState) => void>();
     const save = vi.fn<(_: BudgetState) => Promise<void>>().mockRejectedValue(new Error("quota"));

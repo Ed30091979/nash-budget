@@ -50,6 +50,8 @@ export interface BudgetLine {
   readonly id: BudgetLineId;
   readonly categoryId: CategoryId;
   readonly plannedMinor: MinorUnits;
+  /** Soft-archive flag. Omitted by legacy data and treated as active. */
+  readonly active?: boolean;
   readonly rolloverMinor?: MinorUnits;
   readonly adjustmentMinor?: MinorUnits;
 }
