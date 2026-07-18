@@ -1,0 +1,273 @@
+const DEFAULT_DATABASE_NAME = "family-budget";
+const DATABASE_VERSION = 2;
+const STORE_NAME = "documents";
+const ACTIVE_BUDGET_KEY = "active-budget";
+const LAST_BACKUP_KEY = "metadata:last-successful-backup";
+
+interface StoredDocument<T> {
+  readonly key: string;
+  readonly schemaVersion: number;
+  readonly updatedAt: string;
+  readonly value: T;
+}
+
+export interface StorageHealth {
+  readonly persisted: boolean;
+  readonly usage: number | null;
+  readonly quota: number | null;
+}
+
+export interface RepositoryOptions<T = unknown> {
+  readonly databaseName?: string;
+  /** Synchronous v1 payload validator/transform; throwing aborts the whole versionchange transaction. */
+  readonly migrateV1Value?: (value: unknown, key: string) => T;
+}
+
+function databaseError(message: string): Error {
+  return new Error(message);
+}
+
+function guardGenericV1Value(value: unknown): unknown {
+  const stack: Array<{ readonly value: unknown; readonly depth: number }> = [{ value, depth: 0 }];
+  const seen = new WeakSet<object>();
+  const ids = new Set<string>();
+  let nodes = 0;
+  let characterUnits = 0;
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    nodes += 1;
+    if (nodes > 100_000) throw databaseError("Документ v1 содержит слишком много данных.");
+    if (current.depth > 64) throw databaseError("Документ v1 имеет слишком глубокую структуру.");
+    if (current.value === null || typeof current.value === "boolean") continue;
+    if (typeof current.value === "string") {
+      characterUnits += current.value.length;
+      if (characterUnits > 5 * 1024 * 1024) throw databaseError("Документ v1 содержит слишком много текста.");
+      continue;
+    }
+    if (typeof current.value === "number") {
+      if (!Number.isFinite(current.value) || Math.abs(current.value) > Number.MAX_SAFE_INTEGER) {
+        throw databaseError("Документ v1 содержит небезопасное число.");
+      }
+      continue;
+    }
+    if (Array.isArray(current.value)) {
+      if (current.value.length > 50_000) throw databaseError("Документ v1 содержит слишком большую коллекцию.");
+      if (seen.has(current.value)) throw databaseError("Документ v1 содержит циклическую ссылку.");
+      seen.add(current.value);
+      for (const child of current.value) stack.push({ value: child, depth: current.depth + 1 });
+      continue;
+    }
+    if (typeof current.value !== "object" || current.value === undefined) {
+      throw databaseError("Документ v1 содержит неподдерживаемый тип данных.");
+    }
+    const prototype = Object.getPrototypeOf(current.value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw databaseError("Документ v1 содержит неподдерживаемый тип данных.");
+    }
+    if (seen.has(current.value)) throw databaseError("Документ v1 содержит циклическую ссылку.");
+    seen.add(current.value);
+    const entries = Object.entries(current.value);
+    if (entries.length > 50_000) throw databaseError("Документ v1 содержит слишком большую коллекцию.");
+    for (const [key, child] of entries) {
+      characterUnits += key.length;
+      if (characterUnits > 5 * 1024 * 1024) throw databaseError("Документ v1 содержит слишком много текста.");
+      if (key === "__proto__" || key === "constructor" || key === "prototype") {
+        throw databaseError("Документ v1 содержит запрещённое имя поля.");
+      }
+      if (key === "id" && typeof child === "string") {
+        if (ids.has(child)) throw databaseError("Документ v1 содержит повторяющийся идентификатор.");
+        ids.add(child);
+      }
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+  return value;
+}
+
+function migrateV1ToV2<T>(store: IDBObjectStore, options: RepositoryOptions<T>, transaction: IDBTransaction): void {
+  const cursorRequest = store.openCursor();
+  cursorRequest.onerror = () => transaction.abort();
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+    try {
+      const document = cursor.value as Partial<StoredDocument<unknown>> | null;
+      if (
+        !document ||
+        typeof document !== "object" ||
+        typeof document.key !== "string" ||
+        document.schemaVersion !== 1 ||
+        typeof document.updatedAt !== "string" ||
+        !("value" in document)
+      ) {
+        throw databaseError("Документ v1 не может быть безопасно мигрирован.");
+      }
+      guardGenericV1Value(document.value);
+      const migratedValue = options.migrateV1Value
+        ? options.migrateV1Value(document.value, document.key)
+        : document.value;
+      if (migratedValue && typeof (migratedValue as { then?: unknown }).then === "function") {
+        throw databaseError("Миграция v1 должна быть синхронной.");
+      }
+      guardGenericV1Value(migratedValue);
+      cursor.update({ ...document, schemaVersion: 2, value: migratedValue });
+      cursor.continue();
+    } catch {
+      transaction.abort();
+    }
+  };
+}
+
+function openDatabase<T>(options: RepositoryOptions<T>): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(options.databaseName ?? DEFAULT_DATABASE_NAME, DATABASE_VERSION);
+    let settled = false;
+
+    request.onupgradeneeded = (event) => {
+      const database = request.result;
+      const transaction = request.transaction;
+      if (!transaction) {
+        request.result.close();
+        return;
+      }
+      try {
+        const oldVersion = event.oldVersion;
+        if (oldVersion === 0) database.createObjectStore(STORE_NAME, { keyPath: "key" });
+        if (oldVersion >= 1 && oldVersion < 2) {
+          migrateV1ToV2(transaction.objectStore(STORE_NAME), options, transaction);
+        }
+      } catch {
+        transaction.abort();
+      }
+    };
+
+    request.onsuccess = () => {
+      if (settled) {
+        request.result.close();
+        return;
+      }
+      settled = true;
+      const database = request.result;
+      database.onversionchange = () => database.close();
+      resolve(database);
+    };
+    request.onerror = () => {
+      if (settled) return;
+      settled = true;
+      reject(databaseError("Не удалось открыть или обновить локальное хранилище."));
+    };
+    request.onblocked = () => {
+      if (settled) return;
+      settled = true;
+      reject(databaseError("Обновление локального хранилища заблокировано другой вкладкой."));
+    };
+  });
+}
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(databaseError("Ошибка локального хранилища."));
+  });
+}
+
+function transactionComplete(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(databaseError("Транзакция хранилища завершилась ошибкой."));
+    transaction.onabort = () => reject(databaseError("Транзакция хранилища отменена."));
+  });
+}
+
+function makeDocument<T>(key: string, value: T, now: Date): StoredDocument<T> {
+  return { key, schemaVersion: DATABASE_VERSION, updatedAt: now.toISOString(), value };
+}
+
+export class IndexedDbBudgetRepository<T> {
+  private readonly options: RepositoryOptions<T>;
+
+  constructor(options: RepositoryOptions<T> = {}) {
+    this.options = options;
+  }
+
+  private async withDatabase<R>(operation: (database: IDBDatabase) => Promise<R>): Promise<R> {
+    const database = await openDatabase(this.options);
+    try {
+      return await operation(database);
+    } finally {
+      database.close();
+    }
+  }
+
+  async load(): Promise<T | null> {
+    return this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const result = await requestResult(
+        transaction.objectStore(STORE_NAME).get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>,
+      );
+      return result?.value ?? null;
+    });
+  }
+
+  async save(value: T): Promise<void> {
+    await this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).put(makeDocument(ACTIVE_BUDGET_KEY, value, new Date()));
+      await transactionComplete(transaction);
+    });
+  }
+
+  /** Parses and validates completely before opening the single write transaction. */
+  async restore(text: string, parseAndValidate: (text: string) => T): Promise<T> {
+    const value = parseAndValidate(text);
+    await this.save(value);
+    return value;
+  }
+
+  async setLastSuccessfulBackup(createdAt: string): Promise<void> {
+    const date = new Date(createdAt);
+    if (Number.isNaN(date.getTime()) || date.toISOString() !== createdAt) {
+      throw new Error("Некорректная дата резервной копии.");
+    }
+    await this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).put(makeDocument(LAST_BACKUP_KEY, createdAt, date));
+      await transactionComplete(transaction);
+    });
+  }
+
+  async getLastSuccessfulBackup(): Promise<string | null> {
+    return this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const result = await requestResult(
+        transaction.objectStore(STORE_NAME).get(LAST_BACKUP_KEY) as IDBRequest<StoredDocument<string> | undefined>,
+      );
+      return result?.value ?? null;
+    });
+  }
+
+  /** Removes the whole repository, including metadata, in one transaction. */
+  async clear(): Promise<void> {
+    await this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).clear();
+      await transactionComplete(transaction);
+    });
+  }
+
+  async documentCount(): Promise<number> {
+    return this.withDatabase(async (database) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      return requestResult(transaction.objectStore(STORE_NAME).count());
+    });
+  }
+}
+
+export async function requestStorageHealth(): Promise<StorageHealth> {
+  const storage = navigator.storage;
+  if (!storage) return { persisted: false, usage: null, quota: null };
+  let persisted = storage.persisted ? await storage.persisted() : false;
+  if (!persisted && storage.persist) persisted = await storage.persist();
+  const estimate = storage.estimate ? await storage.estimate() : {};
+  return { persisted, usage: estimate.usage ?? null, quota: estimate.quota ?? null };
+}

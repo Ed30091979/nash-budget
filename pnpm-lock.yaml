@@ -49,6 +49,9 @@ importers:
         specifier: 7.4.1
         version: 7.4.1
     devDependencies:
+      '@family-budget/test-fixtures':
+        specifier: workspace:*
+        version: link:../../packages/test-fixtures
       '@types/react':
         specifier: 19.2.17
         version: 19.2.17
@@ -58,6 +61,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: 6.0.3
         version: 6.0.3(vite@8.1.5(@types/node@26.1.1)(terser@5.49.0))
+      fake-indexeddb:
+        specifier: 6.2.4
+        version: 6.2.4
       vite:
         specifier: 8.1.5
         version: 8.1.5(@types/node@26.1.1)(terser@5.49.0)
@@ -71,7 +77,17 @@ importers:
         specifier: workspace:*
         version: link:../test-fixtures
 
-  packages/storage: {}
+  packages/storage:
+    devDependencies:
+      ajv:
+        specifier: 8.18.0
+        version: 8.18.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.18.0)
+      fake-indexeddb:
+        specifier: 6.2.4
+        version: 6.2.4
 
   packages/test-fixtures:
     dependencies:
@@ -1342,6 +1358,10 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  fake-indexeddb@6.2.4:
+    resolution: {integrity: sha512-INKeIKEtSViN4yVtEWEUqbsqmaIy7Ls+MfU0yxQVXg67pOJ/sH1ZxcVrP8XrKULUFohcPD9gnmym+qBfEybACw==}
+    engines: {node: '>=18'}
 
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
@@ -3824,6 +3844,8 @@ snapshots:
   eta@4.6.0: {}
 
   expect-type@1.4.0: {}
+
+  fake-indexeddb@6.2.4: {}
 
   fast-deep-equal@3.1.3: {}
 

@@ -92,6 +92,49 @@ packages/
 
 IndexedDB — единственный источник истины для PWA и Capacitor MVP. `packages/storage` владеет schema version, миграциями, транзакциями и codecs резервной копии.
 
+### Контракт Storage v2
+
+Версия IndexedDB, версия формата backup и версия payload изменяются независимо. Для первой миграции IndexedDB `v1 → v2` действуют следующие правила:
+
+- upgrade выполняется только внутри `onupgradeneeded` и одной `versionchange`-транзакции;
+- все преобразования записей завершаются до commit этой транзакции; ошибка или невалидный stored document вызывает `abort`, поэтому частично обновлённая база не становится доступной; rollback доказывается двумя документами v1, где custom `migrateV1Value` принимает первый и отклоняет невалидную дробную сумму во втором;
+- соединение закрывается при `versionchange`, чтобы другая вкладка или новая версия приложения могла продолжить upgrade;
+- состояние `blocked` не замалчивается: вызывающая сторона получает точную контролируемую ошибку «Обновление локального хранилища заблокировано другой вкладкой.»; после закрытия удерживающего соединения новый вызов open можно повторить;
+- миграции последовательны и идемпотентны на уровне версии: существующая база `v1` проходит шаг `1 → 2`, а уже открытая `v2` не преобразуется повторно.
+
+Внешний backup до restore проходит два слоя codec: общий guard ограничивает размер, глубину, количество узлов/элементов, небезопасные числа, duplicate ID и ключи `__proto__`, `prototype`, `constructor`; обязательный `BudgetState` application validator проверяет accounts, categories, budgets и их lines, goals, annual commitments, schedules, transactions, их safe-integer money/date/enum и фактически существующие account/category/budget/goal/transaction references. Оба слоя выполняются до открытия write-транзакции restore; ошибка не должна менять ни активный документ, ни metadata. `BudgetState` не содержит household/member, а domain-проекция не хранит canonical movements/splits, поэтому их проверка этим codec не заявляется. Обычный `save()` остаётся типизированным repository API и получает уже проверенный application state — generic repository не подменяет domain validation.
+
+JSON backup имеет versioned envelope:
+
+```json
+{
+  "app": "family-budget",
+  "appVersion": "0.1.0",
+  "formatVersion": 2,
+  "schemaVersion": 1,
+  "createdAt": "2026-07-17T12:00:00.000Z",
+  "integrity": {
+    "algorithm": "sha256",
+    "checksum": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+  },
+  "payload": {}
+}
+```
+
+`app` не даёт импортировать файл другого продукта, `appVersion` фиксирует версию создавшего приложение, `formatVersion` версионирует envelope, а `schemaVersion` — модель внутри `payload`. В текущем контракте это соответственно `family-budget`, строка версии приложения, `2` и `1`. Backup `schemaVersion: 1` не равен `schemaVersion: 2` внутреннего IndexedDB `StoredDocument`: это разные уровни совместимости. `createdAt` — UTC ISO 8601. SHA-256 вычисляется по однозначно сериализованному payload и сверяется до restore. Эта проверка целостности обнаруживает случайное повреждение файла, но **не является шифрованием, электронной подписью или аутентификацией**: пользователь должен хранить backup как незашифрованные финансовые данные.
+
+Размер входного JSON ограничен `5 MiB` (`5 × 1024 × 1024` UTF-8 bytes) до разбора. После проверки размера envelope, integrity, schema и фактических `BudgetState`-ссылок restore записывает текущий активный документ одной IndexedDB-транзакцией. Чужой `app`, неподдерживаемый `formatVersion`/`schemaVersion`, duplicate UUID, опасный ключ, оборванная связь или превышение лимита отклоняются без записи.
+
+Единственный compatibility-path для Phase 0 принимает ровно legacy envelope `{ backupVersion: 1, createdAt, app, payload }`, где `app = "family-budget"` и `createdAt` — строгий UTC ISO timestamp. В legacy-файле нет checksum, и import не придумывает для него integrity: сначала остаются обязательными лимит `5 MiB`, точная проверка envelope и generic guard, затем тот же `BudgetState` application validator, и только после этого разрешён write. Современный export legacy-формат не создаёт и всегда пишет `formatVersion: 2`, payload `schemaVersion: 1` и SHA-256 checksum. Другие backup migrations не заявлены.
+
+Metadata `lastSuccessfulBackup` хранится в IndexedDB, а не в `localStorage`, и содержит только точный UTC ISO timestamp последней успешно сформированной JSON-копии. Версии и checksum в metadata не дублируются. Вызывающий application layer записывает timestamp только после успешного формирования backup; ошибка не должна заменять прежнее значение. `clear()` в одной транзакции очищает пользовательские документы и эту metadata, оставляя пустую рабочую схему IndexedDB v2; отмена или ошибка не даёт частично очищенного состояния.
+
+CSV — отдельный ограниченный по размеру человекочитаемый экспорт таблицы, а не средство восстановления и не полная backup-копия. Он не содержит достаточного контракта для round-trip всех UUID и связей. Поля экранируются по правилам CSV. Для строк codec обнаруживает `=`, `+`, `-` или `@` как сразу, так и после ограниченного максимальной длиной поля префикса пробелов, C0/C1 controls, zero-width/invisible Unicode и bidi controls (`U+061C`, `U+2066…U+2069`), затем добавляет апостроф. Safe-integer `-12345` остаётся числом `-12345`, а пользовательская строка `"-12345"` защищается апострофом.
+
+Автоматизированный контракт Storage v2 принят: storage `28/28`, web `24/24`, fixtures `6/6`, domain `17/17`, суммарно `75/75`, пять typechecks, production PWA build с `13` precache entries, dependency audits `0`, свежие code/security review `APPROVE` без blocker/high/medium. Проверены `12 345` копеек при `v1 → v2`, timestamp `2026-07-17T12:00:00.000Z`, байт-в-байт сохранение прежних raw-данных при отказах, `0` документов после clear и projected G-001 `2/3/1/3/1/0/0/5` с income/expense/net worth `100 000 / 76 500 / 23 500 ₽`.
+
+Остаются низкие тестовые caveats: `versionchange`-close handler не имеет отдельного synthetic lifecycle-теста, а checksum rejection и repository no-write доказаны соседними, не одним сквозным тестом. Реальные browser/device-проверки и Phase 7 UI этого архитектурного acceptance не входят.
+
 Минимальное масштабируемое ядро:
 
 | Сущность | Основные поля |
@@ -136,12 +179,13 @@ IndexedDB — единственный источник истины для PWA 
 Safari/browser storage нельзя считать гарантированным бессрочным архивом. Поэтому:
 
 - приложение при возможности запрашивает persistent storage, но не обещает, что запрос будет поддержан или удовлетворён;
-- versioned JSON backup содержит все сущности, UUID, schema version и контроль целостности;
+- versioned JSON backup содержит все сущности, UUID, `appVersion`, `formatVersion`, payload `schemaVersion`, время создания и SHA-256 checksum;
 - CSV остаётся читаемым экспортом, но не считается полной резервной копией;
-- import сначала полностью валидируется, затем применяется атомарно и выдаёт отчёт;
+- import ограничен `5 MiB`, сначала полностью валидируется codec, затем применяется атомарно и выдаёт отчёт;
 - onboarding объясняет риск удаления данных браузером/устройством;
-- дашборд показывает дату последнего успешного backup и ненавязчиво напоминает обновить его;
-- экспортированный JSON/CSV не шифруется автоматически, что явно сообщается пользователю.
+- дашборд показывает единственный сохранённый metadata timestamp последней успешно сформированной backup-копии и ненавязчиво напоминает обновить её;
+- integrity checksum помогает заметить случайную порчу, но не подтверждает автора файла;
+- экспортированный JSON/CSV не шифруется и не аутентифицируется автоматически, что явно сообщается пользователю.
 
 ## Privacy и security первого релиза
 

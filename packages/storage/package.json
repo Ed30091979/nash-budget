@@ -9,5 +9,10 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "devDependencies": {
+    "ajv": "8.18.0",
+    "ajv-formats": "3.0.1",
+    "fake-indexeddb": "6.2.4"
   }
 }

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://family-budget.local/schemas/storage-backup.schema.json",
+  "title": "Family Budget v2 backup envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app", "appVersion", "formatVersion", "schemaVersion", "createdAt", "integrity", "payload"],
+  "properties": {
+    "app": { "const": "family-budget" },
+    "appVersion": { "type": "string", "minLength": 1, "maxLength": 50 },
+    "formatVersion": { "const": 2 },
+    "schemaVersion": { "const": 1 },
+    "createdAt": { "type": "string", "format": "date-time", "maxLength": 30 },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "checksum"],
+      "properties": {
+        "algorithm": { "const": "sha256" },
+        "checksum": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "payload": {
+      "description": "Validated by the application-specific codec before a single atomic write."
+    }
+  }
+}

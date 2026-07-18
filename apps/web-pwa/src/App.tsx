@@ -9,14 +9,13 @@ import {
   type Transaction,
 } from "@family-budget/domain";
 import {
-  IndexedDbBudgetRepository,
   requestStorageHealth,
-  serializeBackup,
   type StorageHealth,
 } from "@family-budget/storage";
 import { UpdatePrompt } from "./components/UpdatePrompt";
-import { prepareBudgetState, restoreBudgetBackup } from "./backup";
+import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, parseMoney } from "./money";
+import { createBudgetRepository } from "./storage-repository";
 
 type Screen = "today" | "year" | "operations" | "more";
 type EntryKind = "expense" | "income";
@@ -81,7 +80,7 @@ function storageText(health: StorageHealth | null): string {
 }
 
 export default function App() {
-  const repository = useMemo(() => new IndexedDbBudgetRepository<BudgetState>(), []);
+  const repository = useMemo(() => createBudgetRepository(), []);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const [screen, setScreen] = useState<Screen>("today");
   const [horizon, setHorizon] = useState<Horizon>(12);
@@ -175,15 +174,23 @@ export default function App() {
     }
   };
 
-  const exportBackup = () => {
+  const exportBackup = async () => {
     if (!budget) return;
-    const url = URL.createObjectURL(new Blob([serializeBackup(budget)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `family-budget-${todayLocal()}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setMessage("Резервная копия подготовлена.");
+    try {
+      const { text } = await createBudgetBackup(
+        budget,
+        (createdAt) => repository.setLastSuccessfulBackup(createdAt),
+      );
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `family-budget-${todayLocal()}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage("Резервная копия подготовлена.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось подготовить резервную копию.");
+    }
   };
 
   const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -238,7 +245,7 @@ export default function App() {
         {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
         {screen === "year" ? <YearScreen budget={budget} plan={plan} horizon={horizon} onHorizon={setHorizon} categoryById={categoryById} /> : null}
         {screen === "operations" ? <OperationsScreen budget={budget} entryKind={entryKind} entryAmount={entryAmount} entryCategoryId={entryCategoryId} entryDate={entryDate} transactions={recentTransactions} categoryById={categoryById} onKindChange={setEntryKind} onAmountChange={setEntryAmount} onCategoryChange={setEntryCategoryId} onDateChange={setEntryDate} onSubmit={(event) => void addTransaction(event)} /> : null}
-        {screen === "more" ? <MoreScreen storageHealth={storageHealth} showIosInstall={isIos && !isStandalone} onExport={exportBackup} onImport={(event) => void importBackup(event)} /> : null}
+        {screen === "more" ? <MoreScreen storageHealth={storageHealth} showIosInstall={isIos && !isStandalone} onExport={() => void exportBackup()} onImport={(event) => void importBackup(event)} /> : null}
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}

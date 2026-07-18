@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BACKUP_LIMITS,
   MAX_BACKUP_FILE_BYTES,
+  createBudgetBackup,
+  parseAndValidateBudgetBackup,
   prepareBudgetState,
   restoreBudgetBackup,
 } from "./backup";
@@ -13,11 +15,55 @@ function backupFile(payload: unknown, size?: number): { size: number; text(): Pr
   return { size: size ?? text.length, text: async () => text };
 }
 
+function withCrossCollectionDuplicate(state: BudgetState): BudgetState {
+  const duplicateId = state.accounts[0]!.id;
+  const originalCategoryId = state.categories[5]!.id;
+  return {
+    ...state,
+    categories: state.categories.map((category) => (
+      category.id === originalCategoryId ? { ...category, id: duplicateId } : category
+    )),
+    budgets: state.budgets.map((budget) => ({
+      ...budget,
+      lines: budget.lines.map((line) => (
+        line.categoryId === originalCategoryId ? { ...line, categoryId: duplicateId } : line
+      )),
+    })),
+  };
+}
+
+function withRelinkedMalformedAccountId(state: BudgetState): BudgetState {
+  const originalId = state.accounts[0]!.id;
+  const malformedId = "relinked-but-not-a-uuid";
+  return {
+    ...state,
+    accounts: state.accounts.map((account) => (
+      account.id === originalId ? { ...account, id: malformedId } : account
+    )),
+    annualCommitments: state.annualCommitments.map((item) => (
+      item.accountId === originalId ? { ...item, accountId: malformedId } : item
+    )),
+    scheduledExpenses: state.scheduledExpenses.map((item) => (
+      item.accountId === originalId ? { ...item, accountId: malformedId } : item
+    )),
+    transactions: state.transactions.map((transaction) => {
+      if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
+        return transaction.accountId === originalId ? { ...transaction, accountId: malformedId } : transaction;
+      }
+      return {
+        ...transaction,
+        fromAccountId: transaction.fromAccountId === originalId ? malformedId : transaction.fromAccountId,
+        toAccountId: transaction.toAccountId === originalId ? malformedId : transaction.toAccountId,
+      };
+    }),
+  };
+}
+
 describe("восстановление бюджета", () => {
   it("дополняет legacy state, не заменяя счета, категории, бюджеты, цели и операции", () => {
     const seed = makePlanningSeed();
     const uniqueTransaction = {
-      id: "legacy-unique-transaction",
+      id: "95555555-5555-4555-8555-555555555559",
       occurredOn: seed.budgets[0]!.startDate,
       status: "posted" as const,
       kind: "expense" as const,
@@ -74,6 +120,10 @@ describe("восстановление бюджета", () => {
     const budgets = Array.from({ length: BACKUP_LIMITS.budgets + 1 }, (_, index) => ({
       ...seed.budgets[0]!,
       id: `budget-${index}`,
+      lines: seed.budgets[0]!.lines.map((line, lineIndex) => ({
+        ...line,
+        id: `budget-${index}-line-${lineIndex}`,
+      })),
       // Если лимит не сработает первым, семантическая/доменная проверка упадёт с другой ошибкой.
       startDate: "not-a-date",
     }));
@@ -109,5 +159,87 @@ describe("восстановление бюджета", () => {
 
     await expect(restoreBudgetBackup(backupFile(makePlanningSeed()), save, publish)).rejects.toThrow("quota");
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет одинаковый UUID в разных коллекциях до save/publish и сохраняет старый документ", async () => {
+    let stored = makePlanningSeed();
+    const before = JSON.stringify(stored);
+    const save = vi.fn(async (next: BudgetState) => { stored = next; });
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const duplicate = withCrossCollectionDuplicate(makePlanningSeed());
+
+    expect(() => parseAndValidateBudgetBackup(serializeBackup(duplicate))).toThrow(/повторяющийся идентификатор/);
+    await expect(restoreBudgetBackup(backupFile(duplicate), save, publish)).rejects.toThrow(/повторяющийся идентификатор/);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  it("отклоняет связанный внутри state, но невалидный UUID до save/publish", async () => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = withRelinkedMalformedAccountId(makePlanningSeed());
+
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(/UUID/);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe("экспорт бюджета", () => {
+  const exactCreatedAt = "2026-07-17T12:00:00.000Z";
+  const previousCreatedAt = "2026-07-16T08:30:00.000Z";
+
+  it("возвращает валидный текст и записывает точное время только после сериализации", async () => {
+    let storedCreatedAt = previousCreatedAt;
+    const persist = vi.fn(async (createdAt: string) => { storedCreatedAt = createdAt; });
+
+    const result = await createBudgetBackup(makePlanningSeed(), persist, { createdAt: exactCreatedAt });
+
+    expect(result.createdAt).toBe(exactCreatedAt);
+    expect((JSON.parse(result.text) as { createdAt: string }).createdAt).toBe(exactCreatedAt);
+    expect(parseAndValidateBudgetBackup(result.text)).toEqual(makePlanningSeed());
+    expect(persist).toHaveBeenCalledExactlyOnceWith(exactCreatedAt);
+    expect(storedCreatedAt).toBe(exactCreatedAt);
+  });
+
+  it("сохраняет прежнее время, если сериализация не прошла", async () => {
+    let storedCreatedAt = previousCreatedAt;
+    const persist = vi.fn(async (createdAt: string) => { storedCreatedAt = createdAt; });
+
+    await expect(
+      createBudgetBackup(withCrossCollectionDuplicate(makePlanningSeed()), persist, { createdAt: exactCreatedAt }),
+    ).rejects.toThrow(/повторяющийся идентификатор/);
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(storedCreatedAt).toBe(previousCreatedAt);
+  });
+
+  it("не меняет metadata при экспорте согласованно перелинкованного не-UUID", async () => {
+    let storedCreatedAt = previousCreatedAt;
+    const persist = vi.fn(async (createdAt: string) => { storedCreatedAt = createdAt; });
+
+    await expect(
+      createBudgetBackup(withRelinkedMalformedAccountId(makePlanningSeed()), persist, { createdAt: exactCreatedAt }),
+    ).rejects.toThrow(/UUID/);
+
+    expect(persist).not.toHaveBeenCalled();
+    expect(storedCreatedAt).toBe(previousCreatedAt);
+  });
+
+  it("не возвращает данные для скачивания и сохраняет прежнее время при ошибке metadata", async () => {
+    let storedCreatedAt = previousCreatedAt;
+    const persist = vi.fn(async (_createdAt: string) => {
+      throw new Error("metadata quota");
+    });
+
+    await expect(
+      createBudgetBackup(makePlanningSeed(), persist, { createdAt: exactCreatedAt }),
+    ).rejects.toThrow("metadata quota");
+
+    expect(persist).toHaveBeenCalledExactlyOnceWith(exactCreatedAt);
+    expect(storedCreatedAt).toBe(previousCreatedAt);
   });
 });

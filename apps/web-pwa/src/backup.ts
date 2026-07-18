@@ -3,7 +3,10 @@ import {
   calculateBudget,
   type BudgetState,
 } from "@family-budget/domain";
-import { parseBackup } from "@family-budget/storage";
+import {
+  ValidatedBackupCodec,
+  type SerializeBackupOptions,
+} from "@family-budget/storage";
 
 export const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
 export const BACKUP_LIMITS = {
@@ -23,6 +26,7 @@ export const BACKUP_LIMITS = {
 } as const;
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type LegacyBudgetState = Omit<BudgetState, "annualCommitments" | "scheduledExpenses"> &
   Partial<Pick<BudgetState, "annualCommitments" | "scheduledExpenses">>;
@@ -30,6 +34,11 @@ type LegacyBudgetState = Omit<BudgetState, "annualCommitments" | "scheduledExpen
 interface BackupFile {
   readonly size: number;
   text(): Promise<string>;
+}
+
+export interface PreparedBudgetBackup {
+  readonly text: string;
+  readonly createdAt: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,6 +96,24 @@ function requireLocalDate(value: string, label: string): void {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     throw new Error(`${label}: невозможная календарная дата.`);
   }
+}
+
+function requireUuid(value: string, label: string): void {
+  if (!UUID_PATTERN.test(value)) throw new Error(`${label}: некорректный UUID.`);
+}
+
+function validateBudgetStateUuids(state: BudgetState): void {
+  requireUuid(state.activeBudgetId, "activeBudgetId");
+  state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
+  state.categories.forEach((item, index) => requireUuid(item.id, `categories[${index}].id`));
+  state.budgets.forEach((budget, budgetIndex) => {
+    requireUuid(budget.id, `budgets[${budgetIndex}].id`);
+    budget.lines.forEach((line, lineIndex) => requireUuid(line.id, `budgets[${budgetIndex}].lines[${lineIndex}].id`));
+  });
+  state.goals.forEach((item, index) => requireUuid(item.id, `goals[${index}].id`));
+  state.annualCommitments.forEach((item, index) => requireUuid(item.id, `annualCommitments[${index}].id`));
+  state.scheduledExpenses.forEach((item, index) => requireUuid(item.id, `scheduledExpenses[${index}].id`));
+  state.transactions.forEach((item, index) => requireUuid(item.id, `transactions[${index}].id`));
 }
 
 function requireSafeMinor(value: number, label: string, allowNegative = false): void {
@@ -263,6 +290,7 @@ export function prepareBudgetState(value: unknown): BudgetState {
   requireBaseShape(value);
   const state = normalizeBudgetState(value);
   requirePlanningShape(state);
+  validateBudgetStateUuids(state);
 
   const activeBudget = state.budgets.find((budget) => budget.id === state.activeBudgetId);
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");
@@ -273,7 +301,22 @@ export function prepareBudgetState(value: unknown): BudgetState {
 }
 
 export function parseAndValidateBudgetBackup(text: string): BudgetState {
-  return prepareBudgetState(parseBackup<unknown>(text));
+  return new ValidatedBackupCodec(prepareBudgetState).parse(text);
+}
+
+/** Serializes first and records metadata only when the complete backup is valid. */
+export async function createBudgetBackup(
+  state: BudgetState,
+  persistLastSuccessfulBackup: (createdAt: string) => Promise<void>,
+  options: SerializeBackupOptions = {},
+): Promise<PreparedBudgetBackup> {
+  const createdAt = options.createdAt ?? new Date().toISOString();
+  const text = new ValidatedBackupCodec(prepareBudgetState).serialize(state, {
+    ...options,
+    createdAt,
+  });
+  await persistLastSuccessfulBackup(createdAt);
+  return { text, createdAt };
 }
 
 export async function restoreBudgetBackup(

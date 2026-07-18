@@ -88,6 +88,52 @@
 - [x] Финальные свежие code review и security review: `APPROVE`; blocker/high/medium/low — `0/0/0/0`.
 - [ ] Excel release gate, browser live/offline, физический iPhone/Home Screen, Android/RuStore и deploy этой приёмкой не подтверждались.
 
+## Критерии приёмки Phase 3 — Storage v2
+
+Автоматизируемая часть Phase 3 реализована и принята после исправления findings. Матрица ниже фиксирует проверенные контракты и точные значения; реальные Safari/Home Screen, iPhone/iPad, Android System WebView, Excel, Phase 7 data-management UI и deploy сюда не входят.
+
+| Область | Подготовка и действие | Точный ожидаемый результат |
+|---|---|---|
+| Миграция `v1 → v2` | Временная база v1: один документ, `amountMinor = 12 345`; открыть как v2 | Одна запись остаётся одной записью, сумма остаётся `12 345` копеек (`123,45 ₽`), schema version становится `2` |
+| Rollback миграции | Два документа v1: первый `amountMinor = 12 345`, второй `amountMinor = 12.5`; custom `migrateV1Value` требует safe integer | Custom validator принимает первый и отклоняет второй, upgrade делает `abort`; обе исходные записи v1 остаются байт-в-байт прежними, ни один `StoredDocument.schemaVersion = 2` не фиксируется |
+| Lifecycle | Успешное repository-соединение получает `versionchange`; отдельно unmanaged v1 blocker удерживает соединение при открытии repository v2 | Repository handler закрывает своё соединение на `versionchange`; blocker даёт точную ошибку «Обновление локального хранилища заблокировано другой вкладкой.», после ручного закрытия следующий `load()` возвращает `null` |
+| Envelope | Создать backup app `0.1.0` с clock `2026-07-17T12:00:00.000Z` | Ровно поля `app`, `appVersion`, `formatVersion`, `schemaVersion`, `createdAt`, `integrity`, `payload`; значения `family-budget`, `0.1.0`, `2`, `1`, timestamp до миллисекунды, `integrity.algorithm = sha256`, 64-символьный lowercase hex `checksum` canonical payload |
+| Legacy Phase 0 | Импортировать ровно `{ backupVersion: 1, createdAt: "2026-07-17T12:00:00.000Z", app: "family-budget", payload }` без integrity через validated codec | Payload проходит лимит/generic guard и обязательный application validator до write; checksum не создаётся задним числом; другой app/version, лишнее поле или отсутствие `createdAt` отклоняется |
+| G-001 round-trip | Преобразовать canonical G-001 через `toDomainBudgetState`, затем export/restore получившегося `BudgetState` | После restore: accounts `2`, categories `3`, budgets `1`, budget lines `3`, goals `1`, annual commitments `0`, schedules `0`, transactions `5`; расчёт даёт доход `100 000 ₽`, расходы `76 500 ₽`, капитал `23 500 ₽` |
+| Повреждение | Изменить одну сумму в payload без пересчёта checksum | Restore отклоняется до write; прежняя база и `lastSuccessfulBackup` остаются байт-в-байт неизменными |
+| Чужой/новый формат | Импортировать `app = other-app`, затем `formatVersion = 3`, затем `schemaVersion = 2` | Каждый файл отклоняется понятной ошибкой; записано `0` изменений |
+| Размер | Подать JSON размером `5 MiB + 1 byte` в UTF-8 | Отклонение по размеру происходит до `JSON.parse`, integrity/schema validation и IndexedDB write |
+| Codec и связи | По одному проверить duplicate UUID, `__proto__`/`prototype`/`constructor`, unsafe integer и неизвестные ссылки active budget, transaction account, scheduled category, goal/account и refund/original transaction в projected `BudgetState` | Каждый вариант отклоняется до write; исходные документы и metadata не меняются |
+| Metadata | Успешно сформировать backup с `createdAt = 2026-07-17T12:00:00.000Z`, затем симулировать ошибку следующего export | В IndexedDB сохранена только строка `2026-07-17T12:00:00.000Z`; версии/checksum не дублируются, после ошибки timestamp остаётся прежним |
+| `clear()` / clear-all | В базе есть активный документ и `lastSuccessfulBackup`; выполнить подтверждённую очистку | `documentCount()` возвращает `0`, `load()` — `null`, `getLastSuccessfulBackup()` — `null`; рабочая IndexedDB v2 открывается без повторной миграции |
+| CSV | Экспортировать строки `=1+1`, ` =1`, LF+`+1`, NUL+`-1`, `U+200B`+`@cmd`, `U+FEFF`+`=2`, `U+061C`+`=5`, `U+2066…U+2069` перед `=+-@`; отдельно number `-12345` и string `"-12345"` | Опасные строки получают leading apostrophe после bounded invisible/bidi prefix; number остаётся `-12345`, string становится `'-12345`; UTF-8 BOM/RFC4180 сохраняются, CSV явно не называется backup |
+| CSV bounds | Сформировать число строк/bytes на границе codec и на единицу выше | Допустимый экспорт завершается детерминированно; превышение отклоняется без огромной строки в памяти и без содержимого финансовых данных в ошибке/логе |
+
+### Автоматизированное evidence Phase 3
+
+- [x] migration-тесты подтверждают атомарные `v1 → v2`, rollback на невалидном втором документе и точный `blocked/retry`;
+- [x] backup envelope содержит ровно `app`, `appVersion`, `formatVersion: 2`, `schemaVersion: 1`, `createdAt`, `integrity { algorithm: sha256, checksum }`, `payload`, а checksum проверяется до restore;
+- [x] backup `schemaVersion: 1` не смешивается с IndexedDB `StoredDocument.schemaVersion: 2`; backup migrations сверх поддерживаемого codec не заявляются;
+- [x] точный legacy Phase 0 envelope `backupVersion: 1` импортируется без выдуманного integrity, но только после bounds/generic guard и обязательной `BudgetState` validation-before-write;
+- [x] integrity в контракте не называется шифрованием, подписью или аутентификацией;
+- [x] validation-before-write и лимит `5 MiB` подтверждены тестом, включая duplicate/dangerous keys и фактические BudgetState account/category/budget/goal/transaction references;
+- [x] успешный backup обновляет только timestamp в IndexedDB metadata, неуспешный не обновляет его;
+- [x] repository `clear()` атомарно оставляет `0` документов и очищает backup metadata;
+- [x] CSV ограничен, formula-safe после leading invisible/bidi controls, различает отрицательное число и строку и называется экспортом, а не backup;
+- [x] корневой `pnpm verify`: fixtures `6/6`, domain `17/17`, storage `28/28`, web `24/24`, всего `75/75`; пять TypeScript typechecks и production PWA build с `13` precache entries;
+- [x] `pnpm audit` и `pnpm audit --prod`: `0` vulnerabilities;
+- [x] абсолютно свежие code review и security review: `APPROVE`; blocker/high/medium — `0/0/0`;
+- [x] точные live/test значения: v1 `12 345` копеек перешёл в `StoredDocument.schemaVersion: 2` без изменения суммы; timestamp `2026-07-17T12:00:00.000Z`; при отклонении старые raw-данные остались байт-в-байт прежними; после `clear()` документов `0`;
+- [x] projected G-001 round-trip сохранил counts `2/3/1/3/1/0/0/5` и headline income/expense/net worth `100 000 / 76 500 / 23 500 ₽`;
+- [x] CSV regression сохранил numeric `-12345`, защитил string `"-12345"` и формулы после leading invisible/bidi controls;
+
+Низкие caveats, не отменяющие автоматизированную приёмку:
+
+- [ ] отдельного synthetic-теста, который принудительно вызывает `versionchange` на уже открытом repository-соединении и наблюдает его закрытие, нет; сам handler проверен code review, а `blocked/retry` покрыт отдельно;
+- [ ] checksum rejection и неизменность repository подтверждены соседними тестами, но не одним сквозным тестом «повреждённый checksum → тот же IndexedDB document»;
+- [ ] отображение last-backup/clear/CSV в Phase 7 UI остаётся отдельной работой;
+- [ ] реальные Safari/Home Screen, iPhone/iPad, Android System WebView, Excel и deploy остаются отдельными gate и этой фазой не заявляются.
+
 ## Excel release gate
 
 ### Функциональность
@@ -148,15 +194,17 @@
 
 ### IndexedDB, backup и обмен
 
-- [ ] IndexedDB migrations протестированы в целевом Safari/Home Screen и Android System WebView.
-- [ ] Миграция со всех поддерживаемых schema versions не теряет данные; ошибка не оставляет частично обновлённую базу.
-- [ ] Versioned JSON backup/restore проходит round-trip без потери UUID, дат, сумм и связей.
+- [ ] IndexedDB migrations протестированы автоматически, затем отдельно в целевом Safari/Home Screen и Android System WebView.
+- [ ] Миграция со всех поддерживаемых schema versions не теряет данные; `v1 → v2` выполняется одной `versionchange`-транзакцией, ошибка не оставляет частично обновлённую базу.
+- [ ] Соединения корректно закрываются на `versionchange`; `blocked` возвращает «Обновление локального хранилища заблокировано другой вкладкой.», а новый вызов после закрытия blocker проходит безопасно.
+- [ ] Versioned JSON backup/restore с `app`, `appVersion`, `formatVersion`, payload `schemaVersion`, `createdAt` и integrity проходит round-trip без потери UUID, дат, сумм и связей.
 - [ ] Повреждённый, чужой или более новый формат полностью отклоняется до записи и выдаёт понятную ошибку.
+- [ ] JSON больше `5 MiB` отклоняется до parse/write; codec отклоняет duplicate UUID, dangerous keys и невалидные связи.
 - [ ] Имитация очистки browser/app storage восстанавливается из последней backup-копии.
-- [ ] Дата последнего backup и напоминание видимы; отсутствие persistent-storage grant объясняется без ложной гарантии.
-- [ ] CSV export корректно открывается в Excel на macOS/Windows и явно не называется полной backup-копией.
+- [ ] Metadata последнего успешного backup и напоминание видимы; отсутствие persistent-storage grant объясняется без ложной гарантии.
+- [ ] CSV export ограничен, formula-safe, корректно открывается в Excel на macOS/Windows и явно не называется полной backup-копией.
 - [ ] Пользователь может полностью удалить локальные данные.
-- [ ] Экспорт предупреждает о незашифрованном файле.
+- [ ] Экспорт предупреждает о незашифрованном/неаутентифицированном файле; integrity checksum описан только как обнаружение случайной порчи.
 
 ### Security и privacy
 
