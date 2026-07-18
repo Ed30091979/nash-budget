@@ -1,0 +1,22 @@
+{
+  "name": "family-budget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first семейный бюджет: PWA для iOS/браузера и Android-приложение для RuStore.",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev": "pnpm --filter @family-budget/web dev",
+    "build": "pnpm --filter @family-budget/web build",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "verify": "pnpm test && pnpm typecheck && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@family-budget/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@family-budget/domain": "workspace:*",
+    "@family-budget/storage": "workspace:*",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "workbox-window": "7.4.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.3",
+    "vite": "8.1.5",
+    "vite-plugin-pwa": "1.3.0"
+  }
+}

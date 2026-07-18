@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.DS_Store
+.vite/
+coverage/
+*.log
+outputs/legacy/
+apps/android/android/.gradle/
+apps/android/android/local.properties

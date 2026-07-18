@@ -1,0 +1,405 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "G-001",
+  "title": "Базовый месяц с взносом в цель",
+  "derivedFromFixtureId": "G-000",
+  "minorUnit": {
+    "currency": "RUB",
+    "exponent": 2
+  },
+  "household": {
+    "id": "11111111-1111-4111-8111-111111111111",
+    "externalCode": "H1",
+    "name": "Тестовая семья",
+    "baseCurrency": "RUB",
+    "timezone": "Europe/Samara",
+    "periodStartDay": 1,
+    "revision": 1,
+    "updatedAt": "2026-07-01T00:00:00Z",
+    "deletedAt": null
+  },
+  "members": [
+    {
+      "id": "11111111-1111-4111-8111-111111111112",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "M-OWNER",
+      "displayName": "Владелец",
+      "localRole": "owner",
+      "archivedAt": null,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+  "accounts": [
+    {
+      "id": "22222222-2222-4222-8222-222222222221",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "A-CURRENT",
+      "name": "Основной",
+      "type": "current",
+      "currency": "RUB",
+      "openingBalanceMinor": 0,
+      "active": true,
+      "isPrimary": true,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "A-SAVINGS",
+      "name": "Накопительный",
+      "type": "savings",
+      "currency": "RUB",
+      "openingBalanceMinor": 0,
+      "active": true,
+      "isPrimary": false,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+  "categories": [
+    {
+      "id": "33333333-3333-4333-8333-333333333331",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "C-HOUSING",
+      "parentId": null,
+      "type": "expense",
+      "group": "Обязательные расходы",
+      "name": "Жильё",
+      "active": true,
+      "sortOrder": 10,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333332",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "C-FOOD",
+      "parentId": null,
+      "type": "expense",
+      "group": "Повседневные расходы",
+      "name": "Продукты",
+      "active": true,
+      "sortOrder": 20,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "C-TRANSPORT",
+      "parentId": null,
+      "type": "expense",
+      "group": "Повседневные расходы",
+      "name": "Транспорт",
+      "active": true,
+      "sortOrder": 30,
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+  "budgetPeriod": {
+    "id": "44444444-4444-4444-8444-444444444441",
+    "householdId": "11111111-1111-4111-8111-111111111111",
+    "externalCode": "BP-2026-07",
+    "startDate": "2026-07-01",
+    "endDate": "2026-07-31",
+    "status": "open",
+    "revision": 1,
+    "updatedAt": "2026-07-01T00:00:00Z",
+    "deletedAt": null
+  },
+  "budgetPlan": {
+    "plannedIncomeMinor": 10000000,
+    "lines": [
+      {
+        "id": "44444444-4444-4444-8444-444444444451",
+        "periodId": "44444444-4444-4444-8444-444444444441",
+        "categoryId": "33333333-3333-4333-8333-333333333331",
+        "plannedMinor": 4000000,
+        "rolloverMinor": 0,
+        "adjustmentMinor": 0,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "revision": 1,
+        "updatedAt": "2026-07-01T00:00:00Z",
+        "deletedAt": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444452",
+        "periodId": "44444444-4444-4444-8444-444444444441",
+        "categoryId": "33333333-3333-4333-8333-333333333332",
+        "plannedMinor": 3000000,
+        "rolloverMinor": 0,
+        "adjustmentMinor": 0,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "revision": 1,
+        "updatedAt": "2026-07-01T00:00:00Z",
+        "deletedAt": null
+      },
+      {
+        "id": "44444444-4444-4444-8444-444444444453",
+        "periodId": "44444444-4444-4444-8444-444444444441",
+        "categoryId": "33333333-3333-4333-8333-333333333333",
+        "plannedMinor": 1000000,
+        "rolloverMinor": 0,
+        "adjustmentMinor": 0,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "revision": 1,
+        "updatedAt": "2026-07-01T00:00:00Z",
+        "deletedAt": null
+      }
+    ]
+  },
+  "goals": [
+    {
+      "id": "66666666-6666-4666-8666-666666666661",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "GOAL-RESERVE",
+      "name": "Резерв",
+      "targetMinor": 10000000,
+      "deadline": null,
+      "linkedAccountId": "22222222-2222-4222-8222-222222222222",
+      "plannedContributionMinor": 1000000,
+      "progressRule": "linked_account_balance",
+      "status": "active",
+      "revision": 1,
+      "updatedAt": "2026-07-01T00:00:00Z",
+      "deletedAt": null
+    }
+  ],
+  "transactions": [
+    {
+      "id": "55555555-5555-4555-8555-555555555551",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "T-INCOME",
+      "kind": "income",
+      "amountMinor": 10000000,
+      "memberId": "11111111-1111-4111-8111-111111111112",
+      "optionalGoalId": null,
+      "originalTransactionId": null,
+      "occurredOn": "2026-07-01",
+      "createdAt": "2026-07-01T05:00:00Z",
+      "updatedAt": "2026-07-01T05:00:00Z",
+      "revision": 1,
+      "deletedAt": null,
+      "status": "posted",
+      "movements": [
+        {
+          "id": "77777777-7777-4777-8777-777777777711",
+          "accountId": "22222222-2222-4222-8222-222222222221",
+          "signedAmountMinor": 10000000,
+          "role": "destination"
+        }
+      ],
+      "splits": []
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555552",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "T-HOUSING",
+      "kind": "expense",
+      "amountMinor": 4000000,
+      "memberId": "11111111-1111-4111-8111-111111111112",
+      "optionalGoalId": null,
+      "originalTransactionId": null,
+      "occurredOn": "2026-07-02",
+      "createdAt": "2026-07-02T05:00:00Z",
+      "updatedAt": "2026-07-02T05:00:00Z",
+      "revision": 1,
+      "deletedAt": null,
+      "status": "posted",
+      "movements": [
+        {
+          "id": "77777777-7777-4777-8777-777777777721",
+          "accountId": "22222222-2222-4222-8222-222222222221",
+          "signedAmountMinor": -4000000,
+          "role": "source"
+        }
+      ],
+      "splits": [
+        {
+          "id": "88888888-8888-4888-8888-888888888821",
+          "categoryId": "33333333-3333-4333-8333-333333333331",
+          "amountMinor": 4000000
+        }
+      ]
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555553",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "T-FOOD",
+      "kind": "expense",
+      "amountMinor": 3150000,
+      "memberId": "11111111-1111-4111-8111-111111111112",
+      "optionalGoalId": null,
+      "originalTransactionId": null,
+      "occurredOn": "2026-07-05",
+      "createdAt": "2026-07-05T05:00:00Z",
+      "updatedAt": "2026-07-05T05:00:00Z",
+      "revision": 1,
+      "deletedAt": null,
+      "status": "posted",
+      "movements": [
+        {
+          "id": "77777777-7777-4777-8777-777777777731",
+          "accountId": "22222222-2222-4222-8222-222222222221",
+          "signedAmountMinor": -3150000,
+          "role": "source"
+        }
+      ],
+      "splits": [
+        {
+          "id": "88888888-8888-4888-8888-888888888831",
+          "categoryId": "33333333-3333-4333-8333-333333333332",
+          "amountMinor": 3150000
+        }
+      ]
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555554",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "T-TRANSPORT",
+      "kind": "expense",
+      "amountMinor": 500000,
+      "memberId": "11111111-1111-4111-8111-111111111112",
+      "optionalGoalId": null,
+      "originalTransactionId": null,
+      "occurredOn": "2026-07-06",
+      "createdAt": "2026-07-06T05:00:00Z",
+      "updatedAt": "2026-07-06T05:00:00Z",
+      "revision": 1,
+      "deletedAt": null,
+      "status": "posted",
+      "movements": [
+        {
+          "id": "77777777-7777-4777-8777-777777777741",
+          "accountId": "22222222-2222-4222-8222-222222222221",
+          "signedAmountMinor": -500000,
+          "role": "source"
+        }
+      ],
+      "splits": [
+        {
+          "id": "88888888-8888-4888-8888-888888888841",
+          "categoryId": "33333333-3333-4333-8333-333333333333",
+          "amountMinor": 500000
+        }
+      ]
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "householdId": "11111111-1111-4111-8111-111111111111",
+      "externalCode": "T-GOAL",
+      "kind": "goal_contribution",
+      "amountMinor": 1000000,
+      "memberId": "11111111-1111-4111-8111-111111111112",
+      "optionalGoalId": "66666666-6666-4666-8666-666666666661",
+      "originalTransactionId": null,
+      "occurredOn": "2026-07-10",
+      "createdAt": "2026-07-10T05:00:00Z",
+      "updatedAt": "2026-07-10T05:00:00Z",
+      "revision": 1,
+      "deletedAt": null,
+      "status": "posted",
+      "movements": [
+        {
+          "id": "77777777-7777-4777-8777-777777777751",
+          "accountId": "22222222-2222-4222-8222-222222222221",
+          "signedAmountMinor": -1000000,
+          "role": "source"
+        },
+        {
+          "id": "77777777-7777-4777-8777-777777777752",
+          "accountId": "22222222-2222-4222-8222-222222222222",
+          "signedAmountMinor": 1000000,
+          "role": "destination"
+        }
+      ],
+      "splits": []
+    }
+  ],
+  "expected": {
+    "incomeMinor": 10000000,
+    "expenseMinor": 7650000,
+    "plannedExpenseLimitsMinor": 8000000,
+    "plannedGoalContributionsMinor": 1000000,
+    "remainingExpenseLimitsMinor": 350000,
+    "plannedFreeToAllocateMinor": 1000000,
+    "availableOnPrimaryAccountMinor": 1350000,
+    "netWorthMinor": 2350000,
+    "accountBalances": [
+      {
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "balanceMinor": 1350000
+      },
+      {
+        "accountId": "22222222-2222-4222-8222-222222222222",
+        "balanceMinor": 1000000
+      }
+    ],
+    "categoryMetrics": [
+      {
+        "categoryId": "33333333-3333-4333-8333-333333333331",
+        "plannedLimitMinor": 4000000,
+        "actualExpenseMinor": 4000000,
+        "usageBasisPoints": 10000,
+        "remainingMinor": 0,
+        "overLimitMinor": 0,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "status": "limit_exhausted",
+        "statusText": "Лимит исчерпан"
+      },
+      {
+        "categoryId": "33333333-3333-4333-8333-333333333332",
+        "plannedLimitMinor": 3000000,
+        "actualExpenseMinor": 3150000,
+        "usageBasisPoints": 10500,
+        "remainingMinor": -150000,
+        "overLimitMinor": 150000,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "status": "over_limit",
+        "statusText": "Перелимит на 1 500 ₽"
+      },
+      {
+        "categoryId": "33333333-3333-4333-8333-333333333333",
+        "plannedLimitMinor": 1000000,
+        "actualExpenseMinor": 500000,
+        "usageBasisPoints": 5000,
+        "remainingMinor": 500000,
+        "overLimitMinor": 0,
+        "warnPercent": 80,
+        "fixedLimitPercent": 100,
+        "status": "within_limit",
+        "statusText": "В пределах лимита"
+      }
+    ],
+    "goalMetrics": [
+      {
+        "goalId": "66666666-6666-4666-8666-666666666661",
+        "targetMinor": 10000000,
+        "progressMinor": 1000000,
+        "remainingMinor": 9000000,
+        "progressBasisPoints": 1000
+      }
+    ],
+    "overLimitSignals": [
+      {
+        "categoryId": "33333333-3333-4333-8333-333333333332",
+        "overLimitMinor": 150000,
+        "message": "Перелимит на 1 500 ₽"
+      }
+    ]
+  }
+}

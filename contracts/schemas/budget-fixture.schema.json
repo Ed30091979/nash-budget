@@ -1,0 +1,1010 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:family-budget:contracts:budget-fixture:1.0.0",
+  "title": "Family budget golden fixture",
+  "description": "Version 1.0.0 contract shared by the Excel prototype and Android calculation core.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fixtureId",
+    "title",
+    "derivedFromFixtureId",
+    "minorUnit",
+    "household",
+    "members",
+    "accounts",
+    "categories",
+    "budgetPeriod",
+    "budgetPlan",
+    "goals",
+    "transactions",
+    "expected"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "fixtureId": {
+      "type": "string",
+      "pattern": "^G-[0-9]{3}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "derivedFromFixtureId": {
+      "type": ["string", "null"],
+      "pattern": "^G-[0-9]{3}$"
+    },
+    "minorUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "exponent"],
+      "properties": {
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "exponent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        }
+      }
+    },
+    "household": {
+      "$ref": "#/$defs/household"
+    },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "accounts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/account"
+      }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/category"
+      }
+    },
+    "budgetPeriod": {
+      "$ref": "#/$defs/budgetPeriod"
+    },
+    "budgetPlan": {
+      "$ref": "#/$defs/budgetPlan"
+    },
+    "goals": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/goal"
+      }
+    },
+    "transactions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/transaction"
+      }
+    },
+    "expected": {
+      "$ref": "#/$defs/expected"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "nullableDateTime": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/dateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "money": {
+      "type": "integer"
+    },
+    "nonNegativeMoney": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "positiveMoney": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "household": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "externalCode",
+        "name",
+        "baseCurrency",
+        "timezone",
+        "periodStartDay",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseCurrency": {
+          "$ref": "#/$defs/currency"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1
+        },
+        "periodStartDay": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "displayName",
+        "localRole",
+        "archivedAt",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "localRole": {
+          "enum": ["owner", "editor", "viewer"]
+        },
+        "archivedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "name",
+        "type",
+        "currency",
+        "openingBalanceMinor",
+        "active",
+        "isPrimary",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": ["current", "savings", "cash", "credit", "other"]
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "openingBalanceMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "isPrimary": {
+          "type": "boolean"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "parentId",
+        "type",
+        "group",
+        "name",
+        "active",
+        "sortOrder",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "enum": ["income", "expense"]
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "sortOrder": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "budgetPeriod": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "startDate",
+        "endDate",
+        "status",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startDate": {
+          "$ref": "#/$defs/date"
+        },
+        "endDate": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "enum": ["draft", "open", "closed"]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "budgetPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plannedIncomeMinor", "lines"],
+      "properties": {
+        "plannedIncomeMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/budgetLine"
+          }
+        }
+      }
+    },
+    "budgetLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "periodId",
+        "categoryId",
+        "plannedMinor",
+        "rolloverMinor",
+        "adjustmentMinor",
+        "warnPercent",
+        "fixedLimitPercent",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "periodId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "plannedMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "rolloverMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "adjustmentMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "warnPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "fixedLimitPercent": {
+          "const": 100
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "name",
+        "targetMinor",
+        "deadline",
+        "linkedAccountId",
+        "plannedContributionMinor",
+        "progressRule",
+        "status",
+        "revision",
+        "updatedAt",
+        "deletedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targetMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "linkedAccountId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "plannedContributionMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "progressRule": {
+          "const": "linked_account_balance"
+        },
+        "status": {
+          "enum": ["active", "completed", "cancelled"]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        }
+      }
+    },
+    "movement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "accountId", "signedAmountMinor", "role"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "accountId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "signedAmountMinor": {
+          "type": "integer",
+          "not": {
+            "const": 0
+          }
+        },
+        "role": {
+          "enum": ["source", "destination"]
+        }
+      }
+    },
+    "split": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "categoryId", "amountMinor"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "householdId",
+        "externalCode",
+        "kind",
+        "amountMinor",
+        "memberId",
+        "optionalGoalId",
+        "originalTransactionId",
+        "occurredOn",
+        "createdAt",
+        "updatedAt",
+        "revision",
+        "deletedAt",
+        "status",
+        "movements",
+        "splits"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "householdId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "externalCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": ["income", "expense", "transfer", "refund", "goal_contribution"]
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        },
+        "memberId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "optionalGoalId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "originalTransactionId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occurredOn": {
+          "$ref": "#/$defs/date"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "deletedAt": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "status": {
+          "enum": ["draft", "pending", "posted", "voided"]
+        },
+        "movements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/movement"
+          }
+        },
+        "splits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/split"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "income"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "optionalGoalId": {
+                "type": "null"
+              },
+              "originalTransactionId": {
+                "type": "null"
+              },
+              "movements": {
+                "minItems": 1,
+                "maxItems": 1
+              },
+              "splits": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "expense"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "optionalGoalId": {
+                "type": "null"
+              },
+              "originalTransactionId": {
+                "type": "null"
+              },
+              "movements": {
+                "minItems": 1,
+                "maxItems": 1
+              },
+              "splits": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": ["transfer", "goal_contribution"]
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "originalTransactionId": {
+                "type": "null"
+              },
+              "movements": {
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "splits": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "transfer"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "optionalGoalId": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "goal_contribution"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "optionalGoalId": {
+                "$ref": "#/$defs/uuid"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "refund"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "optionalGoalId": {
+                "type": "null"
+              },
+              "originalTransactionId": {
+                "$ref": "#/$defs/uuid"
+              },
+              "movements": {
+                "minItems": 1,
+                "maxItems": 1
+              },
+              "splits": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "accountBalance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accountId", "balanceMinor"],
+      "properties": {
+        "accountId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "balanceMinor": {
+          "$ref": "#/$defs/money"
+        }
+      }
+    },
+    "categoryMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "categoryId",
+        "plannedLimitMinor",
+        "actualExpenseMinor",
+        "usageBasisPoints",
+        "remainingMinor",
+        "overLimitMinor",
+        "warnPercent",
+        "fixedLimitPercent",
+        "status",
+        "statusText"
+      ],
+      "properties": {
+        "categoryId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "plannedLimitMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "actualExpenseMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "usageBasisPoints": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "remainingMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "overLimitMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "warnPercent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "fixedLimitPercent": {
+          "const": 100
+        },
+        "status": {
+          "enum": ["within_limit", "warning", "limit_exhausted", "over_limit"]
+        },
+        "statusText": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "goalMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goalId",
+        "targetMinor",
+        "progressMinor",
+        "remainingMinor",
+        "progressBasisPoints"
+      ],
+      "properties": {
+        "goalId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "targetMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        },
+        "progressMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "remainingMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "progressBasisPoints": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "overLimitSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categoryId", "overLimitMinor", "message"],
+      "properties": {
+        "categoryId": {
+          "$ref": "#/$defs/uuid"
+        },
+        "overLimitMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "incomeMinor",
+        "expenseMinor",
+        "plannedExpenseLimitsMinor",
+        "plannedGoalContributionsMinor",
+        "remainingExpenseLimitsMinor",
+        "plannedFreeToAllocateMinor",
+        "availableOnPrimaryAccountMinor",
+        "netWorthMinor",
+        "accountBalances",
+        "categoryMetrics",
+        "goalMetrics",
+        "overLimitSignals"
+      ],
+      "properties": {
+        "incomeMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "expenseMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "plannedExpenseLimitsMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "plannedGoalContributionsMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "remainingExpenseLimitsMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "plannedFreeToAllocateMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "availableOnPrimaryAccountMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "netWorthMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "accountBalances": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/accountBalance"
+          }
+        },
+        "categoryMetrics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/categoryMetric"
+          }
+        },
+        "goalMetrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/goalMetric"
+          }
+        },
+        "overLimitSignals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/overLimitSignal"
+          }
+        }
+      }
+    }
+  }
+}

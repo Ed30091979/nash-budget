@@ -1,0 +1,20 @@
+{
+  "name": "@family-budget/android",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "pnpm --filter @family-budget/web build",
+    "add": "cap add android",
+    "sync": "pnpm build:web && cap sync android",
+    "open": "cap open android",
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.4.2",
+    "@capacitor/core": "8.4.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.4.2"
+  }
+}
