@@ -8,6 +8,7 @@ interface StoredDocument<T> {
   readonly key: string;
   readonly schemaVersion: number;
   readonly updatedAt: string;
+  readonly revision?: string;
   readonly value: T;
 }
 
@@ -26,6 +27,15 @@ export interface RepositoryOptions<T = unknown> {
 export type CreateIfAbsentResult<T> =
   | { readonly status: "created"; readonly value: T }
   | { readonly status: "existing"; readonly value: T };
+
+export interface VersionedSnapshot<T> {
+  readonly value: T;
+  readonly revision: string;
+}
+
+export type SaveIfRevisionResult<T> =
+  | { readonly status: "saved"; readonly value: T; readonly revision: string }
+  | { readonly status: "conflict"; readonly current: VersionedSnapshot<T> | null };
 
 function databaseError(message: string): Error {
   return new Error(message);
@@ -114,7 +124,12 @@ function migrateV1ToV2<T>(store: IDBObjectStore, options: RepositoryOptions<T>, 
         throw databaseError("Миграция v1 должна быть синхронной.");
       }
       guardGenericV1Value(migratedValue);
-      cursor.update({ ...document, schemaVersion: 2, value: migratedValue });
+      cursor.update({
+        key: document.key,
+        schemaVersion: 2,
+        updatedAt: document.updatedAt,
+        value: migratedValue,
+      } satisfies StoredDocument<unknown>);
       cursor.continue();
     } catch {
       transaction.abort();
@@ -183,8 +198,33 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function makeDocument<T>(key: string, value: T, now: Date): StoredDocument<T> {
-  return { key, schemaVersion: DATABASE_VERSION, updatedAt: now.toISOString(), value };
+function createRevision(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    throw databaseError("Не удалось подготовить версию для локального хранилища.");
+  }
+}
+
+function makeDocument<T>(key: string, value: T, now: Date, revision = createRevision()): StoredDocument<T> {
+  return { key, schemaVersion: DATABASE_VERSION, updatedAt: now.toISOString(), revision, value };
+}
+
+function isCurrentRevision(value: unknown): value is string {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function corruptRevisionError(): Error {
+  return databaseError("Документ локального хранилища повреждён.");
+}
+
+function cloneForStorage<T>(value: T): T {
+  try {
+    return structuredClone(value);
+  } catch {
+    throw databaseError("Документ не может быть безопасно скопирован в локальное хранилище.");
+  }
 }
 
 export class IndexedDbBudgetRepository<T> {
@@ -213,6 +253,125 @@ export class IndexedDbBudgetRepository<T> {
     });
   }
 
+  async loadVersioned(): Promise<VersionedSnapshot<T> | null> {
+    const upgradeRevision = createRevision();
+    return this.withDatabase(
+      (database) =>
+        new Promise<VersionedSnapshot<T> | null>((resolve, reject) => {
+          let transaction: IDBTransaction;
+          try {
+            transaction = database.transaction(STORE_NAME, "readwrite");
+          } catch {
+            reject(databaseError("Не удалось начать транзакцию локального хранилища."));
+            return;
+          }
+          let result: VersionedSnapshot<T> | null | undefined;
+          let settled = false;
+          let transactionFailed = false;
+          let terminalError: Error | undefined;
+          const rejectOnce = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          };
+          const abort = (error?: Error) => {
+            transactionFailed = true;
+            terminalError ??= error;
+            try {
+              transaction.abort();
+            } catch {
+              // Settle through the terminal transaction event.
+            }
+          };
+
+          transaction.oncomplete = () => {
+            if (transactionFailed) {
+              rejectOnce(terminalError ?? databaseError("Транзакция хранилища завершилась ошибкой."));
+              return;
+            }
+            if (result === undefined) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась без результата."));
+              return;
+            }
+            if (settled) return;
+            settled = true;
+            resolve(result);
+          };
+          transaction.onerror = () => {
+            transactionFailed = true;
+          };
+          transaction.onabort = () => rejectOnce(terminalError ?? databaseError("Транзакция хранилища отменена."));
+
+          let store: IDBObjectStore;
+          try {
+            store = transaction.objectStore(STORE_NAME);
+          } catch {
+            abort();
+            return;
+          }
+
+          let request: IDBRequest<StoredDocument<T> | undefined>;
+          try {
+            request = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+          } catch {
+            abort();
+            return;
+          }
+          request.onerror = () => abort();
+          request.onsuccess = () => {
+            let document: StoredDocument<T> | undefined;
+            try {
+              document = request.result;
+            } catch {
+              abort();
+              return;
+            }
+            if (!document) {
+              result = null;
+              return;
+            }
+            if (isCurrentRevision(document.revision)) {
+              result = { value: document.value, revision: document.revision };
+              return;
+            }
+            if (document.revision !== undefined) {
+              abort(corruptRevisionError());
+              return;
+            }
+
+            try {
+              const writeRequest = store.put({ ...document, revision: upgradeRevision });
+              writeRequest.onerror = () => abort();
+              writeRequest.onsuccess = () => {
+                let readBackRequest: IDBRequest<StoredDocument<T> | undefined>;
+                try {
+                  readBackRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+                } catch {
+                  abort();
+                  return;
+                }
+                readBackRequest.onerror = () => abort();
+                readBackRequest.onsuccess = () => {
+                  try {
+                    const stored = readBackRequest.result;
+                    if (!stored || stored.revision !== upgradeRevision) {
+                      abort();
+                      return;
+                    }
+                    result = { value: stored.value, revision: upgradeRevision };
+                  } catch {
+                    abort();
+                  }
+                };
+              };
+            } catch {
+              abort();
+            }
+          };
+        }),
+    );
+  }
+
   async save(value: T): Promise<void> {
     await this.withDatabase(async (database) => {
       const transaction = database.transaction(STORE_NAME, "readwrite");
@@ -221,14 +380,176 @@ export class IndexedDbBudgetRepository<T> {
     });
   }
 
+  /**
+   * Atomically writes only if the active document still has expectedRevision.
+   * A null expectation matches an absent document. Both success and conflict
+   * values are snapshots produced by IndexedDB, never the caller-owned object.
+   */
+  async saveIfRevision(expectedRevision: string | null, value: T): Promise<SaveIfRevisionResult<T>> {
+    const valueSnapshot = cloneForStorage(value);
+    const nextRevision = createRevision();
+    const upgradeRevision = createRevision();
+
+    return this.withDatabase(
+      (database) =>
+        new Promise<SaveIfRevisionResult<T>>((resolve, reject) => {
+          let transaction: IDBTransaction;
+          try {
+            transaction = database.transaction(STORE_NAME, "readwrite");
+          } catch {
+            reject(databaseError("Не удалось начать транзакцию локального хранилища."));
+            return;
+          }
+
+          let result: SaveIfRevisionResult<T> | undefined;
+          let settled = false;
+          let transactionFailed = false;
+          let terminalError: Error | undefined;
+
+          const rejectOnce = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          };
+          const abort = (error?: Error) => {
+            transactionFailed = true;
+            terminalError ??= error;
+            try {
+              transaction.abort();
+            } catch {
+              // The terminal transaction event owns settlement even if a wrapper throws.
+            }
+          };
+
+          transaction.oncomplete = () => {
+            if (transactionFailed) {
+              rejectOnce(terminalError ?? databaseError("Транзакция хранилища завершилась ошибкой."));
+              return;
+            }
+            if (!result) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась без результата."));
+              return;
+            }
+            if (settled) return;
+            settled = true;
+            resolve(result);
+          };
+          transaction.onerror = () => {
+            transactionFailed = true;
+          };
+          transaction.onabort = () => rejectOnce(terminalError ?? databaseError("Транзакция хранилища отменена."));
+
+          let store: IDBObjectStore;
+          try {
+            store = transaction.objectStore(STORE_NAME);
+          } catch {
+            abort();
+            return;
+          }
+
+          let readRequest: IDBRequest<StoredDocument<T> | undefined>;
+          try {
+            readRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+          } catch {
+            abort();
+            return;
+          }
+          readRequest.onerror = () => abort();
+          readRequest.onsuccess = () => {
+            let currentDocument: StoredDocument<T> | undefined;
+            try {
+              currentDocument = readRequest.result;
+            } catch {
+              abort();
+              return;
+            }
+
+            if (currentDocument && !isCurrentRevision(currentDocument.revision)) {
+              if (currentDocument.revision !== undefined) {
+                abort(corruptRevisionError());
+                return;
+              }
+              try {
+                const upgradeRequest = store.put({ ...currentDocument, revision: upgradeRevision });
+                upgradeRequest.onerror = () => abort();
+                upgradeRequest.onsuccess = () => {
+                  let readBackRequest: IDBRequest<StoredDocument<T> | undefined>;
+                  try {
+                    readBackRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+                  } catch {
+                    abort();
+                    return;
+                  }
+                  readBackRequest.onerror = () => abort();
+                  readBackRequest.onsuccess = () => {
+                    try {
+                      const upgraded = readBackRequest.result;
+                      if (!upgraded || upgraded.revision !== upgradeRevision) {
+                        abort();
+                        return;
+                      }
+                      result = {
+                        status: "conflict",
+                        current: { value: upgraded.value, revision: upgradeRevision },
+                      };
+                    } catch {
+                      abort();
+                    }
+                  };
+                };
+              } catch {
+                abort();
+              }
+              return;
+            }
+
+            const current = currentDocument
+              ? { value: currentDocument.value, revision: currentDocument.revision! }
+              : null;
+            const matches = current ? current.revision === expectedRevision : expectedRevision === null;
+            if (!matches) {
+              result = { status: "conflict", current };
+              return;
+            }
+
+            try {
+              const writeRequest = store.put(
+                makeDocument(ACTIVE_BUDGET_KEY, valueSnapshot, new Date(), nextRevision),
+              );
+              writeRequest.onerror = () => abort();
+              writeRequest.onsuccess = () => {
+                let readBackRequest: IDBRequest<StoredDocument<T> | undefined>;
+                try {
+                  readBackRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+                } catch {
+                  abort();
+                  return;
+                }
+                readBackRequest.onerror = () => abort();
+                readBackRequest.onsuccess = () => {
+                  try {
+                    const stored = readBackRequest.result;
+                    if (!stored || stored.revision !== nextRevision) {
+                      abort();
+                      return;
+                    }
+                    result = { status: "saved", value: stored.value, revision: nextRevision };
+                  } catch {
+                    abort();
+                  }
+                };
+              };
+            } catch {
+              abort();
+            }
+          };
+        }),
+    );
+  }
+
   /** Creates the active document only when it is still absent in the same read/write transaction. */
   async createIfAbsent(value: T): Promise<CreateIfAbsentResult<T>> {
-    let valueSnapshot: T;
-    try {
-      valueSnapshot = structuredClone(value);
-    } catch {
-      throw databaseError("Документ не может быть безопасно скопирован в локальное хранилище.");
-    }
+    const valueSnapshot = cloneForStorage(value);
 
     return this.withDatabase(
       (database) =>
