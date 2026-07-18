@@ -37,7 +37,7 @@ describe("web content security policy", () => {
       "style-src": ["'self'"],
       "img-src": ["'self'", "data:"],
       "font-src": ["'self'"],
-      "connect-src": ["'self'", "ws://localhost:*", "ws://127.0.0.1:*"],
+      "connect-src": ["'self'"],
       "worker-src": ["'self'"],
       "manifest-src": ["'self'"],
       "object-src": ["'none'"],
@@ -46,7 +46,7 @@ describe("web content security policy", () => {
     });
   });
 
-  it("does not permit inline/eval execution, wildcard hosts, or external endpoints", () => {
+  it("does not permit inline/eval execution, wildcard hosts, loopback endpoints, or web sockets", () => {
     const directives = readCspDirectives();
     const sources = [...directives.values()].flat();
 
@@ -58,8 +58,9 @@ describe("web content security policy", () => {
     expect(sources).not.toContain("ws:");
     expect(sources).not.toContain("wss:");
     expect(sources.some((source) => /^https?:\/\//u.test(source))).toBe(false);
-    expect(sources.some((source) => /^wss?:\/\/(?!localhost:|127\.0\.0\.1:)/u.test(source))).toBe(
-      false,
-    );
+    expect(sources.some((source) => /^wss?:/iu.test(source))).toBe(false);
+    expect(
+      sources.some((source) => /^(?:https?:\/\/|wss?:\/\/)?(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/iu.test(source)),
+    ).toBe(false);
   });
 });

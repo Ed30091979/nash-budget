@@ -219,6 +219,32 @@ button:focus-visible, input:focus-visible, select:focus-visible, label:focus-vis
 .onboarding-save-error { margin: 0; padding: 12px 14px; color: #8b2c20; font-size: .78rem; line-height: 1.45; background: var(--red-soft); border: 1px solid #efb7ae; border-radius: 12px; }
 #categories:focus-visible, #composition:focus-visible, #onboarding-title:focus-visible { outline: 3px solid rgb(43 138 114 / 32%); outline-offset: 3px; }
 
+.year-actions { display: flex; flex: none; gap: 9px; align-items: stretch; }
+.planning-entry { white-space: nowrap; }
+.planning-toolbar { display: flex; margin-bottom: 12px; }
+.planning-screen { min-width: 0; }
+.planning-screen > .screen-heading { margin-bottom: 4px; }
+.planning-screen .section-card > h2, .planning-screen .section-card > p { margin: 0; }
+.planning-screen .section-card > p { margin-top: 6px; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+.planning-screen .section-card > form { margin-top: 16px; }
+.planning-screen .section-card > form > fieldset { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; padding: 15px; margin: 0; background: #f7f9f7; border: 1px solid var(--border); border-radius: 16px; }
+.planning-screen .section-card > form > fieldset > legend { padding: 0 6px; color: var(--green); font-size: .8rem; font-weight: 900; }
+.planning-screen .section-card > form > fieldset > .field-error { grid-column: 1 / -1; margin: 0; }
+.planning-screen .section-card > form > fieldset > .primary-button, .planning-screen .section-card > form > fieldset > .secondary-button { width: 100%; }
+.planning-screen .field small { color: var(--muted); font-size: .71rem; line-height: 1.4; }
+.planning-screen input[aria-invalid="true"], .planning-screen select[aria-invalid="true"] { border-color: var(--red); box-shadow: 0 0 0 2px rgb(189 73 55 / 9%); }
+.planning-screen fieldset:disabled { opacity: .72; }
+.planning-screen #schedule-months { grid-column: 1 / -1; min-width: 0; padding: 12px; margin: 0; border: 1px solid var(--border); border-radius: 13px; }
+.planning-screen #schedule-months > legend { padding: 0 5px; font-size: .76rem; font-weight: 850; }
+.month-checkboxes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
+.month-checkboxes label { display: flex; min-height: 44px; gap: 5px; align-items: center; justify-content: center; padding: 6px; font-size: .72rem; font-weight: 850; background: #fff; border: 1px solid var(--border); border-radius: 10px; }
+.month-checkboxes label:has(input:checked) { color: var(--green); border-color: #8fc9b5; box-shadow: 0 0 0 2px rgb(43 138 114 / 10%); }
+.planning-edit-list { display: grid; gap: 9px; padding: 0; margin: 15px 0 0; list-style: none; }
+.planning-edit-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: center; min-width: 0; padding: 12px; background: #fff; border: 1px solid var(--border); border-radius: 14px; }
+.planning-edit-list li > div:first-child > strong, .planning-edit-list li > div:first-child > span { display: block; }
+.planning-edit-list li > div:first-child > span { margin-top: 4px; color: var(--muted); font-size: .72rem; line-height: 1.4; }
+.planning-edit-list .text-button { padding-right: 8px; padding-left: 8px; text-align: center; }
+
 @media (min-width: 760px) {
   .app-shell { padding-bottom: 38px; }
   .content { padding: 32px 24px 54px; }
@@ -245,6 +271,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, label:focus-vis
   .plan-row { grid-template-columns: 36px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
   .composition-options { grid-template-columns: 1fr; }
+  .year-actions { width: 100%; flex-direction: column; }
+  .planning-entry { width: 100%; }
+  .planning-screen .section-card > form > fieldset { grid-template-columns: 1fr; padding: 12px; }
+  .planning-screen .section-card > form > fieldset > .field-error, .planning-screen #schedule-months { grid-column: 1; }
+  .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .planning-edit-list li { grid-template-columns: 1fr 1fr; align-items: stretch; }
+  .planning-edit-list li > div:first-child, .planning-edit-list li > strong, .planning-edit-list li > .field { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
