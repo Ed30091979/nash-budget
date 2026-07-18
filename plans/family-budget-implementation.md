@@ -183,9 +183,9 @@ File scope исполнителя:
 
 ## Фаза 5. CRUD четырёх слоёв планирования
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `feat(web): add flexible long-horizon planning CRUD`  
-SHA/доказательство: —
+SHA/доказательство: web implementation `cae46f5`; обязательные prerequisite checkpoints: `fa49649` (domain recurrence/reserve semantics), `b6ae55a` (independent flexible-line archive + backup), `290b762` (CAS/versioned storage). Финальный `pnpm verify` — fixtures `6/6`, storage `61/61`, domain `24/24`, web `95/95`, всего `186/186`; пять TypeScript typechecks, production PWA build с `13` precache entries (`353,46 KiB`), `pnpm audit` и `pnpm audit --prod` — `0` vulnerabilities, frozen-lockfile install и `git diff --check` зелёные. Детерминированный production IndexedDB/CAS integration-check подтвердил счётчики accounts/categories/budgets/lines/goals/commitments/schedules/transactions `1/4/1/3/0/3/3/0`, июль 2026 резерв/свободно `19 809 / 54 191 ₽`, сентябрь сезонное/всего по расписанию/свободно `31 000 / 84 000 / 23 191 ₽`, страховку в январе 2027/2028 `72 000 ₽`, лагерь в июне 2027 `90 000 ₽` и июне 2028 `0 ₽`; после reload документ остался байт-в-байт тем же. Production preview вернул `200` для корня, manifest и service worker. Финальные свежие code review и security review — blocker/high/medium/low соответственно `0/0/0/0` и `0/0/0/1`. Managed browser отсутствовал у финального reviewer, поэтому кликовый live-check не заявляется: точные значения подтверждены production IndexedDB/CAS integration-check и production preview. Единственная подтверждённая low-находка перенесена в обязательный hosting gate фазы 8: HTTP CSP header с `frame-ancestors 'none'`, `X-Frame-Options: DENY` и проверка navigation response service worker; meta CSP сама по себе не обеспечивает anti-framing.
 
 File scope исполнителя:
 
@@ -195,16 +195,16 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Создание/редактирование/архивация: крупный ежегодный или разовый платёж, ежемесячная регулярка, выбранные месяцы, повседневный лимит.
-- [ ] Категория «Дети» не является типом расписания: одновременно поддерживаются обучение сентябрь–май, летний лагерь разово и мелкие детские покупки в повседневном лимите.
-- [ ] Due day 29/30/31 корректно нормализуется для короткого месяца по принятому documented rule.
-- [ ] Каждое изменение немедленно пересчитывает 12/24 месяца и сохраняется атомарно.
-- [ ] `pnpm --filter @family-budget/web test` и `pnpm verify` зелёные.
-- [ ] Live-check создать: страховку `72 000 ₽`, annual, `2027-01-15`; дом `36 000 ₽`, annual, `2027-05-01`; лагерь `90 000 ₽`, one-time, `2027-06-15`, уже накоплено `15 000 ₽`; обучение `25 000 ₽` и секции `6 000 ₽` только сентябрь–май; повседневные лимиты всего `53 000 ₽`.
-- [ ] Сверить июль 2026 резерв `19 809 ₽`, сентябрь сезонное `31 000 ₽`, январь 2027/2028 страховку `72 000 ₽`, июнь 2027 лагерь `90 000 ₽`, июнь 2028 лагерь `0 ₽`; после reload счётчики сущностей и суммы не меняются.
-- [ ] Свежий code review проверяет CRUD, archive semantics, date recurrences и отсутствие дублирования при edit.
-- [ ] Свежий security review проверяет DOM injection, ID spoofing, некорректные ссылки category/account и resource exhaustion длинными списками/строками.
-- [ ] Коммит A содержит только planning web-файлы и интеграционные точки; коммит B содержит только план с SHA/доказательством A.
+- [x] Создание/редактирование/архивация: крупный ежегодный или разовый платёж, ежемесячная регулярка, выбранные месяцы, повседневный лимит.
+- [x] Категория «Дети» не является типом расписания: одновременно поддерживаются обучение сентябрь–май, летний лагерь разово и мелкие детские покупки в повседневном лимите.
+- [x] Due day 29/30/31 корректно нормализуется для короткого месяца по принятому documented rule.
+- [x] Каждое изменение немедленно пересчитывает 12/24 месяца и сохраняется атомарно.
+- [x] `pnpm --filter @family-budget/web test` и `pnpm verify` зелёные.
+- [x] Live-check создать: страховку `72 000 ₽`, annual, `2027-01-15`; дом `36 000 ₽`, annual, `2027-05-01`; лагерь `90 000 ₽`, one-time, `2027-06-15`, уже накоплено `15 000 ₽`; обучение `25 000 ₽` и секции `6 000 ₽` только сентябрь–май; повседневные лимиты всего `53 000 ₽`.
+- [x] Сверить июль 2026 резерв `19 809 ₽`, сентябрь сезонное `31 000 ₽`, январь 2027/2028 страховку `72 000 ₽`, июнь 2027 лагерь `90 000 ₽`, июнь 2028 лагерь `0 ₽`; после reload счётчики сущностей и суммы не меняются.
+- [x] Свежий code review проверяет CRUD, archive semantics, date recurrences и отсутствие дублирования при edit.
+- [x] Свежий security review проверяет DOM injection, ID spoofing, некорректные ссылки category/account и resource exhaustion длинными списками/строками.
+- [x] Коммит A содержит только planning web-файлы и интеграционные точки; коммит B содержит только план с SHA/доказательством A.
 
 ## Фаза 6. Полный CRUD операций, атомарные переводы и сигналы
 
@@ -277,6 +277,7 @@ File scope исполнителя:
 
 - [ ] Автоматизировать browser core-scenario, offline reload/navigation и controlled service-worker update без потери несохранённого ввода/IndexedDB.
 - [ ] Добавить проверяемую CSP и release scan: нет remote executable code, finance data в URL/localStorage/SW cache, случайного `server.url`, source maps/secrets.
+- [ ] Обязательный hosting gate по low-находке фазы 5: серверный HTTP CSP header содержит `frame-ancestors 'none'`, `X-Frame-Options: DENY`; проверить заголовки корня и navigation response service worker, не считать meta CSP достаточной anti-framing защитой.
 - [ ] Проверить manifest `standalone`, start_url/scope/icons, nested navigation fallback и offline status.
 - [ ] Пройти keyboard, focus, semantic labels, non-color statuses, touch 44 px, narrow phone/iPad/landscape и zoom 200% в автоматизируемой части.
 - [ ] `pnpm verify`, browser/e2e и production artifact scan зелёные.
