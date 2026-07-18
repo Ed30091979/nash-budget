@@ -13,6 +13,8 @@ import {
   type StorageHealth,
 } from "@family-budget/storage";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { Onboarding } from "./onboarding/Onboarding";
+import { persistCompletedOnboarding } from "./onboarding/model";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, parseMoney } from "./money";
 import { createBudgetRepository } from "./storage-repository";
@@ -20,6 +22,7 @@ import { createBudgetRepository } from "./storage-repository";
 type Screen = "today" | "year" | "operations" | "more";
 type EntryKind = "expense" | "income";
 type Horizon = 12 | 24;
+type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
 const monthShort = new Intl.DateTimeFormat("ru-RU", { month: "short", year: "2-digit", timeZone: "UTC" });
@@ -82,6 +85,8 @@ function storageText(health: StorageHealth | null): string {
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
   const [budget, setBudget] = useState<BudgetState | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [screen, setScreen] = useState<Screen>("today");
   const [horizon, setHorizon] = useState<Horizon>(12);
   const [online, setOnline] = useState(navigator.onLine);
@@ -95,15 +100,22 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!cancelled) setLoadState("loading");
       try {
         const stored = await repository.load();
-        const next = stored ? prepareBudgetState(stored) : makePlanningSeed();
-        await repository.save(next);
-        if (!cancelled) setBudget(next);
+        if (!cancelled) {
+          if (stored) {
+            setBudget(prepareBudgetState(stored));
+            setLoadState("ready");
+          } else {
+            setBudget(null);
+            setLoadState("empty");
+          }
+        }
       } catch {
         if (!cancelled) {
-          setBudget(makePlanningSeed());
-          setMessage("Хранилище браузера недоступно: изменения сохранятся только до закрытия страницы.");
+          setBudget(null);
+          setLoadState("error");
         }
       }
       try {
@@ -115,7 +127,7 @@ export default function App() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [repository]);
+  }, [loadAttempt, repository]);
 
   useEffect(() => {
     const connected = () => setOnline(true);
@@ -210,7 +222,29 @@ export default function App() {
     }
   };
 
-  if (!budget || !metrics || !plan) return <main className="content" aria-busy="true"><p>Открываем семейный план…</p></main>;
+  const publishInitialBudget = (next: BudgetState) => {
+    setBudget(next);
+    setLoadState("ready");
+  };
+
+  const completeOnboarding = async (next: BudgetState) => {
+    const result = await persistCompletedOnboarding(repository, prepareBudgetState(next), prepareBudgetState, publishInitialBudget);
+    if (result.status === "existing") {
+      setMessage("Бюджет уже создан в другой вкладке. Открыли сохранённую там версию; введённые здесь данные её не перезаписали.");
+    }
+  };
+
+  const loadDemo = async () => {
+    const result = await persistCompletedOnboarding(repository, makePlanningSeed(), prepareBudgetState, publishInitialBudget);
+    if (result.status === "existing") {
+      setMessage("Бюджет уже создан в другой вкладке. Демо не перезаписало сохранённую там версию.");
+    }
+  };
+
+  if (loadState === "loading") return <main className="loading-state" aria-busy="true"><p>Открываем семейный план…</p></main>;
+  if (loadState === "error") return <main className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main>;
+  if (loadState === "empty") return <Onboarding onComplete={completeOnboarding} onDemo={loadDemo} />;
+  if (!budget || !metrics || !plan) return <main className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
   const flexibleIds = new Set(activeBudget.lines.map((line) => line.categoryId));
@@ -339,12 +373,13 @@ function CategoryList({ rows }: { rows: CategoryRow[] }) {
   return <ul className="category-list">{rows.map(({ category, metric }) => {
     if (!metric) return null;
     const percent = (metric.execution ?? 0) * 100;
-    return <li key={category.id}><div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><div className="progress-track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100}><span className={`progress-value ${metric.status}`} style={{ width: `${Math.min(Math.max(percent, 0), 100)}%` }} /></div><div className="category-values"><span>Потрачено <b>{formatMoney(metric.actualMinor)}</b></span><span>Осталось <b>{formatMoney(metric.remainingMinor)}</b></span></div></li>;
+    const progress = Math.min(Math.max(percent, 0), 100);
+    return <li key={category.id}><div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><progress className={`progress-track ${metric.status}`} max={100} value={progress} aria-label={`${category.name}: ${Math.round(progress)}% лимита`} /><div className="category-values"><span>Потрачено <b>{formatMoney(metric.actualMinor)}</b></span><span>Осталось <b>{formatMoney(metric.remainingMinor)}</b></span></div></li>;
   })}</ul>;
 }
 
 function OperationsScreen({ budget, entryKind, entryAmount, entryCategoryId, entryDate, transactions, categoryById, onKindChange, onAmountChange, onCategoryChange, onDateChange, onSubmit }: { budget: BudgetState; entryKind: EntryKind; entryAmount: string; entryCategoryId: string; entryDate: string; transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; onKindChange: (kind: EntryKind) => void; onAmountChange: (value: string) => void; onCategoryChange: (value: string) => void; onDateChange: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <><div className="screen-heading"><div><span className="card-kicker">Факт</span><h1>Записать операцию</h1><p>Только то, что уже произошло. Будущие платежи живут в плане.</p></div></div><section className="entry-card"><form className="form-grid" onSubmit={onSubmit}><fieldset className="segmented"><legend className="sr-only">Тип операции</legend><label><input type="radio" checked={entryKind === "expense"} onChange={() => onKindChange("expense")} />Расход</label><label><input type="radio" checked={entryKind === "income"} onChange={() => onKindChange("income")} />Доход</label></fieldset><div className="amount-field"><label htmlFor="amount">Сумма, ₽</label><input id="amount" inputMode="decimal" placeholder="0" value={entryAmount} onChange={(event) => onAmountChange(event.target.value)} required /></div>{entryKind === "expense" ? <div className="field"><label htmlFor="category">На что</label><select id="category" value={entryCategoryId} onChange={(event) => onCategoryChange(event.target.value)} required><option value="">Выберите категорию</option>{budget.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div> : null}<div className="field"><label htmlFor="date">Когда</label><input id="date" type="date" value={entryDate} onChange={(event) => onDateChange(event.target.value)} required /></div><button className="primary-button wide" type="submit">Сохранить</button></form></section><section className="section-card"><SectionTitle title="История" note={`${transactions.length} проведённых операций`} /><TransactionList transactions={transactions} categoryById={categoryById} /></section></>;
+  return <><div className="screen-heading"><div><span className="card-kicker">Факт</span><h1>Записать операцию</h1><p>Только то, что уже произошло. Будущие платежи живут в плане.</p></div></div><section className="entry-card"><form className="form-grid" onSubmit={onSubmit}><fieldset className="segmented"><legend className="sr-only">Тип операции</legend><label><input type="radio" checked={entryKind === "expense"} onChange={() => onKindChange("expense")} />Расход</label><label><input type="radio" checked={entryKind === "income"} onChange={() => onKindChange("income")} />Доход</label></fieldset><div className="amount-field"><label htmlFor="amount">Сумма, ₽</label><input id="amount" inputMode="decimal" maxLength={24} placeholder="0" value={entryAmount} onChange={(event) => onAmountChange(event.target.value)} required /></div>{entryKind === "expense" ? <div className="field"><label htmlFor="category">На что</label><select id="category" value={entryCategoryId} onChange={(event) => onCategoryChange(event.target.value)} required><option value="">Выберите категорию</option>{budget.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div> : null}<div className="field"><label htmlFor="date">Когда</label><input id="date" type="date" value={entryDate} onChange={(event) => onDateChange(event.target.value)} required /></div><button className="primary-button wide" type="submit">Сохранить</button></form></section><section className="section-card"><SectionTitle title="История" note={`${transactions.length} проведённых операций`} /><TransactionList transactions={transactions} categoryById={categoryById} /></section></>;
 }
 
 function TransactionList({ transactions, categoryById }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]> }) {
