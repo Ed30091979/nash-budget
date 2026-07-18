@@ -23,6 +23,10 @@ export interface RepositoryOptions<T = unknown> {
   readonly migrateV1Value?: (value: unknown, key: string) => T;
 }
 
+export type CreateIfAbsentResult<T> =
+  | { readonly status: "created"; readonly value: T }
+  | { readonly status: "existing"; readonly value: T };
+
 function databaseError(message: string): Error {
   return new Error(message);
 }
@@ -215,6 +219,121 @@ export class IndexedDbBudgetRepository<T> {
       transaction.objectStore(STORE_NAME).put(makeDocument(ACTIVE_BUDGET_KEY, value, new Date()));
       await transactionComplete(transaction);
     });
+  }
+
+  /** Creates the active document only when it is still absent in the same read/write transaction. */
+  async createIfAbsent(value: T): Promise<CreateIfAbsentResult<T>> {
+    let valueSnapshot: T;
+    try {
+      valueSnapshot = structuredClone(value);
+    } catch {
+      throw databaseError("Документ не может быть безопасно скопирован в локальное хранилище.");
+    }
+
+    return this.withDatabase(
+      (database) =>
+        new Promise<CreateIfAbsentResult<T>>((resolve, reject) => {
+          let transaction: IDBTransaction;
+          try {
+            transaction = database.transaction(STORE_NAME, "readwrite");
+          } catch {
+            reject(databaseError("Не удалось начать транзакцию локального хранилища."));
+            return;
+          }
+          let result: CreateIfAbsentResult<T> | undefined;
+          let settled = false;
+          let transactionFailed = false;
+
+          const rejectOnce = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          };
+          const abort = () => {
+            transactionFailed = true;
+            try {
+              transaction.abort();
+            } catch {
+              // An inactive transaction will still finish through onabort/oncomplete; settle only there.
+            }
+          };
+
+          transaction.oncomplete = () => {
+            if (transactionFailed) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась ошибкой."));
+              return;
+            }
+            if (!result) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась без результата."));
+              return;
+            }
+            if (settled) return;
+            settled = true;
+            resolve(result);
+          };
+          transaction.onerror = () => {
+            transactionFailed = true;
+          };
+          transaction.onabort = () => rejectOnce(databaseError("Транзакция хранилища отменена."));
+
+          let store: IDBObjectStore;
+          try {
+            store = transaction.objectStore(STORE_NAME);
+          } catch {
+            abort();
+            return;
+          }
+
+          let readRequest: IDBRequest<StoredDocument<T> | undefined>;
+          try {
+            readRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+          } catch {
+            abort();
+            return;
+          }
+          readRequest.onerror = abort;
+          readRequest.onsuccess = () => {
+            let existing: StoredDocument<T> | undefined;
+            try {
+              existing = readRequest.result;
+            } catch {
+              abort();
+              return;
+            }
+            if (existing) {
+              result = { status: "existing", value: existing.value };
+              return;
+            }
+
+            try {
+              const addRequest = store.add(makeDocument(ACTIVE_BUDGET_KEY, valueSnapshot, new Date()));
+              addRequest.onerror = abort;
+              addRequest.onsuccess = () => {
+                try {
+                  const readBackRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+                  readBackRequest.onerror = abort;
+                  readBackRequest.onsuccess = () => {
+                    try {
+                      const created = readBackRequest.result;
+                      if (!created) {
+                        abort();
+                        return;
+                      }
+                      result = { status: "created", value: created.value };
+                    } catch {
+                      abort();
+                    }
+                  };
+                } catch {
+                  abort();
+                }
+              };
+            } catch {
+              abort();
+            }
+          };
+        }),
+    );
   }
 
   /** Parses and validates completely before opening the single write transaction. */
