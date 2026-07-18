@@ -134,9 +134,9 @@ File scope исполнителя:
 
 ## Фаза 3. Storage v2, migrations и атомарный backup/restore
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `feat(storage): add migrations and validated atomic recovery`  
-SHA/доказательство: —
+SHA/доказательство: implementation `57f95c6`; точный pathspec из 18 файлов без этого плана: `apps/web-pwa/package.json`, `apps/web-pwa/src/App.tsx`, `apps/web-pwa/src/backup.test.ts`, `apps/web-pwa/src/backup.ts`, `apps/web-pwa/src/storage-repository.test.ts`, `apps/web-pwa/src/storage-repository.ts`, `contracts/schemas/storage-backup.schema.json`, `docs/ARCHITECTURE.md`, `docs/QA_ACCEPTANCE.md`, `packages/storage/package.json`, `packages/storage/src/backup.ts`, `packages/storage/src/csv.ts`, `packages/storage/src/index.ts`, `packages/storage/src/indexed-db.ts`, `packages/storage/tests/backup.test.ts`, `packages/storage/tests/csv.test.ts`, `packages/storage/tests/indexed-db.test.ts`, `pnpm-lock.yaml`. `pnpm verify` — fixtures `6/6`, domain `17/17`, storage `28/28`, web `24/24`, всего `75/75`, пять TypeScript typechecks и production PWA build с `13` precache entries; frozen-lockfile install зелёный; `pnpm audit` и `pnpm audit --prod` — `0` vulnerabilities. Точный live/read-only gate: документ v1 с суммой `12 345` копеек мигрирован в schema v2; `createdAt` сохранён как `2026-07-17T12:00:00.000Z`; backup проходит byte-identical round-trip, а повреждённый restore отклоняется без изменения сохранённого документа; clear-all оставляет `0` документов. Projected G-001 после восстановления сохраняет счётчики `2/3/1/3/1/0/0/5` и суммы доход/расходы/капитал `100 000 / 76 500 / 23 500 ₽`. Legacy backup и CSV security gates подтверждают строгую валидацию, лимиты и защиту от formula injection. Финальные свежие абсолютные code review и security review — `APPROVE`, blocker/high/medium `0/0/0`. Неблокирующие low caveats: нет прямого synthetic-теста закрытия соединения через `versionchange`; checksum и repository-level интеграция покрыты соседними, а не отдельными end-to-end тестами. Реальные Safari/iPhone/Android/Excel/deploy и Phase 7 UI этой фазой не подтверждались.
 
 File scope исполнителя:
 
@@ -146,15 +146,15 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Реализовать последовательные IndexedDB migrations минимум `v1 → v2`, атомарное применение и тест отказа без частичного состояния.
-- [ ] Backup содержит app, version, schema version, createdAt и проверку целостности; payload валидируется полностью до одной записи.
-- [ ] Отклонять повреждённый JSON, чужой app, неподдерживаемую старшую версию, duplicate UUID, лишние/невалидные связи и чрезмерно большой импорт с понятной ошибкой.
-- [ ] Добавить last successful backup metadata, clear-all и CSV codec; явно различать CSV и полную backup-копию.
-- [ ] `pnpm --filter @family-budget/storage test`, затем `pnpm verify` зелёные.
-- [ ] Live-check в временной browser DB: миграция документа v1 с суммой `12 345` копеек сохраняет `123,45 ₽`; backup с временем `2026-07-17T12:00:00Z` проходит round-trip; испорченная сумма/UUID отклоняется и прежний документ остаётся байт-в-байт; clear оставляет `0` документов.
-- [ ] Свежий code review проверяет lifecycle IDB connection/transaction, migration rollback и ошибки blocked/versionchange.
-- [ ] Свежий security review проверяет prototype pollution, oversized JSON/CSV, формульную инъекцию CSV, content disclosure в ошибках и отсутствие данных в localStorage/logs.
-- [ ] Коммит A содержит только storage/contracts/docs-файлы фазы; коммит B содержит только план с SHA/доказательством A.
+- [x] Реализовать последовательные IndexedDB migrations минимум `v1 → v2`, атомарное применение и тест отказа без частичного состояния.
+- [x] Backup содержит app, version, schema version, createdAt и проверку целостности; payload валидируется полностью до одной записи.
+- [x] Отклонять повреждённый JSON, чужой app, неподдерживаемую старшую версию, duplicate UUID, лишние/невалидные связи и чрезмерно большой импорт с понятной ошибкой.
+- [x] Добавить last successful backup metadata, clear-all и CSV codec; явно различать CSV и полную backup-копию.
+- [x] `pnpm --filter @family-budget/storage test`, затем `pnpm verify` зелёные.
+- [x] Live-check в временной browser DB: миграция документа v1 с суммой `12 345` копеек сохраняет `123,45 ₽`; backup с временем `2026-07-17T12:00:00Z` проходит round-trip; испорченная сумма/UUID отклоняется и прежний документ остаётся байт-в-байт; clear оставляет `0` документов.
+- [x] Свежий code review проверяет lifecycle IDB connection/transaction, migration rollback и ошибки blocked/versionchange.
+- [x] Свежий security review проверяет prototype pollution, oversized JSON/CSV, формульную инъекцию CSV, content disclosure в ошибках и отсутствие данных в localStorage/logs.
+- [x] Коммит A содержит только storage/contracts/docs-файлы фазы; коммит B содержит только план с SHA/доказательством A.
 
 ## Фаза 4. Onboarding и пустая семья вместо demo seed
 
