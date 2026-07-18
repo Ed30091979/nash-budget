@@ -124,7 +124,7 @@ export interface RefundTransaction extends BaseTransaction {
   readonly kind: "refund";
   readonly accountId: AccountId;
   readonly categoryId: CategoryId;
-  readonly originalTransactionId?: TransactionId;
+  readonly originalTransactionId: TransactionId;
 }
 
 export interface TransferTransaction extends BaseTransaction {
@@ -207,6 +207,8 @@ export interface PlanningMonthMetrics {
   readonly month: string;
   readonly plannedIncomeMinor: MinorUnits;
   readonly scheduledExpenseMinor: MinorUnits;
+  /** Portion of scheduledExpenseMinor enabled only in selected calendar months. */
+  readonly seasonalExpenseMinor: MinorUnits;
   readonly flexiblePlanMinor: MinorUnits;
   readonly annualReserveMinor: MinorUnits;
   readonly annualDueMinor: MinorUnits;

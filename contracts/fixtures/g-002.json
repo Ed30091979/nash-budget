@@ -1,0 +1,343 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "G-002",
+  "title": "Горизонт 24 месяца: ежегодные, сезонные и повседневные расходы",
+  "startMonth": "2026-07",
+  "horizonMonths": 24,
+  "minorUnit": {
+    "currency": "RUB",
+    "exponent": 2
+  },
+  "state": {
+    "activeBudgetId": "74444444-4444-4444-8444-444444444441",
+    "accounts": [
+      {
+        "id": "22222222-2222-4222-8222-222222222221",
+        "name": "Основной",
+        "type": "current",
+        "currency": "RUB",
+        "openingBalanceMinor": 0,
+        "active": true
+      },
+      {
+        "id": "22222222-2222-4222-8222-222222222222",
+        "name": "Резерв платежей",
+        "type": "reserve",
+        "currency": "RUB",
+        "openingBalanceMinor": 1500000,
+        "active": true
+      }
+    ],
+    "categories": [
+      {
+        "id": "73333333-3333-4333-8333-333333333331",
+        "name": "Жильё",
+        "type": "expense",
+        "group": "Обязательные",
+        "active": true,
+        "sortOrder": 10
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333332",
+        "name": "ЖКХ и связь",
+        "type": "expense",
+        "group": "Обязательные",
+        "active": true,
+        "sortOrder": 20
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333333",
+        "name": "Дети",
+        "type": "expense",
+        "group": "Семья",
+        "active": true,
+        "sortOrder": 30
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333335",
+        "name": "Продукты",
+        "type": "expense",
+        "group": "Повседневные",
+        "active": true,
+        "sortOrder": 40
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333334",
+        "name": "Транспорт",
+        "type": "expense",
+        "group": "Повседневные",
+        "active": true,
+        "sortOrder": 50
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333336",
+        "name": "Досуг",
+        "type": "expense",
+        "group": "Повседневные",
+        "active": true,
+        "sortOrder": 60
+      },
+      {
+        "id": "73333333-3333-4333-8333-333333333337",
+        "name": "Дом и мелкие покупки",
+        "type": "expense",
+        "group": "Повседневные",
+        "active": true,
+        "sortOrder": 70
+      }
+    ],
+    "budgets": [
+      {
+        "id": "74444444-4444-4444-8444-444444444441",
+        "startDate": "2026-07-01",
+        "endDate": "2026-07-31",
+        "status": "open",
+        "plannedIncomeMinor": 18000000,
+        "warningThreshold": 0.8,
+        "lines": [
+          {
+            "id": "74444444-4444-4444-8444-444444444451",
+            "categoryId": "73333333-3333-4333-8333-333333333335",
+            "plannedMinor": 3000000
+          },
+          {
+            "id": "74444444-4444-4444-8444-444444444452",
+            "categoryId": "73333333-3333-4333-8333-333333333334",
+            "plannedMinor": 1000000
+          },
+          {
+            "id": "74444444-4444-4444-8444-444444444453",
+            "categoryId": "73333333-3333-4333-8333-333333333336",
+            "plannedMinor": 800000
+          },
+          {
+            "id": "74444444-4444-4444-8444-444444444454",
+            "categoryId": "73333333-3333-4333-8333-333333333337",
+            "plannedMinor": 500000
+          }
+        ]
+      }
+    ],
+    "goals": [
+      {
+        "id": "66666666-6666-4666-8666-666666666661",
+        "name": "Финансовая подушка",
+        "linkedAccountId": "22222222-2222-4222-8222-222222222222",
+        "targetMinor": 60000000,
+        "openingContributedMinor": 1500000,
+        "plannedContributionMinor": 1000000,
+        "status": "active"
+      }
+    ],
+    "annualCommitments": [
+      {
+        "id": "78888888-8888-4888-8888-888888888881",
+        "name": "Страхование автомобиля",
+        "categoryId": "73333333-3333-4333-8333-333333333334",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "dueDate": "2027-01-15",
+        "amountMinor": 7200000,
+        "reservedMinor": 0,
+        "recurrence": "annual",
+        "active": true
+      },
+      {
+        "id": "78888888-8888-4888-8888-888888888882",
+        "name": "Платёж за загородный дом",
+        "categoryId": "73333333-3333-4333-8333-333333333331",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "dueDate": "2027-05-01",
+        "amountMinor": 3600000,
+        "reservedMinor": 0,
+        "recurrence": "annual",
+        "active": true
+      },
+      {
+        "id": "78888888-8888-4888-8888-888888888883",
+        "name": "Летний лагерь",
+        "categoryId": "73333333-3333-4333-8333-333333333333",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "dueDate": "2027-06-15",
+        "amountMinor": 9000000,
+        "reservedMinor": 1500000,
+        "recurrence": "one_time",
+        "active": true
+      }
+    ],
+    "scheduledExpenses": [
+      {
+        "id": "79999999-9999-4999-8999-999999999991",
+        "name": "Аренда / ипотека",
+        "categoryId": "73333333-3333-4333-8333-333333333331",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "amountMinor": 4500000,
+        "dueDay": 5,
+        "mode": "monthly",
+        "active": true
+      },
+      {
+        "id": "79999999-9999-4999-8999-999999999992",
+        "name": "ЖКХ, интернет и связь",
+        "categoryId": "73333333-3333-4333-8333-333333333332",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "amountMinor": 800000,
+        "dueDay": 15,
+        "mode": "monthly",
+        "active": true
+      },
+      {
+        "id": "79999999-9999-4999-8999-999999999993",
+        "name": "Обучение детей",
+        "categoryId": "73333333-3333-4333-8333-333333333333",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "amountMinor": 2500000,
+        "dueDay": 10,
+        "mode": "selected_months",
+        "months": [1, 2, 3, 4, 5, 9, 10, 11, 12],
+        "active": true
+      },
+      {
+        "id": "79999999-9999-4999-8999-999999999994",
+        "name": "Секции",
+        "categoryId": "73333333-3333-4333-8333-333333333333",
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "amountMinor": 600000,
+        "dueDay": 12,
+        "mode": "selected_months",
+        "months": [1, 2, 3, 4, 5, 9, 10, 11, 12],
+        "active": true
+      }
+    ],
+    "transactions": [
+      {
+        "id": "75555555-5555-4555-8555-555555555551",
+        "occurredOn": "2026-07-01",
+        "status": "posted",
+        "kind": "income",
+        "amountMinor": 18000000,
+        "accountId": "22222222-2222-4222-8222-222222222221"
+      },
+      {
+        "id": "75555555-5555-4555-8555-555555555552",
+        "occurredOn": "2026-07-05",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 4500000,
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "categoryId": "73333333-3333-4333-8333-333333333331"
+      },
+      {
+        "id": "75555555-5555-4555-8555-555555555553",
+        "occurredOn": "2026-07-08",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 2200000,
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "categoryId": "73333333-3333-4333-8333-333333333335"
+      },
+      {
+        "id": "75555555-5555-4555-8555-555555555554",
+        "occurredOn": "2026-07-09",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 400000,
+        "accountId": "22222222-2222-4222-8222-222222222221",
+        "categoryId": "73333333-3333-4333-8333-333333333334"
+      }
+    ]
+  },
+  "expected": {
+    "firstTwelveMonthsEqual": true,
+    "months": [
+      {
+        "month": "2026-07",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 5300000,
+        "seasonalExpenseMinor": 0,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 1980900,
+        "annualDueMinor": 0,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 4419100
+      },
+      {
+        "month": "2026-09",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 8400000,
+        "seasonalExpenseMinor": 3100000,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 1980900,
+        "annualDueMinor": 0,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 1319100
+      },
+      {
+        "month": "2027-01",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 8400000,
+        "seasonalExpenseMinor": 3100000,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 1980900,
+        "annualDueMinor": 7200000,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 1319100
+      },
+      {
+        "month": "2027-06",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 5300000,
+        "seasonalExpenseMinor": 0,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 1525000,
+        "annualDueMinor": 9000000,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 4875000
+      },
+      {
+        "month": "2028-01",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 8400000,
+        "seasonalExpenseMinor": 3100000,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 900000,
+        "annualDueMinor": 7200000,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 2400000
+      },
+      {
+        "month": "2028-06",
+        "plannedIncomeMinor": 18000000,
+        "scheduledExpenseMinor": 5300000,
+        "seasonalExpenseMinor": 0,
+        "flexiblePlanMinor": 5300000,
+        "annualReserveMinor": 900000,
+        "annualDueMinor": 0,
+        "goalPlanMinor": 1000000,
+        "spendableAfterPlanMinor": 5500000
+      }
+    ],
+    "commitments": [
+      {
+        "commitmentId": "78888888-8888-4888-8888-888888888881",
+        "monthsUntilDue": 7,
+        "remainingToReserveMinor": 7200000,
+        "monthlyReserveMinor": 1028600,
+        "status": "on_track"
+      },
+      {
+        "commitmentId": "78888888-8888-4888-8888-888888888882",
+        "monthsUntilDue": 11,
+        "remainingToReserveMinor": 3600000,
+        "monthlyReserveMinor": 327300,
+        "status": "on_track"
+      },
+      {
+        "commitmentId": "78888888-8888-4888-8888-888888888883",
+        "monthsUntilDue": 12,
+        "remainingToReserveMinor": 7500000,
+        "monthlyReserveMinor": 625000,
+        "status": "on_track"
+      }
+    ]
+  }
+}

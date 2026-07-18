@@ -7,6 +7,7 @@
 - JSON Schema: `schemas/budget-fixture.schema.json`;
 - базовый сценарий: `fixtures/g-000.json`;
 - сценарий с целью: `fixtures/g-001.json`;
+- сценарий горизонта и сезонности: `fixtures/g-002.json`, schema `schemas/planning-fixture.schema.json`;
 - все денежные значения с суффиксом `Minor` — целые числа в минимальных единицах валюты;
 - для RUB `minorUnit.exponent = 2`, поэтому `10000000` означает 100 000,00 ₽;
 - `occurredOn`, `startDate`, `endDate` и `deadline` — локальные календарные даты семьи без времени;
@@ -14,6 +15,8 @@
 - идентификаторы стабильны и не должны генерироваться заново при запуске теста.
 
 `G-001` содержит весь `G-000` и дополнительную цель/операцию. Поле `derivedFromFixtureId` служит для трассировки, а не для наследования или merge.
+
+`G-002` хранит canonical domain state для горизонта 24 месяца. Ежемесячный резерв каждого commitment округляется вверх до целого рубля (100 minor units) отдельно до суммирования. Due day 29/30/31 в коротком месяце нормализуется на последний календарный день этого месяца.
 
 ## Правила расчёта
 
@@ -50,6 +53,7 @@
 python3 -m json.tool contracts/schemas/budget-fixture.schema.json >/dev/null
 python3 -m json.tool contracts/fixtures/g-000.json >/dev/null
 python3 -m json.tool contracts/fixtures/g-001.json >/dev/null
+python3 -m json.tool contracts/fixtures/g-002.json >/dev/null
 ```
 
 Если установлен пакет `jsonschema`, fixtures также проверяются непосредственно по Draft 2020-12 schema.

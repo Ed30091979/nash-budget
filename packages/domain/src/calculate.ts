@@ -25,6 +25,12 @@ import type {
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const LOCAL_MONTH_PATTERN = /^\d{4}-\d{2}$/;
 
+function assertEnum(value: unknown, allowed: readonly string[], label: string): asserts value is string {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new Error(`${label} has unknown value ${String(value)}`);
+  }
+}
+
 function assertStableId(id: StableId, label: string): void {
   if (id.trim().length === 0) {
     throw new Error(`${label} must have a non-empty stable id`);
@@ -54,6 +60,12 @@ function assertPositiveMinor(value: MinorUnits, label: string): void {
 function addMinor(left: MinorUnits, right: MinorUnits, label: string): MinorUnits {
   const value = left + right;
   assertMinor(value, label);
+  return value;
+}
+
+function reservePerMonth(amountMinor: MinorUnits, months: number): MinorUnits {
+  const value = Math.ceil(amountMinor / (months * 100)) * 100;
+  assertMinor(value, "monthly reserve");
   return value;
 }
 
@@ -136,16 +148,19 @@ function categoryStatus(
 }
 
 function validateAccount(account: Account): void {
+  assertEnum(account.type, ["current", "cash", "savings", "reserve"], `account ${account.id} type`);
   assertMinor(account.openingBalanceMinor, `account ${account.id} openingBalanceMinor`);
 }
 
 function validateCategory(category: Category): void {
+  assertEnum(category.type, ["income", "expense"], `category ${category.id} type`);
   if (!Number.isSafeInteger(category.sortOrder)) {
     throw new Error(`category ${category.id} sortOrder must be an integer`);
   }
 }
 
 function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): void {
+  assertEnum(goal.status, ["active", "completed", "cancelled"], `goal ${goal.id} status`);
   assertNonNegativeMinor(goal.targetMinor, `goal ${goal.id} targetMinor`);
   assertNonNegativeMinor(
     goal.openingContributedMinor,
@@ -162,6 +177,7 @@ function validateBudget(
   budget: Budget,
   categories: ReadonlyMap<StableId, Category>,
 ): Map<CategoryId, MinorUnits> {
+  assertEnum(budget.status, ["draft", "open", "closed"], `budget ${budget.id} status`);
   assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
   assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
   if (budget.startDate > budget.endDate) {
@@ -216,7 +232,10 @@ function validateTransactionReferences(
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
   goals: ReadonlyMap<StableId, Goal>,
+  transactions: ReadonlyMap<StableId, Transaction>,
 ): void {
+  assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
+  assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
 
@@ -224,8 +243,7 @@ function validateTransactionReferences(
     case "income":
       requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
       return;
-    case "expense":
-    case "refund": {
+    case "expense": {
       requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
       const category = requireEntity(
         categories,
@@ -234,6 +252,19 @@ function validateTransactionReferences(
       );
       if (category.type !== "expense") {
         throw new Error(`transaction ${transaction.id} must reference an expense category`);
+      }
+      return;
+    }
+    case "refund": {
+      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const category = requireEntity(categories, transaction.categoryId, `transaction ${transaction.id}`);
+      if (category.type !== "expense") throw new Error(`transaction ${transaction.id} must reference an expense category`);
+      const original = requireEntity(transactions, transaction.originalTransactionId, `refund ${transaction.id} originalTransactionId`);
+      if (original.status !== "posted" || original.kind !== "expense") {
+        throw new Error(`refund ${transaction.id} must reference a posted expense transaction`);
+      }
+      if (original.categoryId !== transaction.categoryId) {
+        throw new Error(`refund ${transaction.id} must use the original expense category`);
       }
       return;
     }
@@ -256,6 +287,11 @@ function validateTransactionReferences(
           `transaction ${transaction.id} destination must match goal ${goal.id} linked account`,
         );
       }
+      return;
+    }
+    default: {
+      const unknown = transaction as unknown as { readonly id?: unknown; readonly kind?: unknown };
+      throw new Error(`transaction ${String(unknown.id)} kind has unknown value ${String(unknown.kind)}`);
     }
   }
 }
@@ -268,7 +304,7 @@ export function calculateBudget(
   const categories = indexById(state.categories, "categories");
   const budgets = indexById(state.budgets, "budgets");
   const goals = indexById(state.goals, "goals");
-  indexById(state.transactions, "transactions");
+  const transactions = indexById(state.transactions, "transactions");
 
   for (const account of state.accounts) validateAccount(account);
   for (const category of state.categories) validateCategory(category);
@@ -310,7 +346,7 @@ export function calculateBudget(
   };
 
   for (const transaction of state.transactions) {
-    validateTransactionReferences(transaction, accounts, categories, goals);
+    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
     if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
 
     switch (transaction.kind) {
@@ -373,6 +409,7 @@ export function calculateBudget(
     const availableMinor = availableByCategory.get(category.id) ?? 0;
     const expenseMinor = expenseByCategory.get(category.id) ?? 0;
     const refundMinor = refundByCategory.get(category.id) ?? 0;
+    // Excess refunds remain a negative net actual in their original category.
     const actualMinor = addMinor(expenseMinor, -refundMinor, "category actualMinor");
     const remainingMinor = addMinor(availableMinor, -actualMinor, "category remainingMinor");
     const overMinor = Math.max(0, actualMinor - availableMinor);
@@ -436,11 +473,25 @@ function monthFromIndex(value: number): string {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
 }
 
+/** A due day beyond the month end is charged on that month's final calendar day. */
+export function normalizeScheduledDueDate(month: string, dueDay: number): string {
+  monthIndex(month, "month");
+  if (!Number.isSafeInteger(dueDay) || dueDay < 1 || dueDay > 31) {
+    throw new Error("dueDay must be from 1 to 31");
+  }
+  const year = Number(month.slice(0, 4));
+  const calendarMonth = Number(month.slice(5, 7));
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return `${month}-${String(Math.min(dueDay, days[calendarMonth - 1]!)).padStart(2, "0")}`;
+}
+
 function validateAnnualCommitment(
   item: AnnualCommitment,
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
 ): void {
+  assertEnum(item.recurrence, ["annual", "one_time"], `annual commitment ${item.id} recurrence`);
   assertLocalDate(item.dueDate, `annual commitment ${item.id} dueDate`);
   assertPositiveMinor(item.amountMinor, `annual commitment ${item.id} amountMinor`);
   assertNonNegativeMinor(item.reservedMinor, `annual commitment ${item.id} reservedMinor`);
@@ -456,6 +507,7 @@ function validateScheduledExpense(
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
 ): void {
+  assertEnum(item.mode, ["monthly", "selected_months"], `scheduled expense ${item.id} mode`);
   assertPositiveMinor(item.amountMinor, `scheduled expense ${item.id} amountMinor`);
   if (!Number.isSafeInteger(item.dueDay) || item.dueDay < 1 || item.dueDay > 31) {
     throw new Error(`scheduled expense ${item.id} dueDay must be from 1 to 31`);
@@ -493,10 +545,17 @@ export function calculateAnnualPlan(
   const accounts = indexById(state.accounts, "accounts");
   const categories = indexById(state.categories, "categories");
   const budgets = indexById(state.budgets, "budgets");
+  const goals = indexById(state.goals, "goals");
+  const transactions = indexById(state.transactions, "transactions");
   const annualCommitments = indexById(state.annualCommitments ?? [], "annualCommitments");
   const scheduledExpenses = indexById(state.scheduledExpenses ?? [], "scheduledExpenses");
   const budget = requireEntity(budgets, state.activeBudgetId, "calculateAnnualPlan");
+  for (const account of accounts.values()) validateAccount(account);
+  for (const category of categories.values()) validateCategory(category);
   const flexibleByCategory = validateBudget(budget, categories);
+
+  for (const goal of goals.values()) validateGoal(goal, accounts);
+  for (const transaction of transactions.values()) validateTransactionReferences(transaction, accounts, categories, goals, transactions);
 
   for (const item of annualCommitments.values()) {
     validateAnnualCommitment(item, accounts, categories);
@@ -509,7 +568,7 @@ export function calculateAnnualPlan(
     (total, value) => addMinor(total, value, "flexiblePlanMinor"),
     0,
   );
-  const goalPlanMinor = state.goals
+  const goalPlanMinor = [...goals.values()]
     .filter((goal) => goal.status === "active")
     .reduce((total, goal) => addMinor(total, goal.plannedContributionMinor, "goalPlanMinor"), 0);
 
@@ -519,7 +578,7 @@ export function calculateAnnualPlan(
     const monthsUntilDue = dueIndex - startIndex + 1;
     const remainingToReserveMinor = Math.max(0, item.amountMinor - item.reservedMinor);
     const monthlyReserveMinor = item.active && monthsUntilDue > 0 && remainingToReserveMinor > 0
-      ? Math.ceil(remainingToReserveMinor / monthsUntilDue)
+      ? reservePerMonth(remainingToReserveMinor, monthsUntilDue)
       : 0;
     const status = remainingToReserveMinor === 0
       ? "funded"
@@ -545,6 +604,9 @@ export function calculateAnnualPlan(
     const scheduledExpenseMinor = [...scheduledExpenses.values()]
       .filter((item) => item.active && (item.mode === "monthly" || item.months?.includes(calendarMonth)))
       .reduce((total, item) => addMinor(total, item.amountMinor, "scheduledExpenseMinor"), 0);
+    const seasonalExpenseMinor = [...scheduledExpenses.values()]
+      .filter((item) => item.active && item.mode === "selected_months" && item.months?.includes(calendarMonth))
+      .reduce((total, item) => addMinor(total, item.amountMinor, "seasonalExpenseMinor"), 0);
     const annualReserveMinor = [...annualCommitments.values()]
       .filter((item) => item.active)
       .reduce((total, item) => {
@@ -552,7 +614,7 @@ export function calculateAnnualPlan(
         const reserve = currentIndex <= dueIndex
           ? commitmentMetrics[item.id]?.monthlyReserveMinor ?? 0
           : item.recurrence === "annual"
-            ? Math.ceil(item.amountMinor / 12)
+            ? reservePerMonth(item.amountMinor, 12)
             : 0;
         return addMinor(total, reserve, "annualReserveMinor");
       }, 0);
@@ -569,6 +631,7 @@ export function calculateAnnualPlan(
       month,
       plannedIncomeMinor: budget.plannedIncomeMinor,
       scheduledExpenseMinor,
+      seasonalExpenseMinor,
       flexiblePlanMinor,
       annualReserveMinor,
       annualDueMinor,

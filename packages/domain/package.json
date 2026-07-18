@@ -11,6 +11,9 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "devDependencies": {
+    "@family-budget/test-fixtures": "workspace:*"
+  },
   "engines": {
     "node": ">=20"
   }
