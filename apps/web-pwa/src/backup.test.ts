@@ -59,6 +59,33 @@ function withRelinkedMalformedAccountId(state: BudgetState): BudgetState {
   };
 }
 
+function withRefund(
+  state: BudgetState,
+  occurredOn: string,
+  amountMinor = 150_000,
+): BudgetState {
+  const original = state.transactions.find(
+    (transaction) => transaction.kind === "expense" && transaction.occurredOn === "2026-07-08",
+  );
+  if (!original || original.kind !== "expense") throw new Error("Test fixture expense is missing.");
+  return {
+    ...state,
+    transactions: [
+      ...state.transactions,
+      {
+        id: "75555555-5555-4555-8555-555555555559",
+        occurredOn,
+        status: "posted",
+        kind: "refund",
+        amountMinor,
+        accountId: original.accountId,
+        categoryId: original.categoryId,
+        originalTransactionId: original.id,
+      },
+    ],
+  };
+}
+
 describe("восстановление бюджета", () => {
   it("дополняет legacy state, не заменяя счета, категории, бюджеты, цели и операции", () => {
     const seed = makePlanningSeed();
@@ -227,6 +254,47 @@ describe("восстановление бюджета", () => {
 
     expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет возврат раньше исходного расхода до save/publish и сохраняет прежний state", async () => {
+    let stored = makePlanningSeed();
+    const before = JSON.stringify(stored);
+    const save = vi.fn(async (next: BudgetState) => { stored = next; });
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = withRefund(makePlanningSeed(), "2026-07-07");
+
+    expect(() => prepareBudgetState(malformed)).toThrow(/must not occur before the original expense/);
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(
+      /must not occur before the original expense/,
+    );
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(JSON.stringify(stored)).toBe(before);
+  });
+
+  it("принимает резервную копию с возвратом в день исходного расхода", async () => {
+    const sameDay = withRefund(makePlanningSeed(), "2026-07-08");
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    expect(prepareBudgetState(sameDay)).toEqual(sameDay);
+    await expect(restoreBudgetBackup(backupFile(sameDay), save, publish)).resolves.toEqual(sameDay);
+
+    expect(save).toHaveBeenCalledExactlyOnceWith(sameDay);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(sameDay);
+  });
+
+  it("сохраняет D-013: возврат может превышать сумму исходного расхода", async () => {
+    const excess = withRefund(makePlanningSeed(), "2026-07-09", 4_000_000);
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    expect(prepareBudgetState(excess)).toEqual(excess);
+    await expect(restoreBudgetBackup(backupFile(excess), save, publish)).resolves.toEqual(excess);
+
+    expect(save).toHaveBeenCalledExactlyOnceWith(excess);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(excess);
   });
 });
 

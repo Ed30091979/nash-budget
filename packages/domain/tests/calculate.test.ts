@@ -569,6 +569,46 @@ describe("calculateBudget", () => {
     expect(() => calculateBudget({ ...seed, transactions: [...seed.transactions, wrongCategory] })).toThrow(/original expense category/);
   });
 
+  it("rejects a refund dated before its original expense", () => {
+    const seed = makeSeedBudget();
+    const predatingRefund: Transaction = {
+      id: "refund-before-expense",
+      occurredOn: "2026-07-04",
+      status: "posted",
+      kind: "refund",
+      amountMinor: 100,
+      accountId: SEED_IDS.accounts.main,
+      categoryId: SEED_IDS.categories.food,
+      originalTransactionId: SEED_IDS.transactions.food,
+    };
+
+    expect(() =>
+      calculateBudget({ ...seed, transactions: [...seed.transactions, predatingRefund] }),
+    ).toThrow(/must not occur before the original expense/);
+  });
+
+  it("accepts a refund dated on the same day as its original expense", () => {
+    const seed = makeSeedBudget();
+    const sameDayRefund: Transaction = {
+      id: "refund-same-day",
+      occurredOn: "2026-07-05",
+      status: "posted",
+      kind: "refund",
+      amountMinor: 100,
+      accountId: SEED_IDS.accounts.main,
+      categoryId: SEED_IDS.categories.food,
+      originalTransactionId: SEED_IDS.transactions.food,
+    };
+
+    const metrics = calculateBudget({
+      ...seed,
+      transactions: [...seed.transactions, sameDayRefund],
+    });
+
+    expect(metrics.refundsMinor).toBe(100);
+    expect(metrics.categoryMetrics[SEED_IDS.categories.food]?.refundMinor).toBe(100);
+  });
+
   it("rejects same-account transfer, duplicate IDs, unknown references, and safe-integer overflow", () => {
     const seed = makeSeedBudget();
     const transfer: Transaction = { id: "same", occurredOn: "2026-07-15", status: "posted", kind: "transfer", amountMinor: 1, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.main };

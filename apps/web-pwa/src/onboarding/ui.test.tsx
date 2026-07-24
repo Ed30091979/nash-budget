@@ -23,6 +23,7 @@ describe("onboarding UI contract", () => {
   it("фиксирует 44px touch targets и не использует URL, localStorage и logs в onboarding path", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const operations = readFileSync(new URL("../features/operations/OperationsScreen.tsx", import.meta.url), "utf8");
     const component = readFileSync(new URL("./Onboarding.tsx", import.meta.url), "utf8");
     const model = readFileSync(new URL("./model.ts", import.meta.url), "utf8");
     expect(styles).toMatch(/\.primary-button, \.secondary-button \{[^}]*min-height: 44px/s);
@@ -46,7 +47,7 @@ describe("onboarding UI contract", () => {
     expect(app).toContain('setLoadState("empty")');
     expect(app.match(/makePlanningSeed\(\)/g)).toHaveLength(1);
     expect(app.match(/result\.status === "existing"/g)).toHaveLength(2);
-    expect(app).toContain('id="amount" inputMode="decimal" maxLength={24}');
+    expect(operations).toContain('id="operation-amount" inputMode="decimal" maxLength={24}');
     expect(app).not.toMatch(/\sstyle\s*=/);
     expect(app).toContain('<progress className={`progress-track ${metric.status}`} max={100} value={progress}');
     expect(app).not.toContain("progress-value");

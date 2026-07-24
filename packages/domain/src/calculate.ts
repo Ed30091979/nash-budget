@@ -273,6 +273,9 @@ function validateTransactionReferences(
       if (original.categoryId !== transaction.categoryId) {
         throw new Error(`refund ${transaction.id} must use the original expense category`);
       }
+      if (transaction.occurredOn < original.occurredOn) {
+        throw new Error(`refund ${transaction.id} must not occur before the original expense`);
+      }
       return;
     }
     case "transfer":

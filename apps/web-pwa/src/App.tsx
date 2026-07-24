@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -13,15 +13,15 @@ import {
   type StorageHealth,
 } from "@family-budget/storage";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { OperationsScreen } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
-import { formatMoney, parseMoney } from "./money";
+import { formatMoney } from "./money";
 import { createBudgetRepository } from "./storage-repository";
 
 type Screen = "today" | "year" | "planning" | "operations" | "more";
-type EntryKind = "expense" | "income";
 type Horizon = 12 | 24;
 type LoadState = "loading" | "empty" | "ready" | "error";
 
@@ -178,10 +178,6 @@ export default function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [entryKind, setEntryKind] = useState<EntryKind>("expense");
-  const [entryAmount, setEntryAmount] = useState("");
-  const [entryCategoryId, setEntryCategoryId] = useState("");
-  const [entryDate, setEntryDate] = useState(todayLocal);
   budgetRef.current = budget;
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
@@ -266,30 +262,6 @@ export default function App() {
     [budget],
   );
 
-  const addTransaction = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!budget) return;
-    try {
-      const amountMinor = parseMoney(entryAmount);
-      const pendingEntry = { kind: entryKind, amountMinor, categoryId: entryCategoryId, occurredOn: entryDate } as const;
-      await budgetSave.apply((current) => {
-        const account = current.accounts.find((item) => item.active);
-        if (!account) throw new Error("No active account.");
-        const fallbackCategory = current.categories.find((item) => item.active && item.type === "expense")?.id ?? "";
-        const transaction: Transaction = pendingEntry.kind === "income"
-          ? { id: crypto.randomUUID(), occurredOn: pendingEntry.occurredOn, status: "posted", kind: "income", amountMinor: pendingEntry.amountMinor, accountId: account.id }
-          : { id: crypto.randomUUID(), occurredOn: pendingEntry.occurredOn, status: "posted", kind: "expense", amountMinor: pendingEntry.amountMinor, accountId: account.id, categoryId: pendingEntry.categoryId || fallbackCategory };
-        if (transaction.kind === "expense" && !transaction.categoryId) throw new Error("No active expense category.");
-        return { ...current, transactions: [...current.transactions, transaction] };
-      });
-      setMessage("Операция сохранена.");
-      setEntryAmount("");
-      setScreen("today");
-    } catch (error) {
-      setMessage(mutationMessage(error, "Не удалось сохранить операцию. Проверьте поля и попробуйте снова."));
-    }
-  };
-
   const exportBackup = async () => {
     if (!budget) return;
     try {
@@ -354,7 +326,8 @@ export default function App() {
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
   const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const flexibleRows = budget.categories
+  const activeExpenseCategories = budget.categories.filter((category) => category.active && category.type === "expense");
+  const flexibleRows = activeExpenseCategories
     .filter((category) => category.active && flexibleIds.has(category.id))
     .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }))
     .filter((row) => row.metric);
@@ -363,7 +336,7 @@ export default function App() {
   const recentTransactions = [...budget.transactions]
     .filter((transaction) => transaction.status === "posted")
     .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn))
-    .slice(0, screen === "operations" ? 50 : 5);
+    .slice(0, 5);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
 
@@ -385,7 +358,7 @@ export default function App() {
         {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
         {screen === "year" ? <YearScreen budget={budget} plan={plan} horizon={horizon} onHorizon={setHorizon} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
         {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => setScreen("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /></> : null}
-        {screen === "operations" ? <OperationsScreen budget={budget} entryKind={entryKind} entryAmount={entryAmount} entryCategoryId={entryCategoryId} entryDate={entryDate} transactions={recentTransactions} categoryById={categoryById} onKindChange={setEntryKind} onAmountChange={setEntryAmount} onCategoryChange={setEntryCategoryId} onDateChange={setEntryDate} onSubmit={(event) => void addTransaction(event)} /> : null}
+        {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /> : null}
         {screen === "more" ? <MoreScreen storageHealth={storageHealth} showIosInstall={isIos && !isStandalone} onExport={() => void exportBackup()} onImport={(event) => void importBackup(event)} /> : null}
       </main>
 
@@ -483,10 +456,6 @@ function CategoryList({ rows }: { rows: CategoryRow[] }) {
     const progress = Math.min(Math.max(percent, 0), 100);
     return <li key={category.id}><div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><progress className={`progress-track ${metric.status}`} max={100} value={progress} aria-label={`${category.name}: ${Math.round(progress)}% лимита`} /><div className="category-values"><span>Потрачено <b>{formatMoney(metric.actualMinor)}</b></span><span>Осталось <b>{formatMoney(metric.remainingMinor)}</b></span></div></li>;
   })}</ul>;
-}
-
-function OperationsScreen({ budget, entryKind, entryAmount, entryCategoryId, entryDate, transactions, categoryById, onKindChange, onAmountChange, onCategoryChange, onDateChange, onSubmit }: { budget: BudgetState; entryKind: EntryKind; entryAmount: string; entryCategoryId: string; entryDate: string; transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; onKindChange: (kind: EntryKind) => void; onAmountChange: (value: string) => void; onCategoryChange: (value: string) => void; onDateChange: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <><div className="screen-heading"><div><span className="card-kicker">Факт</span><h1>Записать операцию</h1><p>Только то, что уже произошло. Будущие платежи живут в плане.</p></div></div><section className="entry-card"><form className="form-grid" onSubmit={onSubmit}><fieldset className="segmented"><legend className="sr-only">Тип операции</legend><label><input type="radio" checked={entryKind === "expense"} onChange={() => onKindChange("expense")} />Расход</label><label><input type="radio" checked={entryKind === "income"} onChange={() => onKindChange("income")} />Доход</label></fieldset><div className="amount-field"><label htmlFor="amount">Сумма, ₽</label><input id="amount" inputMode="decimal" maxLength={24} placeholder="0" value={entryAmount} onChange={(event) => onAmountChange(event.target.value)} required /></div>{entryKind === "expense" ? <div className="field"><label htmlFor="category">На что</label><select id="category" value={entryCategoryId} onChange={(event) => onCategoryChange(event.target.value)} required><option value="">Выберите категорию</option>{budget.categories.filter((category) => category.active && category.type === "expense").map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></div> : null}<div className="field"><label htmlFor="date">Когда</label><input id="date" type="date" value={entryDate} onChange={(event) => onDateChange(event.target.value)} required /></div><button className="primary-button wide" type="submit">Сохранить</button></form></section><section className="section-card"><SectionTitle title="История" note={`${transactions.length} проведённых операций`} /><TransactionList transactions={transactions} categoryById={categoryById} /></section></>;
 }
 
 function TransactionList({ transactions, categoryById }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]> }) {
