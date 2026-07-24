@@ -266,9 +266,15 @@ File scope исполнителя:
 
 ## Фаза 8. PWA offline, controlled update, accessibility и web hardening
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `feat(pwa): harden offline updates accessibility and security`  
-SHA/доказательство: —
+SHA/доказательство: implementation `c11034fb4befa04a774aa772fd9a4ae261344fff`; ровно `32` Phase 8 файла в PWA/e2e/package scope, без этого плана и generated output. Финальный `pnpm verify` — fixtures `6/6`, storage `62/62`, domain `26/26`, web `203/203`, всего `297/297`; пять TypeScript typechecks, production build с `10` уникальными precache entries (`396,34 KiB`), frozen-lockfile install и `git diff --check` зелёные. Chromium E2E — `5/5`; release scan — `13` артефактов и `10` уникальных precache URL; `pnpm audit` и `pnpm audit --prod` — `0` vulnerabilities.
+
+Точный Chromium-сценарий восстановил G-002 с остатком повседневных лимитов `27 000 ₽` и `4` операциями; расход «Продукты» `9 000 ₽` датой `2026-07-18` дал `18 000 ₽`, перелимит `1 000 ₽`, `5` операций и сохранил дату. Offline reload корня и `/year` пришёл из service worker, сохранил значения и на обоих navigation responses подтвердил HTTP CSP `frame-ancestors 'none'` и `X-Frame-Options: DENY`. Controlled update A→B не выполняет автоматический reload: черновик операции `1 234` и плановый черновик `Страхование — несохранённый черновик` по отдельности блокируют обновление, сохраняют введённые значения и дают `0` navigation; очистка/отмена разрешает ровно `1` navigation, после чего IndexedDB-данные и точные финансовые значения остаются неизменными.
+
+Accessibility E2E подтвердил skip link → `MAIN`, focus заголовка route без кражи focus у формы, нецветовые статусы, targets не меньше `44 CSS px` и отсутствие page-level overflow на `320 px`, `512 px` как эквиваленте zoom `200%`, iPad portrait/landscape, `667×375` с компактной fixed-bottom навигацией и `844×390` с compact sticky-top навигацией без перекрытия видимых controls. Release scanner проверен не только на production artifact, но и синтетическими отрицательными fixtures для всех chunks, secrets, абсолютных путей и remote executable code; изолированный сервер возвращает `400` для malformed URL, `403` для неверного Origin и очищает временные сборки. Root IAB live-check на финальной сборке подтвердил skip link, `H1`, текстовый network status, а также блокировку update при черновике операции `1 234`, сохранность значения и доступный alert. Финальные свежие code review и security review — `APPROVE`, blocker/high/medium/low `0/0/0/0` каждое.
+
+Deploy не выполнялся; `.openai/hosting.json` отсутствует. Реальное применение заголовков будущим HTTPS-хостом, Safari «На экран Домой», offline/Files/Share и VoiceOver на семейных iPhone/iPad остаются ручными gates пользователя.
 
 File scope исполнителя:
 
@@ -279,17 +285,17 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Автоматизировать browser core-scenario, offline reload/navigation и controlled service-worker update без потери несохранённого ввода/IndexedDB.
-- [ ] Добавить проверяемую CSP и release scan: нет remote executable code, finance data в URL/localStorage/SW cache, случайного `server.url`, source maps/secrets.
-- [ ] Обязательный hosting gate по low-находке фазы 5: серверный HTTP CSP header содержит `frame-ancestors 'none'`, `X-Frame-Options: DENY`; проверить заголовки корня и navigation response service worker, не считать meta CSP достаточной anti-framing защитой.
-- [ ] Проверить manifest `standalone`, start_url/scope/icons, nested navigation fallback и offline status.
-- [ ] Пройти keyboard, focus, semantic labels, non-color statuses, touch 44 px, narrow phone/iPad/landscape и zoom 200% в автоматизируемой части.
-- [ ] `pnpm verify`, browser/e2e и production artifact scan зелёные.
-- [ ] Live-check в чистом browser profile: сначала восстановить подписанный тестовый backup G-002, затем внести расход `9 000 ₽` в продукты датой `2026-07-18`; доступно на повседневное меняется `27 000 → 18 000 ₽`, продукты показывают перелимит `1 000 ₽`, счётчик операций растёт на `1`.
-- [ ] Отключить сеть, перезагрузить корень и вложенный route: остаются `18 000 ₽`, `1 000 ₽`, тот же счётчик и дата; включить сеть и применить SW update — значения не меняются.
-- [ ] Свежий code review проверяет PWA lifecycle, race conditions update и browser compatibility.
-- [ ] Свежий security review проверяет CSP, dependency audit, bundle/manifest/SW cache, URL handling и утечки production artifact.
-- [ ] Коммит A содержит только PWA/e2e/package-файлы; коммит B содержит только план с SHA/доказательством A.
+- [x] Автоматизировать browser core-scenario, offline reload/navigation и controlled service-worker update без потери несохранённого ввода/IndexedDB.
+- [x] Добавить проверяемую CSP и release scan: нет remote executable code, finance data в URL/localStorage/SW cache, случайного `server.url`, source maps/secrets.
+- [x] Обязательный hosting gate по low-находке фазы 5: серверный HTTP CSP header содержит `frame-ancestors 'none'`, `X-Frame-Options: DENY`; проверить заголовки корня и navigation response service worker, не считать meta CSP достаточной anti-framing защитой.
+- [x] Проверить manifest `standalone`, start_url/scope/icons, nested navigation fallback и offline status.
+- [x] Пройти keyboard, focus, semantic labels, non-color statuses, touch 44 px, narrow phone/iPad/landscape и zoom 200% в автоматизируемой части.
+- [x] `pnpm verify`, browser/e2e и production artifact scan зелёные.
+- [x] Live-check в чистом browser profile: сначала восстановить подписанный тестовый backup G-002, затем внести расход `9 000 ₽` в продукты датой `2026-07-18`; доступно на повседневное меняется `27 000 → 18 000 ₽`, продукты показывают перелимит `1 000 ₽`, счётчик операций растёт на `1`.
+- [x] Отключить сеть, перезагрузить корень и вложенный route: остаются `18 000 ₽`, `1 000 ₽`, тот же счётчик и дата; включить сеть и применить SW update — значения не меняются.
+- [x] Свежий code review проверяет PWA lifecycle, race conditions update и browser compatibility.
+- [x] Свежий security review проверяет CSP, dependency audit, bundle/manifest/SW cache, URL handling и утечки production artifact.
+- [x] Коммит A содержит только PWA/e2e/package-файлы; коммит B содержит только план с SHA/доказательством A.
 
 Ручной gate: на реальном семейном iPhone/iPad открыть HTTPS-сборку в Safari, добавить «На экран Домой», пройти VoiceOver, offline и Files/Share backup/restore. HTTPS deploy в рамках этого плана запрещён.
 
