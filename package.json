@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "pnpm --filter @family-budget/web dev",
     "build": "pnpm --filter @family-budget/web build",
+    "e2e": "pnpm --filter @family-budget/web e2e",
+    "release:scan": "pnpm --filter @family-budget/web release:scan",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "verify": "pnpm test && pnpm typecheck && pnpm build"

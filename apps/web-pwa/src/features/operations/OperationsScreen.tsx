@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateBudget,
   type BudgetState,
@@ -20,6 +20,7 @@ import { createOperationsSubmissionGate } from "./form-state";
 interface OperationsScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Confirmation =
@@ -187,7 +188,7 @@ function TransactionFields({ budget, draft, patch }: { budget: BudgetState; draf
   </>;
 }
 
-export function OperationsScreen({ budget, onChange }: OperationsScreenProps) {
+export function OperationsScreen({ budget, onChange, onDirtyChange }: OperationsScreenProps) {
   const [draft, setDraft] = useState<TransactionDraft>(() => defaultDraft("expense", budget));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -195,6 +196,8 @@ export function OperationsScreen({ budget, onChange }: OperationsScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const gate = useRef(createOperationsSubmissionGate());
+  const pristineDraft = useMemo(() => defaultDraft(draft.kind, budget), [budget, draft.kind]);
+  const dirty = editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristineDraft);
   const metrics = useMemo(() => calculateBudget(budget), [budget]);
   const history = useMemo(() => [...budget.transactions].sort((left, right) => right.occurredOn.localeCompare(left.occurredOn) || right.id.localeCompare(left.id)), [budget.transactions]);
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId);
@@ -205,6 +208,14 @@ export function OperationsScreen({ budget, onChange }: OperationsScreenProps) {
   );
   const categorySignals = budget.categories.filter((item) => item.active && item.type === "expense" && categoryIds.has(item.id));
   const usedActiveCategories = budget.categories.filter((category) => category.active && category.type === "expense" && budget.transactions.some((transaction) => (transaction.kind === "expense" || transaction.kind === "refund") && transaction.categoryId === category.id));
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => () => {
+    onDirtyChange?.(false);
+  }, [onDirtyChange]);
 
   const clearTransient = () => {
     setError(null);
@@ -292,6 +303,7 @@ export function OperationsScreen({ budget, onChange }: OperationsScreenProps) {
           <FieldError message={error} />
           <button className="primary-button" type="submit" disabled={busy} aria-busy={busy} aria-label={editingId ? "Проверить изменения операции" : `Сохранить операцию «${kindLabels[draft.kind]}»`}>{editingId ? "Проверить изменения" : "Сохранить"}</button>
           {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button> : null}
+          {!editingId && dirty ? <button className="secondary-button" type="button" onClick={() => reset()}>Очистить черновик</button> : null}
         </fieldset>
       </form>
       {confirmation ? <div className="limit-alert" role="alertdialog" aria-labelledby="operation-confirmation-title">

@@ -35,6 +35,12 @@ describe("data-management UI", () => {
     expect(html).toContain("импорт CSV не поддерживается");
     expect(html).toContain("только свою доверенную JSON-копию");
     expect(html).toContain('accept=".json,application/json"');
+    expect(html).toContain('id="backup-file"');
+    expect(html).toContain('for="backup-file"');
+    expect(html).toContain('aria-describedby="json-restore-notice"');
+    expect(html).toContain('aria-describedby="json-backup-notice"');
+    expect(html).toContain('aria-describedby="csv-export-notice"');
+    expect(html).toContain('aria-busy="false"');
     expect(html).toContain("Перейти к удалению");
     expect(html).not.toContain('type="file" name=');
   });
@@ -78,8 +84,7 @@ describe("data-management UI", () => {
       "utf8",
     );
 
-    expect(styles).toMatch(
-      /\.file-button:focus-within\s*\{[^}]*outline:\s*3px\s+solid[^}]*outline-offset:\s*2px;/,
-    );
+    expect(styles).toMatch(/\.file-button:focus-within\s*\{[\s\S]*outline:\s*3px\s+solid\s+#075fd8;/);
+    expect(styles).toMatch(/\.file-button\s*\{[^}]*min-height:\s*44px;/);
   });
 });

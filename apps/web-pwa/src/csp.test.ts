@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const deployHeaders = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
+const securityHeaders = JSON.parse(
+  readFileSync(new URL("../security-headers.json", import.meta.url), "utf8"),
+) as Record<string, string>;
+
+const metaCsp =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
+const httpCsp = `${metaCsp}; frame-ancestors 'none'`;
 
 function readCspDirectives(): Map<string, string[]> {
   const meta = indexHtml.match(
@@ -44,6 +52,28 @@ describe("web content security policy", () => {
       "base-uri": ["'none'"],
       "form-action": ["'none'"],
     });
+  });
+
+  it("keeps anti-framing in exact deployable HTTP headers rather than claiming meta CSP support", () => {
+    expect(securityHeaders).toEqual({
+      "Content-Security-Policy": httpCsp,
+      "X-Frame-Options": "DENY",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer",
+      "Permissions-Policy":
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=()",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Resource-Policy": "same-origin",
+    });
+
+    expect(deployHeaders).toContain("/*");
+    for (const [name, value] of Object.entries(securityHeaders)) {
+      expect(deployHeaders).toContain(`${name}: ${value}`);
+    }
+
+    const metaDirectives = readCspDirectives();
+    expect(metaDirectives.has("frame-ancestors")).toBe(false);
+    expect(securityHeaders["Content-Security-Policy"]).toContain("frame-ancestors 'none'");
   });
 
   it("does not permit inline/eval execution, wildcard hosts, loopback endpoints, or web sockets", () => {

@@ -65,6 +65,19 @@ interface AppBudgetSaveOptions {
 }
 
 export const BUDGET_WRITE_CONFLICT_MESSAGE = "Бюджет уже изменён в другой вкладке. Показана сохранённая версия; повторите изменение.";
+export const MAIN_CONTENT_ID = "main-content";
+
+export function focusRouteHeading(root: ParentNode | null): boolean {
+  const heading = root?.querySelector<HTMLElement>("h1");
+  if (!heading) return false;
+  if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+  heading.focus({ preventScroll: true });
+  return true;
+}
+
+function SkipLink() {
+  return <a className="skip-link" href={`#${MAIN_CONTENT_ID}`}>К основному содержимому</a>;
+}
 
 function writeConflict(): Error {
   return new Error(BUDGET_WRITE_CONFLICT_MESSAGE);
@@ -167,6 +180,9 @@ export default function App() {
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [operationDraftDirty, setOperationDraftDirty] = useState(false);
+  const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
+  const previousScreenRef = useRef<Screen>(screen);
   budgetRef.current = budget;
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
@@ -246,6 +262,12 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  useEffect(() => {
+    if (previousScreenRef.current === screen) return;
+    previousScreenRef.current = screen;
+    focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+  }, [screen]);
+
   const metrics = useMemo(() => budget ? calculateBudget(budget) : null, [budget]);
   const plan = useMemo(() => {
     if (!budget) return null;
@@ -278,10 +300,10 @@ export default function App() {
     }
   };
 
-  if (loadState === "loading") return <main className="loading-state" aria-busy="true"><p>Открываем семейный план…</p></main>;
-  if (loadState === "error") return <main className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main>;
-  if (loadState === "empty") return <Onboarding onComplete={completeOnboarding} onDemo={loadDemo} />;
-  if (!budget || !metrics || !plan) return <main className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main>;
+  if (loadState === "loading") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true"><p>Открываем семейный план…</p></main></>;
+  if (loadState === "error") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main></>;
+  if (loadState === "empty") return <div className="onboarding-route"><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div></div>;
+  if (!budget || !metrics || !plan) return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
   const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
@@ -301,9 +323,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <SkipLink />
       <header className="app-header">
         <div className="brand"><span className="brand-mark">₽</span><div><strong>Семейный план</strong><small>видим месяц и будущее</small></div></div>
-        <span className={`network-badge${online ? "" : " offline"}`}>{online ? "в сети" : "офлайн"}</span>
+        <span className={`network-badge${online ? "" : " offline"}`} role="status" aria-label={`Состояние сети: ${online ? "в сети" : "офлайн"}`}>{online ? "в сети" : "офлайн"}</span>
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">
@@ -313,44 +336,46 @@ export default function App() {
         <NavButton active={screen === "more"} icon="•••" label="Ещё" onClick={() => setScreen("more")} />
       </nav>
 
-      <main className="content">
-        {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
-        {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
-        {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => setScreen("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /></> : null}
-        {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
-        {screen === "more" ? <MoreScreen
-          budget={budget}
-          storageHealth={storageHealth}
-          showIosInstall={isIos && !isStandalone}
-          lastSuccessfulBackup={lastSuccessfulBackup}
-          onCreateBackup={async () => createBudgetBackup(
-            budgetRef.current ?? budget,
-            async () => undefined,
-          )}
-          onRecordSuccessfulBackup={async (createdAt) => {
-            await repository.setLastSuccessfulBackup(createdAt);
-            setLastSuccessfulBackup(createdAt);
-          }}
-          onRestoreBackup={async (file) => {
-            await restoreBudgetBackup(
-              file,
-              (restored) => budgetSave.apply(() => restored).then(() => undefined),
-              () => undefined,
-            );
-          }}
-          onPersistClear={() => repository.clear()}
-          onPublishEmpty={() => {
-            budgetRef.current = null;
-            revisionRef.current = null;
-            setBudget(null);
-            setLastSuccessfulBackup(null);
-            setLoadState("empty");
-          }}
-        /> : null}
+      <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
+        <div className="route-screen" data-screen={screen}>
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
+          {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
+          {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => setScreen("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
+          {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
+          {screen === "more" ? <MoreScreen
+            budget={budget}
+            storageHealth={storageHealth}
+            showIosInstall={isIos && !isStandalone}
+            lastSuccessfulBackup={lastSuccessfulBackup}
+            onCreateBackup={async () => createBudgetBackup(
+              budgetRef.current ?? budget,
+              async () => undefined,
+            )}
+            onRecordSuccessfulBackup={async (createdAt) => {
+              await repository.setLastSuccessfulBackup(createdAt);
+              setLastSuccessfulBackup(createdAt);
+            }}
+            onRestoreBackup={async (file) => {
+              await restoreBudgetBackup(
+                file,
+                (restored) => budgetSave.apply(() => restored).then(() => undefined),
+                () => undefined,
+              );
+            }}
+            onPersistClear={() => repository.clear()}
+            onPublishEmpty={() => {
+              budgetRef.current = null;
+              revisionRef.current = null;
+              setBudget(null);
+              setLastSuccessfulBackup(null);
+              setLoadState("empty");
+            }}
+          /> : null}
+        </div>
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
-      <UpdatePrompt />
+      <UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />
     </div>
   );
 }
@@ -369,6 +394,7 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
   const next = budget.annualCommitments.find((item) => item.id === nextId);
   const nextMetrics = next ? plan.commitments[next.id] : undefined;
   return <>
+    <h1 className="visually-hidden">Сегодня: семейный бюджет</h1>
     <div className="eyebrow">{formatMonth(plan.startMonth)}</div>
     <section className={`hero-card${safeToSpendMinor < 0 ? " danger" : ""}`}>
       <span>Можно на повседневные расходы</span>

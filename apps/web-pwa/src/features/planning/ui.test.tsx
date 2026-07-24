@@ -2,7 +2,12 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { PlanningScreen } from "./PlanningScreen";
+import {
+  hasChangedRestoreDrafts,
+  hasUnsavedPlanningDrafts,
+  isPlanningEditorDirty,
+  PlanningScreen,
+} from "./PlanningScreen";
 import { archiveFlexibleLine } from "./model";
 import { makePlanningTestState, TEST_IDS } from "./test-fixture";
 
@@ -45,5 +50,70 @@ describe("planning UI", () => {
     expect(source.indexOf("repository.save(next)")).toBeLessThan(source.indexOf("options.publish(next)"));
     expect(source).toContain("maxLength={80}");
     expect(source).toContain("maxLength={24}");
+  });
+
+  it("tracks every lossy planning draft category and aggregates them conservatively", () => {
+    expect(isPlanningEditorDirty(
+      { name: "Новая страховка", dueDate: "", amount: "" },
+      { name: "", dueDate: "", amount: "" },
+      null,
+    )).toBe(true);
+    expect(isPlanningEditorDirty(
+      { name: "", dueDay: "15", months: [9, 10] },
+      { name: "", dueDay: "1", months: [] },
+      null,
+    )).toBe(true);
+    expect(isPlanningEditorDirty(
+      { name: "Продукты", amount: "30000" },
+      { name: "", amount: "" },
+      null,
+    )).toBe(true);
+    expect(isPlanningEditorDirty(
+      { name: "", amount: "" },
+      { name: "", amount: "" },
+      "editing-existing-line",
+    )).toBe(true);
+    expect(isPlanningEditorDirty(
+      { name: "", amount: "" },
+      { name: "", amount: "" },
+      null,
+    )).toBe(false);
+
+    const baselines = new Map([
+      [TEST_IDS.categories.children, "10000"],
+    ]);
+    expect(hasChangedRestoreDrafts({
+      [TEST_IDS.categories.children]: { amount: "12000", error: null },
+    }, baselines)).toBe(true);
+    expect(hasChangedRestoreDrafts({
+      [TEST_IDS.categories.children]: { amount: "10000", error: null },
+    }, baselines)).toBe(false);
+    expect(hasChangedRestoreDrafts({
+      "stale-category": { amount: "999", error: null },
+    }, baselines)).toBe(false);
+
+    for (const editor of ["commitment", "schedule", "flexible"] as const) {
+      expect(hasUnsavedPlanningDrafts({
+        commitment: editor === "commitment",
+        schedule: editor === "schedule",
+        flexible: editor === "flexible",
+      })).toBe(true);
+    }
+    expect(hasUnsavedPlanningDrafts({
+      commitment: false,
+      schedule: false,
+      flexible: false,
+    })).toBe(false);
+  });
+
+  it("wires one aggregate dirty callback through every editor with unmount cleanup", () => {
+    const source = readFileSync(new URL("./PlanningScreen.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain("onDirtyChange?: (dirty: boolean) => void");
+    expect(source).toContain("<CommitmentsEditor {...props} onDirtyChange={reportCommitmentDirty} />");
+    expect(source).toContain("<SchedulesEditor {...props} onDirtyChange={reportScheduleDirty} />");
+    expect(source).toContain("<FlexibleEditor {...props} onDirtyChange={reportFlexibleDirty} />");
+    expect(source).toMatch(/useEffect\(\(\) => \(\) => \{\s*onDirtyChange\(false\);/);
+    expect(source).toContain("onDirtyChange?.(false)");
   });
 });

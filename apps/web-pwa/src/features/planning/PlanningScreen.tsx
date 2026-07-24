@@ -1,4 +1,12 @@
-import { type FormEvent, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { formatMinor, type BudgetState } from "@family-budget/domain";
 import {
   archiveFlexibleLine,
@@ -31,6 +39,38 @@ import {
 interface PlanningScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
+  readonly onDirtyChange?: (dirty: boolean) => void;
+}
+
+type PlanningEditor = "commitment" | "schedule" | "flexible";
+type EditorDirtyReporter = (dirty: boolean) => void;
+
+export interface PlanningDraftDirtyState {
+  readonly commitment: boolean;
+  readonly schedule: boolean;
+  readonly flexible: boolean;
+}
+
+export function hasUnsavedPlanningDrafts(state: PlanningDraftDirtyState): boolean {
+  return state.commitment || state.schedule || state.flexible;
+}
+
+export function isPlanningEditorDirty<T extends object>(
+  draft: T,
+  pristine: T,
+  editingId: string | null,
+): boolean {
+  return editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristine);
+}
+
+export function hasChangedRestoreDrafts(
+  restoreDrafts: Readonly<Record<string, RestoreDraftState>>,
+  baselineAmounts: ReadonlyMap<string, string>,
+): boolean {
+  return Object.entries(restoreDrafts).some(([categoryId, draft]) => {
+    const baseline = baselineAmounts.get(categoryId);
+    return baseline !== undefined && draft.amount !== baseline;
+  });
 }
 
 const monthNames = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
@@ -76,6 +116,20 @@ function useSave(onChange: PlanningScreenProps["onChange"], formPrefix: string, 
   return { ...state, run, clear: () => dispatch({ type: "change" }) };
 }
 
+function useDirtyReporter(onDirtyChange: EditorDirtyReporter, dirty: boolean) {
+  useEffect(() => {
+    onDirtyChange(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => () => {
+    onDirtyChange(false);
+  }, [onDirtyChange]);
+}
+
+interface PlanningEditorProps extends Omit<PlanningScreenProps, "onDirtyChange"> {
+  readonly onDirtyChange: EditorDirtyReporter;
+}
+
 function ActiveReferenceFields({ prefix, budget, categoryId, accountId, onCategory, onAccount, errorField, errorMessage }: {
   prefix: string;
   budget: BudgetState;
@@ -108,14 +162,19 @@ function ActiveReferenceFields({ prefix, budget, categoryId, accountId, onCatego
   </>;
 }
 
-function CommitmentsEditor({ budget, onChange }: PlanningScreenProps) {
-  const defaults = (): CommitmentDraft => ({
+function commitmentDefaults(budget: BudgetState): CommitmentDraft {
+  return {
     name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "",
     accountId: budget.accounts.find((item) => item.active)?.id ?? "", dueDate: "", amount: "", reserved: "0", recurrence: "annual",
-  });
-  const [draft, setDraft] = useState<CommitmentDraft>(defaults);
+  };
+}
+
+function CommitmentsEditor({ budget, onChange, onDirtyChange }: PlanningEditorProps) {
+  const pristine = useMemo(() => commitmentDefaults(budget), [budget]);
+  const [draft, setDraft] = useState<CommitmentDraft>(() => commitmentDefaults(budget));
   const [editingId, setEditingId] = useState<string | null>(null);
   const save = useSave(onChange, "commitment", ["name", "categoryId", "accountId", "dueDate", "amount", "reserved"]);
+  useDirtyReporter(onDirtyChange, isPlanningEditorDirty(draft, pristine, editingId));
   const patch = <K extends keyof CommitmentDraft>(key: K, value: CommitmentDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
     save.clear();
@@ -124,7 +183,7 @@ function CommitmentsEditor({ budget, onChange }: PlanningScreenProps) {
     event.preventDefault();
     void save.run(
       (state) => editingId ? editCommitment(state, editingId, draft) : createCommitment(state, draft),
-      () => { setDraft(defaults()); setEditingId((current) => nextEditingId(current, { type: "saved" })); },
+      () => { setDraft(commitmentDefaults(budget)); setEditingId((current) => nextEditingId(current, { type: "saved" })); },
     );
   };
   const edit = (id: string) => {
@@ -148,7 +207,7 @@ function CommitmentsEditor({ budget, onChange }: PlanningScreenProps) {
         <div className="field"><label htmlFor="commitment-recurrence">Повтор</label><select id="commitment-recurrence" value={draft.recurrence} onChange={(event) => patch("recurrence", event.target.value as CommitmentDraft["recurrence"])}><option value="annual">Каждый год</option><option value="one_time">Один раз</option></select></div>
         {save.errorField === "form" ? <p className="field-error" id="commitment-form" tabIndex={-1} role="alert">{save.errorMessage}</p> : null}
         <button className="primary-button" type="submit" aria-label={editingId ? "Сохранить крупный платёж" : "Добавить крупный платёж"}>{editingId ? "Сохранить" : "Добавить"}</button>
-        {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование крупного платежа" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setDraft(defaults()); save.clear(); }}>Отмена</button> : null}
+        {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование крупного платежа" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setDraft(commitmentDefaults(budget)); save.clear(); }}>Отмена</button> : null}
       </fieldset>
     </form>
     <ul className="planning-edit-list">
@@ -157,18 +216,23 @@ function CommitmentsEditor({ budget, onChange }: PlanningScreenProps) {
   </section>;
 }
 
-function SchedulesEditor({ budget, onChange }: PlanningScreenProps) {
-  const defaults = (): ScheduleDraft => ({ name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "", accountId: budget.accounts.find((item) => item.active)?.id ?? "", amount: "", dueDay: "1", mode: "monthly", months: [] });
-  const [draft, setDraft] = useState<ScheduleDraft>(defaults);
+function scheduleDefaults(budget: BudgetState): ScheduleDraft {
+  return { name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "", accountId: budget.accounts.find((item) => item.active)?.id ?? "", amount: "", dueDay: "1", mode: "monthly", months: [] };
+}
+
+function SchedulesEditor({ budget, onChange, onDirtyChange }: PlanningEditorProps) {
+  const pristine = useMemo(() => scheduleDefaults(budget), [budget]);
+  const [draft, setDraft] = useState<ScheduleDraft>(() => scheduleDefaults(budget));
   const [editingId, setEditingId] = useState<string | null>(null);
   const save = useSave(onChange, "schedule", ["name", "categoryId", "accountId", "amount", "dueDay", "months"]);
+  useDirtyReporter(onDirtyChange, isPlanningEditorDirty(draft, pristine, editingId));
   const patch = <K extends keyof ScheduleDraft>(key: K, value: ScheduleDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
     save.clear();
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void save.run((state) => editingId ? editSchedule(state, editingId, draft) : createSchedule(state, draft), () => { setEditingId((current) => nextEditingId(current, { type: "saved" })); setDraft(defaults()); });
+    void save.run((state) => editingId ? editSchedule(state, editingId, draft) : createSchedule(state, draft), () => { setEditingId((current) => nextEditingId(current, { type: "saved" })); setDraft(scheduleDefaults(budget)); });
   };
   const edit = (id: string) => {
     const item = budget.scheduledExpenses.find((candidate) => candidate.id === id);
@@ -192,14 +256,14 @@ function SchedulesEditor({ budget, onChange }: PlanningScreenProps) {
         {draft.mode === "selected_months" ? <fieldset id="schedule-months" tabIndex={-1} aria-describedby={save.errorField === "months" ? "schedule-months-error" : undefined}><legend>Месяцы оплаты</legend><div className="month-checkboxes">{monthNames.map((label, index) => { const month = index + 1; return <label key={month}><input type="checkbox" checked={draft.months.includes(month)} onChange={() => toggleMonth(month)} />{label}</label>; })}</div><FieldError id="schedule-months" message={save.errorField === "months" ? save.errorMessage ?? undefined : undefined} /></fieldset> : null}
         {save.errorField === "form" ? <p className="field-error" id="schedule-form" tabIndex={-1} role="alert">{save.errorMessage}</p> : null}
         <button className="primary-button" type="submit" aria-label={editingId ? "Сохранить расписание" : "Добавить расписание"}>{editingId ? "Сохранить" : "Добавить"}</button>
-        {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование расписания" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setDraft(defaults()); save.clear(); }}>Отмена</button> : null}
+        {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование расписания" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setDraft(scheduleDefaults(budget)); save.clear(); }}>Отмена</button> : null}
       </fieldset>
     </form>
     <ul className="planning-edit-list">{budget.scheduledExpenses.map((item) => <li key={item.id}><div><strong>{item.name}</strong><span>{rubles(item.amountMinor)} · день {item.dueDay} · {item.mode === "monthly" ? "ежемесячно" : item.months?.map((month) => monthNames[month - 1]).join(", ")}{item.active ? "" : " · в архиве"}</span></div><button className="secondary-button" type="button" aria-label={`Изменить расписание «${item.name}»`} onClick={() => edit(item.id)}>Изменить</button><button className="text-button" type="button" aria-label={`${item.active ? "Архивировать" : "Вернуть"} расписание «${item.name}»`} onClick={() => void save.run((state) => setScheduleActive(state, item.id, !item.active))}>{item.active ? "В архив" : "Вернуть"}</button></li>)}</ul>
   </section>;
 }
 
-function FlexibleEditor({ budget, onChange }: PlanningScreenProps) {
+function FlexibleEditor({ budget, onChange, onDirtyChange }: PlanningEditorProps) {
   const active = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   const [draft, setDraft] = useState<FlexibleDraft>({ name: "", amount: "" });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -222,6 +286,15 @@ function FlexibleEditor({ budget, onChange }: PlanningScreenProps) {
   };
   const activeLines = active?.lines.filter((line) => line.active !== false) ?? [];
   const archivedLines = active?.lines.filter((line) => line.active === false) ?? [];
+  const restoreBaselines = useMemo(
+    () => new Map(archivedLines.map((line) => [line.categoryId, moneyInput(line.plannedMinor)])),
+    [archivedLines],
+  );
+  useDirtyReporter(
+    onDirtyChange,
+    isPlanningEditorDirty(draft, { name: "", amount: "" }, editingId) ||
+      hasChangedRestoreDrafts(restoreDrafts, restoreBaselines),
+  );
   const restore = async (lineId: string, categoryId: string, categoryName: string, originalAmount: string) => {
     const controlId = restoreControlId(categoryId);
     const amount = restoreDrafts[categoryId]?.amount ?? originalAmount;
@@ -255,11 +328,44 @@ function FlexibleEditor({ budget, onChange }: PlanningScreenProps) {
   </section>;
 }
 
-export function PlanningScreen(props: PlanningScreenProps) {
+export function PlanningScreen({ onDirtyChange, ...props }: PlanningScreenProps) {
+  const dirtyState = useRef<PlanningDraftDirtyState>({
+    commitment: false,
+    schedule: false,
+    flexible: false,
+  });
+  const overallDirty = useRef(false);
+  const reportDirty = useCallback((editor: PlanningEditor, dirty: boolean) => {
+    if (dirtyState.current[editor] === dirty) return;
+    dirtyState.current = { ...dirtyState.current, [editor]: dirty };
+    const nextOverall = hasUnsavedPlanningDrafts(dirtyState.current);
+    if (nextOverall === overallDirty.current) return;
+    overallDirty.current = nextOverall;
+    onDirtyChange?.(nextOverall);
+  }, [onDirtyChange]);
+  const reportCommitmentDirty = useCallback(
+    (dirty: boolean) => reportDirty("commitment", dirty),
+    [reportDirty],
+  );
+  const reportScheduleDirty = useCallback(
+    (dirty: boolean) => reportDirty("schedule", dirty),
+    [reportDirty],
+  );
+  const reportFlexibleDirty = useCallback(
+    (dirty: boolean) => reportDirty("flexible", dirty),
+    [reportDirty],
+  );
+
+  useEffect(() => () => {
+    dirtyState.current = { commitment: false, schedule: false, flexible: false };
+    overallDirty.current = false;
+    onDirtyChange?.(false);
+  }, [onDirtyChange]);
+
   return <div className="planning-screen">
     <header className="screen-heading"><div><span className="card-kicker">Настройки горизонта</span><h1>Плановые расходы</h1><p>Четыре слоя хранятся отдельно и сразу пересчитывают 12–24 месяца.</p></div></header>
-    <CommitmentsEditor {...props} />
-    <SchedulesEditor {...props} />
-    <FlexibleEditor {...props} />
+    <CommitmentsEditor {...props} onDirtyChange={reportCommitmentDirty} />
+    <SchedulesEditor {...props} onDirtyChange={reportScheduleDirty} />
+    <FlexibleEditor {...props} onDirtyChange={reportFlexibleDirty} />
   </div>;
 }

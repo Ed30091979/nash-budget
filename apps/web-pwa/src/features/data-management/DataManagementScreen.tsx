@@ -190,7 +190,7 @@ export function DataManagementScreen({
   );
 
   return (
-    <section className="data-management" aria-labelledby="data-management-title">
+    <section className="data-management" aria-labelledby="data-management-title" aria-busy={busy}>
       <header>
         <p className="eyebrow">Данные и восстановление</p>
         <h2 id="data-management-title">Выгрузка и резервная копия</h2>
@@ -201,8 +201,8 @@ export function DataManagementScreen({
         <article className="data-management-card">
           <h3>Резервная копия JSON</h3>
           <p>Последняя успешная копия: <strong>{formatLastBackupDate(lastBackupAt)}</strong>.</p>
-          <p role="note">JSON не зашифрован и читается как обычный текст. Храните файл в безопасном месте.</p>
-          <button type="button" disabled={busy} onClick={runBackup}>
+          <p id="json-backup-notice" role="note">JSON не зашифрован и читается как обычный текст. Храните файл в безопасном месте.</p>
+          <button type="button" disabled={busy} aria-describedby="json-backup-notice" onClick={runBackup}>
             {state.activity === "backup" ? "Готовим копию…" : "Скачать резервную копию"}
           </button>
         </article>
@@ -210,21 +210,23 @@ export function DataManagementScreen({
         <article className="data-management-card">
           <h3>Таблица операций CSV</h3>
           <p>В выгрузке: <strong>{budget.transactions.length}</strong> операций.</p>
-          <p role="note">CSV не зашифрован и читается как обычный текст. Это таблица для Excel, а не резервная копия: импорт CSV не поддерживается.</p>
+          <p id="csv-export-notice" role="note">CSV не зашифрован и читается как обычный текст. Это таблица для Excel, а не резервная копия: импорт CSV не поддерживается.</p>
           <span className="visually-hidden">{HUMAN_READABLE_CSV_NOTICE}</span>
-          <button type="button" disabled={busy} onClick={runCsv}>
+          <button type="button" disabled={busy} aria-describedby="csv-export-notice" onClick={runCsv}>
             {state.activity === "csv" ? "Готовим таблицу…" : "Скачать таблицу CSV"}
           </button>
         </article>
 
         <article className="data-management-card">
           <h3>Восстановить из JSON</h3>
-          <p role="note">Выбирайте только свою доверенную JSON-копию размером не больше 5 МБ. Восстановление заменит текущие локальные данные.</p>
-          <label className="file-button">
+          <p id="json-restore-notice" role="note">Выбирайте только свою доверенную JSON-копию размером не больше 5 МБ. Восстановление заменит текущие локальные данные.</p>
+          <label className="file-button" htmlFor="backup-file">
             <span>{state.activity === "restore" ? "Проверяем копию…" : "Выбрать резервную копию JSON"}</span>
             <input
+              id="backup-file"
               type="file"
               accept=".json,application/json"
+              aria-describedby="json-restore-notice"
               disabled={busy}
               onChange={restore}
             />
@@ -246,7 +248,7 @@ export function DataManagementScreen({
         </article>
       </div>
 
-      {state.message ? <p role="status">{state.message}</p> : null}
+      {state.message ? <p role="status" aria-live="polite">{state.message}</p> : null}
       {state.error ? <p role="alert">{state.error}</p> : null}
 
       {state.clearConfirmationOpen

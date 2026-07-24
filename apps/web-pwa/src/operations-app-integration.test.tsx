@@ -102,8 +102,9 @@ describe("operations app integration", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
     expect(source).toContain('import { OperationsScreen } from "./features/operations"');
-    expect(source).toContain('<OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} />');
-    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} />');
+    expect(source).toContain('<OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} />');
+    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />");
+    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
     expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);
