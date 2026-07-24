@@ -1305,8 +1305,26 @@ describe("IndexedDB storage v2", () => {
     expect(await repository.getLastSuccessfulBackup()).toBeNull();
   });
 
+  it("не воскрешает metadata, если другая вкладка завершила clear до поздней post-download записи", async () => {
+    const databaseName = name("metadata-after-two-tab-clear");
+    const clearingTab = new IndexedDbBudgetRepository<{ amountMinor: number }>({ databaseName });
+    const backupTab = new IndexedDbBudgetRepository<{ amountMinor: number }>({ databaseName });
+    await clearingTab.save({ amountMinor: 12345 });
+    expect(await backupTab.loadVersioned()).not.toBeNull();
+
+    await clearingTab.clear();
+    await expect(
+      backupTab.setLastSuccessfulBackup("2026-07-24T09:10:11.000Z"),
+    ).rejects.toThrow(/бюджет уже удалён/);
+
+    expect(await clearingTab.documentCount()).toBe(0);
+    expect(await clearingTab.loadVersioned()).toBeNull();
+    expect(await clearingTab.getLastSuccessfulBackup()).toBeNull();
+  });
+
   it("не меняет metadata, если последующий export завершился ошибкой", async () => {
     const repository = new IndexedDbBudgetRepository({ databaseName: name("failed-export") });
+    await repository.save({ amountMinor: 12345 });
     await repository.setLastSuccessfulBackup("2026-07-17T12:00:00.000Z");
     const codec = new ValidatedBackupCodec((value) => value);
 

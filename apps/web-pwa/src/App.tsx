@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -13,6 +13,8 @@ import {
   type StorageHealth,
 } from "@family-budget/storage";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { DashboardScreen, OperationsSearch } from "./features/dashboard";
+import { DataManagementScreen } from "./features/data-management";
 import { OperationsScreen } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
@@ -22,11 +24,9 @@ import { formatMoney } from "./money";
 import { createBudgetRepository } from "./storage-repository";
 
 type Screen = "today" | "year" | "planning" | "operations" | "more";
-type Horizon = 12 | 24;
 type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
-const monthShort = new Intl.DateTimeFormat("ru-RU", { month: "short", year: "2-digit", timeZone: "UTC" });
 const dateShort = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
 const calendarMonths = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
@@ -68,12 +68,6 @@ export const BUDGET_WRITE_CONFLICT_MESSAGE = "Бюджет уже изменён
 
 function writeConflict(): Error {
   return new Error(BUDGET_WRITE_CONFLICT_MESSAGE);
-}
-
-function mutationMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message === BUDGET_WRITE_CONFLICT_MESSAGE
-    ? BUDGET_WRITE_CONFLICT_MESSAGE
-    : fallback;
 }
 
 function sameBudget(left: BudgetState, right: BudgetState): boolean {
@@ -133,19 +127,14 @@ export function createAppBudgetSaveCoordinator(options: AppBudgetSaveOptions) {
   };
 }
 
-function todayLocal(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-}
-
 function formatDate(value: string): string {
   const date = new Date(`${value}T12:00:00`);
   return Number.isNaN(date.getTime()) ? value : dateShort.format(date);
 }
 
-function formatMonth(value: string, compact = false): string {
+function formatMonth(value: string): string {
   const date = new Date(`${value}-01T00:00:00.000Z`);
-  return compact ? monthShort.format(date).replace(" г.", "") : monthLong.format(date).replace(" г.", "");
+  return monthLong.format(date).replace(" г.", "");
 }
 
 function transactionCategoryId(transaction: Transaction): string | null {
@@ -174,9 +163,9 @@ export default function App() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [screen, setScreen] = useState<Screen>("today");
-  const [horizon, setHorizon] = useState<Horizon>(12);
   const [online, setOnline] = useState(navigator.onLine);
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
+  const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   budgetRef.current = budget;
 
@@ -224,6 +213,12 @@ export default function App() {
         }
       }
       try {
+        const createdAt = await repository.getLastSuccessfulBackup();
+        if (!cancelled) setLastSuccessfulBackup(createdAt);
+      } catch {
+        if (!cancelled) setLastSuccessfulBackup(null);
+      }
+      try {
         const health = await requestStorageHealth();
         if (!cancelled) setStorageHealth(health);
       } catch {
@@ -255,48 +250,12 @@ export default function App() {
   const plan = useMemo(() => {
     if (!budget) return null;
     const active = budget.budgets.find((item) => item.id === budget.activeBudgetId);
-    return calculateAnnualPlan(budget, active?.startDate.slice(0, 7), horizon);
-  }, [budget, horizon]);
+    return calculateAnnualPlan(budget, active?.startDate.slice(0, 7), 24);
+  }, [budget]);
   const categoryById = useMemo(
     () => new Map(budget?.categories.map((category) => [category.id, category]) ?? []),
     [budget],
   );
-
-  const exportBackup = async () => {
-    if (!budget) return;
-    try {
-      const { text } = await createBudgetBackup(
-        budget,
-        (createdAt) => repository.setLastSuccessfulBackup(createdAt),
-      );
-      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `family-budget-${todayLocal()}.json`;
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setMessage("Резервная копия подготовлена.");
-    } catch {
-      setMessage("Не удалось подготовить резервную копию.");
-    }
-  };
-
-  const importBackup = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    try {
-      await restoreBudgetBackup(
-        file,
-        (restored) => budgetSave.apply(() => restored).then(() => undefined),
-        () => undefined,
-      );
-      setMessage("Резервная копия восстановлена.");
-      setScreen("today");
-    } catch (error) {
-      setMessage(mutationMessage(error, "Не удалось восстановить копию. Проверьте файл и попробуйте снова."));
-    }
-  };
 
   const publishInitialBudget = (next: BudgetState) => {
     budgetRef.current = next;
@@ -356,10 +315,38 @@ export default function App() {
 
       <main className="content">
         {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
-        {screen === "year" ? <YearScreen budget={budget} plan={plan} horizon={horizon} onHorizon={setHorizon} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
+        {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
         {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => setScreen("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /></> : null}
-        {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /> : null}
-        {screen === "more" ? <MoreScreen storageHealth={storageHealth} showIosInstall={isIos && !isStandalone} onExport={() => void exportBackup()} onImport={(event) => void importBackup(event)} /> : null}
+        {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
+        {screen === "more" ? <MoreScreen
+          budget={budget}
+          storageHealth={storageHealth}
+          showIosInstall={isIos && !isStandalone}
+          lastSuccessfulBackup={lastSuccessfulBackup}
+          onCreateBackup={async () => createBudgetBackup(
+            budgetRef.current ?? budget,
+            async () => undefined,
+          )}
+          onRecordSuccessfulBackup={async (createdAt) => {
+            await repository.setLastSuccessfulBackup(createdAt);
+            setLastSuccessfulBackup(createdAt);
+          }}
+          onRestoreBackup={async (file) => {
+            await restoreBudgetBackup(
+              file,
+              (restored) => budgetSave.apply(() => restored).then(() => undefined),
+              () => undefined,
+            );
+          }}
+          onPersistClear={() => repository.clear()}
+          onPublishEmpty={() => {
+            budgetRef.current = null;
+            revisionRef.current = null;
+            setBudget(null);
+            setLastSuccessfulBackup(null);
+            setLoadState("empty");
+          }}
+        /> : null}
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
@@ -418,17 +405,10 @@ function QuickCard({ icon, label, value }: { icon: string; label: string; value:
   return <article className="quick-card"><i aria-hidden="true">{icon}</i><span>{label}</span><strong>{value}</strong></article>;
 }
 
-function YearScreen({ budget, plan, horizon, onHorizon, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; horizon: Horizon; onHorizon: (value: Horizon) => void; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
+function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
   return <>
-    <div className="screen-heading"><div><span className="card-kicker">Планирование</span><h1>Горизонт семьи</h1><p>Все ожидаемые деньги по месяцам — без смешивания с фактическими покупками.</p></div><div className="year-actions"><div className="horizon-toggle" aria-label="Горизонт"><button className={horizon === 12 ? "active" : ""} type="button" onClick={() => onHorizon(12)}>12 мес.</button><button className={horizon === 24 ? "active" : ""} type="button" onClick={() => onHorizon(24)}>24 мес.</button></div><button className="primary-button planning-entry" type="button" onClick={onPlanning}>Настроить план</button></div></div>
-
-    <div className="month-strip" aria-label="План по месяцам">
-      {plan.months.map((month) => <article className={`month-card${month.spendableAfterPlanMinor < 0 ? " risk" : ""}`} key={month.month}>
-        <header><b>{formatMonth(month.month, true)}</b>{month.annualDueMinor > 0 ? <span>платёж</span> : null}</header>
-        <dl><div><dt>Доход</dt><dd>{formatMoney(month.plannedIncomeMinor)}</dd></div><div><dt>По расписанию</dt><dd>{formatMoney(month.scheduledExpenseMinor)}</dd></div><div><dt>Повседневное</dt><dd>{formatMoney(month.flexiblePlanMinor)}</dd></div><div><dt>В резерв</dt><dd>{formatMoney(month.annualReserveMinor)}</dd></div>{month.annualDueMinor > 0 ? <div className="due"><dt>К оплате из резерва</dt><dd>{formatMoney(month.annualDueMinor)}</dd></div> : null}</dl>
-        <footer><span>Свободно</span><b>{formatMoney(month.spendableAfterPlanMinor)}</b></footer>
-      </article>)}
-    </div>
+    <div className="dashboard-toolbar"><button className="primary-button planning-entry" type="button" onClick={onPlanning}>Настроить план</button></div>
+    <DashboardScreen budget={budget} />
 
     <section className="section-card"><SectionTitle title="Крупные и ежегодные" note="Копим заранее, платим из резерва" /><div className="plan-list">{budget.annualCommitments.filter((item) => item.active).map((item) => <CommitmentRow key={item.id} item={item} metrics={plan.commitments[item.id]} category={categoryById.get(item.categoryId)?.name} />)}</div></section>
     <section className="section-card"><SectionTitle title="Расходы по расписанию" note="Каждый месяц или только в выбранные месяцы" /><div className="plan-list">{budget.scheduledExpenses.filter((item) => item.active).map((item) => <ScheduleRow key={item.id} item={item} category={categoryById.get(item.categoryId)?.name} />)}</div></section>
@@ -463,6 +443,30 @@ function TransactionList({ transactions, categoryById }: { transactions: Transac
   return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon">{transactionSign(transaction)}</span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
 }
 
-function MoreScreen({ storageHealth, showIosInstall, onExport, onImport }: { storageHealth: StorageHealth | null; showIosInstall: boolean; onExport: () => void; onImport: (event: ChangeEvent<HTMLInputElement>) => void }) {
-  return <><div className="screen-heading"><div><span className="card-kicker">Приложение</span><h1>Данные и установка</h1><p>Бюджет работает локально и без регистрации.</p></div></div>{showIosInstall ? <div className="install-note"><strong>Установите на iPhone</strong><p>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</p></div> : null}<section className="section-card"><SectionTitle title="Резервная копия" note="Перенос между устройствами вручную" /><div className="backup-actions"><button className="primary-button" type="button" onClick={onExport}>Скачать JSON</button><label className="secondary-button" htmlFor="backup-file">Восстановить</label><input className="sr-only" id="backup-file" type="file" accept="application/json,.json" onChange={onImport} /></div><p className="storage-meter">{storageText(storageHealth)}</p></section><section className="section-card"><SectionTitle title="Конфиденциальность MVP" note="Данные остаются в этом браузере" /><p className="body-copy">Нет регистрации, рекламы и аналитики. Облачную семейную синхронизацию добавим отдельным безопасным этапом.</p></section></>;
+function MoreScreen(props: {
+  budget: BudgetState;
+  storageHealth: StorageHealth | null;
+  showIosInstall: boolean;
+  lastSuccessfulBackup: string | null;
+  onCreateBackup: () => Promise<{ readonly text: string; readonly createdAt: string }>;
+  onRecordSuccessfulBackup: Parameters<typeof DataManagementScreen>[0]["onRecordSuccessfulBackup"];
+  onRestoreBackup: Parameters<typeof DataManagementScreen>[0]["onRestoreBackup"];
+  onPersistClear: () => Promise<void>;
+  onPublishEmpty: () => void;
+}) {
+  return <>
+    <div className="screen-heading"><div><span className="card-kicker">Приложение</span><h1>Данные и установка</h1><p>Бюджет работает локально и без регистрации.</p></div></div>
+    {props.showIosInstall ? <div className="install-note"><strong>Установите на iPhone</strong><p>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</p></div> : null}
+    <div className="storage-context" role="status"><strong>Локальное хранилище</strong><span>{storageText(props.storageHealth)}</span></div>
+    <DataManagementScreen
+      budget={props.budget}
+      lastSuccessfulBackup={props.lastSuccessfulBackup}
+      onCreateBackup={props.onCreateBackup}
+      onRecordSuccessfulBackup={props.onRecordSuccessfulBackup}
+      onRestoreBackup={props.onRestoreBackup}
+      onPersistClear={props.onPersistClear}
+      onPublishEmpty={props.onPublishEmpty}
+    />
+    <section className="section-card"><SectionTitle title="Конфиденциальность MVP" note="Данные остаются в этом браузере" /><p className="body-copy">Нет регистрации, рекламы и аналитики. Облачную семейную синхронизацию добавим отдельным безопасным этапом.</p></section>
+  </>;
 }

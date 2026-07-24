@@ -669,11 +669,91 @@ export class IndexedDbBudgetRepository<T> {
     if (Number.isNaN(date.getTime()) || date.toISOString() !== createdAt) {
       throw new Error("Некорректная дата резервной копии.");
     }
-    await this.withDatabase(async (database) => {
-      const transaction = database.transaction(STORE_NAME, "readwrite");
-      transaction.objectStore(STORE_NAME).put(makeDocument(LAST_BACKUP_KEY, createdAt, date));
-      await transactionComplete(transaction);
-    });
+    await this.withDatabase(
+      (database) =>
+        new Promise<void>((resolve, reject) => {
+          let transaction: IDBTransaction;
+          try {
+            transaction = database.transaction(STORE_NAME, "readwrite");
+          } catch {
+            reject(databaseError("Не удалось начать транзакцию локального хранилища."));
+            return;
+          }
+
+          let recorded = false;
+          let activeBudgetMissing = false;
+          let transactionFailed = false;
+          let settled = false;
+
+          const rejectOnce = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+          };
+          const abort = () => {
+            transactionFailed = true;
+            try {
+              transaction.abort();
+            } catch {
+              // The terminal transaction event owns settlement.
+            }
+          };
+
+          transaction.oncomplete = () => {
+            if (transactionFailed) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась ошибкой."));
+              return;
+            }
+            if (activeBudgetMissing) {
+              rejectOnce(databaseError("Активный бюджет уже удалён. Дата резервной копии не сохранена."));
+              return;
+            }
+            if (!recorded) {
+              rejectOnce(databaseError("Транзакция хранилища завершилась без результата."));
+              return;
+            }
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          transaction.onerror = () => {
+            transactionFailed = true;
+          };
+          transaction.onabort = () => rejectOnce(databaseError("Транзакция хранилища отменена."));
+
+          let store: IDBObjectStore;
+          try {
+            store = transaction.objectStore(STORE_NAME);
+          } catch {
+            abort();
+            return;
+          }
+
+          let activeBudgetRequest: IDBRequest<StoredDocument<T> | undefined>;
+          try {
+            activeBudgetRequest = store.get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>;
+          } catch {
+            abort();
+            return;
+          }
+          activeBudgetRequest.onerror = abort;
+          activeBudgetRequest.onsuccess = () => {
+            try {
+              if (!activeBudgetRequest.result) {
+                activeBudgetMissing = true;
+                return;
+              }
+              const writeRequest = store.put(makeDocument(LAST_BACKUP_KEY, createdAt, date));
+              writeRequest.onerror = abort;
+              writeRequest.onsuccess = () => {
+                recorded = true;
+              };
+            } catch {
+              abort();
+            }
+          };
+        }),
+    );
   }
 
   async getLastSuccessfulBackup(): Promise<string | null> {
