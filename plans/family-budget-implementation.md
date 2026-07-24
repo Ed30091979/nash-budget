@@ -235,9 +235,13 @@ File scope исполнителя:
 
 ## Фаза 7. Дашборды, поиск, CSV и recovery UX
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `feat(web): complete insights search and recovery UX`  
-SHA/доказательство: —
+SHA/доказательство: implementation `874229283946266c025511f40335edfae808cded`; точный scope из `21` файла: `apps/web-pwa/src/{App.tsx,styles.css,phase7-app-integration.test.tsx}`, пять файлов `apps/web-pwa/src/features/dashboard/{DashboardScreen.tsx,index.ts,model.test.ts,model.ts,ui.test.tsx}`, одиннадцать файлов `apps/web-pwa/src/features/data-management/{DataManagementScreen.tsx,dialog-accessibility.test.ts,dialog-accessibility.ts,download.test.ts,download.ts,index.ts,model.test.ts,model.ts,recovery.test.ts,recovery.ts,ui.test.tsx}` и `packages/storage/{src/indexed-db.ts,tests/indexed-db.test.ts}`. Два storage-файла включены как проверенное исправление найденной на review гонки: поздняя запись metadata об успешной backup после clear не должна воскрешать очищенный документ; это явное prerequisite/review-fix исключение из первоначальной формулировки commit A только для dashboard/data-management/integration.
+
+Финальный `pnpm verify` — fixtures `6/6`, storage `62/62`, domain `26/26`, web `174/174`, всего `268/268`; зелёные пять TypeScript typechecks, production build с `13` precache entries (`409,99 KiB`), frozen-lockfile install и `git diff --check`; `pnpm audit` и `pnpm audit --prod` — `0` vulnerabilities. Root live-check в IAB на финальном build подтвердил июль: по расписанию `53 000 ₽`, повседневный факт `26 000 ₽`, остаток `27 000 ₽`, резерв `19 809 ₽`, свободно `44 191 ₽`; сентябрь: сезонное `31 000 ₽`, свободно `13 191 ₽`; ближайшие суммы: январь 2027 `72 000 ₽`, июнь 2027 `90 000 ₽`. Список ближайших платежей показывает ровно одно ближайшее вхождение каждого расписания, включая сентябрьские обучение/секции и ежегодные платежи. Destructive-clear dialog безопасно закрывается кнопкой «Отмена» и Escape, после чего focus возвращается на opener.
+
+Детерминированные gates подтвердили горизонты `12/24` с одинаковым префиксом первых `12` месяцев, январь 2028 `72 000 ₽` и июнь 2028 `0 ₽`; канонический G-000 после refund и transfer содержит `6` операций, доход/расходы/капитал `100 000 / 75 000 / 25 000 ₽`, поиск «Продукты» возвращает `2` записи, reset — `6`, totals инвариантны. Backup проходит byte-identical round-trip по UUID, датам, суммам и счётчикам; повреждённый backup не меняет состояние; CSV содержит BOM, header и `6` data rows; поздняя backup metadata после clear не воскрешает документ. Финальные свежие code review и security review — `APPROVE`, blocker/high/medium/low `0/0/0/0` каждое. File-picker upload через IAB backend выполнить не удалось, поэтому точные restore/CSV утверждения относятся к детерминированным integration gates; реальный iPhone и deploy этой фазой не заявляются.
 
 File scope исполнителя:
 
@@ -248,17 +252,17 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Дашборд показывает план/факт, ближайшие платежи и горизонт 12/24; график имеет числовую таблицу и доступное текстовое резюме.
-- [ ] Фильтры и поиск операций не изменяют исходные данные.
-- [ ] Backup UI показывает дату последней успешной копии, предупреждает о незашифрованном JSON/CSV и позволяет атомарно restore/clear с подтверждением.
-- [ ] CSV открывается в Excel-совместимой UTF-8 форме, экранирует формулы и не называется backup.
-- [ ] `pnpm verify` и UI/integration-тесты зелёные.
-- [ ] Live-check G-002: переключение 12→24 даёт `12` и `24` карточки, первые `12` совпадают; январь 2027 `72 000 ₽`, июнь 2027 `90 000 ₽`, январь 2028 `72 000 ₽`, июнь 2028 `0 ₽`.
-- [ ] На наборе `6` операций поиск по «Продукты» возвращает ожидаемые `2` записи (расход и refund), сброс снова показывает `6`; totals до/после фильтра одинаковы.
-- [ ] Export/import возвращает одинаковые UUID, даты, суммы и счётчики; повреждённый файл не меняет ни одну сумму; CSV содержит header + `6` data rows.
-- [ ] Свежий code review проверяет derived state, график/таблицу, поиск и recovery state machine.
-- [ ] Свежий security review проверяет CSV injection, download filename/content type, file size/type, destructive clear confirmation и отсутствие backup contents в логах.
-- [ ] Коммит A содержит только dashboard/data-management/integration-файлы; коммит B содержит только план с SHA/доказательством A.
+- [x] Дашборд показывает план/факт, ближайшие платежи и горизонт 12/24; график имеет числовую таблицу и доступное текстовое резюме.
+- [x] Фильтры и поиск операций не изменяют исходные данные.
+- [x] Backup UI показывает дату последней успешной копии, предупреждает о незашифрованном JSON/CSV и позволяет атомарно restore/clear с подтверждением.
+- [x] CSV открывается в Excel-совместимой UTF-8 форме, экранирует формулы и не называется backup.
+- [x] `pnpm verify` и UI/integration-тесты зелёные.
+- [x] Live-check G-002: переключение 12→24 даёт `12` и `24` карточки, первые `12` совпадают; январь 2027 `72 000 ₽`, июнь 2027 `90 000 ₽`, январь 2028 `72 000 ₽`, июнь 2028 `0 ₽`.
+- [x] На наборе `6` операций поиск по «Продукты» возвращает ожидаемые `2` записи (расход и refund), сброс снова показывает `6`; totals до/после фильтра одинаковы.
+- [x] Export/import возвращает одинаковые UUID, даты, суммы и счётчики; повреждённый файл не меняет ни одну сумму; CSV содержит header + `6` data rows.
+- [x] Свежий code review проверяет derived state, график/таблицу, поиск и recovery state machine.
+- [x] Свежий security review проверяет CSV injection, download filename/content type, file size/type, destructive clear confirmation и отсутствие backup contents в логах.
+- [x] Коммит A содержит только dashboard/data-management/integration-файлы; коммит B содержит только план с SHA/доказательством A.
 
 ## Фаза 8. PWA offline, controlled update, accessibility и web hardening
 
