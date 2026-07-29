@@ -301,9 +301,13 @@ File scope исполнителя:
 
 ## Фаза 9. Локальный Android/Capacitor проект и непубликуемый AAB
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `feat(android): add local-assets capacitor build pipeline`  
-SHA/доказательство: —
+SHA/доказательство: prerequisite checkpoint `b2152d1` (`fix(web): report local native runtime status`) отдельно фиксирует нативный заголовок «локально на устройстве», не смешивая web-файлы с Android scope; implementation `724328c` содержит локальный Capacitor/Android pipeline, Android-specific проверки и закреплённые workspace dependencies. Frozen offline install зелёный; root `pnpm verify` — `302/302` теста, все TypeScript typechecks и production build green; Chromium E2E — `5/5`; release scan — `13` артефактов и `10` уникальных precache URL; `pnpm audit` и `pnpm audit --prod` — `0/0` vulnerabilities. На JDK `21.0.12`, Android SDK `36`, Gradle `8.14.3` зелёные `cap sync`, Gradle unit tests, lint, clean debug APK, unsigned release AAB и artifact scan.
+
+Debug APK — `4 287 444` байта, SHA-256 `5cea91fbdd78b0c793a3462f9daa9751e42a40d66e27c1acfccba86eb809f3b7`; unsigned release AAB — `1 534 648` байт, SHA-256 `2443a7cd0b0adc337aa5f5c331e1ae36c76278e7098048ca1dde4f7e5dbc6ec8`. Локальная identity: `appId ru.familybudget.app`, `versionCode 1`, `versionName 0.1.0-local`, `minSdk 24`, `targetSdk/compileSdk 36`. Артефакты не запрашивают системных permissions; присутствует только внутреннее signature-protected permission AndroidX, экспортируется только launcher `MainActivity`. Cleartext/mixed content, WebView debugging, native logging, Android backup и device-transfer extraction отключены; `server.url`, remote navigation allowlist, signing config, keystore и credentials отсутствуют.
+
+Live-check на Android 15/API 35 emulator начат в airplane mode с отключёнными Wi-Fi/data до первого запуска: onboarding содержал `0` demo-операций. Для июля 2026 введены доход `180 000 ₽`, обязательные платежи `53 000 ₽` и повседневный лимит `53 000 ₽`; после создания получено нераспределённо `74 000 ₽`, затем расход «Продукты» `9 000 ₽` оставил доступно на повседневное `44 000 ₽`, по категории потрачено/осталось `9 000 / 12 000 ₽`, счётчик операций `1/1`. Force-stop и повторный offline-запуск сохранили все значения; cold launch — `468 ms`, заголовок — «локально на устройстве». Network inspection показал 0 remote requests (все наблюдённые 5 запросов — локальные https://localhost); APK и AAB содержат по 15 локальных web assets. Финальные независимые code review и security review — `APPROVE`, blocker/high/medium/low `0/0/0/0` каждое.
 
 File scope исполнителя:
 
@@ -313,15 +317,15 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Создать native Android project, синхронизировать один production React build в local assets; production config/artifact не содержит `server.url`/live-reload URL.
-- [ ] Зафиксировать versionCode/versionName для локальной тестовой сборки, минимальные SDK после local compatibility spike и отсутствие лишних permissions.
-- [ ] Собрать локальный debug APK и непубликуемый release AAB без production signing key; проверить содержимое артефактов и установку APK на emulator.
-- [ ] `pnpm verify`, `cap sync android`, Gradle unit/lint/build и artifact scan зелёные.
-- [ ] Live-check emulator с airplane mode до первого запуска: onboarding показывает `0` demo-операций; ввести доход `180 000 ₽`, обязательные `53 000 ₽`, повседневные `53 000 ₽`; получить `74 000 ₽` нераспределённо, добавить расход `9 000 ₽`, перезапустить и сверить те же суммы/счётчик offline.
-- [ ] Network inspection показывает `0` обязательных запросов к PWA-домену для UI, данных и расчётов; web assets реально находятся внутри APK/AAB.
-- [ ] Свежий code review проверяет Gradle/Capacitor config, asset sync reproducibility и отсутствие platform fork domain logic.
-- [ ] Свежий security review проверяет permissions, exported components, cleartext traffic, WebView navigation/allowlist, backup flags, logs и release artifact.
-- [ ] Коммит A содержит только Android/scripts/package-файлы; коммит B содержит только план с SHA/доказательством A. Keystore и signing credentials никогда не коммитить.
+- [x] Создать native Android project, синхронизировать один production React build в local assets; production config/artifact не содержит `server.url`/live-reload URL.
+- [x] Зафиксировать versionCode/versionName для локальной тестовой сборки, минимальные SDK после local compatibility spike и отсутствие лишних permissions.
+- [x] Собрать локальный debug APK и непубликуемый release AAB без production signing key; проверить содержимое артефактов и установку APK на emulator.
+- [x] `pnpm verify`, `cap sync android`, Gradle unit/lint/build и artifact scan зелёные.
+- [x] Live-check emulator с airplane mode до первого запуска: onboarding показывает `0` demo-операций; ввести доход `180 000 ₽`, обязательные `53 000 ₽`, повседневные `53 000 ₽`; получить `74 000 ₽` нераспределённо, добавить расход `9 000 ₽`, перезапустить и сверить те же суммы/счётчик offline.
+- [x] Network inspection показывает `0` обязательных запросов к PWA-домену для UI, данных и расчётов; web assets реально находятся внутри APK/AAB.
+- [x] Свежий code review проверяет Gradle/Capacitor config, asset sync reproducibility и отсутствие platform fork domain logic.
+- [x] Свежий security review проверяет permissions, exported components, cleartext traffic, WebView navigation/allowlist, backup flags, logs и release artifact.
+- [x] Коммит A содержит только Android/scripts/package-файлы; коммит B содержит только план с SHA/доказательством A. Keystore и signing credentials никогда не коммитить.
 
 Ручной gate: проверить на реальном Android-устройстве, создать и безопасно резервировать release signing key, подтвердить окончательный package name. RuStore upload/alpha запрещены в автономном цикле.
 
