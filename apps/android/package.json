@@ -7,8 +7,17 @@
     "build:web": "pnpm --filter @family-budget/web build",
     "add": "cap add android",
     "sync": "pnpm build:web && cap sync android",
+    "sync:from-dist": "cap sync android",
     "open": "cap open android",
-    "typecheck": "tsc -p tsconfig.json --pretty false"
+    "test": "node --test ./scripts/verify-artifacts.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --pretty false",
+    "gradle:clean": "cd android && ./gradlew clean && mkdir -p app/build && touch app/build/.npmkeep",
+    "gradle:test": "cd android && ./gradlew test",
+    "gradle:lint": "cd android && ./gradlew lint",
+    "assemble:debug": "cd android && ./gradlew assembleDebug",
+    "bundle:release": "cd android && ./gradlew bundleRelease",
+    "artifact:scan": "node ./scripts/verify-artifacts.mjs",
+    "verify:android": "pnpm sync && pnpm --filter @family-budget/web release:scan && pnpm gradle:clean && pnpm gradle:test && pnpm gradle:lint && pnpm assemble:debug && pnpm bundle:release && pnpm artifact:scan"
   },
   "dependencies": {
     "@capacitor/android": "8.4.2",

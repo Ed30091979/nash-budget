@@ -7,6 +7,9 @@ const config: CapacitorConfig = {
   webDir: "../web-pwa/dist",
   android: {
     backgroundColor: "#f5f7fa",
+    allowMixedContent: false,
+    webContentsDebuggingEnabled: false,
+    loggingBehavior: "none",
   },
 };
 
