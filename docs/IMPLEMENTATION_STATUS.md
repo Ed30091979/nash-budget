@@ -1,8 +1,26 @@
 # Статус реализации
 
-Дата среза: 18 июля 2026 года. Версия: `0.4`; Phase 1 core принят.
+Дата среза: 29 июля 2026 года. Phase 2 Excel-кандидат сгенерирован и принят независимыми review; checkpoint ещё не создан.
 
 ## Реализовано
+
+### Excel MVP: кандидат Phase 2
+
+- требуемый artifact-tool loader/runtime доступен и использован для генерации и inspection;
+- новый артефакт сохранён отдельно от legacy: `outputs/2026-07-29-phase2-rc1/family-budget-mvp.xlsx`;
+- финальный `.xlsx`: `48 795` байт, SHA-256 `478e173ce41f9231c84c5831ebf0704347cdfa81d09b6eefe87430b4056e1ed9`; компактный inspection: `12 428` байт, SHA-256 `da2125b38b934bdd27d50fbc1226d94aed372cd9d4059fe901319d1d1558cb8a`;
+- генератор использует канонический fixture `G-002`, а не независимую копию финансовых значений;
+- книга содержит `11` листов и `6` структурированных input tables;
+- финальный scan экспортированного `.xlsx` нашёл `0` совпадений `#REF!/#DIV/0!/#VALUE!/#NAME?/#N/A`;
+- mutation/rollback probes прошли для всех `6` таблиц; новые строки в зарезервированной области отдельно проверены для ежегодных и ежемесячных расходов, а остальные таблицы покрыты формулами и structured-table проверками;
+- даты и денежные входы сохранены типизированными значениями; inspection подтвердил `8` дат, `17` числовых денежных значений и data validation для горизонта, категорий, повторов, активности, месяцев, типов операций и счетов;
+- точные значения G-002: июль 2026 — доход `180 000 ₽`, ежемесячные `53 000 ₽`, повседневные `53 000 ₽`, резерв `19 809 ₽`, цель `10 000 ₽`, свободно `44 191 ₽`; сентябрь — сезонные `31 000 ₽`, свободно `13 191 ₽`; январь 2027 — платёж из резерва `72 000 ₽`, свободно `13 191 ₽` без второго вычитания;
+- после первой оплаты каждый ежегодный платёж резервируется построчно как `ROUNDUP(Сумма / 12; 0)`;
+- в пакете нет VBA/macros, external links или внешних подключений.
+
+Книга является обычным локальным `.xlsx` и не зашифрована. В ней намеренно нет `sheetProtection`: листы остаются редактируемыми для добавления строк. Цветовое разделение и Excel Tables снижают риск случайного изменения, но не являются security control; защита листа и шифрование не заявляются. Для конфиденциальных данных нужен защищённый каталог или парольное шифрование файла средствами Excel.
+
+Автоматическая генерация, formula scan и рендер не заменяют ручной gate. Проверка в реальном Microsoft Excel macOS/Windows, Accessibility Checker, клавиатурная навигация и масштаб 200% ещё не выполнены.
 
 ### Excel-прототип: legacy, не release-ready
 
@@ -11,10 +29,9 @@
 - повторный аудит выявил расхождение источников: raw Settings содержит доход `158 000 ₽`, тогда как builder использует `180 000 ₽`;
 - в старой книге остались commitments `10 000 ₽` и `17 500 ₽`, не соответствующие актуальному сценарию страховки/дома/лагеря;
 - reviewer сообщил наличие ошибки `#NAME`, поэтому прежнее заявление о нулевом formula-error scan больше не считается подтверждённым;
-- исходники builder и sanitizer/inspection в `tools/` сохраняются в baseline, но новый workbook строится и принимается только в фазе 2 канонического плана;
-- artifact-tool loader/runtime для требуемого Spreadsheet workflow сейчас недоступен; это явный blocker фазы 2, а не основание переиспользовать legacy-файл.
+- legacy не переиспользуется как release result и не подменяет новый артефакт Phase 2.
 
-Контрольные значения `180 000 / 53 000 / 53 000 / 19 809 / 10 000 / 44 191 ₽` подтверждены текущими каноническими fixture/domain-тестами, но не считаются доказанными старой книгой.
+Контрольные значения `180 000 / 53 000 / 53 000 / 19 809 / 10 000 / 44 191 ₽` подтверждены новым артефактом Phase 2 и каноническими fixture/domain-тестами, но не старой книгой.
 
 ### Web/PWA
 
@@ -36,9 +53,10 @@
 
 ### Android/RuStore foundation
 
-- Capacitor 8 config в `apps/android`;
+- локальный Capacitor/Android pipeline Phase 9 реализован на JDK 21 и Android SDK 36;
 - `webDir` указывает на локальный production build PWA, `server.url` отсутствует;
-- package name `ru.familybudget.app` остаётся рабочим до подтверждения перед публикацией.
+- debug APK и неподписанный release AAB проходят локальные Gradle и artifact-security проверки;
+- package name `ru.familybudget.app` остаётся рабочим до подтверждения перед публикацией; deploy, signing и RuStore upload не выполнялись.
 
 ## Phase 1 core — реализовано и принято
 
@@ -51,32 +69,34 @@
 - возврат сверх расхода даёт отрицательный чистый факт без clamp и без превращения в доход;
 - денежные значения и промежуточные суммы обязаны быть safe integers, duplicate IDs внутри коллекции отклоняются до расчёта/restore.
 
-## Проверки текущего инкремента
+## Проверки текущего Excel-инкремента
 
 Выполнены:
 
-```bash
-pnpm verify
-```
+- генерация новым artifact-tool workflow из `G-002`;
+- inspection финального файла: `11` листов, `6` таблиц и `0` formula errors;
+- live mutation/rollback probes для всех `6` таблиц, reserved-row insert для Annual/Monthly и structured formula/table coverage для остальных;
+- exact-value probes июля 2026, сентября 2026 и января 2027;
+- package scan: без macros, external links и внешних подключений;
+- визуальный рендер всех `11` листов в приватный временный каталог; preview PNG не включаются в итоговый output.
+- корневой `pnpm verify`: `302/302` теста, TypeScript typechecks и production build green;
+- `pnpm audit` и `pnpm audit --prod`: `0/0` vulnerabilities;
+- финальный code/formula review: `APPROVE`, blocker/high/medium/low `0/0/0/0`;
+- финальный security review: `APPROVE`, blocker/high/medium/low `0/0/0/0`.
 
-- fixtures: `6/6` тестов;
-- domain: `17/17` тестов;
-- storage: `2/2` теста;
-- web: `14/14` тестов;
-- всего: `39/39`;
-- пять TypeScript typechecks;
-- production PWA build;
-- автоматизированные audits: `0` находок;
-- финальные свежие code review и security review: `APPROVE`, blocker/high/medium/low — `0/0/0/0`;
-- Excel, browser live/offline, физический iPhone/Home Screen, Android/RuStore и deploy не входили в доказательство Phase 1;
-- legacy XLSX повторную приёмку не прошёл и намеренно исключён из baseline; новый автоматизированный Excel gate остаётся фазе 2.
+Не выполнены и не заявляются:
+
+- checkpoint с генератором, новым `.xlsx`, inspection и этой документацией;
+- реальный Microsoft Excel Accessibility Checker, клавиатура и масштаб 200%;
+- deploy, signing и RuStore upload.
+
+Создание checkpoint — единственный оставшийся автоматический шаг Phase 2 перед записью SHA и доказательств в плане.
 
 ## Следующие обязательные работы
 
-- формы добавления и редактирования всех четырёх слоёв расходов в PWA;
-- новый Excel-артефакт из канонического G-002 после восстановления artifact-tool loader/runtime; legacy-книга не переиспользуется как release result;
-- onboarding без демонстрационных данных;
-- полноценная migration schema и атомарная JSON Schema-проверка restore;
+- создать Phase 2 checkpoint, затем записать его SHA и доказательства в плане;
+- выполнить финальный локальный release-candidate audit Phase 10 и обновить handoff-документацию;
+- вручную открыть итоговый `.xlsx` в Microsoft Excel macOS/Windows, пройти Accessibility Checker, клавиатуру и масштаб 200%;
 - реальный Safari/iPhone сценарий установки с Home Screen;
-- Android native project, unsigned AAB, airplane-mode first launch и затем RuStore alpha;
+- проверить финальный Android build на физических слабых устройствах и отдельно авторизовать signing/RuStore alpha;
 - семейная синхронизация — отдельный этап после проверки local-first версии.
