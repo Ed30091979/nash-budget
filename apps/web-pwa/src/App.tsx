@@ -67,6 +67,45 @@ interface AppBudgetSaveOptions {
 export const BUDGET_WRITE_CONFLICT_MESSAGE = "Бюджет уже изменён в другой вкладке. Показана сохранённая версия; повторите изменение.";
 export const MAIN_CONTENT_ID = "main-content";
 
+interface CapacitorRuntimeContract {
+  readonly isNativePlatform?: () => boolean;
+}
+
+interface NetworkStatusPresentation {
+  readonly text: "в сети" | "офлайн" | "локально на устройстве";
+  readonly ariaLabel: string;
+  readonly className: string;
+}
+
+export function isCapacitorNativeRuntime(scope: unknown = globalThis): boolean {
+  if (!scope || (typeof scope !== "object" && typeof scope !== "function")) return false;
+  const runtime = (scope as { readonly Capacitor?: unknown }).Capacitor;
+  if (!runtime || (typeof runtime !== "object" && typeof runtime !== "function")) return false;
+  const contract = runtime as CapacitorRuntimeContract;
+  if (typeof contract.isNativePlatform !== "function") return false;
+  try {
+    return contract.isNativePlatform.call(runtime) === true;
+  } catch {
+    return false;
+  }
+}
+
+export function networkStatusPresentation(nativeRuntime: boolean, online: boolean): NetworkStatusPresentation {
+  if (nativeRuntime) {
+    return {
+      text: "локально на устройстве",
+      ariaLabel: "Состояние сети: локально на устройстве",
+      className: "network-badge",
+    };
+  }
+  const text = online ? "в сети" : "офлайн";
+  return {
+    text,
+    ariaLabel: `Состояние сети: ${text}`,
+    className: `network-badge${online ? "" : " offline"}`,
+  };
+}
+
 export function focusRouteHeading(root: ParentNode | null): boolean {
   const heading = root?.querySelector<HTMLElement>("h1");
   if (!heading) return false;
@@ -170,6 +209,7 @@ function storageText(health: StorageHealth | null): string {
 
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
+  const nativeRuntime = useMemo(() => isCapacitorNativeRuntime(), []);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const budgetRef = useRef<BudgetState | null>(null);
   const revisionRef = useRef<string | null>(null);
@@ -320,13 +360,14 @@ export default function App() {
     .slice(0, 5);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const networkStatus = networkStatusPresentation(nativeRuntime, online);
 
   return (
     <div className="app-shell">
       <SkipLink />
       <header className="app-header">
         <div className="brand"><span className="brand-mark">₽</span><div><strong>Семейный план</strong><small>видим месяц и будущее</small></div></div>
-        <span className={`network-badge${online ? "" : " offline"}`} role="status" aria-label={`Состояние сети: ${online ? "в сети" : "офлайн"}`}>{online ? "в сети" : "офлайн"}</span>
+        <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">

@@ -1,7 +1,12 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { focusRouteHeading, MAIN_CONTENT_ID } from "./App";
+import {
+  focusRouteHeading,
+  isCapacitorNativeRuntime,
+  MAIN_CONTENT_ID,
+  networkStatusPresentation,
+} from "./App";
 
 describe("phase 8 accessibility and responsive contract", () => {
   it("focuses the route heading without requiring a pre-existing tab stop", () => {
@@ -70,9 +75,45 @@ describe("phase 8 accessibility and responsive contract", () => {
   it("retains text labels for network and budget states instead of color-only status", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 
-    expect(source).toContain('aria-label={`Состояние сети: ${online ? "в сети" : "офлайн"}`}');
-    expect(source).toContain('{online ? "в сети" : "офлайн"}');
+    expect(source).toContain('ariaLabel: "Состояние сети: локально на устройстве"');
+    expect(source).toContain('text: "локально на устройстве"');
+    expect(source).toContain('ariaLabel: `Состояние сети: ${text}`');
+    expect(source).toContain("<span className={networkStatus.className} role=\"status\" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>");
     expect(source).toContain('over_limit: "Перелимит"');
     expect(source).toContain('near_limit: "Почти лимит"');
+  });
+
+  it.each([true, false])("shows a neutral local-device status in native runtime when navigator online is %s", (online) => {
+    expect(networkStatusPresentation(true, online)).toEqual({
+      text: "локально на устройстве",
+      ariaLabel: "Состояние сети: локально на устройстве",
+      className: "network-badge",
+    });
+  });
+
+  it("preserves online and offline status in the web runtime", () => {
+    expect(networkStatusPresentation(false, true)).toEqual({
+      text: "в сети",
+      ariaLabel: "Состояние сети: в сети",
+      className: "network-badge",
+    });
+    expect(networkStatusPresentation(false, false)).toEqual({
+      text: "офлайн",
+      ariaLabel: "Состояние сети: офлайн",
+      className: "network-badge offline",
+    });
+  });
+
+  it("accepts only an explicit, successful Capacitor native-platform contract", () => {
+    const nativeCheck = vi.fn(() => true);
+    const runtime = { isNativePlatform: nativeCheck };
+
+    expect(isCapacitorNativeRuntime({ Capacitor: runtime })).toBe(true);
+    expect(nativeCheck).toHaveBeenCalledOnce();
+    expect(nativeCheck.mock.contexts[0]).toBe(runtime);
+    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: () => false } })).toBe(false);
+    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: "true" } })).toBe(false);
+    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: () => { throw new Error("untrusted bridge"); } } })).toBe(false);
+    expect(isCapacitorNativeRuntime({})).toBe(false);
   });
 });
