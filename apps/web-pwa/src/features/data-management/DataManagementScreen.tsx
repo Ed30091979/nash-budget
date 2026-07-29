@@ -91,7 +91,9 @@ export function DataManagementScreen({
         const result = await onCreateBackup();
         const createdAt = await downloadThenRecordSuccessfulBackup(
           result,
-          () => downloadTextFile(prepareJsonDownload(result.text)),
+          async () => {
+            await downloadTextFile(prepareJsonDownload(result.text));
+          },
           onRecordSuccessfulBackup,
         );
         setLastBackupAt(createdAt);
@@ -106,7 +108,7 @@ export function DataManagementScreen({
     void gate.current.run(async () => {
       dispatch({ type: "start", activity: "csv" });
       try {
-        downloadTextFile(prepareOperationsCsvDownload(budget));
+        await downloadTextFile(prepareOperationsCsvDownload(budget));
         dispatch({ type: "succeed", message: "Таблица операций CSV скачана." });
       } catch {
         dispatch({ type: "fail", message: SAFE_ERRORS.csv });
@@ -194,7 +196,11 @@ export function DataManagementScreen({
       <header>
         <p className="eyebrow">Данные и восстановление</p>
         <h2 id="data-management-title">Выгрузка и резервная копия</h2>
-        <p>Все файлы создаются на этом устройстве. В облако они не отправляются.</p>
+        <p>
+          Приложение само не загружает файлы ни на свой сервер, ни на сторонние серверы.
+          Место сохранения выбираете вы. Если выбрать облачную папку, незашифрованный файл
+          может синхронизироваться с облаком.
+        </p>
       </header>
 
       <div className="data-management-grid">

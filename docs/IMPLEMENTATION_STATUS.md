@@ -1,102 +1,116 @@
 # Статус реализации
 
-Дата среза: 29 июля 2026 года. Phase 2 Excel-кандидат сгенерирован и принят независимыми review; checkpoint ещё не создан.
+Дата среза: 30 июля 2026 года. Финальный локальный audit Phase 10 принят. Базовый pre-commit HEAD аудита — `8234806`; точный SHA текущего implementation-checkpoint будет записан отдельным companion evidence-коммитом в [каноническом плане](../plans/family-budget-implementation.md).
 
-## Реализовано
+## Текущий продукт
 
-### Excel MVP: кандидат Phase 2
+### Excel MVP
 
-- требуемый artifact-tool loader/runtime доступен и использован для генерации и inspection;
-- новый артефакт сохранён отдельно от legacy: `outputs/2026-07-29-phase2-rc1/family-budget-mvp.xlsx`;
-- финальный `.xlsx`: `48 795` байт, SHA-256 `478e173ce41f9231c84c5831ebf0704347cdfa81d09b6eefe87430b4056e1ed9`; компактный inspection: `12 428` байт, SHA-256 `da2125b38b934bdd27d50fbc1226d94aed372cd9d4059fe901319d1d1558cb8a`;
-- генератор использует канонический fixture `G-002`, а не независимую копию финансовых значений;
-- книга содержит `11` листов и `6` структурированных input tables;
-- финальный scan экспортированного `.xlsx` нашёл `0` совпадений `#REF!/#DIV/0!/#VALUE!/#NAME?/#N/A`;
-- mutation/rollback probes прошли для всех `6` таблиц; новые строки в зарезервированной области отдельно проверены для ежегодных и ежемесячных расходов, а остальные таблицы покрыты формулами и structured-table проверками;
-- даты и денежные входы сохранены типизированными значениями; inspection подтвердил `8` дат, `17` числовых денежных значений и data validation для горизонта, категорий, повторов, активности, месяцев, типов операций и счетов;
-- точные значения G-002: июль 2026 — доход `180 000 ₽`, ежемесячные `53 000 ₽`, повседневные `53 000 ₽`, резерв `19 809 ₽`, цель `10 000 ₽`, свободно `44 191 ₽`; сентябрь — сезонные `31 000 ₽`, свободно `13 191 ₽`; январь 2027 — платёж из резерва `72 000 ₽`, свободно `13 191 ₽` без второго вычитания;
-- после первой оплаты каждый ежегодный платёж резервируется построчно как `ROUNDUP(Сумма / 12; 0)`;
-- в пакете нет VBA/macros, external links или внешних подключений.
+- текущий артефакт: [`outputs/2026-07-29-phase2-rc1/family-budget-mvp.xlsx`](../outputs/2026-07-29-phase2-rc1/family-budget-mvp.xlsx);
+- checkpoint: `658d3b8` (`feat(excel): align workbook with canonical golden fixtures`);
+- `11` листов, `6` структурированных таблиц, `48 795` байт, SHA-256 `478e173ce41f9231c84c5831ebf0704347cdfa81d09b6eefe87430b4056e1ed9`;
+- [inspection](../outputs/2026-07-29-phase2-rc1/family-budget-mvp.xlsx.inspect.ndjson): `12 428` байт, SHA-256 `da2125b38b934bdd27d50fbc1226d94aed372cd9d4059fe901319d1d1558cb8a`;
+- финальный sanitized XLSX повторно импортирован; formula scan `#REF!/#DIV/0!/#VALUE!/#NAME?/#N/A` — `0`;
+- подтверждены `8` типизированных дат, `17` числовых денежных значений, `15` validation rules и mutation/rollback всех `6` таблиц;
+- архив содержит `34` записи без VBA/macros, external links/connections и локальных путей;
+- все `11` preview-листов прошли визуальную проверку; временные PNG не коммитились.
 
-Книга является обычным локальным `.xlsx` и не зашифрована. В ней намеренно нет `sheetProtection`: листы остаются редактируемыми для добавления строк. Цветовое разделение и Excel Tables снижают риск случайного изменения, но не являются security control; защита листа и шифрование не заявляются. Для конфиденциальных данных нужен защищённый каталог или парольное шифрование файла средствами Excel.
+Точные значения G-002: июль 2026 — доход `180 000 ₽`, ежемесячные `53 000 ₽`, повседневные `53 000 ₽`, резерв `19 809 ₽`, цель `10 000 ₽`, свободно `44 191 ₽`; сентябрь — сезонные `31 000 ₽`, свободно `13 191 ₽`; январь 2027 — платёж из резерва `72 000 ₽`, свободно `13 191 ₽` без второго вычитания. После первой оплаты ежегодный платёж резервируется построчно как `ROUNDUP(Сумма / 12; 0)`.
 
-Автоматическая генерация, formula scan и рендер не заменяют ручной gate. Проверка в реальном Microsoft Excel macOS/Windows, Accessibility Checker, клавиатурная навигация и масштаб 200% ещё не выполнены.
+Fresh Phase 10 regeneration на Node.js `24.14` дала `11` листов, `6` таблиц, `15` validations, `0` formula errors и безопасный пакет из `34` записей. Fresh XLSX: `48 793` байта, SHA-256 `508c68282406f9a760bd2281dff1735069493ab20d537950c635377d0d31ffac`; inspection: `12 428` байт, SHA-256 `90d2dc3c07894c2cf7c07f331a0921a882a7cb19a4d15537972d03a2a4d8fa88`. Отличие от tracked release-книги ограничено случайными relationship/sheet IDs; после нормализации семантика совпадает.
 
-### Excel-прототип: legacy, не release-ready
+Книга не зашифрована и намеренно не включает `sheetProtection`, чтобы пользователь мог редактировать таблицы. Цвета и Excel Tables не являются security-контролем. Реальные Microsoft Excel Accessibility Checker, клавиатурная навигация и масштаб 200% остаются ручным gate.
 
-- прежняя книга сохранена без удаления под `outputs/legacy/` только для расследования и сравнения;
-- legacy workbook и его generated inspection исключаются из Git-baseline и не являются итоговым, текущим или пригодным к публикации Excel MVP;
-- повторный аудит выявил расхождение источников: raw Settings содержит доход `158 000 ₽`, тогда как builder использует `180 000 ₽`;
-- в старой книге остались commitments `10 000 ₽` и `17 500 ₽`, не соответствующие актуальному сценарию страховки/дома/лагеря;
-- reviewer сообщил наличие ошибки `#NAME`, поэтому прежнее заявление о нулевом formula-error scan больше не считается подтверждённым;
-- legacy не переиспользуется как release result и не подменяет новый артефакт Phase 2.
-
-Контрольные значения `180 000 / 53 000 / 53 000 / 19 809 / 10 000 / 44 191 ₽` подтверждены новым артефактом Phase 2 и каноническими fixture/domain-тестами, но не старой книгой.
+Legacy workbook под `outputs/legacy/` сохранён только для расследования и не является текущим результатом.
 
 ### Web/PWA
 
-- главный экран «Сегодня» показывает доступную сумму на повседневные покупки, обязательные платежи, резерв к срокам и свободный остаток;
-- отдельный экран «Год» с переключателем 12/24 месяца и горизонтальной лентой месяцев;
-- крупные платежи поддерживают `annual` и `one_time`;
-- регулярные расходы поддерживают `monthly` и `selected_months`;
-- обучение детей и секции включены с сентября по май; летний лагерь — отдельный крупный разовый платёж;
-- фактическая операция по-прежнему сохраняется в IndexedDB и сразу меняет повседневный остаток;
-- installable manifest, Workbox offline shell, controlled update и JSON backup/restore сохранены.
+- чистый первый запуск не создаёт скрытых demo-операций; бюджет создаётся через onboarding;
+- доступны CRUD крупных/ежегодных, ежемесячных, сезонных и повседневных планов;
+- доступны создание, изменение и удаление дохода, расхода, возврата, перевода и взноса в цель;
+- дашборды показывают план/факт, горизонты 12/24, ближайшие платежи, числовую таблицу и текстовое резюме;
+- поиск и фильтры операций не меняют исходные данные;
+- IndexedDB v2 поддерживает versioned migrations, CAS, атомарные JSON backup/restore/clear и metadata последней копии;
+- CSV — отдельный Excel-совместимый экспорт с BOM и защитой от formula injection, а не backup;
+- PWA имеет installable manifest, Workbox offline shell, navigation fallback, controlled update, CSP и anti-framing headers;
+- автоматизированы keyboard/focus/semantics, touch targets, narrow phone/iPad/landscape и эквивалент zoom 200%;
+- отмена перехода при dirty-черновике сохраняет сумму операции `1 234` и сумму планирования `4 321`; подтверждение отбрасывает черновик, а закрытие окна защищено `beforeunload`;
+- restore принимает валидный 24-месячный горизонт `9997-12 → 9999-11`, а невозможный горизонт от `9998-02` и backup с валютой не `RUB` отклоняются без записи даже при валидном checksum.
 
-### Domain
+Финальный PWA gate: Chromium E2E `5/5`; offline reload сохраняет IndexedDB-данные; controlled update и navigation guards сохраняют несохранённый ввод; release scan — `13` артефактов и `10` уникальных precache URL. Реальный HTTPS Safari/Home Screen/VoiceOver/Files gate на семейном iPhone/iPad не выполнялся.
 
-- `calculateAnnualPlan(state, startMonth, 12 | 24)` возвращает помесячный доход, ежемесячные, сезонные, повседневные, резерв, платежи из резерва, цели и свободный остаток;
-- резерв до ближайшего срока считается в integer minor units; каждый commitment округляется вверх отдельно до целого рубля (`100` minor units), затем резервы суммируются;
-- после первой даты ежегодный платёж переходит на равномерный 12-месячный цикл; разовый завершается;
-- канонические G-000/G-001/G-002 импортируются через `packages/test-fixtures`, валидируются без копирования и сверяются с domain;
-- реализованы проверки сезонности, лагеря, январского платежа, повторного ежегодного платежа, leap/due-day, excess refund, duplicate IDs, unknown references и safe-integer overflow.
+### Domain и storage
 
-### Android/RuStore foundation
+- G-000/G-001/G-002 импортируются через `packages/test-fixtures` и валидируются без второй копии арифметики;
+- деньги и промежуточные значения — safe integer minor units;
+- резерв каждого commitment отдельно округляется вверх до целого рубля, затем суммы складываются;
+- ежегодный платёж после первой даты переходит на 12-месячный цикл, разовый завершается;
+- due day 29/30/31 нормализуется к последнему дню короткого месяца;
+- проверяются duplicate/unknown references, excess refund, unsafe integer, malformed/oversized backup и prototype-pollution keys;
+- restore валидирует весь документ, валюту `RUB` и допустимость полного планового горизонта до одной write-транзакции; повреждённый или семантически недопустимый импорт не меняет сохранённое состояние.
 
-- локальный Capacitor/Android pipeline Phase 9 реализован на JDK 21 и Android SDK 36;
-- `webDir` указывает на локальный production build PWA, `server.url` отсутствует;
-- debug APK и неподписанный release AAB проходят локальные Gradle и artifact-security проверки;
-- package name `ru.familybudget.app` остаётся рабочим до подтверждения перед публикацией; deploy, signing и RuStore upload не выполнялись.
+Канонические результаты: G-000 — доход/расходы/капитал `100 000 / 76 500 / 23 500 ₽`; G-002 — июльский резерв/свободно `19 809 / 44 191 ₽`, сентябрьские сезонные/свободно `31 000 / 13 191 ₽`, due в январе 2027 `72 000 ₽`, due в июне 2028 `0 ₽`.
 
-## Phase 1 core — реализовано и принято
+### Android
 
-Правила реализованы и подтверждены зелёными fixture/domain-тестами, корневым verify и независимыми review:
+- checkpoint `724328c` содержит локальный Capacitor/Android pipeline; prerequisite `b2152d1` показывает нативный статус «локально на устройстве»;
+- один production React build копируется в локальные assets APK/AAB; `server.url` отсутствует;
+- JDK `21.0.12`, Android SDK `36`, Gradle `8.14.3`, `minSdk 24`, `targetSdk/compileSdk 36`;
+- рабочая локальная identity: `ru.familybudget.app`, `versionCode 1`, `versionName 0.1.0-local`; package name ещё не подтверждён для магазина;
+- debug APK: `4 292 140` байт, SHA-256 `941918f60eca6df35251472b3a498c3f1c87375092c00dec2160d2eb820e7212`;
+- неподписанный release AAB: `1 538 078` байт, SHA-256 `7f9d9b81c6a151dea7cb8c8fc0e894353b595edcdf02f18306784fcbda0694d8`;
+- APK содержит один канонический debug v2 signer с сертификатом SHA-256 `16775a00f42bf0d89e957a51ad19c0b55b5494a28934a27043eb52e7745bddc6`; AAB остаётся неподписанным;
+- artifact scan подтверждает `0` системных permissions, только экспортированную launcher `MainActivity`, `15` локальных web assets и отсутствие `server.url`, remote navigation allowlist, release signing config, keystore и credentials; Android backup/device transfer, cleartext/mixed content, WebView debugging и native logging отключены;
+- G-000 и G-002 восстановлены через реальный DocumentsUI при `airplane_mode_on=1`; exact payload, счётчики и UI сохраняются после force-stop, remote requests — `0`;
+- финальный cold-offline G-000 содержит accounts/categories/budgets/flexible lines/goals/commitments/schedules/transactions `2/3/1/3/0/0/0/4`, операций `4`;
+- нативный export: отмена не создаёт файл или metadata; JSON `3 917` байт проходит exact checksum/restore; CSV `483` байта содержит BOM, header и `4` строки; перезапись stale-файла `13 903 → 3 917` байт обрезает хвост через `wt`.
 
-- резерв каждого commitment округляется вверх отдельно до целого рубля (`100` minor units), после чего individual reserves суммируются;
-- канонические даты G-002: страховка `2027-01-15`, дом `2027-05-01`, лагерь `2027-06-15`;
-- целевые значения: июльский резерв `19 809 ₽`, свободно `44 191 ₽`; сентябрь по расписанию `84 000 ₽`, свободно `13 191 ₽`; страховка due `72 000 ₽` в январе 2027 и январе 2028; лагерь due `0 ₽` в июне 2028;
-- `2028-02-29` допустима, `2027-02-29` отклоняется; отсутствующий due day 29/30/31 при материализации даты нормализуется к последнему дню месяца без переноса месячной суммы;
-- возврат сверх расхода даёт отрицательный чистый факт без clamp и без превращения в доход;
-- денежные значения и промежуточные суммы обязаны быть safe integers, duplicate IDs внутри коллекции отклоняются до расчёта/restore.
+Debug APK и AAB — локальные generated-артефакты. AAB не подписан и не загружался в RuStore.
 
-## Проверки текущего Excel-инкремента
+## Закрытые checkpoints
 
-Выполнены:
+| Фаза | Implementation checkpoint | Evidence checkpoint |
+|---|---|---|
+| 0. Baseline | `87a841a` | `caa2107` |
+| 1. Fixtures/domain | `cd334a2` | `4cd5184` |
+| 2. Excel | `658d3b8` | `8234806` |
+| 3. Storage v2 | `57f95c6` | `f8d8fd6` |
+| 4. Onboarding | `8999db4`, `634d3b8` | `fadbdcf` |
+| 5. Planning CRUD | `fa49649`, `b6ae55a`, `290b762`, `cae46f5` | `5955c1f` |
+| 6. Operations | `de204b8` | `a3be654` |
+| 7. Dashboard/recovery | `8742292` | `fb1af00` |
+| 8. PWA hardening | `c11034f` | `bc9d7c4` |
+| 9. Android | `b2152d1`, `724328c` | `5330e7f` |
+| 10. Local RC audit | Текущий принятый change set; SHA фиксируется после commit | Companion evidence-коммит в плане |
 
-- генерация новым artifact-tool workflow из `G-002`;
-- inspection финального файла: `11` листов, `6` таблиц и `0` formula errors;
-- live mutation/rollback probes для всех `6` таблиц, reserved-row insert для Annual/Monthly и structured formula/table coverage для остальных;
-- exact-value probes июля 2026, сентября 2026 и января 2027;
-- package scan: без macros, external links и внешних подключений;
-- визуальный рендер всех `11` листов в приватный временный каталог; preview PNG не включаются в итоговый output.
-- корневой `pnpm verify`: `302/302` теста, TypeScript typechecks и production build green;
-- `pnpm audit` и `pnpm audit --prod`: `0/0` vulnerabilities;
-- финальный code/formula review: `APPROVE`, blocker/high/medium/low `0/0/0/0`;
-- финальный security review: `APPROVE`, blocker/high/medium/low `0/0/0/0`.
+## Финальный принятый автоматизированный срез
 
-Не выполнены и не заявляются:
+- Node.js `24.17`, pnpm `11.9`, frozen offline install для `6` workspaces;
+- root `pnpm verify`: `332/332` теста — Android Node `8`, fixtures `6`, storage `62`, domain `26`, web `230`; пять TypeScript typechecks и production build green;
+- Chromium E2E: `5/5`;
+- release scan: `13` артефактов, `10` уникальных precache URL;
+- `pnpm audit` / `pnpm audit --prod`: `0/0` vulnerabilities;
+- storage targeted regression: `57/57`; domain exact-value runner: `2/2`;
+- fresh Excel: `11` листов, `6` таблиц, `15` validations, `0` formula errors, `34` безопасные package entries; normalized semantic identity с release-книгой;
+- Android на JDK `21.0.12`, SDK `36`, Gradle `8.14.3`: sync, unit tests, lint, clean APK, unsigned AAB и artifact scan green;
+- domain/PWA/Android подтвердили G-000 `100 000 / 76 500 / 23 500 ₽` и G-002 июль `19 809 / 44 191 ₽`, сентябрь `31 000 / 13 191 ₽`, январь 2027 due `72 000 ₽`, июнь 2028 due `0 ₽`;
+- PWA backup round-trip для G-000/G-002 сохранил exact payload; Android восстановил оба файла через DocumentsUI offline и сохранил payload/UI после force-stop;
+- начальные code review findings blocker/high/medium/low `0/1/0/2` исправлены; финальный code review — `APPROVE 0/0/0/0`;
+- начальные security/privacy findings `0/0/3/1` исправлены; финальный security review — `APPROVE 0/0/0/0`;
+- scans не нашли secrets, keys/keystores, production URL, remote executable code, финансовые данные в логах, локальные пути или source maps; Git remote отсутствует.
 
-- checkpoint с генератором, новым `.xlsx`, inspection и этой документацией;
-- реальный Microsoft Excel Accessibility Checker, клавиатура и масштаб 200%;
-- deploy, signing и RuStore upload.
+## Ручные gate и границы
 
-Создание checkpoint — единственный оставшийся автоматический шаг Phase 2 перед записью SHA и доказательств в плане.
+Пользователь вручную выполняет:
 
-## Следующие обязательные работы
+- реальный Excel Accessibility Checker, клавиатура и масштаб 200%;
+- HTTPS/Safari/Home Screen/VoiceOver/offline/update/Files на семейном iPhone/iPad;
+- слабые Android-устройства и разные версии System WebView;
+- окончательные бренд, package name, platform minimums и владелец RuStore-аккаунта;
+- release signing key и его защищённые резервные копии;
+- privacy/legal, карточка магазина, поддержка и проверка на 5–10 семьях;
+- отдельно авторизованная закрытая RuStore alpha и только затем решение о rollout.
 
-- создать Phase 2 checkpoint, затем записать его SHA и доказательства в плане;
-- выполнить финальный локальный release-candidate audit Phase 10 и обновить handoff-документацию;
-- вручную открыть итоговый `.xlsx` в Microsoft Excel macOS/Windows, пройти Accessibility Checker, клавиатуру и масштаб 200%;
-- реальный Safari/iPhone сценарий установки с Home Screen;
-- проверить финальный Android build на физических слабых устройствах и отдельно авторизовать signing/RuStore alpha;
-- семейная синхронизация — отдельный этап после проверки local-first версии.
+Приложение само не загружает экспорт: пользователь выбирает назначение в системном DocumentsUI. Выбранная cloud-папка может синхронизировать незашифрованный JSON/CSV своим провайдером; XLSX также является локальным незашифрованным файлом.
+
+Не выполнялись: production deploy/push, signing, создание release key, RuStore upload/publish, cloud sync и production rollout.

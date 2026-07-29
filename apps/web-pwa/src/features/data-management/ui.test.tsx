@@ -29,6 +29,14 @@ describe("data-management UI", () => {
 
     expect(html).toContain("Последняя успешная копия:");
     expect(html).toContain("<strong>6</strong> операций");
+    expect(html).toContain(
+      "Приложение само не загружает файлы ни на свой сервер, ни на сторонние серверы.",
+    );
+    expect(html).toContain("Место сохранения выбираете вы.");
+    expect(html).toContain(
+      "Если выбрать облачную папку, незашифрованный файл может синхронизироваться с облаком.",
+    );
+    expect(html).not.toContain("В облако они не отправляются.");
     expect(html).toContain("JSON не зашифрован");
     expect(html).toContain("CSV не зашифрован");
     expect(html).toContain("Это таблица для Excel, а не резервная копия");
@@ -71,10 +79,13 @@ describe("data-management UI", () => {
     );
 
     expect(screenSource).toMatch(
-      /await downloadThenRecordSuccessfulBackup\([\s\S]*setLastBackupAt\(createdAt\);[\s\S]*type: "succeed"/,
+      /await downloadThenRecordSuccessfulBackup\([\s\S]*await downloadTextFile[\s\S]*setLastBackupAt\(createdAt\);[\s\S]*type: "succeed"/,
     );
     expect(screenSource).not.toMatch(
       /setLastBackupAt\(result\.createdAt\)[\s\S]*downloadTextFile/,
+    );
+    expect(screenSource).toMatch(
+      /activity: "csv"[\s\S]*await downloadTextFile\(prepareOperationsCsvDownload\(budget\)\)[\s\S]*type: "succeed"/,
     );
   });
 

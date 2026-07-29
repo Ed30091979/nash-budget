@@ -23,12 +23,13 @@ import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./b
 import { formatMoney } from "./money";
 import { createBudgetRepository } from "./storage-repository";
 
-type Screen = "today" | "year" | "planning" | "operations" | "more";
+export type Screen = "today" | "year" | "planning" | "operations" | "more";
 type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
 const dateShort = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
 const calendarMonths = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+export const DISCARD_DRAFT_CONFIRMATION = "Несохранённый черновик будет удалён. Перейти в другой раздел?";
 
 const statusLabels: Record<string, string> = {
   no_plan: "Без лимита",
@@ -112,6 +113,22 @@ export function focusRouteHeading(root: ParentNode | null): boolean {
   if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
   heading.focus({ preventScroll: true });
   return true;
+}
+
+export function shouldChangeScreen(
+  current: Screen,
+  destination: Screen,
+  hasUnsavedDraft: boolean,
+  confirmDiscard: () => boolean,
+): boolean {
+  if (current === destination) return false;
+  return !hasUnsavedDraft || confirmDiscard();
+}
+
+export function protectUnsavedDraftOnUnload(event: BeforeUnloadEvent, hasUnsavedDraft: boolean): void {
+  if (!hasUnsavedDraft) return;
+  event.preventDefault();
+  event.returnValue = "";
 }
 
 function SkipLink() {
@@ -223,6 +240,7 @@ export default function App() {
   const [operationDraftDirty, setOperationDraftDirty] = useState(false);
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
   const previousScreenRef = useRef<Screen>(screen);
+  const hasUnsavedDraft = operationDraftDirty || planningDraftDirty;
   budgetRef.current = budget;
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
@@ -297,6 +315,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!hasUnsavedDraft) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => protectUnsavedDraftOnUnload(event, true);
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [hasUnsavedDraft]);
+
+  useEffect(() => {
     if (!message) return;
     const timeout = window.setTimeout(() => setMessage(null), 6000);
     return () => window.clearTimeout(timeout);
@@ -361,6 +386,16 @@ export default function App() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const networkStatus = networkStatusPresentation(nativeRuntime, online);
+  const navigate = (destination: Screen) => {
+    if (shouldChangeScreen(
+      screen,
+      destination,
+      hasUnsavedDraft,
+      () => window.confirm(DISCARD_DRAFT_CONFIRMATION),
+    )) {
+      setScreen(destination);
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -371,17 +406,17 @@ export default function App() {
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">
-        <NavButton active={screen === "today"} icon="⌂" label="Сегодня" onClick={() => setScreen("today")} />
-        <NavButton active={screen === "year" || screen === "planning"} icon="▦" label="Год" onClick={() => setScreen("year")} />
-        <NavButton active={screen === "operations"} icon="＋" label="Записать" onClick={() => setScreen("operations")} />
-        <NavButton active={screen === "more"} icon="•••" label="Ещё" onClick={() => setScreen("more")} />
+        <NavButton active={screen === "today"} icon="⌂" label="Сегодня" onClick={() => navigate("today")} />
+        <NavButton active={screen === "year" || screen === "planning"} icon="▦" label="Год" onClick={() => navigate("year")} />
+        <NavButton active={screen === "operations"} icon="＋" label="Записать" onClick={() => navigate("operations")} />
+        <NavButton active={screen === "more"} icon="•••" label="Ещё" onClick={() => navigate("more")} />
       </nav>
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
         <div className="route-screen" data-screen={screen}>
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => setScreen("operations")} onYear={() => setScreen("year")} /> : null}
-          {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => setScreen("planning")} categoryById={categoryById} /> : null}
-          {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => setScreen("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
+          {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
+          {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => navigate("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}

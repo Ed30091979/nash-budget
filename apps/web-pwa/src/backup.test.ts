@@ -1,4 +1,8 @@
-import { makePlanningSeed, type BudgetState } from "@family-budget/domain";
+import {
+  calculateAnnualPlan,
+  makePlanningSeed,
+  type BudgetState,
+} from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -86,6 +90,19 @@ function withRefund(
   };
 }
 
+function withActiveBudgetPeriod(
+  state: BudgetState,
+  startDate: string,
+  endDate: string,
+): BudgetState {
+  return {
+    ...state,
+    budgets: state.budgets.map((budget) => (
+      budget.id === state.activeBudgetId ? { ...budget, startDate, endDate } : budget
+    )),
+  };
+}
+
 describe("восстановление бюджета", () => {
   it("дополняет legacy state, не заменяя счета, категории, бюджеты, цели и операции", () => {
     const seed = makePlanningSeed();
@@ -113,6 +130,86 @@ describe("восстановление бюджета", () => {
     expect(restored.transactions.at(-1)).toMatchObject({ id: uniqueTransaction.id, amountMinor: 987_654 });
     expect(restored.annualCommitments).toEqual([]);
     expect(restored.scheduledExpenses).toEqual([]);
+  });
+
+  it("принимает последнюю стартовую дату, отображаемую полным 24-месячным горизонтом", () => {
+    const boundary = withActiveBudgetPeriod(
+      makePlanningSeed(),
+      "9997-12-01",
+      "9997-12-31",
+    );
+
+    const prepared = prepareBudgetState(boundary);
+    const plan = calculateAnnualPlan(prepared, "9997-12", 24);
+
+    expect(plan.months).toHaveLength(24);
+    expect(plan.months.at(-1)?.month).toBe("9999-11");
+  });
+
+  it(
+    "отклоняет старт 9998-02 за границей 24-месячного UI до save/publish",
+    async () => {
+      const previous = makePlanningSeed();
+      let stored = previous;
+      let published = previous;
+      const save = vi.fn(async (next: BudgetState) => { stored = next; });
+      const publish = vi.fn((next: BudgetState) => { published = next; });
+      const invalid = withActiveBudgetPeriod(
+        makePlanningSeed(),
+        "9998-02-01",
+        "9998-02-28",
+      );
+
+      expect(() => prepareBudgetState(invalid)).toThrow(
+        "planning horizon exceeds supported calendar range",
+      );
+      await expect(
+        restoreBudgetBackup(backupFile(invalid), save, publish),
+      ).rejects.toThrow("planning horizon exceeds supported calendar range");
+
+      expect(save).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(stored).toBe(previous);
+      expect(published).toBe(previous);
+    },
+  );
+
+  it("отклоняет modern backup с USD и корректной checksum до save/publish", async () => {
+    const previous = makePlanningSeed();
+    let stored = previous;
+    let published = previous;
+    const save = vi.fn(async (next: BudgetState) => { stored = next; });
+    const publish = vi.fn((next: BudgetState) => { published = next; });
+    const candidate = makePlanningSeed();
+    const usd = {
+      ...candidate,
+      accounts: candidate.accounts.map((account, index) => (
+        index === 0 ? { ...account, currency: "USD" } : account
+      )),
+    };
+    const text = serializeBackup(usd);
+    const envelope = JSON.parse(text) as {
+      formatVersion: number;
+      integrity: { algorithm: string; checksum: string };
+    };
+    const file = { size: text.length, text: async () => text };
+
+    expect(envelope).toMatchObject({
+      formatVersion: 2,
+      integrity: { algorithm: "sha256" },
+    });
+    expect(envelope.integrity.checksum).toMatch(/^[a-f0-9]{64}$/);
+    expect(() => parseAndValidateBudgetBackup(text)).toThrow(
+      /accounts\[0\]\.currency: недопустимое значение/,
+    );
+    await expect(restoreBudgetBackup(file, save, publish)).rejects.toThrow(
+      /accounts\[0\]\.currency: недопустимое значение/,
+    );
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(stored).toBe(previous);
+    expect(published).toBe(previous);
   });
 
   it.each([

@@ -13,6 +13,7 @@ import {
   assertArtifactIsCurrent,
   collectArtifactInputs,
 } from "./artifact-staleness.mjs";
+import { verifyDebugApkSigner } from "./apk-signer-policy.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const androidRoot = join(packageRoot, "android");
@@ -159,6 +160,16 @@ function assertPackagedWebAssets(entries, prefix, artifact) {
 for (const artifact of [debugApk, releaseAab]) {
   assert(existsSync(artifact), `missing artifact ${relative(packageRoot, artifact)}`);
   assert(statSync(artifact).size > 0, `empty artifact ${relative(packageRoot, artifact)}`);
+}
+
+let debugApkSigner;
+try {
+  debugApkSigner = verifyDebugApkSigner({
+    apkPath: debugApk,
+    localPropertiesPath: join(androidRoot, "local.properties"),
+  });
+} catch (error) {
+  fail(error instanceof Error ? error.message : "debug APK signer check failed");
 }
 
 const apkEntries = listZip(debugApk);
@@ -457,15 +468,78 @@ assert(
   "FileProvider must not grant access to the shared external-storage root",
 );
 
-const nativeSources = [
-  ...findFiles(join(appRoot, "src/main"), "MainActivity.java"),
-  ...findFiles(join(appRoot, "src/main"), "MainActivity.kt"),
-];
+const nativeSources = listFiles(join(appRoot, "src/main")).filter((source) =>
+  /\.(?:java|kt)$/u.test(source),
+);
 for (const source of nativeSources) {
   assert(
     !/\b(?:Log\.[vdiew]|System\.out|System\.err)\b/u.test(read(source)),
     `${relative(packageRoot, source)} contains native logging`,
   );
+}
+const mainActivitySource = read(
+  join(
+    appRoot,
+    "src/main/java/ru/familybudget/app/MainActivity.java",
+  ),
+);
+const exportPluginSource = read(
+  join(
+    appRoot,
+    "src/main/java/ru/familybudget/app/NativeFileExportPlugin.java",
+  ),
+);
+const exportPolicySource = read(
+  join(
+    appRoot,
+    "src/main/java/ru/familybudget/app/NativeFileExportPolicy.java",
+  ),
+);
+assert(
+  /registerPlugin\(NativeFileExportPlugin\.class\)/u.test(mainActivitySource),
+  "native file export plugin is not registered",
+);
+assert(
+  /Intent\.ACTION_CREATE_DOCUMENT/u.test(exportPluginSource) &&
+    /Intent\.CATEGORY_OPENABLE/u.test(exportPluginSource),
+  "native exports must use the system document picker",
+);
+assert(
+  !/(?:requestPermissions?|MANAGE_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE)/u.test(
+    exportPluginSource,
+  ),
+  "native export must not request broad storage access",
+);
+assert(
+  /static\s+final\s+String\s+WRITE_TRUNCATE_MODE\s*=\s*"wt"\s*;/u.test(
+    exportPolicySource,
+  ),
+  'native export policy must define WRITE_TRUNCATE_MODE as exactly "wt"',
+);
+assert(
+  /\.openOutputStream\(\s*selectedUri\s*,\s*NativeFileExportPolicy\.WRITE_TRUNCATE_MODE\s*\)/u.test(
+    exportPluginSource,
+  ),
+  "native export must open the selected document with the truncate-mode policy constant",
+);
+for (const [artifact, zipPath, entries, dexPattern] of [
+  ["debug APK", debugApk, apkEntries, /^classes\d*\.dex$/u],
+  ["release AAB", releaseAab, aabEntries, /^base\/dex\/classes\d*\.dex$/u],
+]) {
+  const dexEntries = entries.filter((entry) => dexPattern.test(entry));
+  assert(dexEntries.length > 0, `${artifact}: DEX payload is missing`);
+  const dexFiles = dexEntries.map((entry) => readZipEntryBytes(zipPath, entry));
+  for (const marker of [
+    "NativeFileExport",
+    "android.intent.action.CREATE_DOCUMENT",
+    "application/json",
+    "text/csv",
+  ]) {
+    assert(
+      dexFiles.some((dex) => dex.includes(Buffer.from(marker, "utf8"))),
+      `${artifact}: native export marker is missing: ${marker}`,
+    );
+  }
 }
 
 const artifactInputs = collectArtifactInputs({ packageRoot, androidRoot });
@@ -490,6 +564,7 @@ console.log(
         path: relative(packageRoot, debugApk),
         bytes: statSync(debugApk).size,
         localWebAssets: apkAssetCount,
+        signer: debugApkSigner,
       },
       unsignedReleaseAab: {
         path: relative(packageRoot, releaseAab),

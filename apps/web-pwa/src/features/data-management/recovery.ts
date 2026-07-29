@@ -83,15 +83,15 @@ interface PreparedSuccessfulBackup {
 }
 
 /**
- * A backup is successful only after the browser accepted the download action
- * and its timestamp was persisted. Callers may publish UI success afterwards.
+ * A backup is successful only after the platform export completed and its
+ * timestamp was persisted. Callers may publish UI success afterwards.
  */
 export async function downloadThenRecordSuccessfulBackup(
   backup: PreparedSuccessfulBackup,
-  download: () => void,
+  download: () => Promise<void>,
   recordSuccessfulBackup: (createdAt: string) => Promise<void>,
 ): Promise<string> {
-  download();
+  await download();
   await recordSuccessfulBackup(backup.createdAt);
   return backup.createdAt;
 }

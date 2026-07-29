@@ -59,7 +59,7 @@ describe("successful backup orchestration", () => {
 
     await expect(downloadThenRecordSuccessfulBackup(
       backup,
-      () => { order.push("download"); },
+      async () => { order.push("download"); },
       record,
     )).resolves.toBe(backup.createdAt);
 
@@ -72,7 +72,7 @@ describe("successful backup orchestration", () => {
 
     await expect(downloadThenRecordSuccessfulBackup(
       backup,
-      () => { throw new Error("object URL, append or click failed"); },
+      async () => { throw new Error("object URL, append or click failed"); },
       record,
     )).rejects.toThrow();
 
@@ -80,7 +80,7 @@ describe("successful backup orchestration", () => {
   });
 
   it("does not report completion when metadata persistence fails", async () => {
-    const download = vi.fn();
+    const download = vi.fn(async () => undefined);
 
     await expect(downloadThenRecordSuccessfulBackup(
       backup,
@@ -89,6 +89,40 @@ describe("successful backup orchestration", () => {
     )).rejects.toThrow();
 
     expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for native file completion before recording metadata", async () => {
+    let complete!: () => void;
+    const download = vi.fn(
+      () => new Promise<void>((resolve) => {
+        complete = resolve;
+      }),
+    );
+    const record = vi.fn(async () => undefined);
+
+    const pending = downloadThenRecordSuccessfulBackup(backup, download, record);
+    await Promise.resolve();
+    expect(record).not.toHaveBeenCalled();
+
+    complete();
+    await expect(pending).resolves.toBe(backup.createdAt);
+    expect(record).toHaveBeenCalledWith(backup.createdAt);
+  });
+
+  it("does not record metadata when the native picker is cancelled", async () => {
+    const record = vi.fn(async () => undefined);
+
+    await expect(downloadThenRecordSuccessfulBackup(
+      backup,
+      async () => {
+        throw Object.assign(new Error("Native export cancelled."), {
+          code: "EXPORT_CANCELLED",
+        });
+      },
+      record,
+    )).rejects.toMatchObject({ code: "EXPORT_CANCELLED" });
+
+    expect(record).not.toHaveBeenCalled();
   });
 });
 

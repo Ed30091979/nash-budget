@@ -41,6 +41,8 @@ export interface PreparedBudgetBackup {
   readonly createdAt: string;
 }
 
+const RENDERABLE_PLANNING_HORIZON_MONTHS = 24;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -135,7 +137,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireString(account.id, `accounts[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(account.name, `accounts[${index}].name`, false, BACKUP_LIMITS.nameLength);
     requireEnum(account.type, ["current", "cash", "savings", "reserve"], `accounts[${index}].type`);
-    requireString(account.currency, `accounts[${index}].currency`, true);
+    requireEnum(account.currency, ["RUB"], `accounts[${index}].currency`);
     requireNumber(account.openingBalanceMinor, `accounts[${index}].openingBalanceMinor`);
     requireBoolean(account.active, `accounts[${index}].active`);
   });
@@ -304,7 +306,11 @@ export function prepareBudgetState(value: unknown): BudgetState {
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");
   validateAllBudgets(state);
   calculateBudget(state);
-  calculateAnnualPlan(state, activeBudget.startDate.slice(0, 7), 12);
+  calculateAnnualPlan(
+    state,
+    activeBudget.startDate.slice(0, 7),
+    RENDERABLE_PLANNING_HORIZON_MONTHS,
+  );
   return state;
 }
 

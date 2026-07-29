@@ -153,7 +153,7 @@ describe("phase 7 App composition", () => {
     const backupOrder: string[] = [];
     await downloadThenRecordSuccessfulBackup(
       backup,
-      () => { backupOrder.push("download"); },
+      async () => { backupOrder.push("download"); },
       async (value) => {
         backupOrder.push("persist");
         await sourceRepository.setLastSuccessfulBackup(value);
@@ -244,7 +244,7 @@ describe("phase 7 App composition", () => {
 
     await expect(downloadThenRecordSuccessfulBackup(
       backup,
-      () => { throw new Error("anchor click failed"); },
+      async () => { throw new Error("anchor click failed"); },
       record,
     )).rejects.toThrow();
 
@@ -262,7 +262,7 @@ describe("phase 7 App composition", () => {
       async () => undefined,
       { createdAt: "2026-07-24T09:10:11.000Z" },
     );
-    const download = vi.fn();
+    const download = vi.fn(async () => undefined);
 
     await expect(downloadThenRecordSuccessfulBackup(
       backup,

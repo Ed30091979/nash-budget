@@ -1,7 +1,9 @@
 package ru.familybudget.app;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 
+import com.getcapacitor.annotation.CapacitorPlugin;
 import org.junit.Test;
 
 public class LocalBuildPolicyTest {
@@ -12,5 +14,10 @@ public class LocalBuildPolicyTest {
             "BridgeActivity",
             MainActivity.class.getSuperclass().getSimpleName()
         );
+        CapacitorPlugin exportPlugin = NativeFileExportPlugin.class.getAnnotation(
+            CapacitorPlugin.class
+        );
+        assertNotNull(exportPlugin);
+        assertEquals("NativeFileExport", exportPlugin.name());
     }
 }
