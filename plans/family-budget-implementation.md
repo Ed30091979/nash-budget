@@ -331,9 +331,15 @@ File scope исполнителя:
 
 ## Фаза 10. Локальный release-candidate audit и handoff
 
-Статус: [ ] готово  
+Статус: [x] готово
 Checkpoint: `docs(release): finalize local release candidate evidence`  
-SHA/доказательство: —
+SHA/доказательство: implementation `f933cb3`; ровно `22` файла по проверенному pathspec: `README.md`, `apps/android/android/app/src/main/java/ru/familybudget/app/{MainActivity.java,NativeFileExportPlugin.java,NativeFileExportPolicy.java}`, `apps/android/android/app/src/test/java/ru/familybudget/app/{LocalBuildPolicyTest.java,NativeFileExportPolicyTest.java}`, `apps/android/scripts/{apk-signer-policy.mjs,verify-artifacts.mjs,verify-artifacts.test.mjs}`, `apps/web-pwa/src/{App.tsx,navigation-draft.test.tsx,backup.ts,backup.test.ts,phase7-app-integration.test.tsx}`, `apps/web-pwa/src/features/data-management/{DataManagementScreen.tsx,download.ts,download.test.ts,recovery.ts,recovery.test.ts,ui.test.tsx}`, `docs/IMPLEMENTATION_STATUS.md`, `reports/release-candidate/LOCAL_RELEASE_CANDIDATE_REPORT.md`; этот plan-only companion commit создаётся после `f933cb3`, его SHA намеренно не записывается внутрь самого коммита.
+
+Финальная автоматика: `pnpm verify` — `332/332`, Chromium E2E — `5/5`, `pnpm audit`/`pnpm audit --prod` — `0/0` vulnerabilities, release scan — `13` артефактов и `10` уникальных precache URL; storage migration/restore, production build, Android `cap sync`/Gradle unit/lint/APK/AAB и artifact security scan зелёные. Итоговый debug APK: SHA-256 `941918f60eca6df35251472b3a498c3f1c87375092c00dec2160d2eb820e7212`; unsigned release AAB: SHA-256 `7f9d9b81c6a151dea7cb8c8fc0e894353b595edcdf02f18306784fcbda0694d8`; release Excel: SHA-256 `478e173ce41f9231c84c5831ebf0704347cdfa81d09b6eefe87430b4056e1ed9`.
+
+Live-check domain/PWA/Android подтвердил G-000 `100 000 / 76 500 / 23 500 ₽`; G-002: июль резерв/свободно `19 809 / 44 191 ₽`, сентябрь сезонное/свободно `31 000 / 13 191 ₽`, январь 2027 due `72 000 ₽`, июнь 2028 due `0 ₽`; JSON backup round-trip сохранил UUID, даты, суммы и счётчики. Подтверждённые findings исправлены и перегнаны: Android SAF пишет с явным truncation mode `wt`, restore допускает только `RUB`, artifact gate fail-closed проверяет единственного debug signer, route/update navigation не теряет несохранённые черновики. Финальные свежие code review и security review — `APPROVE`, blocker/high/medium/low `0/0/0/0` каждое.
+
+Открыты только ручные gates пользователя из раздела ниже: реальный Excel и Accessibility/keyboard/200%; HTTPS Safari/Home Screen/VoiceOver/offline/update/Files/Share на iPhone/iPad; слабое Android-устройство и несколько System WebView; окончательные бренд, платформы, RuStore-владелец и package name; release signing key и его backup; privacy/legal/store/support; пилот `5–10` семей; отдельно разрешённая закрытая RuStore alpha с upgrade/recovery. Эти gates не отмечены выполненными; deploy, signing и upload не выполнялись.
 
 File scope исполнителя:
 
@@ -344,15 +350,15 @@ File scope исполнителя:
 
 Реализация и проверки:
 
-- [ ] Выполнить полный `pnpm verify`, Excel scan, browser/e2e, storage migrations/restore, Android Gradle checks и artifact security scan с нуля.
-- [ ] Сформировать трассируемую таблицу QA gate → команда/ручной gate → результат → SHA/артефакт.
-- [ ] Проверить отсутствие секретов, remote code, financial logs, production URL, keystore и чужих dirty-файлов во всех коммитах плана.
-- [ ] Live-check одинакового fixture на domain, PWA и Android emulator: G-000 `100 000 / 76 500 / 23 500 ₽`; G-002 июль `19 809 / 44 191 ₽`, сентябрь `31 000 / 13 191 ₽`, январь 2027 `72 000 ₽`, июнь 2028 `0 ₽`; backup round-trip сохраняет UUID/даты/суммы/счётчики.
-- [ ] Свежий финальный code reviewer не участвовал ни в одной реализации и проверяет весь range от baseline SHA до HEAD.
-- [ ] Другой свежий security reviewer проверяет весь range, dependency/artifact scans и privacy claims.
-- [ ] Все подтверждённые findings исправлены, затронутые фазы перегнаны, итоговый рабочий tree чист относительно заранее зафиксированных чужих файлов.
-- [ ] Этот план содержит SHA и доказательство каждой закрытой фазы; `docs/IMPLEMENTATION_STATUS.md` и `README.md` соответствуют факту.
-- [ ] Коммит A содержит только release docs/reports и подтверждённые точечные fixes; коммит B содержит только план с SHA/доказательством A.
+- [x] Выполнить полный `pnpm verify`, Excel scan, browser/e2e, storage migrations/restore, Android Gradle checks и artifact security scan с нуля.
+- [x] Сформировать трассируемую таблицу QA gate → команда/ручной gate → результат → SHA/артефакт.
+- [x] Проверить отсутствие секретов, remote code, financial logs, production URL, keystore и чужих dirty-файлов во всех коммитах плана.
+- [x] Live-check одинакового fixture на domain, PWA и Android emulator: G-000 `100 000 / 76 500 / 23 500 ₽`; G-002 июль `19 809 / 44 191 ₽`, сентябрь `31 000 / 13 191 ₽`, январь 2027 `72 000 ₽`, июнь 2028 `0 ₽`; backup round-trip сохраняет UUID/даты/суммы/счётчики.
+- [x] Свежий финальный code reviewer не участвовал ни в одной реализации и проверяет весь range от baseline SHA до HEAD.
+- [x] Другой свежий security reviewer проверяет весь range, dependency/artifact scans и privacy claims.
+- [x] Все подтверждённые findings исправлены, затронутые фазы перегнаны, итоговый рабочий tree чист относительно заранее зафиксированных чужих файлов.
+- [x] Этот план содержит SHA и доказательство каждой закрытой фазы; `docs/IMPLEMENTATION_STATUS.md` и `README.md` соответствуют факту.
+- [x] Коммит A содержит только release docs/reports и подтверждённые точечные fixes; коммит B содержит только план с SHA/доказательством A.
 
 ## Ручные действия пользователя после автономного code-ready финала
 
