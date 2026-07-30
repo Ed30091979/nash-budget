@@ -1,4 +1,4 @@
-package ru.familybudget.app;
+package ru.nashbudget.app;
 
 import java.io.IOException;
 import java.io.OutputStream;

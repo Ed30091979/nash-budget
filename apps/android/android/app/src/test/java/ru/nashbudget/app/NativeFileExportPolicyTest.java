@@ -1,4 +1,4 @@
-package ru.familybudget.app;
+package ru.nashbudget.app;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;

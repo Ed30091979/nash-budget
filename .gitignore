@@ -7,3 +7,6 @@ coverage/
 outputs/legacy/
 apps/android/android/.gradle/
 apps/android/android/local.properties
+
+outputs/release-*/*.aab
+apps/android/android/app/build/

@@ -111,7 +111,7 @@ function assertSameEntries(actual, expected, artifact) {
 }
 
 function assertLocalConfig(config, source) {
-  assert(config.appId === "ru.familybudget.app", `${source}: unexpected appId`);
+  assert(config.appId === "ru.nashbudget.app", `${source}: unexpected appId`);
   assert(
     config.webDir === "../web-pwa/dist",
     `${source}: webDir must reference the local production build`,
@@ -324,7 +324,7 @@ assert(
 );
 const mergedManifest = read(mergedManifests[0]);
 const internalReceiverPermission =
-  "ru.familybudget.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
+  "ru.nashbudget.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
 const requestedPermissions = [
   ...mergedManifest.matchAll(
     /<uses-permission\b[^>]*android:name="([^"]+)"[^>]*\/?>/gu,
@@ -404,7 +404,7 @@ assert(
 );
 assert(
   /versionCode\s+1\b/u.test(appBuild) &&
-    /versionName\s+"0\.1\.0-local"/u.test(appBuild),
+    /versionName\s+"1\.0\.0"/u.test(appBuild),
   "local versionCode/versionName changed unexpectedly",
 );
 assert(
@@ -480,19 +480,19 @@ for (const source of nativeSources) {
 const mainActivitySource = read(
   join(
     appRoot,
-    "src/main/java/ru/familybudget/app/MainActivity.java",
+    "src/main/java/ru/nashbudget/app/MainActivity.java",
   ),
 );
 const exportPluginSource = read(
   join(
     appRoot,
-    "src/main/java/ru/familybudget/app/NativeFileExportPlugin.java",
+    "src/main/java/ru/nashbudget/app/NativeFileExportPlugin.java",
   ),
 );
 const exportPolicySource = read(
   join(
     appRoot,
-    "src/main/java/ru/familybudget/app/NativeFileExportPolicy.java",
+    "src/main/java/ru/nashbudget/app/NativeFileExportPolicy.java",
   ),
 );
 assert(
@@ -553,9 +553,9 @@ console.log("Android artifact scan passed.");
 console.log(
   JSON.stringify(
     {
-      appId: "ru.familybudget.app",
+      appId: "ru.nashbudget.app",
       versionCode: 1,
-      versionName: "0.1.0-local",
+      versionName: "1.0.0",
       systemPermissions: [],
       internalSignaturePermissions: requestedPermissions,
       exportedComponents: exportedTrueComponents,
