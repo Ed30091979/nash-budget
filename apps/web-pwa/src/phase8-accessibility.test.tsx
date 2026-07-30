@@ -55,7 +55,7 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(styles).toContain(".composition-options label:has(input:focus-visible)");
     expect(styles).toContain(".month-checkboxes label:has(input:focus-visible)");
     expect(styles).toContain(".file-button:focus-within");
-    expect(styles).toContain("outline: 3px solid #075fd8");
+    expect(styles).toContain("outline: 3px solid #ffedd7");
   });
 
   it("defines narrow, zoomed-tablet and landscape containment without hiding inner data scrollers", () => {

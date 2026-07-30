@@ -38,15 +38,15 @@ export const PWA_BUILD_ID = resolvePwaBuildId(process.env.PWA_BUILD_ID);
 
 export const PWA_MANIFEST = {
   id: "/",
-  name: "Наш семейный бюджет",
+  name: "Наш бюджет",
   short_name: "Наш бюджет",
   description: "План, факт и контроль семейных лимитов — даже без интернета.",
   lang: "ru",
   start_url: "/",
   scope: "/",
   display: "standalone",
-  background_color: "#f5f7fa",
-  theme_color: "#16324f",
+  background_color: "#100904",
+  theme_color: "#100904",
   categories: ["finance", "productivity"],
   icons: [
     {

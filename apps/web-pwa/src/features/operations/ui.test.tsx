@@ -100,7 +100,7 @@ describe("operations UI", () => {
     expect(html).toContain("150%");
     expect(html).toContain("нет плана");
     expect(html).toMatch(/role="status" aria-label="Точный перелимит: Перелимит,[^"]*150%"/);
-    expect(html).toMatch(/<i aria-hidden="true">!<\/i>/);
+    expect(html).toMatch(/<span class="plan-icon signal-icon over_limit" aria-hidden="true">!<\/span>/);
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });

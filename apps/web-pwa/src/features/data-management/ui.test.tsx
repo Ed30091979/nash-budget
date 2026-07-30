@@ -95,7 +95,7 @@ describe("data-management UI", () => {
       "utf8",
     );
 
-    expect(styles).toMatch(/\.file-button:focus-within\s*\{[\s\S]*outline:\s*3px\s+solid\s+#075fd8;/);
+    expect(styles).toMatch(/\.file-button:focus-within\s*\{[\s\S]*outline:\s*3px\s+solid\s+#ffedd7;/);
     expect(styles).toMatch(/\.file-button\s*\{[^}]*min-height:\s*44px;/);
   });
 });

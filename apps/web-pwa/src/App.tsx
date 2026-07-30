@@ -401,15 +401,15 @@ export default function App() {
     <div className="app-shell">
       <SkipLink />
       <header className="app-header">
-        <div className="brand"><span className="brand-mark">₽</span><div><strong>Семейный план</strong><small>видим месяц и будущее</small></div></div>
+        <div className="brand"><span className="brand-mark">₽</span><div><strong>Наш бюджет</strong><small>видим месяц и будущее</small></div></div>
         <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">
-        <NavButton active={screen === "today"} icon="⌂" label="Сегодня" onClick={() => navigate("today")} />
-        <NavButton active={screen === "year" || screen === "planning"} icon="▦" label="Год" onClick={() => navigate("year")} />
-        <NavButton active={screen === "operations"} icon="＋" label="Записать" onClick={() => navigate("operations")} />
-        <NavButton active={screen === "more"} icon="•••" label="Ещё" onClick={() => navigate("more")} />
+        <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
+        <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
+        <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />
+        <NavButton active={screen === "more"} icon="more" label="Ещё" onClick={() => navigate("more")} />
       </nav>
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
@@ -456,8 +456,15 @@ export default function App() {
   );
 }
 
-function NavButton({ active, icon, label, onClick }: { active: boolean; icon: string; label: string; onClick: () => void }) {
-  return <button className={`nav-button${active ? " active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}><b aria-hidden="true">{icon}</b><span>{label}</span></button>;
+const navIcons = {
+  today: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 10.5 12 3.5l8.5 7" /><path d="M5.5 9.5V20h13V9.5" /><path d="M9.8 20v-5.5h4.4V20" /></svg>,
+  year: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17" /><path d="M8 2.8v4M16 2.8v4" /></svg>,
+  operations: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.8" /><path d="M12 8.2v7.6M8.2 12h7.6" /></svg>,
+  more: <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.2" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="18.8" cy="12" r="2" /></svg>,
+} as const;
+
+function NavButton({ active, icon, label, onClick }: { active: boolean; icon: keyof typeof navIcons; label: string; onClick: () => void }) {
+  return <button className={`nav-button${active ? " active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}><span className="nav-icon" aria-hidden="true">{navIcons[icon]}</span><span>{label}</span></button>;
 }
 
 type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
