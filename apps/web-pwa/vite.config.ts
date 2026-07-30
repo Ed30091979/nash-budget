@@ -36,27 +36,30 @@ export function resolvePwaBuildId(value: string | undefined): string {
 
 export const PWA_BUILD_ID = resolvePwaBuildId(process.env.PWA_BUILD_ID);
 
+// Базовый путь для хостинга под подкаталогом (GitHub Pages). По умолчанию "/".
+export const PWA_BASE = process.env.PWA_BASE ?? "/";
+
 export const PWA_MANIFEST = {
-  id: "/",
+  id: PWA_BASE,
   name: "Наш бюджет",
   short_name: "Наш бюджет",
   description: "План, факт и контроль семейных лимитов — даже без интернета.",
   lang: "ru",
-  start_url: "/",
-  scope: "/",
+  start_url: PWA_BASE,
+  scope: PWA_BASE,
   display: "standalone",
   background_color: "#100904",
   theme_color: "#100904",
   categories: ["finance", "productivity"],
   icons: [
     {
-      src: "/icon-192.png",
+      src: `${PWA_BASE}icon-192.png`,
       sizes: "192x192",
       type: "image/png",
       purpose: "any",
     },
     {
-      src: "/icon-512.png",
+      src: `${PWA_BASE}icon-512.png`,
       sizes: "512x512",
       type: "image/png",
       purpose: "any maskable",
@@ -78,6 +81,7 @@ function buildMetadataPlugin(): Plugin {
 }
 
 export default defineConfig({
+  base: PWA_BASE,
   plugins: [
     react(),
     buildMetadataPlugin(),
