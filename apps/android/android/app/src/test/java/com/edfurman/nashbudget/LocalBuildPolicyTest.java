@@ -1,4 +1,4 @@
-package ru.nashbudget.app;
+package com.edfurman.nashbudget;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -9,7 +9,7 @@ import org.junit.Test;
 public class LocalBuildPolicyTest {
     @Test
     public void nativeShellUsesTheExpectedPackageAndCapacitorBridge() {
-        assertEquals("ru.nashbudget.app", MainActivity.class.getPackageName());
+        assertEquals("com.edfurman.nashbudget", MainActivity.class.getPackageName());
         assertEquals(
             "BridgeActivity",
             MainActivity.class.getSuperclass().getSimpleName()

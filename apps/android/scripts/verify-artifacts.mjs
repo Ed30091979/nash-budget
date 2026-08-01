@@ -111,7 +111,7 @@ function assertSameEntries(actual, expected, artifact) {
 }
 
 function assertLocalConfig(config, source) {
-  assert(config.appId === "ru.nashbudget.app", `${source}: unexpected appId`);
+  assert(config.appId === "com.edfurman.nashbudget", `${source}: unexpected appId`);
   assert(
     config.webDir === "../web-pwa/dist",
     `${source}: webDir must reference the local production build`,
@@ -324,7 +324,7 @@ assert(
 );
 const mergedManifest = read(mergedManifests[0]);
 const internalReceiverPermission =
-  "ru.nashbudget.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
+  "com.edfurman.nashbudget.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
 const requestedPermissions = [
   ...mergedManifest.matchAll(
     /<uses-permission\b[^>]*android:name="([^"]+)"[^>]*\/?>/gu,
@@ -480,19 +480,19 @@ for (const source of nativeSources) {
 const mainActivitySource = read(
   join(
     appRoot,
-    "src/main/java/ru/nashbudget/app/MainActivity.java",
+    "src/main/java/com/edfurman/nashbudget/MainActivity.java",
   ),
 );
 const exportPluginSource = read(
   join(
     appRoot,
-    "src/main/java/ru/nashbudget/app/NativeFileExportPlugin.java",
+    "src/main/java/com/edfurman/nashbudget/NativeFileExportPlugin.java",
   ),
 );
 const exportPolicySource = read(
   join(
     appRoot,
-    "src/main/java/ru/nashbudget/app/NativeFileExportPolicy.java",
+    "src/main/java/com/edfurman/nashbudget/NativeFileExportPolicy.java",
   ),
 );
 assert(
@@ -553,7 +553,7 @@ console.log("Android artifact scan passed.");
 console.log(
   JSON.stringify(
     {
-      appId: "ru.nashbudget.app",
+      appId: "com.edfurman.nashbudget",
       versionCode: 1,
       versionName: "1.0.0",
       systemPermissions: [],

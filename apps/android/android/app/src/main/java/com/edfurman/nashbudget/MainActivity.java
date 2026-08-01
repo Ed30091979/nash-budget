@@ -1,4 +1,4 @@
-package ru.nashbudget.app;
+package com.edfurman.nashbudget;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;

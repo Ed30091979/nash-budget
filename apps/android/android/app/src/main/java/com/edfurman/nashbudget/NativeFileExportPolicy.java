@@ -1,4 +1,4 @@
-package ru.nashbudget.app;
+package com.edfurman.nashbudget;
 
 import java.io.IOException;
 import java.io.OutputStream;

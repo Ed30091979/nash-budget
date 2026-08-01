@@ -6,7 +6,7 @@
  *   node tools/publish-rustore.mjs --submit        # … и отправить на модерацию
  *
  * Ключ API: ~/.upword/rustore-api.env (RUSTORE_KEY_ID, RUSTORE_PRIVATE_KEY_PATH).
- * Приложение ru.nashbudget.app должно быть создано в RuStore Console,
+ * Приложение com.edfurman.nashbudget должно быть создано в RuStore Console,
  * а ключ API — иметь к нему доступ.
  */
 import crypto from "node:crypto";
@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PACKAGE = "ru.nashbudget.app";
+const PACKAGE = "com.edfurman.nashbudget";
 const API = "https://public-api.rustore.ru/public/v1";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ASSETS = path.join(ROOT, "outputs/release-1.0.0/store-assets");

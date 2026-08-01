@@ -1,4 +1,4 @@
-package ru.nashbudget.app;
+package com.edfurman.nashbudget;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;

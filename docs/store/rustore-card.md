@@ -5,7 +5,7 @@
 ## Основное
 
 - **Название:** Наш бюджет
-- **Package name:** `ru.nashbudget.app`
+- **Package name:** `com.edfurman.nashbudget`
 - **Версия:** 1.0.0 (versionCode 1)
 - **Категория:** Финансы
 - **Возрастная маркировка:** 0+

@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   // До первой публикации package name нужно подтвердить и затем не менять.
-  appId: "ru.nashbudget.app",
+  appId: "com.edfurman.nashbudget",
   appName: "Наш бюджет",
   webDir: "../web-pwa/dist",
   android: {

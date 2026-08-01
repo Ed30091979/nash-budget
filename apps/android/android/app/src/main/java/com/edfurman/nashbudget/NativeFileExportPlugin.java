@@ -1,4 +1,4 @@
-package ru.nashbudget.app;
+package com.edfurman.nashbudget;
 
 import android.app.Activity;
 import android.content.Intent;
