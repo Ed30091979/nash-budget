@@ -71,3 +71,19 @@ describe("PWA production configuration", () => {
     expect(configSource).toContain("headers: SECURITY_HEADERS");
   });
 });
+
+describe("service worker registration coverage", () => {
+  const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+  it("registers the service worker on every route, including first-run onboarding", () => {
+    const routeGuards = appSource
+      .split("\n")
+      .filter((line) => /^\s{2}if \((?:loadState === |!budget \|\|).*\) return </u.test(line));
+
+    expect(routeGuards).toHaveLength(4);
+    for (const guard of routeGuards) {
+      expect(guard).toContain("<UpdatePrompt");
+    }
+    expect(appSource).toContain('hasUnsavedChanges={operationDraftDirty || planningDraftDirty}');
+  });
+});

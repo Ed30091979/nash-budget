@@ -222,11 +222,15 @@ if (
 const manifest = JSON.parse(
   readFileSync(join(distDirectory, "manifest.webmanifest"), "utf8"),
 );
+const base = process.env.PWA_BASE ?? "/";
+if (!/^\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*$/u.test(base)) {
+  fail("PWA_BASE must be an absolute path with a trailing slash");
+}
 if (
   manifest.display !== "standalone" ||
-  manifest.id !== "/" ||
-  manifest.start_url !== "/" ||
-  manifest.scope !== "/" ||
+  manifest.id !== base ||
+  manifest.start_url !== base ||
+  manifest.scope !== base ||
   "orientation" in manifest
 ) {
   fail("manifest identity, standalone mode, scope, start URL, or orientation is invalid");
@@ -235,8 +239,8 @@ const iconSizes = new Set(
   (manifest.icons ?? []).map((icon) => `${icon.src}|${icon.sizes}|${icon.purpose}`),
 );
 if (
-  !iconSizes.has("/icon-192.png|192x192|any") ||
-  !iconSizes.has("/icon-512.png|512x512|any maskable")
+  !iconSizes.has(`${base}icon-192.png|192x192|any`) ||
+  !iconSizes.has(`${base}icon-512.png|512x512|any maskable`)
 ) {
   fail("manifest icons are incomplete");
 }
