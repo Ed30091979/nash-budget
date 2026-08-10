@@ -1,0 +1,20 @@
+{
+  "name": "@family-budget/sync-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@family-budget/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@family-budget/test-fixtures": "workspace:*"
+  }
+}

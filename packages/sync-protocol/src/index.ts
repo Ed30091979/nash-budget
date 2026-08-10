@@ -1,0 +1,40 @@
+export {
+  decodeOperation,
+  encodeOperation,
+  MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_OPERATION_BYTES,
+  MIN_LOCAL_DATE,
+  parseOperation,
+  parseUuid,
+  SyncProtocolError,
+} from "./codec.js";
+export {
+  createClock,
+  createLocalOperation,
+  HONEST_LAMPORT_CEILING,
+  MAX_HONEST_LAMPORT,
+  MAX_LAMPORT,
+  MAX_LAMPORT_SKEW,
+  receiveClock,
+  receiveLamport,
+  receiveOperations,
+  tickClock,
+  type LamportReception,
+  type LamportVerdict,
+} from "./clock.js";
+export {
+  applyJournal,
+  applyOperations,
+  compareOperations,
+  createEmptyJournal,
+  MAX_AGGREGATE_MINOR,
+  MAX_APPLIED_OP_IDS,
+  MAX_BATCH_OPERATIONS,
+  MAX_JOURNAL_ENTRIES,
+  MAX_TOMBSTONES_PER_DEVICE,
+  MAX_UNDO_STEPS,
+  restoreJournal,
+  SATURATION_MINOR,
+} from "./journal.js";
+export * from "./types.js";

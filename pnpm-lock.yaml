@@ -97,6 +97,16 @@ importers:
         specifier: 6.2.4
         version: 6.2.4
 
+  packages/sync-protocol:
+    dependencies:
+      '@family-budget/domain':
+        specifier: workspace:*
+        version: link:../domain
+    devDependencies:
+      '@family-budget/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+
   packages/test-fixtures:
     dependencies:
       ajv:
