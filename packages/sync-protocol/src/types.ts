@@ -159,22 +159,29 @@ export const JOURNAL_PROBLEM_CODES = [
   /** One budget plans one category twice. */
   "duplicate_budget_line",
   /**
-   * Advisory: a total the domain sums has left the range a domain calculation stays safe in.
-   * A property of the journal, with no entity named — nothing is withheld for it.
+   * A total the domain sums has left the range a domain calculation stays safe in. A property
+   * of the journal, with no entity named — nothing is withheld for it.
    */
   "amount_out_of_range",
   /**
-   * Advisory: the journal holds more entries than any family fills. Nothing is withheld for it
-   * and no author is named — the count is reported, and that is all it does.
+   * The journal holds more entries than any family fills. Nothing is withheld for it and no
+   * author is named — the count is reported, and that is all it does.
    */
   "journal_entry_budget",
-  /** Advisory: one device owns more tombstones than any honest history explains. */
+  /**
+   * One author owns more tombstones than any honest history explains. Nothing is withheld for
+   * it: an honest bulk deletion still shows the family its budget.
+   */
   "tombstone_budget",
-  /** Advisory: the oldest operation identifiers fell out of the bookkeeping window. */
+  /**
+   * The oldest operation identifiers fell out of the bookkeeping window. Nothing is withheld
+   * for it, and nothing in the state depends on the window.
+   */
   "applied_id_budget",
   /**
-   * Advisory: a device stamped an operation at or past anything honest work produces, so the
-   * stamp carries no rank in the merge. A property of the converged journal, not of a delivery.
+   * A device stamped an operation at or past anything honest work produces, so the stamp
+   * carries no rank in the merge. Nothing is withheld for it — the stamp has already cost its
+   * writer every conflict. A property of the converged journal, not of a delivery.
    * The empty identifier means this device's own stored clock, read back above the line from a
    * snapshot and brought below it.
    */
@@ -260,7 +267,12 @@ export interface JournalProblem {
   readonly code: JournalProblemCode;
   /** Entity kind the problem is about, or null when it is not about one entity. */
   readonly entity: EntityKind | null;
-  /** Identifier the problem is about: an entity for most codes, a device for a tombstone budget. */
+  /**
+   * Identifier the problem is about: an entity for most codes, and a device for a tombstone
+   * budget or an implausible stamp. The empty string means the problem is about no single
+   * identifier — a property of the journal itself, the shared bucket of authors the family has
+   * nothing to show for, or this device's own clock read back from a snapshot.
+   */
   readonly id: string;
 }
 

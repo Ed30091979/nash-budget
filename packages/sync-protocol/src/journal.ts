@@ -51,13 +51,15 @@ import { ENTITY_KINDS, UNSHOWABLE_PROBLEM_CODES } from "./types.js";
  * out of one of those totals, so it stays inside it as well, and {@link COMBINED_AGGREGATES} of
  * them added together still stay safe.
  *
- * Nothing is withheld for it. Seven rounds of review were spent on the question of *which*
- * entity an over-budget total should give up, and every answer was the same defect in a new
- * spelling: the dimension the eviction sorted by was always a field the writing peer fills in
- * for itself. The last of them sorted by `amountMinor`, which looks like a measure with a
- * meaning of its own and is not one — a peer that stamps its amounts one kopeck below the
- * family's puts the family's salary at the head of the queue, so the family's own records go
- * first and the family is told for ever that its budget is not ready.
+ * Nothing is withheld for it, and this is the whole account of the eviction that used to be
+ * here; everywhere else that mentions it points back at this constant. Round after round of
+ * review was spent on the question of *which* entity an over-budget total should give up, and
+ * every answer was the same defect in a new spelling: the dimension the eviction sorted by was
+ * always a field the writing peer fills in for itself. The last of them sorted by `amountMinor`,
+ * which looks like a measure with a meaning of its own and is not one — a peer that stamps its
+ * amounts one kopeck below the family's puts the family's salary at the head of the queue, so
+ * the family's own records go first and the family is told for ever that its budget is not
+ * ready.
  *
  * The margin below the safe integer range is what makes the report enough. A total has to pass
  * a hundred billion roubles before this fires and nine quadrillion before the domain refuses to
@@ -86,29 +88,32 @@ export const MAX_AGGREGATE_MINOR = 10 ** 13;
 export const SATURATION_MINOR = MAX_AGGREGATE_MINOR * 100;
 
 /**
- * Entities the state may show before the gate says so out loud. Advisory: nothing is withheld
- * for it, ever.
+ * Entries one journal holds before the gate says so out loud — counted over the whole converged
+ * journal, so tombstones and the entities the gate withholds are counted with the rest. Nothing
+ * is withheld for crossing it, ever.
  *
- * It used to be enforced, and enforcing it was the sixth appearance of one defect. A limit
- * needs a dimension — something to measure a participant's share by — and the dimension chosen
- * was the identifier of the writing device, so that a flooder would evict its own entries and
- * nobody else's. But `deviceId` is a field of the operation: the codec checks that it has the
- * shape of a UUID and nothing else, and SYNC_ARCHITECTURE forbids the server to compare it with
- * the device that uploaded the envelope, because a device that rotates its key must go on
- * writing under the identity it had. So the peer being bounded wrote the measure of its own
- * share, drew itself a fresh identity for every entry, and the budget was shared again — one
- * flood took every account, every category, the budget and all five hundred transactions of a
- * family out of the state, identically in both delivery orders and for good, because the
+ * This is the whole account of the eviction that used to stand here; everywhere else that
+ * mentions it points back at this constant.
+ *
+ * It used to be enforced, and enforcing it was one appearance of a defect this package met again
+ * and again. A limit needs a dimension — something to measure a participant's share by — and the
+ * dimension chosen was the identifier of the writing device, so that a flooder would evict its
+ * own entries and nobody else's. But `deviceId` is a field of the operation: the codec checks
+ * that it has the shape of a UUID and nothing else, and SYNC_ARCHITECTURE forbids the server to
+ * compare it with the device that uploaded the envelope, because a device that rotates its key
+ * must go on writing under the identity it had. So the peer being bounded wrote the measure of
+ * its own share, drew itself a fresh identity for every entry, and the budget was shared again —
+ * one flood took every account, every category, the budget and all five hundred transactions of
+ * a family out of the state, identically in both delivery orders and for good, because the
  * journal never shrinks.
  *
- * The whole class goes with the enforcement, and the seventh round removed the last eviction
- * this package had for the same reason — see {@link MAX_AGGREGATE_MINOR}. What holds the safe
- * integer invariant is {@link SATURATION_MINOR} on the merge side and the domain's own refusal
- * to add an unsafe total on the consumer side; neither of them needs anybody's records taken
- * away.
+ * The whole class goes with the enforcement, and the last eviction this package had went the
+ * same way for the same reason — see {@link MAX_AGGREGATE_MINOR}. What holds the safe integer
+ * invariant is {@link SATURATION_MINOR} on the merge side and the domain's own refusal to add
+ * an unsafe total on the consumer side; neither of them needs anybody's records taken away.
  *
  * What is left here is a number a consumer can show a person: a journal this large is worth
- * looking at, and the family goes on seeing every entity in it.
+ * looking at, and the family goes on seeing every entry in it.
  */
 export const MAX_JOURNAL_ENTRIES = 100_000;
 
@@ -139,12 +144,19 @@ export const MAX_BATCH_OPERATIONS = 100_000;
 /**
  * Operation identifiers one journal remembers, as a sliding window over the epochs it folded.
  *
- * Bookkeeping must not grow without end, and the ceiling used to be a throw. That handed a
- * peer an off switch: a forged snapshot listing a million identifiers locked the device out of
- * its own journal for good, including the operations it wrote itself, because every later call
- * threw before it applied anything. The oldest identifiers are dropped instead and the drop is
- * reported. Nothing depends on the set for correctness — it is never a reason to skip an
- * operation — so a forgotten identifier costs an extra fold, not a divergence.
+ * Bookkeeping must not grow without end, and on the fold side the ceiling used to be a throw.
+ * That handed a peer an off switch: a forged snapshot listing a million identifiers locked the
+ * device out of its own journal for good, including the operations it wrote itself, because
+ * every later call threw before it applied anything. A fold that crosses the ceiling drops the
+ * oldest identifiers instead and reports the drop. Nothing depends on the set for correctness
+ * — it is never a reason to skip an operation — so a forgotten identifier costs an extra fold,
+ * not a divergence.
+ *
+ * Reading a snapshot back from storage still refuses a set larger than this, and that refusal
+ * is not the lockout it replaced. A snapshot this module writes never carries more than the
+ * ceiling, because the fold that produced it trimmed the window before handing it back, so the
+ * refusal can only fall on a set some other writer made up — never on a device's own journal.
+ * It stays a rejection of malformed input rather than an off switch. See `readAppliedOpIds`.
  */
 export const MAX_APPLIED_OP_IDS = 1_000_000;
 
@@ -197,10 +209,8 @@ const COMBINED_AGGREGATES = 4;
  *    the gate would lose its own arithmetic before it could report anything about the journal's.
  *
  * The count-based clause that used to head this list — a bounded number of entities carrying a
- * bounded number of amounts — is gone with the enforcement of {@link MAX_JOURNAL_ENTRIES}. It
- * was the only reason that budget threw anything out of a family's state, and the reason was
- * circular: the count could only be enforced by evicting somebody, and every dimension to evict
- * by was written by the peer being evicted.
+ * bounded number of amounts — is gone with the enforcement of {@link MAX_JOURNAL_ENTRIES}, and
+ * so is the circularity it rested on: see that constant for why nothing is evicted any more.
  */
 function assertMoneyCeilings(): void {
   if (COMBINED_AGGREGATES * MAX_AGGREGATE_MINOR > Number.MAX_SAFE_INTEGER) {
@@ -544,22 +554,18 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
 /**
  * Says out loud that this journal is larger than any family fills. Withholds nothing.
  *
- * Three rounds of review were spent on the question of *which* entries an over-budget journal
- * should drop, and every answer was a lever. Dropping by identifier let a peer name its entries
- * so that the family's went first. Dropping by rank let a peer stamp its entries so that the
- * family's went first. Dropping round by round with a dimension per device — the fifth answer —
- * held for exactly one round: `deviceId` is a field the writing peer fills in, checked for the
- * shape of a UUID and nothing else, and SYNC_ARCHITECTURE forbids the server to compare it with
- * the device that actually uploaded the envelope, because that comparison would break key
- * rotation. One identity per entry, and the per-device budget was a shared budget again. The
- * flood took every account, every category, the budget and all five hundred transactions of a
- * family out of the state, in both delivery orders and permanently.
+ * Round after round of review was spent on the question of *which* entries an over-budget
+ * journal should drop, and every answer was a lever for the peer being bounded: dropping by
+ * identifier let it name its entries so that the family's went first, dropping by rank let it
+ * stamp them so, and a budget per device let it mint a fresh `deviceId` per entry. The answer
+ * is that there is nothing to drop — nothing in the domain needs this count bounded, so the
+ * report is all that is left and the family keeps its data. {@link MAX_JOURNAL_ENTRIES} carries
+ * the whole account, including what the last of those floods cost a family; see
+ * {@link MAX_AGGREGATE_MINOR} for what actually holds the safe integer invariant up.
  *
- * The fourth answer is that there is nothing to drop. Nothing in the domain needs this count
- * bounded — see {@link MAX_AGGREGATE_MINOR} for what actually holds the safe integer invariant
- * up — so the report is all that is left, and the family keeps its data. Advisory, one problem
- * for the journal rather than one per author: naming an author would put a string of the
- * flooder's choosing in the report for no purpose, since nothing follows from it.
+ * One problem for the journal rather than one per author: naming an author would put a string
+ * of the flooder's choosing in the report for no purpose, since nothing follows from it.
+ * Nothing is withheld for it.
  */
 function reportEntryBudget(
   ordered: readonly JournalEntry[],
@@ -831,14 +837,10 @@ function transactionContributions(
  * journal, with accumulators that saturate rather than overflow, and a total past
  * {@link MAX_AGGREGATE_MINOR} is reported.
  *
- * It used to withhold, and that was the seventh appearance of one defect. The entity to give up
- * was chosen by `amountMinor` — the last dimension in this file that looked like a measure with
- * a meaning of its own rather than a name somebody picked. It is a name somebody picked: the
- * amount is a field of the operation, so a peer that writes its own amounts one kopeck below
- * the family's salary sends the salary to the head of the queue and the family's real income is
- * the first thing to leave the state, permanently and in every delivery order, with
- * `ready: false` on top of it. Nothing measured on this side survives being chosen by the peer
- * being measured; see decision 39 for the boundary this settles on.
+ * It used to withhold, choosing the entity to give up by `amountMinor` — a field of the
+ * operation, so the peer being measured picked what left the family's state first. That was the
+ * last eviction this package had; {@link MAX_AGGREGATE_MINOR} carries the whole account and the
+ * boundary it settles on.
  *
  * One problem for the journal, not one per entity: no entity is named because none is missing.
  * Nothing lands in the withheld list for it either, for the same reason.
@@ -911,7 +913,7 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
  * the family. What is bounded in an honest history is how many entities one author buried,
  * so that is what is counted, and crossing the budget withholds nothing.
  *
- * Who counts as one author is the part the sixth round had to repair. Counting per `deviceId`
+ * Who counts as one author is the part that had to be repaired here. Counting per `deviceId`
  * made the identifier of the writing device the measure of the writing device's own share, and
  * that identifier is a field of the operation: nothing in the protocol confirms it, and
  * SYNC_ARCHITECTURE forbids the server to compare it with the device that uploaded the envelope
@@ -978,8 +980,8 @@ function confirmedDevices(live: LiveEntities, owners: ReadonlyMap<string, Journa
  * restarted disagree with a device that did not. What is left is a report of every implausible
  * stamp that actually owns something, which is every implausible stamp that took anything.
  *
- * Advisory: the stamp costs its writer every conflict already (see {@link rankedLamport}), so
- * nothing is withheld for it. What it gives a consumer is a reason to quarantine the device.
+ * Nothing is withheld for it: the stamp costs its writer every conflict already (see
+ * {@link rankedLamport}). What it gives a consumer is a reason to quarantine the device.
  */
 function reportImplausibleStamps(
   ordered: readonly JournalEntry[],
@@ -1564,19 +1566,9 @@ function readAppliedOpIds(value: unknown): readonly OpId[] {
  * dropped a device from 900 000 to 3 across a restart, after which it wrote its own history
  * under stamps it had already used and lost every conflict against its own past.
  *
- * Carried no further than {@link MAX_HONEST_LAMPORT}, though, and never silently. From the
- * honest ceiling upwards a stamp carries no rank at all, so a device that restored a poisoned
- * clock and went on writing from there would lose every conflict for the rest of its life
- * without ever being told why.
- *
- * Clamping alone used to be the whole answer, and it laundered rather than repaired: a forged
- * snapshot claiming 2^40 came back as exactly 2^32, which — while the ranking spared its own
- * ceiling — was not the least plausible stamp in the protocol but the most powerful one, handed
- * to the device that had just been attacked. The value is brought down below the line and the
- * event is reported as {@link JournalProblem} `implausible_lamport` about this device, whose
- * identifier a snapshot does not carry: the empty identifier means the clock of the device doing
- * the restoring rather than a peer. Advisory, like every other report of that code — the family
- * goes on seeing its budget, and its own device is named as the one to look at.
+ * Validation only: the value is checked for shape and refused above {@link MAX_LAMPORT}, and it
+ * is returned as it was stored. What a stored clock at or above the honest ceiling costs, and
+ * what `restoreJournal` does about it, is written there.
  */
 function readLamport(value: unknown): number {
   if (value === undefined || value === null) return 0;
@@ -1659,6 +1651,19 @@ export function restoreJournal(value: unknown): JournalSnapshot {
     memo.order.push(opId);
   }
 
+  // A stored clock is carried no further than MAX_HONEST_LAMPORT, and never silently. From the
+  // honest ceiling upwards a stamp carries no rank at all, so a device that restored a poisoned
+  // clock and went on writing from there would lose every conflict for the rest of its life
+  // without ever being told why.
+  //
+  // Clamping alone used to be the whole answer, and it laundered rather than repaired: a forged
+  // snapshot claiming 2^40 came back as exactly 2^32, which — while the ranking spared its own
+  // ceiling — was not the least plausible stamp in the protocol but the most powerful one, handed
+  // to the device that had just been attacked. So the value is brought down below the line and
+  // the event is reported as `implausible_lamport` about this device, whose identifier a snapshot
+  // does not carry: the empty identifier means the clock of the device doing the restoring rather
+  // than a peer. Nothing is withheld for it, as with every other report of that code — the family
+  // goes on seeing its budget, and its own device is named as the one to look at.
   const stored = readLamport(record.lamport);
   const restored: JournalProblem[] = [];
   if (stored >= HONEST_LAMPORT_CEILING) restored.push(problem("implausible_lamport", null, ""));
