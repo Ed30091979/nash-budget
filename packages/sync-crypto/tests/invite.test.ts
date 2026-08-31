@@ -273,6 +273,35 @@ describe("the invite box", () => {
     await expect(openInvite(box)).rejects.toMatchObject({ code: "invite_payload_invalid" });
   });
 
+  it.each([
+    ["the sender's device identifier", 2],
+    ["the sender's role", 4],
+    ["the sender's member identifier", 5],
+  ])("refuses rubbish in %s as a malformed payload", async (_field, index) => {
+    // One class of damage, one code. The box opens — the code was right and the tag verified — and
+    // what comes out of it is not text. That is `invite_payload_invalid` by the definition in
+    // `errors.ts`, and it has to be that for every field alike: the version field used to make the
+    // translation on its own while these three let the encoding layer's `invalid_input` through, so
+    // the same broken box reached the user as two different sentences depending on which field the
+    // rubbish landed in.
+    const owner = await makeDevice(DEVICE_A);
+    const familyKey = await generateFamilyKey();
+    const fields: Array<string | number | Uint8Array> = [
+      INVITE_PAYLOAD_VERSION,
+      await exportFamilyKey(familyKey),
+      DEVICE_A,
+      await deviceKeyFingerprint(owner.spki),
+      "owner",
+      MEMBER_A,
+    ];
+    // Not a UTF-8 sequence at all: `0xff` may not open one, so a strict decoder must refuse rather
+    // than substitute a replacement character and carry the field on as if it had been read.
+    fields[index] = new Uint8Array([0xff, 0xfe]);
+    await expect(openInvite(await sealByHand(enc(...fields)))).rejects.toMatchObject({
+      code: "invite_payload_invalid",
+    });
+  });
+
   it("keeps the wrapping key non-extractable, so the code's third never leaves as bytes", async () => {
     const secrets = await deriveInviteSecrets(CODE);
     await expect(crypto.subtle.exportKey("raw", secrets.wrappingKey)).rejects.toThrow();

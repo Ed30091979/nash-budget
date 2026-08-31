@@ -9,6 +9,7 @@
  */
 import { enc } from "./encoding.js";
 import { fail } from "./errors.js";
+import { FIRST_KEY_EPOCH } from "./family-key.js";
 import {
   AES_GCM_IV_BYTES,
   AES_GCM_TAG_BYTES,
@@ -85,7 +86,9 @@ export function envelopeAad(header: EnvelopeHeader): Uint8Array {
  */
 function assertWritableHeader(header: EnvelopeHeader): void {
   if (!Number.isSafeInteger(header.envelopeVersion) || header.envelopeVersion < 1) fail("invalid_input");
-  if (!Number.isSafeInteger(header.keyEpoch) || header.keyEpoch < 1) fail("invalid_input");
+  if (!Number.isSafeInteger(header.keyEpoch) || header.keyEpoch < FIRST_KEY_EPOCH) {
+    fail("invalid_input");
+  }
   if (typeof header.kind !== "string" || !ENVELOPE_KINDS.includes(header.kind as EnvelopeKind)) {
     fail("invalid_input");
   }

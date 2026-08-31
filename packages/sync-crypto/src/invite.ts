@@ -28,6 +28,7 @@ import {
   importAesKey,
   randomBytes,
   sha256,
+  SHA256_BYTES,
 } from "./webcrypto.js";
 
 const INVITE_LABEL = "nash-budget/invite/v1";
@@ -47,9 +48,10 @@ export const INVITE_CODE_LENGTH = 12;
 export const INVITE_ARGON2_ITERATIONS = 3;
 export const INVITE_ARGON2_MEMORY_KIB = 64 * 1024;
 export const INVITE_ARGON2_PARALLELISM = 1;
-/** 96 bytes: three independent 32-byte thirds. */
-export const INVITE_MASTER_BYTES = 96;
+/** One third of the Argon2id output, and the size of every value derived from the code. */
 export const INVITE_SECRET_BYTES = 32;
+/** 96 bytes: three independent thirds, and the thirds are what the size is made of. */
+export const INVITE_MASTER_BYTES = INVITE_SECRET_BYTES * 3;
 
 /**
  * Format version of the invite payload, its first field. Initial value `1` (5.3).
@@ -159,9 +161,9 @@ export async function deriveInviteSecrets(code: string): Promise<InviteSecrets> 
   const master = await deriveInviteMaster(code);
   if (master.length !== INVITE_MASTER_BYTES) fail("invalid_input");
   return {
-    wrappingKey: await importAesKey(master.subarray(0, 32), false),
-    authToken: master.slice(32, 64),
-    bindKey: master.slice(64, 96),
+    wrappingKey: await importAesKey(master.subarray(0, INVITE_SECRET_BYTES), false),
+    authToken: master.slice(INVITE_SECRET_BYTES, INVITE_SECRET_BYTES * 2),
+    bindKey: master.slice(INVITE_SECRET_BYTES * 2, INVITE_SECRET_BYTES * 3),
   };
 }
 
@@ -238,13 +240,13 @@ export interface SealedInvite {
 /**
  * Seals the invite box.
  *
- * The box carries more than the family key. Its first field is `inviteVersion`, and after it,
- * under the same `KEK`, travel `deviceIdA`, the
- * **fingerprint of the sender's device key** and the sender's role and `memberId`. This is the
- * first pin in the reverse direction: the invitee learns the owner's genuine key from the code
- * rather than from a server response, and its authenticity rests on the same knowledge of the code
- * as the family key itself. The server cannot substitute the box — it is under AES-GCM on a key it
- * does not have.
+ * The box carries more than the family key. Its fields are, in this order and under the same
+ * `KEK`: {@link INVITE_PAYLOAD_VERSION} — `inviteVersion` in 5.3 — then the family key itself,
+ * `senderDeviceId`, the **fingerprint of the sender's device key**, `senderRole` and
+ * `senderMemberId`. This is the first pin in the reverse direction: the invitee learns the owner's
+ * genuine key from the code rather than from a server response, and its authenticity rests on the
+ * same knowledge of the code as the family key itself. The server cannot substitute the box — it
+ * is under AES-GCM on a key it does not have.
  *
  * The result comes apart along the line 5.3 draws: `record` is what the server is given, digest of
  * the token included, and `issuerSecrets` is what the issuing device keeps until the invite dies.
@@ -297,6 +299,30 @@ export interface OpenInviteParams {
 }
 
 /**
+ * Everything read out of an opened box, under the one code that names this case.
+ *
+ * `decodeEncHead`, `decodeEnc` and `fromUtf8` belong to the encoding layer, which every bound
+ * construction of the scheme shares, and they refuse with the neutral `invalid_input` because they
+ * know nothing about invites. By the time this function is reached the box has already opened —
+ * the code was right and the AAD verified — so whatever the bytes inside turn out to be wrong
+ * about is exactly the case `invite_payload_invalid` is defined as in `errors.ts`: the box opened
+ * but its contents are not a well-formed payload.
+ *
+ * It exists because that translation used to be made in one place and not in the three beside it.
+ * The version read wrapped its decoding and renamed the refusal; the role, the device identifier
+ * and the member identifier did not, so one and the same damage — a box that opens and carries
+ * rubbish — left this module under two different codes depending on which field the rubbish landed
+ * in. Every read of the payload goes through here, and there is no second way to spell the refusal.
+ */
+function readFromPayload<T>(read: () => T): T {
+  try {
+    return read();
+  } catch {
+    return fail("invite_payload_invalid");
+  }
+}
+
+/**
  * The payload's first field, read before anything else in it is looked at.
  *
  * Order is the whole point. The version is decoded on its own, without asserting how many fields
@@ -306,13 +332,8 @@ export interface OpenInviteParams {
  * it is a broken payload and says so.
  */
 function readInvitePayloadVersion(payload: Uint8Array): number {
-  const head = decodeEncHead(payload);
-  let text: string;
-  try {
-    text = fromUtf8(head);
-  } catch {
-    return fail("invite_payload_invalid");
-  }
+  const head = readFromPayload(() => decodeEncHead(payload));
+  const text = readFromPayload(() => fromUtf8(head));
   if (!/^(?:0|[1-9][0-9]*)$/u.test(text)) fail("invite_payload_invalid");
   const version = Number(text);
   if (!Number.isSafeInteger(version)) fail("invite_payload_invalid");
@@ -359,10 +380,8 @@ export async function openInvite(params: OpenInviteParams): Promise<OpenedInvite
   const version = readInvitePayloadVersion(opened);
   if (version !== INVITE_PAYLOAD_VERSION) fail("invite_version_unsupported");
 
-  const [, rawKey, senderDeviceId, senderKeyFingerprint, senderRole, senderMemberId] = decodeEnc(
-    opened,
-    INVITE_PAYLOAD_FIELDS,
-  );
+  const [, rawKey, senderDeviceId, senderKeyFingerprint, senderRole, senderMemberId] =
+    readFromPayload(() => decodeEnc(opened, INVITE_PAYLOAD_FIELDS));
   if (
     rawKey === undefined ||
     senderDeviceId === undefined ||
@@ -372,9 +391,9 @@ export async function openInvite(params: OpenInviteParams): Promise<OpenedInvite
   ) {
     fail("invite_payload_invalid");
   }
-  if (senderKeyFingerprint.length !== 32) fail("invite_payload_invalid");
+  if (senderKeyFingerprint.length !== SHA256_BYTES) fail("invite_payload_invalid");
 
-  const role = fromUtf8(senderRole);
+  const role = readFromPayload(() => fromUtf8(senderRole));
   if (role !== "owner") fail("invite_sender_not_owner");
 
   let familyKey: CryptoKey;
@@ -386,10 +405,10 @@ export async function openInvite(params: OpenInviteParams): Promise<OpenedInvite
 
   return {
     familyKey,
-    senderDeviceId: fromUtf8(senderDeviceId),
+    senderDeviceId: readFromPayload(() => fromUtf8(senderDeviceId)),
     senderKeyFingerprint: senderKeyFingerprint.slice(),
     senderRole: role,
-    senderMemberId: fromUtf8(senderMemberId),
+    senderMemberId: readFromPayload(() => fromUtf8(senderMemberId)),
     bindKey: secrets.bindKey,
     authToken: secrets.authToken,
   };

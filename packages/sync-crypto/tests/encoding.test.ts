@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   CROCKFORD_ALPHABET,
-  concatBytes,
   decodeEnc,
   decodeEncHead,
   enc,
@@ -16,6 +15,32 @@ import {
   toHex,
   utf8,
 } from "../src/index.js";
+
+/**
+ * The same bytes, but as a view into a larger buffer: two bytes of padding before and one after.
+ *
+ * This is the shape the decoders actually meet. `decodeEnc` hands back `subarray` views, and
+ * `openInvite` reads the version out of one before parsing the rest, so a decoder that reached for
+ * `bytes.buffer` instead of honouring `byteOffset` and `byteLength` would read the padding here
+ * and still pass every test written on a whole array.
+ */
+function asInnerView(bytes: Uint8Array): Uint8Array {
+  const outer = new Uint8Array(bytes.length + 3);
+  outer.fill(9);
+  outer.set(bytes, 2);
+  return outer.subarray(2, outer.length - 1);
+}
+
+/** The code of the refusal a call raises, so a test can name it rather than merely its class. */
+function refusalCode(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    expect(error).toBeInstanceOf(SyncCryptoError);
+    return (error as SyncCryptoError).code;
+  }
+  throw new Error("expected a refusal and got a result");
+}
 
 describe("enc — the one binding encoding of 5.2", () => {
   it("puts a four-byte big-endian length before every value", () => {
@@ -64,10 +89,25 @@ describe("enc — the one binding encoding of 5.2", () => {
     expect(() => decodeEnc(new Uint8Array([0, 0, 0, 9, 1, 2]), 1)).toThrow(SyncCryptoError);
   });
 
+  it("refuses with the neutral code and never with one about an invite", () => {
+    // `decodeEnc` belongs to `enc`, which every bound construction of the scheme shares. The next
+    // caller is the server phase reading some list that has nothing to do with an invite, and a
+    // refusal naming one would put a wrong sentence in front of a user over a value he never
+    // touched. The single caller for whom a broken list really is a broken invite — `openInvite` —
+    // knows that from its own position, once the box has opened, and translates it there.
+    expect(refusalCode(() => decodeEnc(enc("a", "b"), 3))).toBe("invalid_input");
+    expect(refusalCode(() => decodeEnc(new Uint8Array([0, 0, 1]), 1))).toBe("invalid_input");
+    expect(refusalCode(() => decodeEnc(new Uint8Array([0, 0, 0, 9, 1, 2]), 1))).toBe(
+      "invalid_input",
+    );
+    expect(refusalCode(() => decodeEncHead(new Uint8Array([0, 0, 1])))).toBe("invalid_input");
+    expect(refusalCode(() => decodeEncHead(new Uint8Array([0, 0, 0, 9, 1, 2])))).toBe(
+      "invalid_input",
+    );
+  });
+
   it("decodes a segment that is a view into a larger buffer", () => {
-    const framed = concatBytes(new Uint8Array([9, 9]), enc("x"), new Uint8Array([9]));
-    const inner = framed.subarray(2, framed.length - 1);
-    expect(fromUtf8(decodeEnc(inner, 1)[0]!)).toBe("x");
+    expect(fromUtf8(decodeEnc(asInnerView(enc("x")), 1)[0]!)).toBe("x");
   });
 });
 
@@ -87,8 +127,7 @@ describe("decodeEncHead — the first field, before the count is known", () => {
   });
 
   it("reads a segment that is a view into a larger buffer", () => {
-    const framed = concatBytes(new Uint8Array([9, 9]), enc("x", "y"), new Uint8Array([9]));
-    expect(fromUtf8(decodeEncHead(framed.subarray(2, framed.length - 1)))).toBe("x");
+    expect(fromUtf8(decodeEncHead(asInnerView(enc("x", "y"))))).toBe("x");
   });
 });
 

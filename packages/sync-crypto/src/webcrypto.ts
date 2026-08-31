@@ -42,6 +42,7 @@ function source(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   return bytes as Uint8Array<ArrayBuffer>;
 }
 
+/** The digest length of SHA-256, and with it the output length of every derivation here. */
 export const SHA256_BYTES = 32;
 
 export async function sha256(data: Uint8Array): Promise<Uint8Array> {
@@ -54,23 +55,26 @@ export async function hmacSha256(key: Uint8Array, message: Uint8Array): Promise<
 }
 
 /**
- * HKDF-SHA-256, always to 32 bytes.
+ * HKDF-SHA-256, always to {@link SHA256_BYTES}.
  *
- * The two parameters are not interchangeable, and 5.4 spells out why. `salt` is a non-secret
- * random value whose job is to separate derivations made from the same input keying material: a
- * pair of static ECDH keys yields *always the same* shared secret, so without a fresh salt every
- * wrapping key for one pair of devices would repeat the previous one. `info` adds no entropy; it
- * binds the output to a context — the epoch, the rotation attempt, both device identifiers and
- * both key fingerprints — so the key is useless anywhere else.
+ * "Always" is the signature and not merely the sentence: there is no length parameter to pass. The
+ * scheme derives one thing from this function, an AES-256 key or a key of the same size for an
+ * HMAC, and a caller free to ask for fewer bytes could only weaken one of them.
+ *
+ * The two parameters that are here are not interchangeable, and 5.4 spells out why. `salt` is a
+ * non-secret random value whose job is to separate derivations made from the same input keying
+ * material: a pair of static ECDH keys yields *always the same* shared secret, so without a fresh
+ * salt every wrapping key for one pair of devices would repeat the previous one. `info` adds no
+ * entropy; it binds the output to a context — the epoch, the rotation attempt, both device
+ * identifiers and both key fingerprints — so the key is useless anywhere else.
  */
 export async function hkdfSha256(
   ikm: Uint8Array,
   salt: Uint8Array,
   info: Uint8Array,
-  length = 32,
 ): Promise<Uint8Array> {
   const base = await subtle.importKey("raw", source(ikm), "HKDF", false, ["deriveBits"]);
-  const bits = await subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: source(salt), info: source(info) }, base, length * 8);
+  const bits = await subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: source(salt), info: source(info) }, base, SHA256_BYTES * 8);
   return new Uint8Array(bits);
 }
 

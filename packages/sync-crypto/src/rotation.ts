@@ -9,7 +9,7 @@
 import { enc, equalBytes } from "./encoding.js";
 import { openEnvelope, sealEnvelope, type SealedEnvelope } from "./envelope.js";
 import { fail } from "./errors.js";
-import { exportFamilyKey, familyKeyFingerprint } from "./family-key.js";
+import { exportFamilyKey, familyKeyFingerprint, FIRST_KEY_EPOCH } from "./family-key.js";
 import { hkdfSha256, hmacSha256 } from "./webcrypto.js";
 
 const ROTATE_CONFIRM_LABEL = "nash-budget/rotate-confirm/v1";
@@ -83,13 +83,13 @@ export interface ReencryptParams {
 /**
  * Re-encrypts one envelope into the new epoch — step 4 of 5.5.
  *
- * Everything about the envelope is preserved except the three things that must change: **`opId`,
- * the author's `deviceId`, the `kind` and the format version stay exactly as they were, and only
- * `iv`, `keyEpoch` and the ciphertext are new.** The plaintext is moved byte for byte and never
- * re-serialised, which is what keeps `lamport` and `memberId` — both of which live inside it —
- * untouched, and what keeps the merge producing the same result: the tiebreaker is a hash of the
- * canonical text, so rewriting even the action of a winning operation would give it a different
- * hash and let two devices disagree in silence (5.7 makes the same point about compaction).
+ * Exactly three things change — **`iv`, `keyEpoch` and the ciphertext** — and everything else is
+ * carried across untouched: the format version, the `kind`, the `familyId`, the `opId` and the
+ * author's `deviceId`. The plaintext is moved byte for byte and never re-serialised, which is what
+ * keeps `lamport` and `memberId` — both of which live inside it — untouched, and what keeps the
+ * merge producing the same result: the tiebreaker is a hash of the canonical text, so rewriting
+ * even the action of a winning operation would give it a different hash and let two devices
+ * disagree in silence (5.7 makes the same point about compaction).
  *
  * Preserving the author's `deviceId` is why 3.3 forbids the server to require that the header
  * `deviceId` match the uploading device: on this step the owner uploads envelopes authored by every
@@ -147,7 +147,7 @@ export interface ReencryptJournalParams {
 export async function reencryptJournal(
   params: ReencryptJournalParams,
 ): Promise<readonly SealedEnvelope[]> {
-  if (!Number.isSafeInteger(params.previousKeyEpoch) || params.previousKeyEpoch < 1) {
+  if (!Number.isSafeInteger(params.previousKeyEpoch) || params.previousKeyEpoch < FIRST_KEY_EPOCH) {
     fail("invalid_input");
   }
   if (params.nextKeyEpoch <= params.previousKeyEpoch) fail("invalid_input");

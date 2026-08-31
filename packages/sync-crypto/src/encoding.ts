@@ -81,6 +81,13 @@ export function enc(...values: readonly EncodableValue[]): Uint8Array {
  * knows the schema. `count` is required, and a list of a different length is a rejection: a
  * payload with an extra or a missing field is not a payload with a default, it is a payload that
  * was written by something other than this version of the scheme.
+ *
+ * A malformed list is refused as `invalid_input` and never as an invite-specific code. This
+ * function belongs to `enc`, which every bound construction of the scheme shares; the next caller
+ * is the server phase reading some list that has nothing to do with an invite, and telling it that
+ * *its* invite is broken would be a wrong sentence shown to a user over a value it never touched.
+ * The one caller for which a broken list really is a broken invite — `openInvite` — knows that
+ * from its own position, after the box has opened, and says so there.
  */
 export function decodeEnc(bytes: Uint8Array, count: number): readonly Uint8Array[] {
   if (!Number.isSafeInteger(count) || count < 0) fail("invalid_input");
@@ -89,16 +96,16 @@ export function decodeEnc(bytes: Uint8Array, count: number): readonly Uint8Array
   let offset = 0;
 
   while (offset < bytes.length) {
-    if (offset + 4 > bytes.length) fail("invite_payload_invalid");
+    if (offset + 4 > bytes.length) fail("invalid_input");
     const length = view.getUint32(offset, false);
     offset += 4;
-    if (length > bytes.length - offset) fail("invite_payload_invalid");
+    if (length > bytes.length - offset) fail("invalid_input");
     parts.push(bytes.subarray(offset, offset + length));
     offset += length;
-    if (parts.length > count) fail("invite_payload_invalid");
+    if (parts.length > count) fail("invalid_input");
   }
 
-  if (parts.length !== count) fail("invite_payload_invalid");
+  if (parts.length !== count) fail("invalid_input");
   return parts;
 }
 
@@ -112,12 +119,15 @@ export function decodeEnc(bytes: Uint8Array, count: number): readonly Uint8Array
  * carry its version **first** and requires it to be read before the rest of the payload is parsed
  * at all. That is the one lenient step, and it stays this small: it reads one segment and says
  * nothing about what follows it.
+ *
+ * Refuses with `invalid_input`, for the reason given on {@link decodeEnc}: the invite is one
+ * caller of this function and not its subject.
  */
 export function decodeEncHead(bytes: Uint8Array): Uint8Array {
-  if (bytes.length < 4) fail("invite_payload_invalid");
+  if (bytes.length < 4) fail("invalid_input");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const length = view.getUint32(0, false);
-  if (length > bytes.length - 4) fail("invite_payload_invalid");
+  if (length > bytes.length - 4) fail("invalid_input");
   return bytes.subarray(4, 4 + length);
 }
 
@@ -157,17 +167,4 @@ export function fromHex(hex: string): Uint8Array {
     bytes[index] = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
-}
-
-/** Concatenation of byte runs, for the few places that build a buffer rather than an `enc` list. */
-export function concatBytes(...parts: readonly Uint8Array[]): Uint8Array {
-  let total = 0;
-  for (const part of parts) total += part.length;
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
 }

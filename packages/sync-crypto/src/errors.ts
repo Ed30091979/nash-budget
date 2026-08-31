@@ -72,6 +72,21 @@ const MESSAGES: Record<SyncCryptoErrorCode, string> = {
   epoch_mismatch: "envelope belongs to a different key epoch",
 };
 
+/**
+ * Every code, read off the table above instead of written out a second time.
+ *
+ * `SyncCryptoErrorCode` is a type and does not survive to runtime, but {@link MESSAGES} is declared
+ * as a total `Record` over it: the compiler refuses a table that has lost a code, and the keys of
+ * that table are therefore the one list that cannot drift from the union. `tests/no-leak.test.ts`
+ * drives every entry of this list into a real refusal, so a message added here and never provoked
+ * is a failing test rather than an unaudited string. A list written out by hand in the test could
+ * not promise that, and did not: `recipient_key_mismatch` was added to the union and the hand-made
+ * list stayed at nine.
+ */
+export const SYNC_CRYPTO_ERROR_CODES: readonly SyncCryptoErrorCode[] = Object.keys(
+  MESSAGES,
+) as readonly SyncCryptoErrorCode[];
+
 export function fail(code: SyncCryptoErrorCode): never {
   throw new SyncCryptoError(code, MESSAGES[code]);
 }

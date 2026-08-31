@@ -23,7 +23,6 @@ export {
   type WrapFamilyKeyParams,
 } from "./device-key.js";
 export {
-  concatBytes,
   decodeEnc,
   decodeEncHead,
   enc,
@@ -46,7 +45,7 @@ export {
   type EnvelopeKind,
   type SealedEnvelope,
 } from "./envelope.js";
-export { SyncCryptoError, type SyncCryptoErrorCode } from "./errors.js";
+export { SYNC_CRYPTO_ERROR_CODES, SyncCryptoError, type SyncCryptoErrorCode } from "./errors.js";
 export {
   exportFamilyKey,
   familyKeyFingerprint,
@@ -59,8 +58,8 @@ export {
 // and their first third *is* the invite wrapping key — a key this package otherwise imports
 // non-extractable and has a test to keep that way. A property like that is only as strong as the
 // widest public path to the material, so the widest path is not allowed to be an index export. The
-// function stays exported from `./invite.js`, where the argon2 vectors and the no-leak sweep reach
-// it directly and no consumer of the package meets it by autocompletion.
+// function stays exported from `./invite.js`, where the argon2 vectors, the invite tests and the
+// no-leak sweep reach it directly and no consumer of the package meets it by autocompletion.
 export {
   computeBindProof,
   deriveInviteSecrets,
