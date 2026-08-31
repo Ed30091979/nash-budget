@@ -1,0 +1,13 @@
+// Two programs, on purpose.
+//
+// `src` must compile as browser code and nothing else: the PWA and the Capacitor shell are the
+// only places it ever runs, and a stray `Buffer` or `node:crypto` that type-checks here would
+// only be discovered on a device. `tests/crosscheck.test.ts` needs the exact opposite — it opens
+// our envelopes with `node:crypto` and hashes with Node's HKDF, because agreeing with a second
+// implementation of RFC 5869, FIPS 198 and SP 800-38D is what makes the vectors mean something.
+//
+// So the Node types are granted to `tests` and withheld from `src`, and `tsc -b` checks both.
+{
+  "files": [],
+  "references": [{ "path": "./tsconfig.src.json" }, { "path": "./tsconfig.tests.json" }]
+}
