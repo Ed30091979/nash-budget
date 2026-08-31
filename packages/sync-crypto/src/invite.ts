@@ -115,12 +115,21 @@ export async function inviteSalt(code: string): Promise<Uint8Array> {
  * same implementation has to run in the browser, in the Capacitor shell and in Node under test.
  * The known-answer vectors in `tests/argon2.test.ts` are part of that pinning: bumping the version
  * without re-running them is what the requirement forbids.
+ *
+ * Every parameter of the derivation is written out here, the empty `secret` included. 5.3 has no
+ * keyed pepper — there is no server-side secret the joining device could hold, and inventing one
+ * would put the invite behind a value the family does not control — but "no pepper" has to be a
+ * line of this file rather than a default of `hash-wasm`. Left out, the byte string that Argon2id
+ * actually consumes would be chosen by the dependency, and the next version of it, or the next
+ * library, is entitled to choose differently; the vectors would then move under a bump that looked
+ * like nothing.
  */
 export async function deriveInviteMaster(code: string): Promise<Uint8Array> {
   const normalized = normalizeInviteCode(code);
   return argon2id({
     password: utf8(normalized),
     salt: await inviteSalt(normalized),
+    secret: new Uint8Array(0),
     iterations: INVITE_ARGON2_ITERATIONS,
     parallelism: INVITE_ARGON2_PARALLELISM,
     memorySize: INVITE_ARGON2_MEMORY_KIB,

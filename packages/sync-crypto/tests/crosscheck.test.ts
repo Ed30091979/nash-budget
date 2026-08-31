@@ -27,6 +27,7 @@ import {
   computeBindProof,
   computeEpochConfirm,
   deriveInviteSecrets,
+  deviceKeyFingerprint,
   ENVELOPE_VERSION,
   envelopeAad,
   exportFamilyKey,
@@ -202,6 +203,7 @@ describe("the key wrap of 5.4 is ECDH, then HKDF, then GCM — and nothing else"
       senderDeviceId: DEVICE_A,
       recipientSpki,
       recipientDeviceId: DEVICE_B,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(recipientSpki),
       familyId: FAMILY_ID,
       keyEpoch: 7,
       rotationId: ROTATION_ID,
@@ -252,6 +254,16 @@ describe("the package stays runnable in a browser", () => {
     // knew only the first form would wave the other three through. The walk recurses for the same
     // reason — `src` is flat today, and a scan that stops at the first subdirectory stops
     // protecting anything the moment somebody adds one.
+    //
+    // Where each of the two defences ends, stated plainly so that neither is trusted past it.
+    // *This* one reads the source as text: it sees every literal specifier and cannot see one that
+    // is computed, because there is no string in the file to read. The second one — `types: []` in
+    // `tsconfig.src.json` — takes away the Node globals and the ambient `node:` declarations, so a
+    // literal `import "node:fs"` fails to compile there; a computed specifier resolves at run time
+    // and is typed `any`, so it passes that gate too. The overlap of the two is literal imports,
+    // and the gap common to both is exactly the computed specifier. So the loop below does not try
+    // to evaluate one — it refuses the form outright. The package has no dynamic import today and
+    // no reason to acquire one, and if that ever changes this test is the right place to argue it.
     const sourceDir = fileURLToPath(new URL("../src/", import.meta.url));
     const offenders: string[] = [];
     let scanned = 0;
@@ -271,11 +283,26 @@ describe("the package stays runnable in a browser", () => {
           if (specifier.startsWith("./") || specifier === "hash-wasm") continue;
           offenders.push(`${prefix}${entry.name}: ${specifier}`);
         }
+        for (const match of text.matchAll(/(?<![.\w$])(?:import|require)\s*\(\s*(?!["'])/gu)) {
+          offenders.push(`${prefix}${entry.name}: computed specifier at ${match.index}`);
+        }
       }
     };
 
     scan(sourceDir, "");
     expect(offenders).toEqual([]);
+
+    // The arms above, aimed at text that is not in `src`, so that a scan which quietly matched
+    // nothing could not pass for a scan that found nothing.
+    const literal = /(?:\bfrom|\bimport|\brequire)\s*\(?\s*["']([^"']+)["']/gu;
+    const computed = /(?<![.\w$])(?:import|require)\s*\(\s*(?!["'])/gu;
+    expect(`import "node:crypto";`.match(literal)).not.toBeNull();
+    expect(`const fs = await import(name);`.match(computed)).not.toBeNull();
+    expect(`const fs = require(modules[0]);`.match(computed)).not.toBeNull();
+    // And no false alarm on the shapes `src` actually contains.
+    expect(`const url = import.meta.url;`.match(computed)).toBeNull();
+    expect(`await importSpki(params.recipientSpki);`.match(computed)).toBeNull();
+    expect(`await import("./encoding.js");`.match(computed)).toBeNull();
     // A mistyped path would make the walk above find nothing and pass, which is the one way this
     // test could stop guarding the package without ever turning red.
     expect(scanned).toBeGreaterThanOrEqual(5);

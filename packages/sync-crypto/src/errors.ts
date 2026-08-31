@@ -30,8 +30,18 @@ export type SyncCryptoErrorCode =
   | "invite_version_unsupported"
   /** The invite claims a sender who is not the owner, so the whole invite is refused (5.3). */
   | "invite_sender_not_owner"
-  /** The delivered public key does not hash to the pinned fingerprint (5.4). */
+  /** The delivered sender public key does not hash to the pinned fingerprint (5.4). */
   | "sender_key_mismatch"
+  /**
+   * The recipient's public key does not hash to the fingerprint pinned for that device (5.4).
+   *
+   * Deliberately not folded into {@link SyncCryptoErrorCode} `sender_key_mismatch`: it names the
+   * opposite failure. That one is "someone handed me a key I do not trust"; this one is "I was
+   * about to wrap the family key *onto* a key I do not trust", which is the direction that gives
+   * the key away rather than merely refusing one. They reach the user as different sentences and
+   * the caller acts on them differently, so one code for both would lose the distinction.
+   */
+  | "recipient_key_mismatch"
   /** The key wrap did not open under the derived wrapping key. */
   | "key_wrap_open_failed"
   /** An envelope offered for re-encryption does not belong to the epoch being rotated (5.5). */
@@ -57,6 +67,7 @@ const MESSAGES: Record<SyncCryptoErrorCode, string> = {
   invite_version_unsupported: "invite was issued by a newer version of the app",
   invite_sender_not_owner: "invite was not issued by the family owner",
   sender_key_mismatch: "sender key does not match the pinned fingerprint",
+  recipient_key_mismatch: "recipient key does not match the pinned fingerprint",
   key_wrap_open_failed: "key wrap authentication failed",
   epoch_mismatch: "envelope belongs to a different key epoch",
 };

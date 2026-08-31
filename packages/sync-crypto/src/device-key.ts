@@ -151,8 +151,22 @@ export interface WrapFamilyKeyParams {
   readonly senderPrivateKey: CryptoKey;
   readonly senderSpki: Uint8Array;
   readonly senderDeviceId: string;
+  /** The recipient's SPKI as the server delivered it — untrusted until it hashes to the pin. */
   readonly recipientSpki: Uint8Array;
   readonly recipientDeviceId: string;
+  /**
+   * `SHA-256(SPKI)` of the recipient, pinned locally by an invite (5.3) or by a comparison (5.4).
+   *
+   * Mandatory, and checked before the shared secret exists, because 5.4 asks for the same
+   * strictness in both directions. A caller that took the recipient's key out of the server's
+   * device list and wrapped on it unchecked would produce a wrap on a key the *server* chose — and
+   * that hands the server the family key itself. Nothing downstream recovers from it: the strict
+   * order in {@link unwrapFamilyKey} protects a recipient against a forged sender, and has nothing
+   * to say about a wrap that the genuine owner addressed to the wrong key. Enforcing the pin list
+   * against the server's answer belongs to the server phase; making the unsafe call impossible to
+   * write is this package's part, and a required parameter is how a signature says so.
+   */
+  readonly pinnedRecipientFingerprint: Uint8Array;
   readonly familyId: string;
   readonly keyEpoch: number;
   /**
@@ -178,8 +192,17 @@ export interface WrapFamilyKeyParams {
  * static ECDH keys yields always the same shared secret, so without a random salt the wrapping key
  * would repeat — and a repeated IV under a repeated AES-GCM key destroys both the confidentiality
  * and the integrity of the mode.
+ *
+ * The recipient's key is checked against its pin first, in the same order and the same constant
+ * time as {@link unwrapFamilyKey} checks the sender's. The wrap is the one message of this scheme
+ * that *carries* the family key, so the sending end is where an unchecked key costs the most.
  */
 export async function wrapFamilyKey(params: WrapFamilyKeyParams): Promise<KeyWrap> {
+  const recipientFingerprint = await deviceKeyFingerprint(params.recipientSpki);
+  if (!equalBytes(recipientFingerprint, params.pinnedRecipientFingerprint)) {
+    fail("recipient_key_mismatch");
+  }
+
   const context: WrapContext = {
     familyId: params.familyId,
     keyEpoch: params.keyEpoch,
@@ -187,7 +210,7 @@ export async function wrapFamilyKey(params: WrapFamilyKeyParams): Promise<KeyWra
     senderDeviceId: params.senderDeviceId,
     recipientDeviceId: params.recipientDeviceId,
     senderFingerprint: await deviceKeyFingerprint(params.senderSpki),
-    recipientFingerprint: await deviceKeyFingerprint(params.recipientSpki),
+    recipientFingerprint,
     salt: randomBytes(WRAP_SALT_BYTES),
   };
 
@@ -327,14 +350,28 @@ export async function computeOwnerAnnounce(
     readonly senderPrivateKey: CryptoKey;
     readonly senderSpki: Uint8Array;
     readonly recipientSpki: Uint8Array;
+    /**
+     * `SHA-256(SPKI)` of the recipient, pinned locally — compared before anything is derived.
+     *
+     * Same duty as in {@link WrapFamilyKeyParams}, and mandatory for the same reason. Announcing
+     * onto a key the server substituted lets the server hold the only end that can verify the
+     * announcement, and it is the announcement that decides which key the family will treat as the
+     * owner's next one — so a substitution here is not a lost message but a stolen succession.
+     */
+    readonly pinnedRecipientFingerprint: Uint8Array;
   },
 ): Promise<Uint8Array> {
+  const recipientFingerprint = await deviceKeyFingerprint(params.recipientSpki);
+  if (!equalBytes(recipientFingerprint, params.pinnedRecipientFingerprint)) {
+    fail("recipient_key_mismatch");
+  }
+
   const announceKey = await deriveAnnounceKey(
     params.senderPrivateKey,
     await importDevicePublicKey(params.recipientSpki),
     params,
     await deviceKeyFingerprint(params.senderSpki),
-    await deviceKeyFingerprint(params.recipientSpki),
+    recipientFingerprint,
   );
   return hmacSha256(announceKey, await announceMessage(params));
 }
@@ -342,6 +379,11 @@ export async function computeOwnerAnnounce(
 /**
  * Verifies an announcement against the **pinned** fingerprint of the owner's current device, in the
  * order of 5.4: hash the delivered SPKI, compare with the pin, and only then derive.
+ *
+ * The shape of `announce` is checked first, as in `verifyEpochConfirm` and `verifyBindProof`. A
+ * caller that arrives with nothing — a field the server omitted, a row read back as `undefined` —
+ * must still get a refusal of this package, with a code, and not whatever the environment happens
+ * to throw when the value reaches a comparison.
  */
 export async function verifyOwnerAnnounce(
   params: OwnerAnnounceParams & {
@@ -352,6 +394,8 @@ export async function verifyOwnerAnnounce(
     readonly announce: Uint8Array;
   },
 ): Promise<boolean> {
+  if (!(params.announce instanceof Uint8Array)) fail("invalid_input");
+
   const delivered = await deviceKeyFingerprint(params.senderSpki);
   if (!equalBytes(delivered, params.pinnedSenderFingerprint)) fail("sender_key_mismatch");
 

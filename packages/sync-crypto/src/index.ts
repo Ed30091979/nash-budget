@@ -55,9 +55,14 @@ export {
   generateFamilyKey,
   importFamilyKey,
 } from "./family-key.js";
+// `deriveInviteMaster` is deliberately absent. It returns the 96 raw bytes of the Argon2id output,
+// and their first third *is* the invite wrapping key — a key this package otherwise imports
+// non-extractable and has a test to keep that way. A property like that is only as strong as the
+// widest public path to the material, so the widest path is not allowed to be an index export. The
+// function stays exported from `./invite.js`, where the argon2 vectors and the no-leak sweep reach
+// it directly and no consumer of the package meets it by autocompletion.
 export {
   computeBindProof,
-  deriveInviteMaster,
   deriveInviteSecrets,
   generateInviteCode,
   INVITE_ARGON2_ITERATIONS,

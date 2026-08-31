@@ -45,7 +45,11 @@ async function pair(): Promise<Pair> {
 
 async function wrapFor(
   context: Pair,
-  overrides: { readonly keyEpoch?: number; readonly rotationId?: string } = {},
+  overrides: {
+    readonly keyEpoch?: number;
+    readonly rotationId?: string;
+    readonly pinnedRecipientFingerprint?: Uint8Array;
+  } = {},
 ): Promise<KeyWrap> {
   return wrapFamilyKey({
     familyKey: context.familyKey,
@@ -54,6 +58,8 @@ async function wrapFor(
     senderDeviceId: context.owner.deviceId,
     recipientSpki: context.member.spki,
     recipientDeviceId: context.member.deviceId,
+    pinnedRecipientFingerprint:
+      overrides.pinnedRecipientFingerprint ?? (await deviceKeyFingerprint(context.member.spki)),
     familyId: FAMILY_ID,
     keyEpoch: overrides.keyEpoch ?? 2,
     rotationId: overrides.rotationId ?? ROTATION_ID,
@@ -76,6 +82,17 @@ async function unwrapWith(
     pinnedSenderFingerprint:
       overrides.pinnedSenderFingerprint ?? (await deviceKeyFingerprint(context.owner.spki)),
   });
+}
+
+/** The code of the refusal a call produced, and a failure if it produced no refusal at all. */
+async function refusalCode(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    expect(error).toBeInstanceOf(SyncCryptoError);
+    return (error as SyncCryptoError).code;
+  }
+  throw new Error("expected a refusal, got a value");
 }
 
 describe("the device key of 5.4", () => {
@@ -145,6 +162,7 @@ describe("the key wrap of 5.4", () => {
       senderDeviceId: context.owner.deviceId,
       recipientSpki: context.member.spki,
       recipientDeviceId: context.member.deviceId,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
       familyId: FAMILY_ID,
       keyEpoch: 2,
       rotationId: ROTATION_ID,
@@ -152,6 +170,67 @@ describe("the key wrap of 5.4", () => {
     await expect(unwrapWith(context, forged, { senderSpki: server.spki })).rejects.toMatchObject({
       code: "sender_key_mismatch",
     });
+  });
+
+  it("refuses to wrap onto a recipient key that does not hash to the pin", async () => {
+    // The mirror of the test above, and the direction that gives the key away rather than merely
+    // refusing one. A server that answers the device list with its own SPKI in place of B's gets,
+    // from a caller that wraps whatever the list contained, a wrap it can open itself — the family
+    // key handed over by the owner's own device, and every check further down still passing.
+    const context = await pair();
+    const server = await makeDevice(DEVICE_C);
+    await expect(
+      wrapFamilyKey({
+        familyKey: context.familyKey,
+        senderPrivateKey: context.owner.keyPair.privateKey,
+        senderSpki: context.owner.spki,
+        senderDeviceId: context.owner.deviceId,
+        recipientSpki: server.spki,
+        recipientDeviceId: context.member.deviceId,
+        pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
+        familyId: FAMILY_ID,
+        keyEpoch: 2,
+        rotationId: ROTATION_ID,
+      }),
+    ).rejects.toMatchObject({ code: "recipient_key_mismatch" });
+  });
+
+  it("names the wrap side apart from the unwrap side", async () => {
+    // Two codes, not one. "I was handed a key I do not trust" and "I was about to wrap the family
+    // key onto a key I do not trust" are different sentences to the user and different reactions
+    // in the caller, and a single code would erase the difference exactly where it matters.
+    const context = await pair();
+    const server = await makeDevice(DEVICE_C);
+    const wrapCode = await refusalCode(
+      wrapFor(context, { pinnedRecipientFingerprint: await deviceKeyFingerprint(server.spki) }),
+    );
+    const unwrapCode = await refusalCode(
+      unwrapWith(context, await wrapFor(context), { senderSpki: server.spki }),
+    );
+    expect(wrapCode).toBe("recipient_key_mismatch");
+    expect(unwrapCode).toBe("sender_key_mismatch");
+    expect(wrapCode).not.toBe(unwrapCode);
+  });
+
+  it("refuses before the delivered recipient key is parsed at all", async () => {
+    // Same order as the unwrap side: hash, compare in constant time, and only then use. A
+    // structurally invalid SPKI has to come back as a mismatch and not as whatever the WebCrypto
+    // importer throws, because the importer running at all means the unpinned bytes were used.
+    const context = await pair();
+    await expect(
+      wrapFamilyKey({
+        familyKey: context.familyKey,
+        senderPrivateKey: context.owner.keyPair.privateKey,
+        senderSpki: context.owner.spki,
+        senderDeviceId: context.owner.deviceId,
+        recipientSpki: new Uint8Array([1, 2, 3]),
+        recipientDeviceId: context.member.deviceId,
+        pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
+        familyId: FAMILY_ID,
+        keyEpoch: 2,
+        rotationId: ROTATION_ID,
+      }),
+    ).rejects.toMatchObject({ code: "recipient_key_mismatch" });
   });
 
   it("compares the fingerprint before it touches the delivered key at all", async () => {
@@ -175,6 +254,7 @@ describe("the key wrap of 5.4", () => {
       senderDeviceId: context.owner.deviceId,
       recipientSpki: stranger.spki,
       recipientDeviceId: stranger.deviceId,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(stranger.spki),
       familyId: FAMILY_ID,
       keyEpoch: 2,
       rotationId: ROTATION_ID,
@@ -252,6 +332,7 @@ describe("the owner successor announcement of 5.4.1", () => {
       senderPrivateKey: context.owner.keyPair.privateKey,
       senderSpki: context.owner.spki,
       recipientSpki: context.member.spki,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
     });
     expect(
       await verifyOwnerAnnounce({
@@ -285,6 +366,7 @@ describe("the owner successor announcement of 5.4.1", () => {
       senderPrivateKey: other.keyPair.privateKey,
       senderSpki: context.owner.spki,
       recipientSpki: context.member.spki,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
     });
     expect(
       await verifyOwnerAnnounce({
@@ -314,6 +396,7 @@ describe("the owner successor announcement of 5.4.1", () => {
       senderPrivateKey: context.owner.keyPair.privateKey,
       senderSpki: context.owner.spki,
       recipientSpki: context.member.spki,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
     });
     await expect(
       verifyOwnerAnnounce({
@@ -325,6 +408,53 @@ describe("the owner successor announcement of 5.4.1", () => {
         announce,
       }),
     ).rejects.toMatchObject({ code: "sender_key_mismatch" });
+  });
+
+  it("refuses to announce onto a recipient key that does not hash to the pin", async () => {
+    // The announcement decides which key the family will treat as the owner's next one. Computed
+    // onto a key the server substituted, it is verifiable by the server and by nobody else — not a
+    // message lost but a succession stolen — so the pin is checked here before any derivation too.
+    const context = await pair();
+    const server = await makeDevice(DEVICE_C);
+    const successor = await makeDevice(DEVICE_C);
+    await expect(
+      computeOwnerAnnounce({
+        familyId: FAMILY_ID,
+        keyEpoch: 1,
+        senderDeviceId: context.owner.deviceId,
+        recipientDeviceId: context.member.deviceId,
+        successorDeviceId: successor.deviceId,
+        successorSpki: successor.spki,
+        senderPrivateKey: context.owner.keyPair.privateKey,
+        senderSpki: context.owner.spki,
+        recipientSpki: server.spki,
+        pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
+      }),
+    ).rejects.toMatchObject({ code: "recipient_key_mismatch" });
+  });
+
+  it("refuses an announcement that is not bytes with an error of this package", async () => {
+    // The guard `verifyEpochConfirm` and `verifyBindProof` already carry. A caller that arrives
+    // with nothing — a column the server omitted, a row read back as `undefined` — must still get
+    // a refusal that carries a code, so that "every refusal of this package is an error of this
+    // package" holds on this path as well as on theirs.
+    const context = await pair();
+    const successor = await makeDevice(DEVICE_C);
+    await expect(
+      verifyOwnerAnnounce({
+        familyId: FAMILY_ID,
+        keyEpoch: 1,
+        senderDeviceId: context.owner.deviceId,
+        recipientDeviceId: context.member.deviceId,
+        successorDeviceId: successor.deviceId,
+        successorSpki: successor.spki,
+        recipientPrivateKey: context.member.keyPair.privateKey,
+        recipientSpki: context.member.spki,
+        senderSpki: context.owner.spki,
+        pinnedSenderFingerprint: await deviceKeyFingerprint(context.owner.spki),
+        announce: undefined as unknown as Uint8Array,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_input" });
   });
 
   it("does not verify for a different successor or a different epoch", async () => {
@@ -344,6 +474,7 @@ describe("the owner successor announcement of 5.4.1", () => {
       senderPrivateKey: context.owner.keyPair.privateKey,
       senderSpki: context.owner.spki,
       recipientSpki: context.member.spki,
+      pinnedRecipientFingerprint: await deviceKeyFingerprint(context.member.spki),
     });
     const verify = async (patch: Partial<typeof params>): Promise<boolean> =>
       verifyOwnerAnnounce({

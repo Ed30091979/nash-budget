@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeBindProof,
-  deriveInviteMaster,
   INVITE_PAYLOAD_VERSION,
   deriveInviteSecrets,
   enc,
@@ -24,6 +23,10 @@ import {
   type OpenInviteParams,
   type SealedInvite,
 } from "../src/index.js";
+// Reached through the module rather than the index: `deriveInviteMaster` returns the raw 96
+// bytes of the Argon2id output, the invite wrapping key among them, and the package keeps that
+// off its public surface.
+import { deriveInviteMaster } from "../src/invite.js";
 import {
   DEVICE_A,
   DEVICE_B,

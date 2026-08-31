@@ -22,7 +22,6 @@ import { argon2d, argon2i, argon2id } from "hash-wasm";
 import { describe, expect, it } from "vitest";
 
 import {
-  deriveInviteMaster,
   deriveInviteSecrets,
   INVITE_ARGON2_ITERATIONS,
   INVITE_ARGON2_MEMORY_KIB,
@@ -31,6 +30,10 @@ import {
   inviteSalt,
   toHex,
 } from "../src/index.js";
+// Reached through the module rather than the index: `deriveInviteMaster` returns the raw 96
+// bytes of the Argon2id output, the invite wrapping key among them, and the package keeps that
+// off its public surface.
+import { deriveInviteMaster } from "../src/invite.js";
 
 interface Vector {
   readonly iterations: number;
