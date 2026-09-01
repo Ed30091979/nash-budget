@@ -18,12 +18,14 @@ import type { JournalIntegrity } from "@family-budget/sync-protocol";
 
 import { activateDialogEnvironment, handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import type { DeviceRecord, MemberRecord, MembershipSnapshot } from "./api";
+import { formatLastBackupDate } from "../data-management/model";
 import {
   MEMBER_ROLE_LABELS,
   formatInviteCode,
   formatInviteExpiry,
   isValidEmail,
   isValidLoginCode,
+  joinConsequence,
   normalizeLoginCode,
   ownFingerprintPresentation,
   peerFingerprintPresentation,
@@ -72,6 +74,17 @@ export interface FamilyScreenProps {
   readonly offeredFingerprintOf: (deviceId: string) => Uint8Array | undefined;
   /** Names for the identifiers the server list carries. They live in the budget, not on a server. */
   readonly memberNameOf: (memberId: string) => string | null;
+  /**
+   * The budget this device holds right now — what the join warning is about.
+   *
+   * Only the shape the warning reads is required, so a test does not have to build a whole budget
+   * to assert the wording. The screen is unreachable before onboarding, so there is always one.
+   */
+  readonly localBudget: { readonly transactions: { readonly length: number } };
+  /** ISO moment of the last successful backup, or `null` when none was ever made. */
+  readonly lastBackupAt: string | null;
+  /** Makes a backup from the family screen, so the warning can offer one instead of only naming it. */
+  readonly onCreateBackup: () => Promise<void>;
   readonly invite: ActiveInvite | null;
   readonly status: SyncStatusReport | null;
   readonly integrity: JournalIntegrity | null;
@@ -104,7 +117,15 @@ export function FamilyScreen(props: FamilyScreenProps) {
   // remembers *which* envelope was dismissed: a stop on a different `opId` is a different fact and
   // comes back on its own.
   const [dismissedStopOpId, setDismissedStopOpId] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<{ readonly kind: "leave" } | { readonly kind: "revoke"; readonly deviceId: string } | null>(null);
+  const [confirming, setConfirming] = useState<
+    | { readonly kind: "leave" }
+    | { readonly kind: "revoke"; readonly deviceId: string }
+    | { readonly kind: "join"; readonly code: string }
+    | null
+  >(null);
+  // Копию делает экран «Данные», а здесь — та же кнопка на месте вопроса, поэтому и занятость
+  // своя: `props.busy` принадлежит семье и о выгрузке файла ничего не знает.
+  const [backupState, setBackupState] = useState<"idle" | "running" | "done" | "failed">("idle");
   const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const restoreRef = useRef<(() => void) | null>(null);
@@ -145,11 +166,28 @@ export function FamilyScreen(props: FamilyScreenProps) {
     if (isValidLoginCode(loginCode)) props.actions.submitLoginCode(normalizeLoginCode(loginCode));
   };
 
+  // Вступление — единственное необратимое действие этого экрана, которое меняет то, что человек
+  // видит каждый день, поэтому кнопка открывает вопрос, а не отправляет код.
   const submitJoin = (event: FormEvent) => {
     event.preventDefault();
     const code = joinCode.trim();
-    if (code.length > 0) props.actions.joinByCode(code);
+    if (code.length === 0) return;
+    setBackupState("idle");
+    setConfirming({ kind: "join", code });
   };
+
+  const runBackup = () => {
+    setBackupState("running");
+    props.onCreateBackup().then(
+      () => setBackupState("done"),
+      () => setBackupState("failed"),
+    );
+  };
+
+  const consequence =
+    confirming?.kind === "join"
+      ? joinConsequence(props.localBudget.transactions.length, props.lastBackupAt, formatLastBackupDate)
+      : null;
 
   const dialog = confirming === null ? null : (
     <div className="confirmation-backdrop" role="presentation">
@@ -167,28 +205,71 @@ export function FamilyScreen(props: FamilyScreenProps) {
         }}
       >
         <h3 id="family-confirm-title">
-          {confirming.kind === "leave" ? "Выйти из семьи?" : "Отозвать это устройство?"}
+          {consequence
+            ? consequence.title
+            : confirming.kind === "leave"
+              ? "Выйти из семьи?"
+              : "Отозвать это устройство?"}
         </h3>
         <p id="family-confirm-description">
-          {confirming.kind === "leave"
-            ? "Это устройство перестанет получать операции семьи. Бюджет останется на устройстве целиком — ничего не удаляется. Ключ семьи у вас останется до тех пор, пока владелец не сменит его."
-            : "Устройство потеряет доступ к серверу семьи немедленно. Ключ семьи, уже лежащий на нём, отзывом не стирается — закрывает доступ только смена ключа владельцем."}
+          {consequence
+            ? consequence.body
+            : confirming.kind === "leave"
+              ? "Это устройство перестанет получать операции семьи. Бюджет останется на устройстве целиком — ничего не удаляется. Ключ семьи у вас останется до тех пор, пока владелец не сменит его."
+              : "Устройство потеряет доступ к серверу семьи немедленно. Ключ семьи, уже лежащий на нём, отзывом не стирается — закрывает доступ только смена ключа владельцем."}
         </p>
+        {consequence ? (
+          <div className="dialog-aside">
+            <p>{consequence.backupLine}</p>
+            {backupState === "done" ? (
+              <p className="dialog-aside-result" role="status">
+                Копия скачана. Прежний бюджет восстанавливается из этого файла на экране «Данные».
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={backupState === "running"}
+                  onClick={runBackup}
+                >
+                  {backupState === "running" ? "Копия готовится…" : consequence.backupActionLabel}
+                </button>
+                {backupState === "failed" ? (
+                  <p className="dialog-aside-result" role="alert">
+                    Копию сделать не удалось. Бюджет не изменён — вступление можно отложить и
+                    повторить попытку на экране «Данные».
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
         <div className="dialog-actions">
-          <button ref={cancelRef} type="button" disabled={props.busy} onClick={() => setConfirming(null)}>
+          <button
+            ref={cancelRef}
+            type="button"
+            disabled={props.busy || backupState === "running"}
+            onClick={() => setConfirming(null)}
+          >
             Отмена
           </button>
           <button
             type="button"
-            className="danger-button"
-            disabled={props.busy}
+            className={confirming.kind === "join" ? "primary-button" : "danger-button"}
+            disabled={props.busy || backupState === "running"}
             onClick={() => {
-              if (confirming.kind === "leave") props.actions.leaveFamily();
+              if (confirming.kind === "join") props.actions.joinByCode(confirming.code);
+              else if (confirming.kind === "leave") props.actions.leaveFamily();
               else props.actions.revokeDevice(confirming.deviceId);
               setConfirming(null);
             }}
           >
-            {confirming.kind === "leave" ? "Выйти из семьи" : "Отозвать устройство"}
+            {consequence
+              ? consequence.confirmLabel
+              : confirming.kind === "leave"
+                ? "Выйти из семьи"
+                : "Отозвать устройство"}
           </button>
         </div>
       </section>

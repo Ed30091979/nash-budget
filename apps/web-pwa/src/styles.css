@@ -488,6 +488,13 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dialog-actions { display: flex; gap: 12px; justify-content: flex-end; }
 .dialog-actions button { min-height: 44px; padding: 13px 20px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
 .dialog-actions .danger-button { color: var(--red-ink); background: var(--red-soft); border-color: var(--red-soft); border-radius: var(--radius-control); }
+/* `.dialog-actions button` перебивает `.primary-button` по специфичности — как и `.danger-button` выше. */
+.dialog-actions .primary-button { color: var(--on-hero); background: var(--green-deep); border-color: var(--green-deep); }
+/* Вопрос перед вступлением в семью несёт с собой и выход: копию можно сделать не уходя с него. */
+.dialog-aside { padding: 16px; margin: 16px 0; background: var(--surface-sunken); border-radius: var(--radius-control); }
+.dialog-aside > p { margin: 0 0 12px; }
+.dialog-aside .secondary-button { min-height: 44px; }
+.dialog-aside-result { margin: 12px 0 0; }
 /* ── Семья (фаза S6). Утверждённая палитра и типографика; компоновка — по логике существующих экранов. ── */
 .sync-badge { display: inline-flex; gap: 6px; flex: none; align-items: center; padding: 6px 12px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; white-space: nowrap; background: var(--surface-sunken); border-radius: var(--radius-pill); }
 .sync-badge::before { width: 8px; height: 8px; flex: none; content: ""; background: var(--ink-muted); border-radius: 50%; }

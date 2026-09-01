@@ -14,6 +14,7 @@ import {
   formatInviteExpiry,
   isValidEmail,
   isValidLoginCode,
+  joinConsequence,
   memberFilterOptions,
   membersById,
   normalizeLoginCode,
@@ -262,5 +263,46 @@ describe("приглашение", () => {
 
   it("разбивает двенадцать символов кода на три группы", () => {
     expect(formatInviteCode("ABCDEFGHJKMN")).toBe("ABCD-EFGH-JKMN");
+  });
+});
+
+describe("предупреждение перед вступлением", () => {
+  const stamp = () => "9 июля 2026 г., 12:00";
+
+  it("называет смену бюджета до нажатия и считает то, что человек здесь записал", () => {
+    const warning = joinConsequence(42, null, stamp);
+
+    expect(warning.body).toContain("перестанет показывать бюджет, который вы ведёте здесь сейчас");
+    expect(warning.body).toContain("Записанных здесь операций: 42.");
+    expect(warning.body).toContain("в семейный не вливается");
+    expect(warning.confirmLabel).toBe("Вступить в семью");
+  });
+
+  it("не выдумывает счёт операций, когда записей ещё нет", () => {
+    expect(joinConsequence(0, null, stamp).body).not.toContain("Записанных здесь операций");
+  });
+
+  it("предлагает сделать копию, когда её нет", () => {
+    const warning = joinConsequence(1, null, stamp);
+
+    expect(warning.backupLine).toContain("Резервной копии этого бюджета ещё нет");
+    expect(warning.backupActionLabel).toBe("Сделать копию сейчас");
+  });
+
+  it("называет дату прежней копии и не выдаёт её за полную", () => {
+    const warning = joinConsequence(1, "2026-07-09T12:00:00.000Z", stamp);
+
+    expect(warning.backupLine).toContain("9 июля 2026 г., 12:00");
+    expect(warning.backupLine).toContain("Записи, сделанные после неё, в файл не попали");
+    expect(warning.backupLine).not.toContain("ещё нет");
+  });
+
+  it("говорит о последствии, а не пугает потерей", () => {
+    const warning = joinConsequence(42, null, stamp);
+    const text = `${warning.title} ${warning.body} ${warning.backupLine}`;
+
+    for (const scare of ["удал", "потеря", "безвозвратн", "навсегда", "внимание"]) {
+      expect(text.toLowerCase()).not.toContain(scare);
+    }
   });
 });

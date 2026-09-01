@@ -55,6 +55,9 @@ function props(overrides: Partial<FamilyScreenProps> = {}): FamilyScreenProps {
     pinOf: () => ({ state: "absent" }) as PinState,
     offeredFingerprintOf: () => undefined,
     memberNameOf: () => null,
+    localBudget: { transactions: [] },
+    lastBackupAt: null,
+    onCreateBackup: vi.fn(async () => undefined),
     invite: null,
     status: null,
     integrity: null,
@@ -290,6 +293,32 @@ describe("тревога, уведомления и удержанные зап�
     expect(markup).toContain("Журнал неполон");
     expect(markup).toContain("Понятно");
     expect(markup).not.toContain("Ключ семьи не совпадает");
+  });
+
+  it("«Вступить» открывает предупреждение, а не вступает", () => {
+    const actions = noopActions();
+    const markup = render({ session, membership: null, actions, localBudget: { transactions: [1, 2, 3] } });
+    // До нажатия предупреждения на экране нет, и никто никуда не вступил.
+    expect(markup).toContain("Вступить по коду");
+    expect(markup).not.toContain("После вступления здесь будет бюджет семьи");
+    expect(actions.joinByCode).not.toHaveBeenCalled();
+
+    const screen = readFileSync(new URL("./FamilyScreen.tsx", import.meta.url), "utf8");
+    // Кнопка формы открывает вопрос…
+    expect(screen).toContain('setConfirming({ kind: "join", code });');
+    // …и код уходит только из подтверждения диалога. Другого вызова в файле нет.
+    expect(screen).toContain('if (confirming.kind === "join") props.actions.joinByCode(confirming.code);');
+    expect(screen.match(/actions\.joinByCode\(/gu)).toHaveLength(1);
+  });
+
+  it("предупреждение предлагает копию на месте и объявляет её результат", () => {
+    const screen = readFileSync(new URL("./FamilyScreen.tsx", import.meta.url), "utf8");
+    expect(screen).toContain("props.onCreateBackup().then(");
+    expect(screen).toContain("consequence.backupLine");
+    expect(screen).toContain("consequence.backupActionLabel");
+    // Пока файл готовится, вступить нельзя: иначе бюджет сменится раньше, чем копия ляжет на диск.
+    expect(screen).toContain('disabled={props.busy || backupState === "running"}');
+    expect(screen).toContain('role="status"');
   });
 
   it("тревога не получает памяти о закрытии, а обычная остановка получает", () => {

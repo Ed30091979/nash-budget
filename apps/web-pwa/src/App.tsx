@@ -15,7 +15,7 @@ import {
 } from "@family-budget/storage";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { DashboardScreen, OperationsSearch } from "./features/dashboard";
-import { DataManagementScreen } from "./features/data-management";
+import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
 import {
   FamilyScreen,
   MEMBER_FILTER_ALL,
@@ -421,6 +421,22 @@ export default function App() {
   );
   const memberById = useMemo(() => (budget ? membersById(budget) : new Map()), [budget]);
 
+  const recordBackup = async (createdAt: string) => {
+    await repository.setLastSuccessfulBackup(createdAt);
+    setLastSuccessfulBackup(createdAt);
+  };
+
+  // Экран семьи предлагает копию там же, где предупреждает о смене бюджета, поэтому путь один и
+  // тот же — включая отметку о дате: копия, сделанная перед вступлением, обязана считаться
+  // последней и на экране «Данные».
+  const createBackup = async () => {
+    const source = budgetRef.current;
+    if (source === null) throw new Error("Budget is not ready.");
+    const backup = await createBudgetBackup(source, async () => undefined);
+    await downloadTextFile(prepareJsonDownload(backup.text));
+    await recordBackup(backup.createdAt);
+  };
+
   const publishInitialBudget = (next: BudgetState) => {
     budgetRef.current = next;
     revisionRef.current = null;
@@ -526,10 +542,7 @@ export default function App() {
               budgetRef.current ?? budget,
               async () => undefined,
             )}
-            onRecordSuccessfulBackup={async (createdAt) => {
-              await repository.setLastSuccessfulBackup(createdAt);
-              setLastSuccessfulBackup(createdAt);
-            }}
+            onRecordSuccessfulBackup={recordBackup}
             onRestoreBackup={async (file) => {
               let clearedLabels = 0;
               await restoreBudgetBackup(
@@ -563,6 +576,9 @@ export default function App() {
             pinOf={family.pinOf}
             offeredFingerprintOf={family.offeredFingerprintOf}
             memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}
+            localBudget={budget}
+            lastBackupAt={lastSuccessfulBackup}
+            onCreateBackup={createBackup}
             invite={family.invite}
             status={family.status}
             integrity={family.integrity}

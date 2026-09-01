@@ -281,6 +281,60 @@ function decodeBase64(text: string, label: string): Uint8Array {
   return bytes;
 }
 
+/* ───────────────────────────── Опрос, который спит вместе со вкладкой ───────────────────────────── */
+
+export interface VisibilityAwarePoll {
+  readonly intervalMs: number;
+  /** Один круг опроса. Вызывается только тогда, когда документ видим. */
+  readonly run: () => void;
+  readonly isHidden: () => boolean;
+  readonly setInterval: (callback: () => void, ms: number) => number;
+  readonly clearInterval: (handle: number) => void;
+  /** Подписка на смену видимости. Возвращает отписку. */
+  readonly onVisibilityChange: (listener: () => void) => () => void;
+}
+
+/**
+ * Опрос идёт, пока вкладку видно, и не идёт, пока не видно.
+ *
+ * Фоновая вкладка, опрашивающая сервер каждые пятнадцать секунд, тратит не своё: на телефоне это
+ * радио, которое будит устройство, и заряд, который человек тратит на экран, которого не видит.
+ * Ничего не теряется — журнал накопительный, курсор сохранён на диске, и один круг при возвращении
+ * догоняет всё пропущенное разом.
+ *
+ * Круг при возвращении делается сразу, а не через интервал: человек, вернувшийся во вкладку,
+ * смотрит на цифры прямо сейчас, и показывать ему пятнадцать секунд заведомо устаревшее значение
+ * было бы хуже, чем не опрашивать вовсе. Скрытый старт круга не делает — иначе «не будить фоновую
+ * вкладку» нарушалось бы ровно в тот момент, когда приложение восстановили в фоне.
+ */
+export function startVisibilityAwarePolling(poll: VisibilityAwarePoll): () => void {
+  let timer: number | null = null;
+
+  const stop = () => {
+    if (timer === null) return;
+    poll.clearInterval(timer);
+    timer = null;
+  };
+
+  const start = () => {
+    if (timer !== null) return;
+    poll.run();
+    timer = poll.setInterval(() => poll.run(), poll.intervalMs);
+  };
+
+  const unsubscribe = poll.onVisibilityChange(() => {
+    if (poll.isHidden()) stop();
+    else start();
+  });
+
+  if (!poll.isHidden()) start();
+
+  return () => {
+    unsubscribe();
+    stop();
+  };
+}
+
 /**
  * Reads the pin table, tolerating anything that is not one.
  *
@@ -510,7 +564,8 @@ export function useFamily(
     [engineFor, refreshSyncState, repository, store],
   );
 
-  /* ── Состояние синхронизации и приём чужих операций. Ни того, ни другого без входа. ── */
+
+/* ── Состояние синхронизации и приём чужих операций. Ни того, ни другого без входа. ── */
   useEffect(() => {
     if (!isSyncActive(serverUrl, session) || session?.familyId == null || api === null) {
       setStatus(null);
@@ -538,11 +593,20 @@ export function useFamily(
         running = false;
       }
     };
-    void round();
-    const timer = window.setInterval(() => void round(), SYNC_INTERVAL_MS);
+    const stopPolling = startVisibilityAwarePolling({
+      intervalMs: SYNC_INTERVAL_MS,
+      run: () => void round(),
+      isHidden: () => document.visibilityState === "hidden",
+      setInterval: (callback, ms) => window.setInterval(callback, ms),
+      clearInterval: (handle) => window.clearInterval(handle),
+      onVisibilityChange: (listener) => {
+        document.addEventListener("visibilitychange", listener);
+        return () => document.removeEventListener("visibilitychange", listener);
+      },
+    });
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
     // `session` целиком в зависимостях был бы перезапуском цикла на каждое обновление токена.
   }, [api, engineFor, refreshSyncState, serverUrl, session?.familyId, session?.deviceId, reload]);

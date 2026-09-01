@@ -68,6 +68,17 @@ describe("приложение с экраном семьи", () => {
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 
+  it("предупреждение о смене бюджета получает и бюджет, и дату копии, и саму копию", () => {
+    expect(source).toContain("localBudget={budget}");
+    expect(source).toContain("lastBackupAt={lastSuccessfulBackup}");
+    expect(source).toContain("onCreateBackup={createBackup}");
+    // Копия, сделанная перед вступлением, — та же копия, что и на экране «Данные»: один путь,
+    // одна отметка о дате. Иначе «Данные» продолжали бы показывать «копия ещё не создавалась».
+    expect(source).toContain("await downloadTextFile(prepareJsonDownload(backup.text));");
+    expect(source).toContain("await recordBackup(backup.createdAt);");
+    expect(source).toContain("onRecordSuccessfulBackup={recordBackup}");
+  });
+
   it("автор операции и фильтр по участнику подключены к истории", () => {
     expect(source).toContain("filterTransactionsByMember(postedTransactions, memberFilter)");
     expect(source).toContain("memberFilterOptions(budget)");

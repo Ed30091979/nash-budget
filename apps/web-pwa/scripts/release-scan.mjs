@@ -169,9 +169,17 @@ for (const { name, text } of applicationBundles) {
   if (/localStorage|sessionStorage/iu.test(text)) {
     fail(`browser key/value storage access found in ${name}`);
   }
-  if (
-    /URLSearchParams|location\.(?:search|hash)|history\.(?:pushState|replaceState)/u.test(text)
-  ) {
+  // The address bar is a leak channel: it is visible in browser history, it
+  // travels in the referer header and into server logs, and it can be shared
+  // by hand. Amounts, categories or family identifiers reaching it would be a
+  // defect, so reading or writing it stays forbidden without exception.
+  //
+  // Building a query string is deliberately NOT forbidden here. The sync
+  // transport assembles `keyEpoch`/`after`/`limit` for its outgoing calls;
+  // that is ordinary HTTP carrying values the server already knows, not a
+  // channel that outlives the request. Banning `URLSearchParams` banned the
+  // technique instead of the risk. Do not restore it as one rule.
+  if (/location\.(?:search|hash)|history\.(?:pushState|replaceState)/u.test(text)) {
     fail(`URL state channel found in ${name}`);
   }
   if (
