@@ -700,6 +700,38 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
 }
 
 /**
+ * Clears an attribution whose participant the journal does not hold, and says so out loud.
+ *
+ * The state has to be one the domain accepts, and `calculateMemberExpenses` refuses a
+ * transaction whose `memberId` names nobody. But the answer cannot be the one an unresolved
+ * account or category gets: a family deleting a participant is an ordinary thing to do, and
+ * doing it while another device labels an expense is ordinary concurrency. If the expense went
+ * down with the label, deleting one participant would quietly take every purchase ever
+ * attributed to them out of the family's budget, and the totals on the screen would be wrong
+ * rather than merely incomplete. It would also be a lever: one delete, and whichever spending
+ * the deleter chose to have attributed disappears from the money everybody else is reading.
+ * The domain draws the same line from its own side — attribution is a label, and no headline
+ * figure may move because a label was added, changed or dropped.
+ *
+ * So the transaction stays, to the kopeck, and only the label goes. It is reported as an
+ * `unknown_reference` about the transaction, because nothing may disappear silently, and
+ * nothing is withheld for it: the transaction is on the screen and counted, and it is merely
+ * attributed to nobody. If the operation that creates the participant is only late, the label
+ * comes back by itself on the pass after it arrives — this reads the converged journal and
+ * keeps nothing of its own between passes.
+ */
+function clearUnknownAttribution(live: LiveEntities, report: (problem: JournalProblem) => void): void {
+  for (const [id, transaction] of live.transactions) {
+    // Read first, copied only when there is something to clear: this runs over every
+    // transaction of the journal on every materialisation, and almost none of them need it.
+    if (transaction.memberId === undefined || live.members.has(transaction.memberId)) continue;
+    const { memberId: _unknown, ...unlabelled } = transaction;
+    live.transactions.set(id, unlabelled);
+    report(problem("unknown_reference", "transaction", id));
+  }
+}
+
+/**
  * Drops every entity whose references no longer resolve, repeating until nothing changes:
  * losing an account takes its goal down, and losing an expense takes the refund that
  * points at it down as well.
@@ -1088,6 +1120,9 @@ function buildView(
   resolveSharedIdentifiers(live, owners, report, record);
   rejectDuplicateBudgetLines(live, owners, report, record);
   dropDanglingEntities(live, report, record);
+  // After the sweep, so that a transaction already on its way out is not reported twice over,
+  // and after resolveSharedIdentifiers, which is the one step that can take a participant out.
+  clearUnknownAttribution(live, report);
   reportAggregateBounds(live, report);
   reportTombstoneBudget(ordered, confirmedDevices(live, owners), report);
   reportImplausibleStamps(ordered, activations.values(), report);

@@ -492,18 +492,35 @@ function parseTransactionFields(value: unknown): TransactionFields {
   const record = requireRecord(value, label);
   const kind = readEnum(record, "kind", TRANSACTION_KINDS, "transaction kind");
   const shared = ["kind", "occurredOn", "status", "amountMinor"];
+  /**
+   * The participant credited with this operation, carried on the transaction itself.
+   *
+   * The header carries a member too, and the two answer different questions: the header says
+   * who *wrote* the operation, and this says whose spending it is. Only the second survives
+   * an edit — a member correcting somebody else's expense writes their own identifier into
+   * the header and leaves this one alone — and only the second is what the domain reads to
+   * split a budget by participant. A field list that omitted it rejected the whole operation
+   * as unknown, so a labelled expense could be entered on one device and never reach another.
+   *
+   * Optional, and every list below keeps it optional rather than required: every operation
+   * written before participants existed omits it, and such an operation stays valid for ever.
+   */
+  const attribution = ["memberId"];
   const base = {
     occurredOn: readLocalDate(record, "occurredOn", "transaction occurredOn"),
     status: readEnum(record, "status", TRANSACTION_STATUSES, "transaction status"),
     amountMinor: readMinor(record, "amountMinor", "transaction amountMinor", 1),
+    // Absent stays absent: an unlabelled transaction must not gain an empty label by passing
+    // through the codec, because `memberId: undefined` is a different value to the domain.
+    ...(record.memberId === undefined ? {} : { memberId: readId(record, "memberId", "transaction memberId") }),
   };
 
   switch (kind) {
     case "income":
-      requireFieldNames(record, [...shared, "accountId"], [], label);
+      requireFieldNames(record, [...shared, "accountId"], attribution, label);
       return { ...base, kind, accountId: readId(record, "accountId", "transaction accountId") };
     case "expense":
-      requireFieldNames(record, [...shared, "accountId", "categoryId"], [], label);
+      requireFieldNames(record, [...shared, "accountId", "categoryId"], attribution, label);
       return {
         ...base,
         kind,
@@ -511,7 +528,12 @@ function parseTransactionFields(value: unknown): TransactionFields {
         categoryId: readId(record, "categoryId", "transaction categoryId"),
       };
     case "refund":
-      requireFieldNames(record, [...shared, "accountId", "categoryId", "originalTransactionId"], [], label);
+      requireFieldNames(
+        record,
+        [...shared, "accountId", "categoryId", "originalTransactionId"],
+        attribution,
+        label,
+      );
       return {
         ...base,
         kind,
@@ -520,7 +542,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
         originalTransactionId: readId(record, "originalTransactionId", "transaction originalTransactionId"),
       };
     case "transfer": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], [], label);
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], attribution, label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       // The domain refuses a movement inside one account, so it never reaches a journal.
@@ -528,7 +550,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
       return { ...base, kind, fromAccountId, toAccountId };
     }
     case "goal_contribution": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], [], label);
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], attribution, label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");

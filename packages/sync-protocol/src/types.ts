@@ -7,6 +7,9 @@ import type {
   BudgetState,
   Category,
   Goal,
+  Member,
+  MemberId,
+  MemberRole,
   ScheduledExpense,
   StableId,
   Transaction,
@@ -14,29 +17,33 @@ import type {
 
 export type DeviceId = string;
 export type OpId = string;
-export type MemberId = StableId;
 
 /**
- * Advisory only. A role in the journal is whatever the writing device claimed, because any
- * device can author any operation, so it may never be used to authorise anything: it labels
- * a participant in the history and nothing more. The server decides who may read or write a
- * family, and its decision is the only one that binds.
+ * The participant, the identifier that names one and the label a participant carries, taken
+ * from the domain rather than declared again.
+ *
+ * They lived here while the domain had no model of a participant. It has one now, field for
+ * field the same, and two identical declarations of one concept are not a redundancy that
+ * costs nothing: they drift the moment either side gains a field, and the journal would then
+ * replicate a participant the budget cannot read.
+ *
+ * What does not come from the domain is the standing of a role *in the journal*. A role here
+ * is whatever the writing device claimed, because any device can author any operation, so it
+ * may never be used to authorise anything: it labels a participant in the history and nothing
+ * more. The server decides who may read or write a family, and its decision is the only one
+ * that binds.
  */
-export type MemberRole = "owner" | "member";
+export type { Member, MemberId, MemberRole };
 
 /**
- * A family participant. Attribution arrives with synchronisation, so the member
- * lives here until the domain package gains its own model.
+ * A {@link BudgetState} whose participants are always present.
+ *
+ * Not redundant now that the domain carries members itself: the domain declares them optional,
+ * because every backup and every budget written before participants existed omits them and
+ * stays valid. A journal has no such history to honour — it materialises the list on every
+ * pass, empty when a family has named nobody — so the state it produces promises the list, and
+ * a consumer of this package reads `state.members` without a fallback.
  */
-export interface Member {
-  readonly id: MemberId;
-  readonly name: string;
-  /** Self-declared label, never a permission. See {@link MemberRole}. */
-  readonly role: MemberRole;
-  readonly active: boolean;
-}
-
-/** A BudgetState plus the family participants replicated by the protocol. */
 export interface SyncedBudgetState extends BudgetState {
   readonly members: readonly Member[];
 }

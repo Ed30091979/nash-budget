@@ -1,4 +1,9 @@
-import { calculateAnnualPlan, calculateBudget } from "@family-budget/domain";
+import {
+  calculateAnnualPlan,
+  calculateBudget,
+  calculateMemberExpenses,
+  type Transaction,
+} from "@family-budget/domain";
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
 import { describe, expect, it } from "vitest";
 
@@ -61,6 +66,7 @@ const GOAL_ID = "66666666-6666-4666-8666-666666666661";
 const MEMBER_ANNA = "member-anna";
 const MEMBER_PETR = "member-petr";
 const GHOST_ID = "ghost-transaction";
+const LABELLED_EXPENSE_ID = "expense-anna-wrote-down-for-petr";
 
 type FixtureState = ReturnType<typeof toDomainBudgetState>;
 type FixtureTransaction = FixtureState["transactions"][number];
@@ -1553,6 +1559,89 @@ describe("integrity gate", () => {
         reason: "unknown_reference",
       },
     ]);
+  });
+
+  it("carries a participant on a transaction across devices, and never lets the label cost the money", () => {
+    const journal = buildFixtureJournal();
+    const attributed = (snapshot: JournalSnapshot): Transaction | undefined =>
+      snapshot.state.transactions.find((item) => item.id === LABELLED_EXPENSE_ID);
+
+    // Written down by Анна, spent by Пётр. The two identifiers answer different questions and
+    // travel separately, and both have to survive a merge for the family to see whose spending
+    // this was on any device but the one it was typed on.
+    const labelled = parseOperation({
+      opId: opUuid(981),
+      deviceId: DEVICE_B,
+      lamport: 700,
+      memberId: MEMBER_ANNA,
+      entity: "transaction",
+      action: "create",
+      targetId: LABELLED_EXPENSE_ID,
+      fields: {
+        kind: "expense",
+        occurredOn: "2026-07-12",
+        status: "posted",
+        amountMinor: 150_000,
+        accountId: MAIN_ACCOUNT_ID,
+        categoryId: PRODUCTS_CATEGORY_ID,
+        memberId: MEMBER_PETR,
+      },
+    });
+
+    const shown = applyJournal([...journal, labelled]);
+    expect(shown.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(attributed(shown)?.memberId).toBe(MEMBER_PETR);
+    expect(labelled.memberId).toBe(MEMBER_ANNA);
+    const split = calculateMemberExpenses(shown.state);
+    expect(split.byMember[MEMBER_PETR]?.actualMinor).toBe(150_000);
+    expect(split.byMember[MEMBER_ANNA]?.actualMinor).toBe(0);
+    // And through storage: a snapshot recomputes its state from the entries it validated, so
+    // a label that did not survive the entry would be lost on the next start of the device.
+    expect(attributed(restoreJournal(JSON.parse(JSON.stringify(shown)) as unknown))?.memberId).toBe(MEMBER_PETR);
+
+    // Now Пётр is deleted while that expense is in flight — ordinary concurrency in a family.
+    // The domain refuses a label naming nobody, so the state may not keep it; but withholding
+    // the transaction the way an unresolved account is withheld would take a real purchase out
+    // of the budget, and one delete would then quietly move the totals everybody else reads.
+    // The label goes, the money stays, and the family is told.
+    const deleted = parseOperation({
+      opId: opUuid(982),
+      deviceId: DEVICE_C,
+      lamport: 701,
+      entity: "member",
+      action: "delete",
+      targetId: MEMBER_PETR,
+    });
+    const forgotten = applyJournal([...journal, labelled, deleted]);
+    const kept = attributed(forgotten);
+    expect(kept?.amountMinor).toBe(150_000);
+    expect(kept !== undefined && "memberId" in kept).toBe(false);
+    expect(forgotten.integrity.ready).toBe(true);
+    expect(forgotten.integrity.withheld).toEqual([]);
+    expect(forgotten.integrity.problems).toEqual([
+      { code: "unknown_reference", entity: "transaction", id: LABELLED_EXPENSE_ID },
+    ]);
+    // To the kopeck what it was before the participant was deleted, and the split no longer
+    // throws: the purchase is simply attributed to nobody.
+    expect(calculateBudget(forgotten.state).expensesMinor).toBe(calculateBudget(shown.state).expensesMinor);
+    expect(calculateMemberExpenses(forgotten.state).unattributed.actualMinor).toBe(
+      split.unattributed.actualMinor + 150_000,
+    );
+
+    // A participant who has not arrived yet is the other half of the same case, and the gate
+    // keeps nothing of its own between passes: the label comes back by itself on the pass
+    // after the operation that creates them is delivered.
+    const early = applyJournal([
+      ...journal.filter((item) => item.targetId !== MEMBER_PETR),
+      labelled,
+    ]);
+    expect(attributed(early) !== undefined && "memberId" in attributed(early)!).toBe(false);
+    expect(early.integrity.problems).toEqual([
+      { code: "unknown_reference", entity: "transaction", id: LABELLED_EXPENSE_ID },
+    ]);
+    const arrived = applyOperations(early, journal.filter((item) => item.targetId === MEMBER_PETR));
+    expect(attributed(arrived)?.memberId).toBe(MEMBER_PETR);
+    expect(arrived.integrity.problems).toEqual([]);
   });
 
   it("settles a category planned twice by the total order, not by the name of the line", () => {
