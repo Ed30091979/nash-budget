@@ -22,7 +22,13 @@
  *   this device never accepted;
  * - **an epoch below the accepted one is refused with an alarm and never enters the chain.** It is
  *   not a stale answer: it is an attempt to put the family back on a key that may already have
- *   leaked to a revoked device.
+ *   leaked to a revoked device. «Не входит в цепочку» is a wrap passed over unopened and counted,
+ *   not a walk abandoned: the server hands back *every* wrap this device was ever sent, in
+ *   ascending order, and the old ones survive a lawful rotation — they are what a device two
+ *   epochs behind catches up on. A walk that stopped at the first of them would leave every
+ *   device stranded one epoch after its first rotation and would call the ordinary answer an
+ *   alarm. Whether the wrap is worth showing to a person is the caller's decision, and it is
+ *   handed the count to make it.
  */
 import {
   deviceKeyFingerprint,
@@ -48,8 +54,6 @@ export type PinState =
   | { readonly state: "repin_required" };
 
 export type EpochChainRefusal =
-  /** A wrap for an epoch below the one this device holds. Alarm, never a ceremony. */
-  | "epoch_below_accepted"
   /** A wrap for the epoch already held, carrying a different key. The substitution 5.4.1 names. */
   | "key_substituted"
   /** No confirmation travelled with a wrap that changes the number. */
@@ -77,7 +81,20 @@ export interface EpochChainParams {
    * no earlier key, so no chain of confirmations can exist for it, and the ceremony that bound it
    * is what authorises the first wrap. That is not a third path — it is the second one.
    */
-  readonly accepted: { readonly keyEpoch: number; readonly key: CryptoKey } | null;
+  readonly accepted: {
+    readonly keyEpoch: number;
+    readonly key: CryptoKey;
+    /**
+     * Whether that epoch has already been proven live (5.4.1), so the walk can hand it back.
+     *
+     * The proof is expensive — it costs a round trip in which the server numbers one of this
+     * device's own envelopes — and 5.4.1 leans on it: an epoch below the *proven* one is what may
+     * not be stepped down to. A walk that always answered `live: false` would have the caller
+     * write that over a proof already earned, and the device would go back to being unable to
+     * forget the key it left.
+     */
+    readonly live?: boolean;
+  } | null;
   /** The local pin for a sender device. Never read from a server response. */
   readonly pin: (senderDeviceId: string) => PinState;
   /** The SPKI the server offers for a sender. Untrusted until it hashes to the pin. */
@@ -92,6 +109,16 @@ export interface EpochChainResult {
   readonly advanced: number;
   /** Wraps of the accepted epoch that carried the same key and were therefore redundant. */
   readonly ignored: number;
+  /**
+   * Wraps naming an epoch below the one held: passed over unopened, and counted here.
+   *
+   * Ordinary after any rotation — the server keeps every wrap a device was ever sent — so this
+   * being non-zero is not by itself a reason to say anything to anybody. What 5.4.1 calls an
+   * alarm is a *proposal* to move down, and only the caller knows whether it is looking at one:
+   * it is the side that knows whether the epoch it holds was ever proven live, and the side that
+   * owns the one loud signal this system has.
+   */
+  readonly belowAccepted: number;
   /** Where the walk stopped, and why. `null` when every link was consumed. */
   readonly refusal: { readonly reason: EpochChainRefusal; readonly keyEpoch: number } | null;
 }
@@ -124,30 +151,50 @@ export async function resolveEpochChain(params: EpochChainParams): Promise<Epoch
   let currentEpoch = params.accepted?.keyEpoch ?? null;
   let advanced = 0;
   let ignored = 0;
+  let belowAccepted = 0;
 
   const ordered = [...params.wraps]
     .filter((wrap) => wrap.deviceId === params.deviceId)
     .sort((left, right) => left.keyEpoch - right.keyEpoch);
 
-  const halt = async (
-    reason: EpochChainRefusal,
-    keyEpoch: number,
+  /**
+   * The result, however the walk ended.
+   *
+   * `live` is carried over only while the walk never left the epoch it was earned in — which is
+   * exactly the case `currentEpoch` still names the accepted one, because the walk only ever goes
+   * up. One link consumed and the proof is spent: the new key has not been numbered by anything.
+   */
+  const settle = async (
+    refusal: { readonly reason: EpochChainRefusal; readonly keyEpoch: number } | null,
   ): Promise<EpochChainResult> => ({
     epoch:
       currentKey === null || currentEpoch === null
         ? null
-        : { keyEpoch: currentEpoch, keyDigest: toHex(await familyKeyFingerprint(currentKey)), live: false },
+        : {
+            keyEpoch: currentEpoch,
+            keyDigest: toHex(await familyKeyFingerprint(currentKey)),
+            live: currentEpoch === params.accepted?.keyEpoch && params.accepted.live === true,
+          },
     key: currentKey,
     advanced,
     ignored,
-    refusal: { reason, keyEpoch },
+    belowAccepted,
+    refusal,
   });
+
+  const halt = (reason: EpochChainRefusal, keyEpoch: number): Promise<EpochChainResult> =>
+    settle({ reason, keyEpoch });
 
   for (const record of ordered) {
     // An epoch below the one held is not a stale answer and not a reason to ask a person
     // anything: it is an attempt to return the family to a key a revoked device may still have.
+    // It is passed over without being opened — deriving anything from a key that far back is the
+    // very thing being refused — and the walk goes on to the wraps that are ahead of it, which is
+    // where the catching up lives. Downwards it cannot go in any case: the epoch held only rises,
+    // and one equal to it is settled by digest below.
     if (currentEpoch !== null && record.keyEpoch < currentEpoch) {
-      return halt("epoch_below_accepted", record.keyEpoch);
+      belowAccepted += 1;
+      continue;
     }
 
     const pin = params.pin(record.senderDeviceId);
@@ -230,14 +277,5 @@ export async function resolveEpochChain(params: EpochChainParams): Promise<Epoch
     advanced += 1;
   }
 
-  return {
-    epoch:
-      currentKey === null || currentEpoch === null
-        ? null
-        : { keyEpoch: currentEpoch, keyDigest: toHex(await familyKeyFingerprint(currentKey)), live: false },
-    key: currentKey,
-    advanced,
-    ignored,
-    refusal: null,
-  };
+  return settle(null);
 }

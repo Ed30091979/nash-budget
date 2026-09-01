@@ -1,3 +1,4 @@
+import { ENVELOPE_VERSION } from "@family-budget/sync-crypto";
 import {
   createEmptyJournal,
   MAX_LAMPORT,
@@ -8,7 +9,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import { applyDelivery } from "../src/intake.js";
-import type { DeliveredEnvelope, OutgoingEnvelope, SyncCursor } from "../src/types.js";
+import type { DeliveredEnvelope, OutgoingEnvelope, SyncCursor, SyncStop } from "../src/types.js";
 import {
   createFamilyKey,
   deleteDatabases,
@@ -57,7 +58,7 @@ async function apply(
   envelopes: readonly DeliveredEnvelope[],
   cursor: SyncCursor = START,
   snapshot: JournalSnapshot = createEmptyJournal(),
-  priorAttempts = 0,
+  priorStop: SyncStop | null = null,
 ) {
   return applyDelivery({
     envelopes,
@@ -66,7 +67,7 @@ async function apply(
     familyKey,
     deviceId: DEVICE_A,
     snapshot,
-    priorAttempts,
+    priorStop,
   });
 }
 
@@ -134,14 +135,40 @@ describe("приём чужих операций (3.4)", () => {
     // Sealed under a key this device does not hold: a genuine envelope of an imposed key.
     const foreign = numbered([await sealOperation(other.key, expense(1))]);
 
-    let attempts = 0;
-    for (let round = 0; round < 12; round += 1) {
-      const result = await apply(family.key, foreign, START, createEmptyJournal(), attempts);
+    let stop: SyncStop | null = null;
+    for (let round = 1; round <= 12; round += 1) {
+      const result = await apply(family.key, foreign, START, createEmptyJournal(), stop);
       expect(result.cursor).toEqual(START);
-      expect(result.stop?.reason).toBe("key_mismatch");
-      attempts = result.stop!.attempts;
+      expect(result.stop).toMatchObject({ reason: "key_mismatch", attempts: round });
+      stop = result.stop;
     }
-    expect(attempts).toBe(12);
+  });
+
+  it("счётчик попыток обнуляется, когда доставка встала на другом конверте", async () => {
+    const family = await createFamilyKey();
+    const other = await createFamilyKey();
+    const first = numbered([await sealOperation(family.key, expense(1))])[0]!;
+    const second = numbered([await sealOperation(family.key, expense(2))], 2)[0]!;
+
+    // Nine rounds of an incomplete journal: the numbering skips and the same envelope is the one
+    // the cursor keeps stopping on.
+    let stop: SyncStop | null = null;
+    for (let round = 1; round <= 9; round += 1) {
+      const result = await apply(family.key, [second], START, createEmptyJournal(), stop);
+      expect(result.stop).toMatchObject({ reason: "journal_incomplete", attempts: round });
+      stop = result.stop;
+    }
+
+    // Now the server hands back the first envelope, sealed under a key this device does not hold.
+    // 3.4 counts retries of *one* envelope: this is the first failure of this one, so the count
+    // starts again and the interface says «не удалось прочитать» rather than «ключ семьи не
+    // совпадает» on the strength of somebody else's nine rounds.
+    const foreign = numbered([await sealOperation(other.key, expense(3))]);
+    const changed = await apply(family.key, foreign, START, createEmptyJournal(), stop);
+
+    expect(changed.stop).toMatchObject({ reason: "key_mismatch", attempts: 1 });
+    expect(changed.stop!.opId).not.toBe(stop!.opId);
+    expect(first.opId).not.toBe(changed.stop!.opId);
   });
 
   it("чужой номер эпохи без объявленной смены обрабатывается как отказ тега", async () => {
@@ -156,6 +183,24 @@ describe("приём чужих операций (3.4)", () => {
     const result = await apply(family.key, numbered([envelope]));
 
     expect(result.stop).toMatchObject({ reason: "key_mismatch" });
+    expect(result.cursor).toEqual(START);
+  });
+
+  it("подделанный открытый заголовок не даёт мягкого вердикта до проверки тега", async () => {
+    const family = await createFamilyKey();
+    const operation = expense(1);
+    const genuine = await sealOperation(family.key, operation);
+    // The envelope is honest and this device can read it. The server edits one open byte of the
+    // header on the way — the version — and hopes to be answered «требуется обновление», which
+    // would let it hang that screen on a whole family without holding any key at all.
+    const forged: OutgoingEnvelope = { ...genuine, envelopeVersion: ENVELOPE_VERSION + 1 };
+
+    const result = await apply(family.key, numbered([forged]));
+
+    // The version is in the AAD, so the edit breaks the tag, and 3.4 answers a broken tag in this
+    // device's own epoch with the alarm and with nothing milder.
+    expect(result.stop).toMatchObject({ reason: "key_mismatch", seq: 1, attempts: 1 });
+    expect(result.applied).toBe(0);
     expect(result.cursor).toEqual(START);
   });
 

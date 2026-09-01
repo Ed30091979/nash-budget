@@ -14,7 +14,7 @@ import {
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { toBase64 } from "../src/base64.js";
-import { resolveEpochChain, type PinState } from "../src/epoch-chain.js";
+import { resolveEpochChain, type EpochChainParams, type PinState } from "../src/epoch-chain.js";
 import type { KeyWrapRecord } from "../src/transport.js";
 import { DEVICE_A, DEVICE_B, FAMILY_ID } from "./support.js";
 
@@ -93,7 +93,7 @@ function pinnedTo(fingerprint: Uint8Array): (deviceId: string) => PinState {
 
 async function walk(
   wraps: readonly KeyWrapRecord[],
-  accepted: { keyEpoch: number; key: CryptoKey } | null,
+  accepted: EpochChainParams["accepted"],
   overrides: Partial<Parameters<typeof resolveEpochChain>[0]> = {},
 ) {
   return resolveEpochChain({
@@ -149,16 +149,63 @@ describe("догоняющая цепочка эпох (5.4.1)", () => {
     expect(result.epoch?.keyEpoch).toBe(1);
   });
 
-  it("эпоха ниже принятой — тревога и в цепочку не входит", async () => {
+  it("эпоха ниже принятой в цепочку не входит, но обход не обрывает", async () => {
     const first = await generateFamilyKey();
     const third = await generateFamilyKey();
     const wraps = [await makeWrap(first, 1, null)];
 
     const result = await walk(wraps, { keyEpoch: 3, key: third });
 
-    expect(result.refusal).toEqual({ reason: "epoch_below_accepted", keyEpoch: 1 });
+    // Passed over, counted, and the caller decides what to say about it. Not a refusal: the
+    // server keeps old wraps for the devices still catching up, so it hands them back to
+    // everybody, and calling that a break would be calling an ordinary answer an alarm.
+    expect(result.refusal).toBeNull();
+    expect(result.belowAccepted).toBe(1);
     expect(result.advanced).toBe(0);
     expect(result.epoch?.keyEpoch).toBe(3);
+    expect(result.key).toBe(third);
+  });
+
+  it("старые обёртки, пережившие ротацию, не мешают догнать цепочку", async () => {
+    const first = await generateFamilyKey();
+    const second = await generateFamilyKey();
+    const third = await generateFamilyKey();
+    // Exactly what `GET /keys` returns to a device one epoch behind after two rotations: every
+    // wrap it was ever sent, in ascending order, the spent ones included.
+    const wraps = [
+      await makeWrap(first, 1, null),
+      await makeWrap(second, 2, first),
+      await makeWrap(third, 3, second),
+    ];
+
+    const result = await walk(wraps, { keyEpoch: 2, key: second });
+
+    expect(result.refusal).toBeNull();
+    expect(result.belowAccepted).toBe(1);
+    expect(result.ignored).toBe(1);
+    expect(result.advanced).toBe(1);
+    expect(result.epoch?.keyEpoch).toBe(3);
+    expect(result.epoch?.keyDigest).toBe(toHex(await familyKeyFingerprint(third)));
+  });
+
+  it("доказанная живость переживает обход, который никуда не ушёл", async () => {
+    const held = await generateFamilyKey();
+    const earlier = await generateFamilyKey();
+    const next = await generateFamilyKey();
+
+    // The device is current: one redundant wrap of its own epoch and one it has long passed.
+    const standing = await walk([await makeWrap(held, 2, null), await makeWrap(earlier, 1, null)], {
+      keyEpoch: 2,
+      key: held,
+      live: true,
+    });
+    // The proof cost a round trip and belongs to this key. A walk that ended where it started
+    // must not hand back a value that erases it.
+    expect(standing.epoch).toMatchObject({ keyEpoch: 2, live: true });
+
+    // One link consumed and the proof is spent: nothing of the new key has been numbered yet.
+    const moved = await walk([await makeWrap(next, 3, held)], { keyEpoch: 2, key: held, live: true });
+    expect(moved.epoch).toMatchObject({ keyEpoch: 3, live: false });
   });
 
   it("обёртка своей эпохи с другим ключом — подмена, а не переиздание", async () => {

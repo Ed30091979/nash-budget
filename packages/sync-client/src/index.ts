@@ -16,6 +16,7 @@ export {
   SYNC_STATE_KEYS,
   SyncEngine,
   type EnqueueResult,
+  type RetiredEpochKey,
   type SyncEngineOptions,
 } from "./engine.js";
 export {
@@ -25,7 +26,7 @@ export {
   type EpochChainResult,
   type PinState,
 } from "./epoch-chain.js";
-export { applyDelivery, KEY_MISMATCH_RETRIES, type ApplyDeliveryParams } from "./intake.js";
+export { applyDelivery, type ApplyDeliveryParams } from "./intake.js";
 export {
   createHttpTransport,
   type FetchQuery,

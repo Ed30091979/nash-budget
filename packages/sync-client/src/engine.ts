@@ -19,7 +19,11 @@
  *    writes names *that* number. A cursor found under an earlier one is the ordinary outcome of a
  *    rotation and is reset to the beginning of the new epoch; a cursor found under a later one is
  *    a step down and is refused. Neither is allowed to degenerate into «ключ семьи не совпадает»,
- *    which is the one alarm this system has and is spent on a forged envelope alone.
+ *    which is the one alarm this system has and is spent on a forged envelope alone. The queue
+ *    crosses with the cursor: what is waiting is re-sealed under the key in hand, because the
+ *    server refuses a whole batch over one envelope naming an epoch that is not in force, and a
+ *    queue that cannot drain is a device that never proves its new epoch live and therefore never
+ *    lets the old key be forgotten.
  *
  * And one property from section 9, which is a property of what this file does *not* do: nothing
  * here runs until an account exists. The engine is constructed after sign-in, so with no account
@@ -28,9 +32,10 @@
 import {
   type IndexedDbBudgetRepository,
   type OutboxAppend,
+  type OutboxRecord,
   type SaveIfRevisionResult,
 } from "@family-budget/storage";
-import { ENVELOPE_VERSION, sealEnvelope, utf8 } from "@family-budget/sync-crypto";
+import { ENVELOPE_VERSION, openEnvelope, sealEnvelope, utf8 } from "@family-budget/sync-crypto";
 import {
   applyOperations,
   createClock,
@@ -44,7 +49,7 @@ import {
   type SyncedBudgetState,
 } from "@family-budget/sync-protocol";
 
-import { toBase64 } from "./base64.js";
+import { fromBase64, toBase64 } from "./base64.js";
 import { SyncClientError } from "./errors.js";
 import { applyDelivery } from "./intake.js";
 import type { SyncTransport } from "./transport.js";
@@ -66,6 +71,17 @@ export const SYNC_STATE_KEYS = {
   cursor: "cursor",
   epoch: "epoch",
   stop: "stop",
+  /**
+   * The re-encrypted queue of 5.5 step 8, written down before the old records are removed.
+   *
+   * The store has no way to swap a queue entry for another under the same `opId` in one
+   * transaction — the identifier is unique, so the old record has to go before the new one can be
+   * added — and a crash between the two would take a local change with it. So the new envelopes
+   * are put here first, and the record is cleared in the same transaction that adds them back.
+   * A record found on the next run is a rewrite that was interrupted, and it is finished before
+   * anything else touches the queue.
+   */
+  rekey: "rekey",
 } as const;
 
 /**
@@ -82,6 +98,23 @@ const MAX_PAGES_PER_PULL = 64;
 /** Compare-and-set attempts before a write gives up and says so. */
 const MAX_WRITE_ATTEMPTS = 4;
 
+/**
+ * A key of an epoch this device has left behind, kept for one purpose only.
+ *
+ * 5.5 step 8 has the device re-encrypt its *outgoing queue* under the new key, and a queue entry
+ * can only be re-encrypted by whoever can open it. So the engine that seals under `FK'` is handed
+ * the keys of the epochs its queue may still be sealed under. 5.5 already says the owner keeps
+ * both keys until the switch is confirmed; this is the same window, on the receiving side.
+ *
+ * They are used for nothing else: no delivery is ever opened with one, because an envelope of a
+ * retired epoch arriving from the server is the alarm of 3.4 and not an invitation to try an old
+ * key on it.
+ */
+export interface RetiredEpochKey {
+  readonly keyEpoch: number;
+  readonly key: CryptoKey;
+}
+
 export interface SyncEngineOptions {
   readonly repository: IndexedDbBudgetRepository<SyncedBudgetState>;
   readonly transport: SyncTransport;
@@ -92,8 +125,25 @@ export interface SyncEngineOptions {
   readonly keyEpoch: number;
   /** `SHA-256(FK)` in lower-case hex, as 5.4.1 has the device remember it. */
   readonly keyDigest: string;
+  /** Keys of epochs already left, so what is queued under them can be moved to the epoch in hand. */
+  readonly retiredKeys?: readonly RetiredEpochKey[];
   readonly fetchLimit?: number;
   readonly batchSize?: number;
+}
+
+/** What one pass over the queue moved to the epoch in hand, and what it could not move. */
+interface OutboxRekey {
+  /**
+   * Envelopes left sealed under an epoch whose key this device no longer holds.
+   *
+   * They are not sent — the server refuses a batch in which a single envelope names an epoch that
+   * is not in force, and one of these in the batch would take every other envelope down with it —
+   * and they are not deleted either, because a queue entry is a local change that has not reached
+   * the family yet. They stay, they are counted, and the count travels out in {@link PushResult}.
+   */
+  readonly stranded: number;
+  /** What may actually be submitted: the batch, entirely under the epoch in hand. */
+  readonly envelopes: readonly OutgoingEnvelope[];
 }
 
 export interface EnqueueResult {
@@ -133,6 +183,7 @@ export class SyncEngine {
   private readonly familyKey: CryptoKey;
   private readonly keyEpoch: number;
   private readonly keyDigest: string;
+  private readonly retiredKeys: ReadonlyMap<number, CryptoKey>;
   private readonly fetchLimit: number;
   private readonly batchSize: number;
 
@@ -144,6 +195,11 @@ export class SyncEngine {
     this.familyKey = options.familyKey;
     this.keyEpoch = options.keyEpoch;
     this.keyDigest = options.keyDigest;
+    this.retiredKeys = new Map(
+      (options.retiredKeys ?? [])
+        .filter((retired) => retired.keyEpoch !== options.keyEpoch)
+        .map((retired) => [retired.keyEpoch, retired.key] as const),
+    );
     this.fetchLimit = options.fetchLimit ?? FETCH_LIMIT;
     this.batchSize = options.batchSize ?? SUBMIT_BATCH_SIZE;
   }
@@ -390,6 +446,166 @@ export class SyncEngine {
     });
   }
 
+  /** A queue record as it was written, or `null` when it is not the shape this build writes. */
+  private static queuedEnvelope(value: unknown): OutgoingEnvelope | null {
+    if (typeof value !== "object" || value === null) return null;
+    const record = value as Partial<OutgoingEnvelope>;
+    if (
+      !Number.isSafeInteger(record.envelopeVersion) ||
+      typeof record.kind !== "string" ||
+      typeof record.familyId !== "string" ||
+      typeof record.opId !== "string" ||
+      record.opId.length === 0 ||
+      record.opId.length > 128 ||
+      typeof record.deviceId !== "string" ||
+      !Number.isSafeInteger(record.keyEpoch) ||
+      (record.keyEpoch as number) < 1 ||
+      typeof record.iv !== "string" ||
+      typeof record.ciphertext !== "string"
+    ) {
+      return null;
+    }
+    return record as OutgoingEnvelope;
+  }
+
+  /**
+   * Moves one queued envelope from a retired epoch to the epoch in hand — 5.5 step 8.
+   *
+   * The plaintext is carried across as bytes and is never re-encoded: `opId` and `lamport` live
+   * inside it, and the merge tiebreaker is computed over that exact text, so a re-serialisation
+   * would change what the family already agreed on. What does change is what step 8 names — a
+   * fresh IV, the new epoch number, and the tag that binds them.
+   *
+   * `null` when the envelope will not open under the key offered, which is not a case to guess
+   * at: an entry this device sealed itself and can no longer read is left where it is.
+   */
+  private async reseal(
+    envelope: OutgoingEnvelope,
+    retired: CryptoKey,
+  ): Promise<OutgoingEnvelope | null> {
+    const iv = fromBase64(envelope.iv);
+    const ciphertext = fromBase64(envelope.ciphertext);
+    if (iv === null || ciphertext === null) return null;
+    let plaintext: Uint8Array;
+    try {
+      plaintext = await openEnvelope(retired, {
+        envelopeVersion: envelope.envelopeVersion,
+        kind: envelope.kind,
+        familyId: envelope.familyId,
+        opId: envelope.opId,
+        deviceId: envelope.deviceId,
+        keyEpoch: envelope.keyEpoch,
+        iv,
+        ciphertext,
+      });
+    } catch {
+      return null;
+    }
+    const header = {
+      envelopeVersion: envelope.envelopeVersion,
+      kind: envelope.kind,
+      familyId: envelope.familyId,
+      opId: envelope.opId,
+      deviceId: envelope.deviceId,
+      keyEpoch: this.keyEpoch,
+    };
+    const sealed = await sealEnvelope(this.familyKey, header, plaintext);
+    return { ...header, iv: toBase64(sealed.iv), ciphertext: toBase64(sealed.ciphertext) };
+  }
+
+  /**
+   * Swaps re-encrypted envelopes in for the ones they replace, without a window in which neither
+   * exists.
+   *
+   * The order is the whole point. The new envelopes are written to {@link SYNC_STATE_KEYS.rekey}
+   * first, so from that moment on every operation exists either in the queue or in that record or
+   * in both; the old records are removed next; the new ones are added and the record cleared in
+   * one transaction. A crash anywhere leaves the record behind, and the next run finishes the
+   * same rewrite — adding an envelope whose identifier is already in the queue is a no-op, so
+   * finishing it twice costs nothing.
+   */
+  private async rewriteOutbox(appends: readonly OutboxAppend[]): Promise<void> {
+    // The removal, and not a confirmation: `confirmOutbox` is how a record leaves the queue, and
+    // the record leaving here is being replaced in the same breath rather than sent. Nothing about
+    // 3.3 is weakened by that — no envelope is dropped without a `seq`, one is swapped for the
+    // same operation under a new key.
+    await this.repository.confirmOutbox(appends.map((append) => append.opId));
+    for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+      const document = await this.repository.loadVersioned();
+      const commit = await this.repository.commitWithSync({
+        expectedRevision: document?.revision ?? null,
+        // The document is not what changed here — only the queue is — so it is written back as it
+        // was found. A device with a queue always has a document (3.1 step 7 writes both), and the
+        // journal answers for the case that cannot happen rather than leaving it to `null`.
+        value: document?.value ?? (await this.readJournal()).state,
+        outbox: appends,
+        syncState: [{ key: SYNC_STATE_KEYS.rekey, value: null }],
+      });
+      if (commit.status === "saved") return;
+    }
+    throw new SyncClientError("write_conflict", "the re-encrypted queue lost its revision check");
+  }
+
+  /** Finishes a rewrite that a crash interrupted, whatever epoch it was going to. */
+  private async resumeRekey(): Promise<void> {
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.rekey);
+    if (stored === undefined || stored === null) return;
+    const record = stored as { readonly envelopes?: unknown };
+    if (!Array.isArray(record.envelopes)) {
+      throw new SyncClientError("corrupt_sync_state", "the stored re-encryption is not a queue");
+    }
+    const appends: OutboxAppend[] = [];
+    for (const value of record.envelopes) {
+      const envelope = SyncEngine.queuedEnvelope(value);
+      if (envelope === null) {
+        throw new SyncClientError("corrupt_sync_state", "the stored re-encryption is not a queue");
+      }
+      appends.push({ opId: envelope.opId, envelope });
+    }
+    // Restored even when it names an epoch this device has since left again: the record may be the
+    // only copy of those operations, and putting them back is what lets the pass below move them
+    // on to the epoch actually in hand.
+    if (appends.length > 0) await this.rewriteOutbox(appends);
+    else await this.repository.writeSyncState([{ key: SYNC_STATE_KEYS.rekey, value: null }]);
+  }
+
+  /**
+   * 5.5 step 8, first half: the queue is moved to the epoch in hand before anything is sent.
+   *
+   * Without it a device that had anything queued at the moment of a rotation is finished: the
+   * server refuses a whole batch in which one envelope names an epoch not in force, so the queue
+   * never drains, everything written afterwards waits behind it, no envelope of the new epoch is
+   * ever numbered — and the new epoch, never having been proven live, does not let the old key be
+   * forgotten either.
+   */
+  private async rekeyOutbox(limit?: number): Promise<OutboxRekey> {
+    await this.resumeRekey();
+    const queued: readonly OutboxRecord[] = await this.repository.listOutbox(limit);
+    const envelopes: OutgoingEnvelope[] = [];
+    const appends: OutboxAppend[] = [];
+    let stranded = 0;
+    for (const record of queued) {
+      const envelope = SyncEngine.queuedEnvelope(record.envelope);
+      if (envelope === null) {
+        throw new SyncClientError("corrupt_sync_state", "a queued envelope is not an envelope");
+      }
+      if (envelope.keyEpoch === this.keyEpoch) {
+        envelopes.push(envelope);
+        continue;
+      }
+      const retired = this.retiredKeys.get(envelope.keyEpoch);
+      const resealed = retired === undefined ? null : await this.reseal(envelope, retired);
+      if (resealed === null) {
+        stranded += 1;
+        continue;
+      }
+      appends.push({ opId: resealed.opId, envelope: resealed });
+      envelopes.push(resealed);
+    }
+    if (appends.length > 0) await this.rewriteOutbox(appends);
+    return { stranded, envelopes };
+  }
+
   /**
    * Sends what is queued and removes exactly what the server numbered.
    *
@@ -398,44 +614,35 @@ export class SyncEngine {
    * order, which is what makes them arrive once and only once when the link comes back.
    */
   async push(): Promise<PushResult> {
-    const queued = await this.repository.listOutbox(this.batchSize);
-    if (queued.length === 0) return { confirmed: 0, pending: 0 };
+    // Everything about to be submitted is under the epoch this engine seals with, because that is
+    // what the pass above guarantees: what could be moved was moved, and what could not is not in
+    // the batch. So a number coming back is a number given to an envelope of *this* epoch, which
+    // is exactly what 5.4.1 asks liveness to be.
+    const prepared = await this.rekeyOutbox(this.batchSize);
+    const envelopes = prepared.envelopes;
+    if (envelopes.length === 0) {
+      return {
+        confirmed: 0,
+        pending: await this.repository.countOutbox(),
+        stranded: prepared.stranded,
+      };
+    }
 
-    const envelopes = queued.map((record) => record.envelope as OutgoingEnvelope);
     const sent = new Set(envelopes.map((envelope) => envelope.opId));
     const answer = await this.transport.submit(this.familyId, envelopes);
 
-    // Only identifiers this device actually sent, and only with a number that can be a `seq`.
-    // A server that answered with somebody else's identifier, or with `seq: 0`, would otherwise
-    // be able to empty a queue it never accepted anything from.
+    // Only identifiers this device actually sent in *this* batch, and only with a number that can
+    // be a `seq`. A server that answered with somebody else's identifier, with one this device is
+    // holding back for a later batch, or with `seq: 0`, would otherwise be able to empty a queue
+    // it never accepted anything from.
     const confirmable = answer.accepted
       .filter((entry) => sent.has(entry.opId) && Number.isSafeInteger(entry.seq) && entry.seq > 0)
       .map((entry) => entry.opId);
-    // Which epoch the numbered envelopes were actually sealed under. The proof of 5.4.1 belongs to
-    // that epoch and to no other, so it is read off the envelopes rather than assumed from the
-    // record on disk: a queue drained across a rotation can still hold envelopes of the epoch
-    // before it, and a number given to one of those proves that the *old* key is live.
-    const confirmedIds = new Set(confirmable);
-    const proven = new Set(
-      queued
-        .filter((record) => confirmedIds.has(record.opId))
-        .map((record) => (record.envelope as OutgoingEnvelope).keyEpoch),
-    );
     const confirmed = await this.repository.confirmOutbox(confirmable);
 
     if (confirmed > 0) {
-      // The removal above is right whatever the epoch — the server numbered those envelopes, and
-      // 3.3 clears the queue against a number and nothing else. What follows the removal is the
-      // mark, and it is written for the epoch this engine seals under, addressed by number and by
-      // digest rather than copied from whatever the record happened to hold.
-      for (const sealedEpoch of proven) {
-        if (sealedEpoch !== this.keyEpoch) {
-          throw new SyncClientError(
-            "epoch_conflict",
-            "the server numbered an envelope of an epoch this device no longer seals under",
-          );
-        }
-      }
+      // The mark is written for the epoch this engine seals under, addressed by number and by
+      // digest rather than copied from whatever the record on disk happened to hold.
       const epoch = await this.readEpoch();
       if (!epoch.live) {
         await this.repository.writeSyncState([
@@ -447,19 +654,24 @@ export class SyncEngine {
       }
     }
 
-    return { confirmed, pending: await this.repository.countOutbox() };
+    return {
+      confirmed,
+      pending: await this.repository.countOutbox(),
+      stranded: prepared.stranded,
+    };
   }
 
   /**
-   * Puts the cursor on the epoch the key in hand belongs to — 5.5 step 8 — before the first
-   * request of a pull.
+   * Crosses the epoch barrier — 5.5 step 8, both halves — before the first request of a pull.
    *
-   * «Сбрасывает курсор на `(keyEpoch', 0)` и заново проходит журнал»: the retired epoch's
-   * envelopes were destroyed with it, its numbering has nothing to do with the new one, and the
-   * alarm that stood against one of its envelopes is about an envelope that no longer exists. All
-   * three are rewritten here, in one write and before the first request, so a device interrupted
-   * between the reset and the first page does not come back and walk the new journal from a
-   * number of the old one.
+   * «Затем перешифровывает непустую исходящую очередь под `FK'` с новыми `iv` и `keyEpoch'`,
+   * сохраняя `opId` и `lamport`, сбрасывает курсор на `(keyEpoch', 0)` и заново проходит журнал»:
+   * the queue moves first, then the cursor. The retired epoch's envelopes were destroyed with it,
+   * its numbering has nothing to do with the new one, and the alarm that stood against one of its
+   * envelopes is about an envelope that no longer exists — so cursor, alarm and epoch record are
+   * rewritten in one write and before the first request, and a device interrupted between the
+   * reset and the first page does not come back and walk the new journal from a number of the old
+   * one.
    *
    * What this is *not* is a way into a new epoch. The key was accepted before this engine was
    * built — by the chain of 5.4 or by a ceremony a person ran — and no answer of the server takes
@@ -470,7 +682,26 @@ export class SyncEngine {
     readonly stop: SyncStop | null;
   }> {
     const stored = await this.storedCursor();
+    // Before anything is written: a cursor ahead of the key in hand is a step down, and a state
+    // this broken is not a rotation to be tidied up after.
     const cursor = this.resolveCursor(stored);
+
+    // The queue is asked about itself rather than deduced from the cursor. A device that wrote
+    // something and never pulled has no cursor record at all, and its queue would otherwise stay
+    // sealed under the epoch it was written in for ever. One record answers the question: the
+    // queue is in insertion order and the epoch a device seals under only rises, so a head under
+    // the epoch in hand has nothing retired behind it. `push` re-encrypts every batch it takes,
+    // which is what covers the one case this probe cannot see — a second, stale tab appending
+    // behind a head this engine already moved.
+    await this.resumeRekey();
+    const head = await this.repository.listOutbox(1);
+    const first = head.length === 0 ? null : SyncEngine.queuedEnvelope(head[0]!.envelope);
+    if (head.length > 0 && (first === null || first.keyEpoch !== this.keyEpoch)) {
+      // The whole queue, not one batch: this is the moment the rotation is being crossed, and the
+      // order of what is waiting is kept by moving all of it at once.
+      await this.rekeyOutbox();
+    }
+
     if (stored.keyEpoch === cursor.keyEpoch) return { cursor, stop: await this.readStop() };
     // `readEpoch` carries the liveness proof over when it has already been earned in this epoch,
     // and refuses the two states that are not a rotation at all.
@@ -498,8 +729,9 @@ export class SyncEngine {
     const opened = await this.openEpoch();
     let cursor = opened.cursor;
     let stop: SyncStop | null = null;
+    let pageLimitReached = false;
     const notices: PullResult["notices"][number][] = [];
-    let priorAttempts = opened.stop === null ? 0 : opened.stop.attempts;
+    let priorStop = opened.stop;
 
     for (let page = 0; page < MAX_PAGES_PER_PULL; page += 1) {
       const answer = await this.transport.fetch(this.familyId, {
@@ -523,7 +755,7 @@ export class SyncEngine {
           familyKey: this.familyKey,
           deviceId: this.deviceId,
           snapshot: journal,
-          priorAttempts,
+          priorStop,
         });
 
         if (result.applied === 0 && result.checkpoints === 0) {
@@ -559,16 +791,20 @@ export class SyncEngine {
         checkpoints += result.checkpoints;
         notices.push(...result.notices);
         stop = result.stop;
-        priorAttempts = result.stop === null ? 0 : result.stop.attempts;
+        priorStop = result.stop;
       }
       if (!written) throw new SyncClientError("write_conflict", "the delivery lost its revision check");
       if (stop !== null) break;
       // The client's own end-of-journal test (3.6). A short page is the end of what the server
       // holds; anything else would be trusting `hasMore`.
       if (answer.envelopes.length < this.fetchLimit) break;
+      // A full page on the last iteration means the walk ran out of this call's budget, not that
+      // the journal ended. The two ask for different things from the caller — one is "done", the
+      // other is "call again" — so they are not returned as the same silence.
+      pageLimitReached = page === MAX_PAGES_PER_PULL - 1;
     }
 
-    return { cursor, applied, checkpoints, notices, stop, requests };
+    return { cursor, applied, checkpoints, notices, stop, requests, pageLimitReached };
   }
 
   /** 3.4: the poll follows a successful submission, so this device sees its own `seq` at once. */

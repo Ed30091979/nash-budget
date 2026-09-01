@@ -23,9 +23,7 @@ import { openEnvelope, ENVELOPE_KINDS, ENVELOPE_VERSION, fromUtf8 } from "@famil
 import {
   applyOperations,
   createClock,
-  ENTITY_KINDS,
   MAX_LAMPORT,
-  OPERATION_ACTIONS,
   parseOperation,
   receiveLamport,
   type JournalSnapshot,
@@ -50,19 +48,15 @@ export interface ApplyDeliveryParams {
   readonly familyKey: CryptoKey;
   readonly deviceId: string;
   readonly snapshot: JournalSnapshot;
-  /** Consecutive failures already recorded against the envelope the cursor is stopped on. */
-  readonly priorAttempts?: number;
-}
-
-/** The threshold of 3.4: retries of one envelope, after which the wording changes. Nothing else. */
-export const KEY_MISMATCH_RETRIES = 10;
-
-function stop(
-  reason: SyncStopReason,
-  envelope: DeliveredEnvelope,
-  attempts: number,
-): SyncStop {
-  return { reason, seq: envelope.seq, opId: envelope.opId, attempts };
+  /**
+   * The stop this delivery is retrying, as it was written down.
+   *
+   * The whole record and not just its counter: 3.4 counts retries of *one* envelope, so the
+   * counter only carries over while the delivery stops on the same `opId`. Handing this function
+   * a number alone would make "nine attempts" a property of the device rather than of an
+   * envelope, and the tenth failure — of any envelope at all — would raise the alarm.
+   */
+  readonly priorStop?: SyncStop | null;
 }
 
 /**
@@ -71,13 +65,14 @@ function stop(
  * 3.4 asks for two different verdicts here — an unknown entity, action or field means "update the
  * application", and an operation that fails a bounds check is quarantined — and the codec of
  * phase S1 reports both through one error type with one message. Reading that message would make
- * this classification depend on prose, so the split is made on what this build can decide for
- * itself, from its own enumerations and its own constants:
+ * this classification depend on prose, so the split is made on the one thing this build can decide
+ * for itself, from its own constant:
  *
  * - the stamp is outside `1 … 2^40`: a bounds failure, and the one bound 3.4 names by itself;
- * - the entity or the action is not one this build knows: «update the application»;
- * - anything else: «update the application» as well, because an unknown *field* inside `fields`
- *   is by far the likelier cause and 3.4 forbids passing it over in silence either way.
+ * - everything else: «update the application». An unknown entity, an unknown action and an
+ *   unknown *field* inside `fields` all end here, and there is nothing to gain by asking after
+ *   the first two separately — the answer is the same sentence on the same screen, and a branch
+ *   that cannot change an outcome only makes it look as though it could.
  *
  * The residue is honest and small: an in-range operation that fails a money bound is reported as
  * "update required" rather than quarantined. Both stop the cursor and neither skips anything, so
@@ -93,21 +88,13 @@ function classifyUndecodable(plaintext: string): SyncStopReason {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return "update_required";
   }
-  const record = parsed as Record<string, unknown>;
-  const lamport = record.lamport;
-  if (typeof lamport !== "number" || !Number.isSafeInteger(lamport) || lamport < 1) {
-    return "quarantined";
-  }
-  if (lamport > MAX_LAMPORT) return "quarantined";
-  const entity = record.entity;
-  const action = record.action;
-  if (typeof entity !== "string" || !(ENTITY_KINDS as readonly string[]).includes(entity)) {
-    return "update_required";
-  }
-  if (typeof action !== "string" || !(OPERATION_ACTIONS as readonly string[]).includes(action)) {
-    return "update_required";
-  }
-  return "update_required";
+  const lamport = (parsed as Record<string, unknown>).lamport;
+  const inBounds =
+    typeof lamport === "number" &&
+    Number.isSafeInteger(lamport) &&
+    lamport >= 1 &&
+    lamport <= MAX_LAMPORT;
+  return inBounds ? "update_required" : "quarantined";
 }
 
 /**
@@ -125,6 +112,27 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
   let checkpoints = 0;
   const notices: LamportNotice[] = [];
 
+  /**
+   * Everything the caller is owed when a delivery stops, in one place.
+   *
+   * The counter is the substance here rather than the tidying: `attempts` counts consecutive
+   * failures of *this* envelope, so it continues only while the previous stop named the same
+   * `opId` and starts at `1` for any other. The rest of the result is what was folded before the
+   * stop — the cursor never moves past the envelope named.
+   */
+  const halt = (reason: SyncStopReason, envelope: DeliveredEnvelope): IntakeResult => {
+    const prior = params.priorStop ?? null;
+    const attempts = prior !== null && prior.opId === envelope.opId ? prior.attempts + 1 : 1;
+    return {
+      snapshot,
+      cursor,
+      applied,
+      checkpoints,
+      notices,
+      stop: { reason, seq: envelope.seq, opId: envelope.opId, attempts },
+    };
+  };
+
   for (const envelope of params.envelopes) {
     // 3.4 step 1. Outside a legitimately announced change of epoch — one that came with a wrap
     // and a confirmation this device verified for itself (5.4) — an envelope numbered under
@@ -132,27 +140,13 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     // number is open and unauthenticated, so letting it move the envelope into the milder class
     // would hand the server a one-digit edit that lifts a forged envelope out of the alarm.
     if (envelope.keyEpoch !== params.acceptedEpoch) {
-      return {
-        snapshot,
-        cursor,
-        applied,
-        checkpoints,
-        notices,
-        stop: stop("key_mismatch", envelope, (params.priorAttempts ?? 0) + 1),
-      };
+      return halt("key_mismatch", envelope);
     }
 
     // 3.4 step 2. `seq` is outside the AAD and the server writes it freely, so continuity is the
     // only thing standing between this device and a journal quietly missing its middle.
     if (envelope.seq !== cursor.seq + 1) {
-      return {
-        snapshot,
-        cursor,
-        applied,
-        checkpoints,
-        notices,
-        stop: stop("journal_incomplete", envelope, (params.priorAttempts ?? 0) + 1),
-      };
+      return halt("journal_incomplete", envelope);
     }
 
     // 3.4 step 3.
@@ -172,34 +166,20 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
         ciphertext,
       });
     } catch {
-      return {
-        snapshot,
-        cursor,
-        applied,
-        checkpoints,
-        notices,
-        stop: stop("key_mismatch", envelope, (params.priorAttempts ?? 0) + 1),
-      };
+      return halt("key_mismatch", envelope);
     }
 
     // 3.4 step 4. Only now may an open header field produce a verdict.
     const knownKind = (ENVELOPE_KINDS as readonly string[]).includes(envelope.kind);
     if (envelope.envelopeVersion !== ENVELOPE_VERSION || !knownKind) {
-      return {
-        snapshot,
-        cursor,
-        applied,
-        checkpoints,
-        notices,
-        stop: stop("update_required", envelope, 0),
-      };
+      return halt("update_required", envelope);
     }
 
     let plaintext: string;
     try {
       plaintext = fromUtf8(plaintextBytes);
     } catch {
-      return { snapshot, cursor, applied, checkpoints, notices, stop: stop("update_required", envelope, 0) };
+      return halt("update_required", envelope);
     }
 
     if (envelope.kind === "checkpoint") {
@@ -213,7 +193,7 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
           throw new Error("not a checkpoint");
         }
       } catch {
-        return { snapshot, cursor, applied, checkpoints, notices, stop: stop("update_required", envelope, 0) };
+        return halt("update_required", envelope);
       }
       checkpoints += 1;
       cursor = { keyEpoch: params.acceptedEpoch, seq: envelope.seq };
@@ -225,19 +205,12 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     try {
       operation = parseOperation(JSON.parse(plaintext));
     } catch {
-      return {
-        snapshot,
-        cursor,
-        applied,
-        checkpoints,
-        notices,
-        stop: stop(classifyUndecodable(plaintext), envelope, 0),
-      };
+      return halt(classifyUndecodable(plaintext), envelope);
     }
 
     // 3.4 step 6.
     if (operation.deviceId !== envelope.deviceId) {
-      return { snapshot, cursor, applied, checkpoints, notices, stop: stop("quarantined", envelope, 0) };
+      return halt("quarantined", envelope);
     }
 
     // 3.4 steps 7 and 8. The stamp is folded whatever the verdict — it ranks by its own value,

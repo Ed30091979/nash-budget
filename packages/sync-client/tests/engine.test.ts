@@ -206,6 +206,147 @@ describe("движок синхронизации", () => {
     expect(await repository.countOutbox()).toBe(1);
   });
 
+  it("подтверждает только то, что ушло в этой пачке, а не всё, что лежит в очереди", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const repository = new IndexedDbBudgetRepository<SyncedBudgetState>({
+      databaseName: databaseName("batch-membership"),
+    });
+    const options = {
+      repository,
+      familyId: FAMILY_ID,
+      deviceId: DEVICE_A,
+      familyKey: family.key,
+      keyEpoch: FIRST_EPOCH,
+      keyDigest: family.digest,
+      // One envelope per submission, so the second one is in the queue and out of the batch.
+      batchSize: 1,
+    };
+    const honest = new SyncEngine({ ...options, transport: server });
+    await honest.enqueue([extraExpense(1)]);
+    await honest.enqueue([extraExpense(2)]);
+
+    const queue = await repository.listOutbox();
+    const held = (queue[1]!.envelope as { readonly opId: string }).opId;
+
+    // The identifier exists — it is the *next* batch — and the server answers with it instead of
+    // the one it was actually sent. The store would happily delete it: this is the engine's own
+    // filter or nothing.
+    const lying = {
+      submit: async () => ({ keyEpoch: FIRST_EPOCH, accepted: [{ opId: held, seq: 1 }] }),
+      fetch: server.fetch.bind(server),
+      keys: server.keys.bind(server),
+    };
+    const result = await new SyncEngine({ ...options, transport: lying }).push();
+
+    expect(result.confirmed).toBe(0);
+    expect(result.pending).toBe(2);
+    expect((await repository.listOutbox()).map((record) => record.opId)).toEqual(
+      queue.map((record) => record.opId),
+    );
+  });
+
+  it("номер, не являющийся номером, очередь не очищает", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const { engine, repository } = await rig(server, family.key, family.digest, DEVICE_A, "zero-seq");
+    await engine.enqueue([extraExpense(1)]);
+    const queued = (await repository.listOutbox())[0]!.opId;
+
+    // `seq` numbers from one (2.2): zero is the empty cursor and can never be the number of an
+    // envelope. A server answering with it is claiming to have accepted something without
+    // numbering it, and the queue is cleared against a number and nothing else.
+    const lying = {
+      submit: async () => ({ keyEpoch: FIRST_EPOCH, accepted: [{ opId: queued, seq: 0 }] }),
+      fetch: server.fetch.bind(server),
+      keys: server.keys.bind(server),
+    };
+    const engineWithLiar = new SyncEngine({
+      repository,
+      transport: lying,
+      familyId: FAMILY_ID,
+      deviceId: DEVICE_A,
+      familyKey: family.key,
+      keyEpoch: FIRST_EPOCH,
+      keyDigest: family.digest,
+    });
+
+    const result = await engineWithLiar.push();
+
+    expect(result.confirmed).toBe(0);
+    expect(await repository.countOutbox()).toBe(1);
+    // And nothing was proven live by a number that is not a number.
+    expect((await engineWithLiar.status()).epoch.live).toBe(false);
+  });
+
+  it("неготовый снимок не стирает последнее показуемое состояние в документе", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "gate-a");
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "gate-b");
+
+    await alpha.engine.enqueue(g002Drafts());
+    await alpha.engine.push();
+    await beta.engine.pull();
+    const shown = (await beta.repository.load())!;
+    expect(shown.transactions).toHaveLength(4);
+
+    // The peer deletes the active budget. The merge is right and the journal keeps it — but the
+    // pointer now names a budget the journal does not hold, and every calculation over that state
+    // throws. Decision 19: the document keeps the last state that could be shown.
+    const [deletion] = stampDrafts(
+      DEVICE_A,
+      [{ entity: "budget", action: "delete", targetId: "74444444-4444-4444-8444-444444444441" }],
+      100_000,
+    );
+    server.seed(await sealOperation(family.key, deletion!));
+
+    const pulled = await beta.engine.pull();
+
+    expect(pulled.stop).toBeNull();
+    expect(pulled.applied).toBe(1);
+    // The document is untouched, so the family goes on seeing July.
+    expect(await beta.repository.load()).toEqual(shown);
+    expect(plan((await beta.repository.load())!).annualReserveMinor).toBe(JULY_RESERVE_MINOR);
+    // And the journal did move: the deletion is folded, and the cursor with it, so the operation
+    // that repairs the state will land on top of it rather than be fetched again.
+    expect((await beta.engine.status()).cursor.seq).toBe(server.stored.length);
+  });
+
+  it("упёршийся в потолок страниц отличим от вычитанного до конца журнала", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const repository = new IndexedDbBudgetRepository<SyncedBudgetState>({
+      databaseName: databaseName("page-cap"),
+    });
+    const engine = new SyncEngine({
+      repository,
+      transport: server,
+      familyId: FAMILY_ID,
+      deviceId: DEVICE_B,
+      familyKey: family.key,
+      keyEpoch: FIRST_EPOCH,
+      keyDigest: family.digest,
+      // One envelope per page, so the cap of one call is reached long before the journal ends.
+      fetchLimit: 1,
+    });
+
+    const drafts = Array.from({ length: 70 }, (_, index) => extraExpense(index + 1));
+    for (const operation of stampDrafts(DEVICE_A, drafts)) {
+      server.seed(await sealOperation(family.key, operation));
+    }
+
+    const first = await engine.pull();
+    expect(first.stop).toBeNull();
+    expect(first.pageLimitReached).toBe(true);
+    expect(first.applied).toBeLessThan(drafts.length);
+
+    // Nothing is wrong: the budget of one call is spent, and calling again finishes the journal.
+    const second = await engine.pull();
+    expect(second.pageLimitReached).toBe(false);
+    expect(first.applied + second.applied).toBe(drafts.length);
+  });
+
   it("локальная запись не теряется при одновременном приходе чужих операций", async () => {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();

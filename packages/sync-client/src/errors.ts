@@ -11,8 +11,6 @@
  * characters of somebody else's prose on this family's screen.
  */
 export const SYNC_CLIENT_ERROR_CODES = [
-  /** The engine was asked to do something that needs an account, and there is no account. */
-  "not_signed_in",
   /** The stored sync record is not the shape this version writes. */
   "corrupt_sync_state",
   /** The transport could not reach the server, or answered with something that is not JSON. */

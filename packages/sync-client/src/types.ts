@@ -89,8 +89,11 @@ export interface SyncStop {
   /**
    * Consecutive failed attempts on this very envelope. 3.4: `10` is a threshold of *retries* of
    * one envelope, after which the message changes from «не удалось прочитать» to «ключ семьи не
-   * совпадает». It is never a threshold of how many different envelopes failed — after the first
-   * failure the cursor stops, so a second different one is never delivered.
+   * совпадает». It is never a threshold of how many different envelopes failed, and the counter
+   * enforces that rather than assuming it: a delivery that stops on a different `opId` than the
+   * one the previous stop named starts again at `1`. Without the reset a device that had been
+   * retrying an incomplete journal for nine rounds would show «ключ семьи не совпадает» — the one
+   * alarm this system has — for the first failure of an unrelated envelope.
    */
   readonly attempts: number;
 }
@@ -117,13 +120,30 @@ export interface IntakeResult {
 export interface PushResult {
   /** Envelopes the server numbered and this device removed from the queue. */
   readonly confirmed: number;
-  /** Envelopes still waiting after this attempt. */
+  /** Envelopes still waiting after this attempt. Includes {@link stranded}. */
   readonly pending: number;
+  /**
+   * Queued envelopes sealed under an epoch whose key this device no longer holds — 5.5 step 8.
+   *
+   * They were not submitted: the server refuses a whole batch over one envelope naming an epoch
+   * that is not in force. They were not deleted either, because each one is a local change that
+   * has not reached the family yet. Anything other than `0` is a device that needs the key of the
+   * epoch it left in order to finish moving its own queue across.
+   */
+  readonly stranded: number;
 }
 
 export interface PullResult extends Omit<IntakeResult, "snapshot"> {
   /** Requests actually made. Zero means the cursor was already at the end of the journal. */
   readonly requests: number;
+  /**
+   * The walk stopped on this build's own page cap, not at the end of the journal.
+   *
+   * The cap bounds one call and not the journal, so `true` means "there is more, call again" and
+   * is a different answer from the `stop` of an alarm: nothing is wrong, the budget of this call
+   * is simply spent.
+   */
+  readonly pageLimitReached: boolean;
 }
 
 export interface SyncStatusReport {

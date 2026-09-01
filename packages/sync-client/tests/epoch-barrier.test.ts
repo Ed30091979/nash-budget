@@ -12,7 +12,10 @@ import { type SyncedBudgetState } from "@family-budget/sync-protocol";
 import { IndexedDbBudgetRepository } from "@family-budget/storage";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { SyncEngine, SYNC_STATE_KEYS } from "../src/engine.js";
+import { openEnvelope, sealEnvelope, utf8 } from "@family-budget/sync-crypto";
+
+import { fromBase64, toBase64 } from "../src/base64.js";
+import { SyncEngine, SYNC_STATE_KEYS, type RetiredEpochKey } from "../src/engine.js";
 import { SyncClientError } from "../src/errors.js";
 import type { OutgoingEnvelope } from "../src/types.js";
 import {
@@ -54,6 +57,7 @@ function engineOn(
   keyDigest: string,
   keyEpoch: number,
   deviceId = DEVICE_B,
+  retiredKeys: readonly RetiredEpochKey[] = [],
 ): SyncEngine {
   return new SyncEngine({
     repository,
@@ -63,7 +67,18 @@ function engineOn(
     familyKey,
     keyEpoch,
     keyDigest,
+    retiredKeys,
   });
+}
+
+/** The bytes inside an envelope, which a rotation may not change by one (5.2, 5.5). */
+async function plaintextOf(key: CryptoKey, envelope: OutgoingEnvelope): Promise<string> {
+  const opened = await openEnvelope(key, {
+    ...envelope,
+    iv: fromBase64(envelope.iv)!,
+    ciphertext: fromBase64(envelope.ciphertext)!,
+  });
+  return new TextDecoder().decode(opened);
 }
 
 type SyncEngineTransport = ConstructorParameters<typeof SyncEngine>[0]["transport"];
@@ -156,7 +171,7 @@ describe("барьер эпохи", () => {
     expect(healed.cursor).toEqual({ keyEpoch: SECOND_EPOCH, seq: 2 });
   });
 
-  it("тревога прошлой эпохи не переезжает в новую", async () => {
+  it("тревога прошлой эпохи стирается до первого запроса новой", async () => {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();
     const imposed = await createFamilyKey();
@@ -170,18 +185,32 @@ describe("барьер эпохи", () => {
     const before = engineOn(repository, server, family.key, family.digest, FIRST_EPOCH);
     const stopped = await before.pull();
     expect(stopped.stop).toMatchObject({ reason: "key_mismatch", attempts: 1 });
+    // The record itself, and not `status()`: a stop of the cursor's own epoch is the only case in
+    // which that report shows one at all, so reading the alarm through it after a rotation would
+    // be reading the mask instead of the record.
+    expect(await repository.readSyncState(SYNC_STATE_KEYS.stop)).toMatchObject({
+      reason: "key_mismatch",
+    });
 
     // The family reacts the way 5.5 prescribes — by rotating the key.
     await reencrypt(server, rotated.key, operations);
 
+    // The link dies on the first request of the new epoch. What is on disk at that moment is what
+    // the barrier wrote, before one byte of the server's answer took part in anything.
+    server.offline = true;
     const after = engineOn(repository, server, rotated.key, rotated.digest, SECOND_EPOCH);
-    // The alarm named an envelope of a journal that no longer exists, so it is gone before the
-    // first request rather than counted on into the new epoch.
-    expect((await after.status()).stop).toBeNull();
+    await expect(after.pull()).rejects.toBeInstanceOf(SyncClientError);
+
+    expect(await repository.readSyncState(SYNC_STATE_KEYS.stop)).toBeNull();
+    expect(await repository.readSyncState(SYNC_STATE_KEYS.cursor)).toEqual({
+      keyEpoch: SECOND_EPOCH,
+      seq: 0,
+    });
+
+    server.offline = false;
     const healed = await after.pull();
     expect(healed.stop).toBeNull();
     expect(healed.applied).toBe(1);
-    expect(await repository.readSyncState(SYNC_STATE_KEYS.stop)).toBeNull();
   });
 
   it("курсор, ушедший вперёд ключа, — ошибка состояния, а не тревога о подмене", async () => {
@@ -246,32 +275,168 @@ describe("барьер эпохи", () => {
     });
   });
 
-  it("номер, выданный конверту прошлой эпохи, живость новой не доказывает", async () => {
+  it("непустая очередь переезжает на новый ключ, сохраняя opId и байты операции", async () => {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();
     const rotated = await createFamilyKey();
-    const repository = repositoryFor("stale-ack");
+    const repository = repositoryFor("rekey-queue");
+
+    // Three operations written while the family was on `FK`, and the link was down when the
+    // owner rotated: the queue is non-empty at the moment of the rotation, which is the case
+    // 5.5 step 8 is written for.
+    const before = engineOn(repository, server, family.key, family.digest, FIRST_EPOCH, DEVICE_A);
+    await before.enqueue([expense(1), expense(2), expense(3)]);
+    const queued = await repository.listOutbox();
+    const sealedBefore = queued.map((record) => record.envelope as OutgoingEnvelope);
+    const plaintextBefore = await Promise.all(
+      sealedBefore.map((envelope) => plaintextOf(family.key, envelope)),
+    );
+
+    server.rotateTo(SECOND_EPOCH);
+    const after = engineOn(repository, server, rotated.key, rotated.digest, SECOND_EPOCH, DEVICE_A, [
+      { keyEpoch: FIRST_EPOCH, key: family.key },
+    ]);
+
+    const pushed = await after.push();
+
+    expect(pushed).toEqual({ confirmed: 3, pending: 0, stranded: 0 });
+    expect(server.stored).toHaveLength(3);
+    // Same operations, same order, under the epoch in force.
+    expect(server.stored.map((envelope) => envelope.keyEpoch)).toEqual([
+      SECOND_EPOCH,
+      SECOND_EPOCH,
+      SECOND_EPOCH,
+    ]);
+    expect(server.stored.map((envelope) => envelope.opId)).toEqual(
+      sealedBefore.map((envelope) => envelope.opId),
+    );
+    // A new IV for every one of them — reusing one under a new key is the one thing AES-GCM does
+    // not survive — and the plaintext byte for byte as it was, so `lamport` and the merge
+    // tiebreaker computed over that text are the ones the family already agreed on.
+    for (const [index, delivered] of server.stored.entries()) {
+      expect(delivered.iv).not.toBe(sealedBefore[index]!.iv);
+      expect(delivered.ciphertext).not.toBe(sealedBefore[index]!.ciphertext);
+      expect(await plaintextOf(rotated.key, delivered)).toBe(plaintextBefore[index]);
+    }
+    // The queue drained, so the new epoch has its proof of liveness and the old key may go.
+    expect((await after.status()).epoch).toEqual({
+      keyEpoch: SECOND_EPOCH,
+      keyDigest: rotated.digest,
+      live: true,
+    });
+  });
+
+  it("очередь переезжает на новый ключ ещё до первого запроса выборки", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const rotated = await createFamilyKey();
+    const repository = repositoryFor("rekey-on-pull");
+
+    const before = engineOn(repository, server, family.key, family.digest, FIRST_EPOCH, DEVICE_A);
+    await before.enqueue([expense(1)]);
+
+    const operations = stampDrafts(DEVICE_B, [expense(2)]);
+    await reencrypt(server, rotated.key, operations);
+
+    const after = engineOn(repository, server, rotated.key, rotated.digest, SECOND_EPOCH, DEVICE_A, [
+      { keyEpoch: FIRST_EPOCH, key: family.key },
+    ]);
+    // A pull and nothing else: 5.5 step 8 moves the queue at the barrier, in the same breath as
+    // the cursor, and not only when something is about to be sent.
+    const pulled = await after.pull();
+
+    expect(pulled.stop).toBeNull();
+    const queue = await repository.listOutbox();
+    expect(queue).toHaveLength(1);
+    expect((queue[0]!.envelope as OutgoingEnvelope).keyEpoch).toBe(SECOND_EPOCH);
+  });
+
+  it("конверт эпохи, ключа которой уже нет, не отправляется и живости не даёт", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const rotated = await createFamilyKey();
+    const repository = repositoryFor("stranded");
 
     // The queue is filled under the epoch in force and stays sealed under it.
     const before = engineOn(repository, server, family.key, family.digest, FIRST_EPOCH, DEVICE_A);
     await before.enqueue([expense(1)]);
 
-    // A server that numbers whatever it is sent, whichever epoch it belongs to.
+    // A server that numbers whatever it is sent, whichever epoch it belongs to — so if the
+    // envelope were offered at all, it would come back with a number.
+    let offered = 0;
     const compliant = {
-      submit: async (_familyId: string, envelopes: readonly OutgoingEnvelope[]) => ({
-        keyEpoch: SECOND_EPOCH,
-        accepted: envelopes.map((envelope, index) => ({ opId: envelope.opId, seq: index + 1 })),
-      }),
+      submit: async (_familyId: string, envelopes: readonly OutgoingEnvelope[]) => {
+        offered += envelopes.length;
+        return {
+          keyEpoch: SECOND_EPOCH,
+          accepted: envelopes.map((envelope, index) => ({ opId: envelope.opId, seq: index + 1 })),
+        };
+      },
       fetch: server.fetch.bind(server),
       keys: server.keys.bind(server),
     };
+    // The engine holds `FK'` and nothing else: the queue cannot be moved across.
     const after = engineOn(repository, compliant, rotated.key, rotated.digest, SECOND_EPOCH, DEVICE_A);
 
-    const failure = await after.push().catch((error: unknown) => error);
-    expect(failure).toBeInstanceOf(SyncClientError);
-    expect((failure as SyncClientError).code).toBe("epoch_conflict");
+    const pushed = await after.push();
+
+    // Not sent, not deleted, and named as what it is. A batch carrying it would have been refused
+    // whole, taking every honest envelope beside it down as well.
+    expect(pushed).toEqual({ confirmed: 0, pending: 1, stranded: 1 });
+    expect(offered).toBe(0);
     // Not one word of liveness was written for the epoch this device now seals under.
     expect(await repository.readSyncState(SYNC_STATE_KEYS.epoch)).toBeUndefined();
+  });
+
+  it("прерванное перешифрование очереди доводится до конца, ничего не теряя", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const rotated = await createFamilyKey();
+    const name = databaseName("rekey-crash");
+    const repository = new IndexedDbBudgetRepository<SyncedBudgetState>({ databaseName: name });
+
+    const before = engineOn(repository, server, family.key, family.digest, FIRST_EPOCH, DEVICE_A);
+    await before.enqueue([expense(1), expense(2)]);
+    const queued = await repository.listOutbox();
+
+    // The state a crash between the two writes leaves behind: the re-encrypted envelopes are
+    // written down, and the records they replace are already gone from the queue.
+    const resealed = await Promise.all(
+      queued.map(async (record) => {
+        const envelope = record.envelope as OutgoingEnvelope;
+        const header = {
+          envelopeVersion: envelope.envelopeVersion,
+          kind: envelope.kind,
+          familyId: envelope.familyId,
+          opId: envelope.opId,
+          deviceId: envelope.deviceId,
+          keyEpoch: SECOND_EPOCH,
+        };
+        const sealed = await sealEnvelope(
+          rotated.key,
+          header,
+          utf8(await plaintextOf(family.key, envelope)),
+        );
+        return { ...header, iv: toBase64(sealed.iv), ciphertext: toBase64(sealed.ciphertext) };
+      }),
+    );
+    await repository.writeSyncState([
+      { key: SYNC_STATE_KEYS.rekey, value: { keyEpoch: SECOND_EPOCH, envelopes: resealed } },
+    ]);
+    await repository.confirmOutbox(queued.map((record) => record.opId));
+    expect(await repository.countOutbox()).toBe(0);
+
+    // The device comes back. Nothing was lost: the record is the other copy of those operations.
+    server.rotateTo(SECOND_EPOCH);
+    const after = engineOn(repository, server, rotated.key, rotated.digest, SECOND_EPOCH, DEVICE_A);
+    const pushed = await after.push();
+
+    expect(pushed).toEqual({ confirmed: 2, pending: 0, stranded: 0 });
+    expect(server.stored.map((envelope) => envelope.opId)).toEqual(
+      queued.map((record) => record.opId),
+    );
+    // And the redo record is gone, so the finished rewrite is not replayed for ever.
+    expect(await repository.readSyncState(SYNC_STATE_KEYS.rekey)).toBeNull();
   });
 
   it("испорченные записи состояния отвергаются так же, как испорченный курсор", async () => {
