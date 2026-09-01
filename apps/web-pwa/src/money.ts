@@ -18,6 +18,23 @@ const maxNormalizedMoneyLength = (maxSafeMinor / 100n).toString().length + 3;
 const maxRawMoneyLength = 24;
 const moneyOverflowMessage = "Сумма превышает максимально допустимое значение.";
 
+export type MoneyScale = "s" | "m" | "l";
+
+/**
+ * Ступень денежной лестницы (DESIGN §7.2): чем длиннее число, тем раньше компонент
+ * понижает типографическую ступень. Обрезать сумму нельзя, поэтому размер выбирается
+ * по фактической длине строки, а порог ширины задаёт CSS через @container.
+ */
+export function moneyScale(text: string): MoneyScale {
+  let digits = 0;
+  for (const character of text) {
+    if (character >= "0" && character <= "9") digits += 1;
+  }
+  if (digits <= 5) return "s";
+  if (digits <= 7) return "m";
+  return "l";
+}
+
 export function formatMoney(minor: number): string {
   if (!Number.isSafeInteger(minor)) {
     throw new Error("Денежная сумма должна храниться целым числом минимальных единиц.");

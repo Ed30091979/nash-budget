@@ -20,7 +20,7 @@ import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
-import { formatMoney } from "./money";
+import { formatMoney, moneyScale } from "./money";
 import { createBudgetRepository } from "./storage-repository";
 
 export type Screen = "today" | "year" | "planning" | "operations" | "more";
@@ -476,12 +476,13 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
   const nextMetrics = next ? plan.commitments[next.id] : undefined;
+  const safeToSpend = formatMoney(safeToSpendMinor);
   return <>
     <h1 className="visually-hidden">Сегодня: семейный бюджет</h1>
     <div className="eyebrow">{formatMonth(plan.startMonth)}</div>
     <section className={`hero-card${safeToSpendMinor < 0 ? " danger" : ""}`}>
       <span>Можно на повседневные расходы</span>
-      <strong>{formatMoney(safeToSpendMinor)}</strong>
+      <strong data-money-scale={moneyScale(safeToSpend)}>{safeToSpend}</strong>
       <p>Остаток лимитов после уже записанных покупок. Обязательные платежи и накопления учтены отдельно.</p>
       <button className="hero-button" type="button" onClick={onAdd}>+ Записать покупку</button>
     </section>
