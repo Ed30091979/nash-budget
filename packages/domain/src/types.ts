@@ -7,6 +7,7 @@ export type GoalId = StableId;
 export type TransactionId = StableId;
 export type AnnualCommitmentId = StableId;
 export type ScheduledExpenseId = StableId;
+export type MemberId = StableId;
 
 /** Money stored as an integer count of the currency's minor unit. */
 export type MinorUnits = number;
@@ -21,12 +22,29 @@ export type GoalStatus = "active" | "completed" | "cancelled";
 export type ScheduleMode = "monthly" | "selected_months";
 export type CommitmentRecurrence = "annual" | "one_time";
 export type TransactionStatus = "posted" | "pending" | "draft";
+/**
+ * Advisory label, never a permission. The domain runs offline and grants nothing on the
+ * strength of a role; the sync server is the only place where access is decided.
+ */
+export type MemberRole = "owner" | "member";
+
 export type TransactionKind =
   | "income"
   | "expense"
   | "refund"
   | "transfer"
   | "goal_contribution";
+
+/**
+ * A family participant. Attribution only: nothing in the money calculations reads a member,
+ * so adding, renaming or archiving one never moves a single kopeck.
+ */
+export interface Member {
+  readonly id: MemberId;
+  readonly name: string;
+  readonly role: MemberRole;
+  readonly active: boolean;
+}
 
 export interface Account {
   readonly id: AccountId;
@@ -109,6 +127,12 @@ interface BaseTransaction {
   readonly occurredOn: LocalDate;
   readonly status: TransactionStatus;
   readonly amountMinor: MinorUnits;
+  /**
+   * Family participant credited with the operation. Optional on purpose: every backup and
+   * every budget written before members existed omits it, and such data stays valid. Read
+   * only by {@link MemberExpenseBreakdown}; the budget and planning figures ignore it.
+   */
+  readonly memberId?: MemberId;
 }
 
 export interface IncomeTransaction extends BaseTransaction {
@@ -151,6 +175,8 @@ export type Transaction =
 
 export interface BudgetState {
   readonly activeBudgetId: BudgetId;
+  /** Absent in every budget written before members existed; such a state stays valid. */
+  readonly members?: readonly Member[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];
@@ -192,6 +218,39 @@ export interface BudgetMetrics {
   readonly accountBalancesMinor: Readonly<Record<AccountId, MinorUnits>>;
   readonly goalContributionsMinor: Readonly<Record<GoalId, MinorUnits>>;
   readonly categoryMetrics: Readonly<Record<CategoryId, CategoryMetrics>>;
+}
+
+/** Net expense figures for one slice of a budget: a member, or everything left unattributed. */
+export interface ExpenseShareMetrics {
+  readonly expenseMinor: MinorUnits;
+  readonly refundMinor: MinorUnits;
+  /** expenseMinor minus refundMinor; an excess refund keeps it negative, as elsewhere. */
+  readonly actualMinor: MinorUnits;
+  /** Posted expenses and refunds counted in this slice. */
+  readonly transactionCount: number;
+  /** actualMinor over the budget's net expenses; null when those are zero or negative. */
+  readonly share: number | null;
+}
+
+export interface MemberExpenseMetrics extends ExpenseShareMetrics {
+  readonly memberId: MemberId;
+}
+
+/**
+ * Expenses split by participant. A standalone metric: {@link BudgetMetrics} is computed
+ * without it and does not change by a kopeck when members appear, disappear or are renamed.
+ */
+export interface MemberExpenseBreakdown {
+  readonly budgetId: BudgetId;
+  /** Identical to BudgetMetrics.expensesMinor for the same budget. */
+  readonly expensesMinor: MinorUnits;
+  /** Sum of the members' actualMinor; the remainder is unattributed. */
+  readonly attributedMinor: MinorUnits;
+  /** Declaration order of state.members, so the caller decides how to sort. */
+  readonly members: readonly MemberExpenseMetrics[];
+  readonly byMember: Readonly<Record<MemberId, MemberExpenseMetrics>>;
+  /** Everything posted without a memberId, including every pre-member operation. */
+  readonly unattributed: ExpenseShareMetrics;
 }
 
 export type AnnualCommitmentStatus = "funded" | "on_track" | "due_soon" | "overdue";

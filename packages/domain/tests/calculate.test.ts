@@ -4,6 +4,7 @@ import { G000, G001, G002, toDomainBudgetState } from "@family-budget/test-fixtu
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateMemberExpenses,
   makePlanningSeed,
   makeSeedBudget,
   normalizeScheduledDueDate,
@@ -658,5 +659,239 @@ describe("calculateBudget", () => {
 
     expect(Object.hasOwn(metrics.goalContributionsMinor, "prototype")).toBe(true);
     expect(metrics.goalContributionsMinor["prototype"]).toBe(7_800);
+  });
+});
+
+const G002_OWNER_ID = "71111111-1111-4111-8111-111111111111";
+const G002_PARTNER_ID = "71111111-1111-4111-8111-111111111112";
+
+/** A budget exactly as it was written before members existed: no list, no labels anywhere. */
+function withoutMembers(state: BudgetState): BudgetState {
+  const { members: _members, ...rest } = state;
+  return {
+    ...rest,
+    transactions: state.transactions.map((transaction) => {
+      const { memberId: _memberId, ...plain } = transaction;
+      return plain as Transaction;
+    }),
+  };
+}
+
+/** Round-trips through JSON the way a restored backup file does. */
+function throughBackup(state: BudgetState): BudgetState {
+  return JSON.parse(JSON.stringify(state)) as BudgetState;
+}
+
+function makeMemberBudget(): BudgetState {
+  return {
+    activeBudgetId: "budget",
+    members: [
+      { id: "member-a", name: "Аня", role: "owner", active: true },
+      { id: "member-b", name: "Борис", role: "member", active: true },
+      { id: "member-c", name: "Вера", role: "member", active: false },
+    ],
+    accounts: [
+      { id: "account", name: "Main", type: "current", currency: "RUB", openingBalanceMinor: 10_000_000, active: true },
+    ],
+    categories: [
+      { id: "food", name: "Food", type: "expense", group: "Daily", active: true, sortOrder: 10 },
+      { id: "salary", name: "Salary", type: "income", group: "Income", active: true, sortOrder: 20 },
+    ],
+    budgets: [{
+      id: "budget",
+      startDate: "2026-07-01",
+      endDate: "2026-07-31",
+      status: "open",
+      plannedIncomeMinor: 10_000_000,
+      warningThreshold: 0.8,
+      lines: [{ id: "line", categoryId: "food", plannedMinor: 5_000_000 }],
+    }],
+    goals: [],
+    annualCommitments: [],
+    scheduledExpenses: [],
+    transactions: [
+      { id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_500_000, accountId: "account", categoryId: "food", memberId: "member-a" },
+      { id: "t-2", occurredOn: "2026-07-03", status: "posted", kind: "expense", amountMinor: 900_000, accountId: "account", categoryId: "food", memberId: "member-b" },
+      { id: "t-3", occurredOn: "2026-07-04", status: "posted", kind: "refund", amountMinor: 100_000, accountId: "account", categoryId: "food", originalTransactionId: "t-2", memberId: "member-b" },
+      { id: "t-4", occurredOn: "2026-07-05", status: "posted", kind: "expense", amountMinor: 600_000, accountId: "account", categoryId: "food" },
+      { id: "t-5", occurredOn: "2026-07-06", status: "pending", kind: "expense", amountMinor: 7_000_000, accountId: "account", categoryId: "food", memberId: "member-a" },
+      { id: "t-6", occurredOn: "2026-08-01", status: "posted", kind: "expense", amountMinor: 8_000_000, accountId: "account", categoryId: "food", memberId: "member-a" },
+      { id: "t-7", occurredOn: "2026-07-07", status: "posted", kind: "income", amountMinor: 9_000_000, accountId: "account", memberId: "member-b" },
+    ],
+  };
+}
+
+describe("calculateMemberExpenses", () => {
+  it("splits the canonical G-002 July expenses between two members and the unlabelled rest", () => {
+    const state = toDomainBudgetState(G002);
+    const breakdown = calculateMemberExpenses(state);
+
+    expect(state.members?.map((member) => member.id)).toEqual([G002_OWNER_ID, G002_PARTNER_ID]);
+    expect(breakdown.budgetId).toBe(state.activeBudgetId);
+    expect(breakdown.expensesMinor).toBe(7_100_000);
+    expect(breakdown.attributedMinor).toBe(6_700_000);
+    expect(breakdown.byMember[G002_OWNER_ID]).toEqual({
+      memberId: G002_OWNER_ID,
+      expenseMinor: 4_500_000,
+      refundMinor: 0,
+      actualMinor: 4_500_000,
+      transactionCount: 1,
+      share: 4_500_000 / 7_100_000,
+    });
+    expect(breakdown.byMember[G002_PARTNER_ID]?.actualMinor).toBe(2_200_000);
+    expect(breakdown.byMember[G002_PARTNER_ID]?.transactionCount).toBe(1);
+    // The 4 000 ₽ transport operation of 9 July carries no label and stays unattributed.
+    expect(breakdown.unattributed).toEqual({
+      expenseMinor: 400_000,
+      refundMinor: 0,
+      actualMinor: 400_000,
+      transactionCount: 1,
+      share: 400_000 / 7_100_000,
+    });
+    expect(breakdown.attributedMinor + breakdown.unattributed.actualMinor).toBe(
+      calculateBudget(state).expensesMinor,
+    );
+    // Income carries a member too, and the expense breakdown must not see a kopeck of it.
+    expect(breakdown.members.reduce((total, item) => total + item.expenseMinor, 0)).toBe(6_700_000);
+  });
+
+  it("leaves every canonical G-000, G-001 and G-002 figure untouched when the labels are removed", () => {
+    for (const fixture of [G000, G001, G002]) {
+      const labelled = toDomainBudgetState(fixture);
+      const legacy = throughBackup(withoutMembers(labelled));
+
+      expect(legacy.members).toBeUndefined();
+      expect(legacy.transactions.some((transaction) => transaction.memberId !== undefined)).toBe(false);
+      expect(calculateBudget(legacy)).toEqual(calculateBudget(labelled));
+      expect(calculateAnnualPlan(legacy, "2026-07", 24)).toEqual(
+        calculateAnnualPlan(labelled, "2026-07", 24),
+      );
+    }
+
+    const canonical = calculateBudget(toDomainBudgetState(G000));
+    expect(canonical.incomeMinor).toBe(10_000_000);
+    expect(canonical.expensesMinor).toBe(7_650_000);
+    expect(canonical.capitalMinor).toBe(2_350_000);
+
+    const july = calculateAnnualPlan(toDomainBudgetState(G002), "2026-07", 24).currentMonth;
+    expect(july.annualReserveMinor).toBe(1_980_900);
+    expect(july.spendableAfterPlanMinor).toBe(4_419_100);
+  });
+
+  it("restores a backup written before members existed and reports everything as unattributed", () => {
+    const legacy = throughBackup(withoutMembers(toDomainBudgetState(G002)));
+    const breakdown = calculateMemberExpenses(legacy);
+
+    expect(breakdown.members).toEqual([]);
+    expect(breakdown.byMember).toEqual({});
+    expect(breakdown.attributedMinor).toBe(0);
+    expect(breakdown.expensesMinor).toBe(7_100_000);
+    expect(breakdown.unattributed).toEqual({
+      expenseMinor: 7_100_000,
+      refundMinor: 0,
+      actualMinor: 7_100_000,
+      transactionCount: 3,
+      share: 1,
+    });
+  });
+
+  it("counts posted expenses and refunds only, and keeps a declared member without spending", () => {
+    const state = makeMemberBudget();
+    const breakdown = calculateMemberExpenses(state);
+
+    expect(breakdown.expensesMinor).toBe(2_900_000);
+    expect(breakdown.members.map((item) => item.memberId)).toEqual(["member-a", "member-b", "member-c"]);
+    expect(breakdown.byMember["member-a"]).toMatchObject({ expenseMinor: 1_500_000, refundMinor: 0, actualMinor: 1_500_000, transactionCount: 1 });
+    expect(breakdown.byMember["member-b"]).toMatchObject({ expenseMinor: 900_000, refundMinor: 100_000, actualMinor: 800_000, transactionCount: 2 });
+    // Archived participants keep their history: the metric never hides spent money.
+    expect(breakdown.byMember["member-c"]).toMatchObject({ actualMinor: 0, transactionCount: 0, share: 0 });
+    expect(breakdown.attributedMinor).toBe(2_300_000);
+    expect(breakdown.unattributed).toMatchObject({ actualMinor: 600_000, transactionCount: 1 });
+    expect(breakdown.attributedMinor + breakdown.unattributed.actualMinor).toBe(breakdown.expensesMinor);
+    expect(breakdown.expensesMinor).toBe(calculateBudget(state).expensesMinor);
+  });
+
+  it("does not move a kopeck of the budget metrics when labels are added or changed", () => {
+    const labelled = makeMemberBudget();
+    const plain = withoutMembers(labelled);
+    const relabelled: BudgetState = {
+      ...labelled,
+      members: [
+        { id: "member-a", name: "Анна Ивановна", role: "member", active: false },
+        { id: "member-b", name: "Борис", role: "owner", active: true },
+        { id: "member-c", name: "Вера", role: "member", active: false },
+      ],
+      transactions: labelled.transactions.map((transaction) => ({ ...transaction, memberId: "member-b" })),
+    };
+
+    expect(calculateBudget(labelled)).toEqual(calculateBudget(plain));
+    expect(calculateBudget(relabelled)).toEqual(calculateBudget(plain));
+    expect(calculateAnnualPlan(relabelled, "2026-07", 12)).toEqual(calculateAnnualPlan(plain, "2026-07", 12));
+    expect(calculateMemberExpenses(relabelled).byMember["member-b"]?.actualMinor).toBe(2_900_000);
+    expect(calculateMemberExpenses(relabelled).unattributed.actualMinor).toBe(0);
+  });
+
+  it("keeps an excess refund negative and reports no share when nothing net was spent", () => {
+    const base = makeMemberBudget();
+    const state: BudgetState = {
+      ...base,
+      transactions: [
+        { id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_000_000, accountId: "account", categoryId: "food", memberId: "member-a" },
+        { id: "t-2", occurredOn: "2026-07-03", status: "posted", kind: "refund", amountMinor: 1_000_000, accountId: "account", categoryId: "food", originalTransactionId: "t-1", memberId: "member-b" },
+      ],
+    };
+    const breakdown = calculateMemberExpenses(state);
+
+    expect(breakdown.expensesMinor).toBe(0);
+    expect(breakdown.byMember["member-a"]).toEqual({ memberId: "member-a", expenseMinor: 1_000_000, refundMinor: 0, actualMinor: 1_000_000, transactionCount: 1, share: null });
+    expect(breakdown.byMember["member-b"]).toEqual({ memberId: "member-b", expenseMinor: 0, refundMinor: 1_000_000, actualMinor: -1_000_000, transactionCount: 1, share: null });
+    expect(breakdown.attributedMinor).toBe(0);
+    expect(breakdown.unattributed.share).toBeNull();
+  });
+
+  it("rejects an unknown member, a duplicate member and an invalid role", () => {
+    const base = makeMemberBudget();
+
+    expect(() => calculateMemberExpenses({
+      ...base,
+      transactions: [{ id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_000, accountId: "account", categoryId: "food", memberId: "ghost" }],
+    })).toThrow(/transaction t-1 memberId references unknown id ghost/);
+
+    expect(() => calculateMemberExpenses({
+      ...base,
+      members: [...(base.members ?? []), { id: "member-a", name: "Двойник", role: "member", active: true }],
+    })).toThrow(/members contains duplicate id member-a/);
+
+    expect(() => calculateMemberExpenses({
+      ...base,
+      members: [{ id: "member-a", name: "Аня", role: "admin" as unknown as "owner", active: true }],
+    })).toThrow(/member member-a role has unknown value admin/);
+
+    expect(() => calculateMemberExpenses({
+      ...base,
+      members: [{ id: "member-a", name: 7 as unknown as string, role: "owner", active: true }],
+    })).toThrow(/member member-a name must be a string/);
+
+    expect(() => calculateMemberExpenses(base, "missing")).toThrow(/calculateMemberExpenses references unknown id missing/);
+  });
+
+  it("keeps special member IDs as own keys on a null-prototype record", () => {
+    const base = makeMemberBudget();
+    const breakdown = calculateMemberExpenses({
+      ...base,
+      members: [
+        { id: "__proto__", name: "Аня", role: "owner", active: true },
+        { id: "constructor", name: "Борис", role: "member", active: true },
+      ],
+      transactions: [
+        { id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_200_000, accountId: "account", categoryId: "food", memberId: "__proto__" },
+        { id: "t-2", occurredOn: "2026-07-03", status: "posted", kind: "expense", amountMinor: 800_000, accountId: "account", categoryId: "food", memberId: "constructor" },
+      ],
+    });
+
+    expect(Object.getPrototypeOf(breakdown.byMember)).toBeNull();
+    expect(Object.keys(breakdown.byMember)).toEqual(["__proto__", "constructor"]);
+    expect(breakdown.byMember["__proto__"]?.actualMinor).toBe(1_200_000);
+    expect(breakdown.byMember["constructor"]?.actualMinor).toBe(800_000);
   });
 });

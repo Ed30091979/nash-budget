@@ -11,15 +11,25 @@ type StableId = string;
 type MinorUnits = number;
 type TransactionStatus = "posted" | "pending" | "draft";
 
+/** Mirrors the domain Member: attribution only, and a role that grants nothing. */
+export interface DomainMember {
+  readonly id: StableId;
+  readonly name: string;
+  readonly role: "owner" | "member";
+  readonly active: boolean;
+}
+
 export type DomainTransaction =
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "income"; readonly amountMinor: MinorUnits; readonly accountId: StableId }
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "expense"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId }
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "refund"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId; readonly originalTransactionId: StableId }
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "transfer"; readonly amountMinor: MinorUnits; readonly fromAccountId: StableId; readonly toAccountId: StableId }
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "goal_contribution"; readonly amountMinor: MinorUnits; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly goalId: StableId };
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "income"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly memberId?: StableId }
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "expense"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId; readonly memberId?: StableId }
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "refund"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId; readonly originalTransactionId: StableId; readonly memberId?: StableId }
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "transfer"; readonly amountMinor: MinorUnits; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly memberId?: StableId }
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "goal_contribution"; readonly amountMinor: MinorUnits; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly goalId: StableId; readonly memberId?: StableId };
 
 export interface DomainBudgetState {
   readonly activeBudgetId: StableId;
+  /** Optional: a state written before members existed simply has none. */
+  readonly members?: readonly DomainMember[];
   readonly accounts: readonly { readonly id: StableId; readonly name: string; readonly type: "current" | "cash" | "savings" | "reserve"; readonly currency: string; readonly openingBalanceMinor: MinorUnits; readonly active: boolean }[];
   readonly categories: readonly { readonly id: StableId; readonly name: string; readonly type: "income" | "expense"; readonly group: string; readonly active: boolean; readonly sortOrder: number }[];
   readonly budgets: readonly { readonly id: StableId; readonly startDate: string; readonly endDate: string; readonly status: "draft" | "open" | "closed"; readonly plannedIncomeMinor: MinorUnits; readonly warningThreshold: number; readonly lines: readonly { readonly id: StableId; readonly categoryId: StableId; readonly plannedMinor: MinorUnits; readonly rolloverMinor?: MinorUnits; readonly adjustmentMinor?: MinorUnits }[] }[];
@@ -34,7 +44,7 @@ interface CanonicalBudgetFixture {
   readonly fixtureId: "G-000" | "G-001";
   readonly title: string;
   readonly household: { readonly id: string; readonly baseCurrency: string };
-  readonly members: readonly { readonly id: string; readonly householdId: string }[];
+  readonly members: readonly { readonly id: string; readonly householdId: string; readonly displayName: string; readonly localRole: "owner" | "editor" | "viewer"; readonly archivedAt: string | null }[];
   readonly accounts: readonly { readonly id: string; readonly householdId: string; readonly name: string; readonly type: string; readonly currency: string; readonly openingBalanceMinor: number; readonly active: boolean; readonly isPrimary: boolean }[];
   readonly categories: readonly { readonly id: string; readonly householdId: string; readonly parentId: string | null; readonly name: string; readonly type: "income" | "expense"; readonly group: string; readonly active: boolean; readonly sortOrder: number }[];
   readonly budgetPeriod: { readonly id: string; readonly householdId: string; readonly startDate: string; readonly endDate: string; readonly status: "draft" | "open" | "closed" };
@@ -216,6 +226,7 @@ function assertBudgetReferences(fixture: CanonicalBudgetFixture): void {
 
 function assertPlanningReferences(fixture: PlanningFixture): void {
   const state = fixture.state;
+  const members = assertUniqueIds(state.members ?? [], "G-002 members");
   const accounts = assertUniqueIds(state.accounts, "G-002 accounts");
   const categories = assertUniqueIds(state.categories, "G-002 categories");
   const budgets = assertUniqueIds(state.budgets, "G-002 budgets");
@@ -236,6 +247,7 @@ function assertPlanningReferences(fixture: PlanningFixture): void {
     requireReference(categories, item.categoryId, `${item.id}`);
   }
   for (const transaction of state.transactions) {
+    if (transaction.memberId !== undefined) requireReference(members, transaction.memberId, `transaction ${transaction.id} memberId`);
     if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") requireReference(accounts, transaction.accountId, `transaction ${transaction.id}`);
     if (transaction.kind === "expense" || transaction.kind === "refund") requireReference(categories, transaction.categoryId, `transaction ${transaction.id}`);
     if (transaction.kind === "refund") {
@@ -282,9 +294,22 @@ function split(transaction: CanonicalTransaction) {
   return transaction.splits[0]!;
 }
 
+/**
+ * The canonical model calls a participant's label `localRole` and knows three of them; the
+ * domain knows two and treats a role as a label, so everyone who is not the owner is a member.
+ */
+function adaptMember(member: CanonicalBudgetFixture["members"][number]): DomainMember {
+  return {
+    id: member.id,
+    name: member.displayName,
+    role: member.localRole === "owner" ? "owner" : "member",
+    active: member.archivedAt === null,
+  };
+}
+
 function adaptTransaction(transaction: CanonicalTransaction): DomainTransaction {
   if (transaction.status === "voided") throw new Error(`Transaction ${transaction.id} uses unsupported voided status`);
-  const base = { id: transaction.id, occurredOn: transaction.occurredOn, status: transaction.status, amountMinor: transaction.amountMinor };
+  const base = { id: transaction.id, occurredOn: transaction.occurredOn, status: transaction.status, amountMinor: transaction.amountMinor, memberId: transaction.memberId };
   switch (transaction.kind) {
     case "income":
       return { ...base, kind: "income", accountId: movement(transaction, "destination").accountId };
@@ -305,6 +330,7 @@ export function toDomainBudgetState(fixture: CanonicalFixture): DomainBudgetStat
   if (fixture.fixtureId === "G-002") return structuredClone(fixture.state);
   return {
     activeBudgetId: fixture.budgetPeriod.id,
+    members: fixture.members.map(adaptMember),
     accounts: fixture.accounts.map((account) => {
       if (account.type !== "current" && account.type !== "cash" && account.type !== "savings" && account.type !== "reserve") throw new Error(`Unsupported account type ${account.type}`);
       return { id: account.id, name: account.name, type: account.type, currency: account.currency, openingBalanceMinor: account.openingBalanceMinor, active: account.active };

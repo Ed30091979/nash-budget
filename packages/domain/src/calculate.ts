@@ -12,9 +12,14 @@ import type {
   CategoryBudgetStatus,
   CategoryId,
   CategoryMetrics,
+  ExpenseShareMetrics,
   FormatMinorOptions,
   Goal,
   GoalId,
+  Member,
+  MemberExpenseBreakdown,
+  MemberExpenseMetrics,
+  MemberId,
   MinorUnits,
   PlanningMonthMetrics,
   ScheduledExpense,
@@ -462,6 +467,141 @@ export function calculateBudget(
     accountBalancesMinor: recordFromMap(accountBalances),
     goalContributionsMinor: recordFromMap(goalContributions),
     categoryMetrics,
+  };
+}
+
+function validateMember(member: Member): void {
+  assertEnum(member.role, ["owner", "member"], `member ${member.id} role`);
+  if (typeof member.name !== "string") {
+    throw new Error(`member ${member.id} name must be a string`);
+  }
+  if (typeof member.active !== "boolean") {
+    throw new Error(`member ${member.id} active must be a boolean`);
+  }
+}
+
+function expenseShare(
+  expenseMinor: MinorUnits,
+  refundMinor: MinorUnits,
+  transactionCount: number,
+  expensesMinor: MinorUnits,
+): ExpenseShareMetrics {
+  const actualMinor = addMinor(expenseMinor, -refundMinor, "member actualMinor");
+  return {
+    expenseMinor,
+    refundMinor,
+    actualMinor,
+    transactionCount,
+    share: expensesMinor > 0 ? actualMinor / expensesMinor : null,
+  };
+}
+
+/**
+ * Expenses of one budget split by participant.
+ *
+ * Deliberately a second pass rather than a field of {@link calculateBudget}: attribution is
+ * a label on an operation, and no headline figure may move because a label was added, changed
+ * or dropped. A state without members, or with operations that carry no `memberId`, is normal
+ * and lands whole in `unattributed` — that is what every backup written before members looks
+ * like. Counts the same operations as `calculateBudget`: posted expenses and refunds inside
+ * the budget window, so `attributedMinor` plus `unattributed.actualMinor` is exactly
+ * `BudgetMetrics.expensesMinor`.
+ */
+export function calculateMemberExpenses(
+  state: BudgetState,
+  budgetId: string = state.activeBudgetId,
+): MemberExpenseBreakdown {
+  const budgets = indexById(state.budgets, "budgets");
+  const budget = requireEntity(budgets, budgetId, "calculateMemberExpenses");
+  assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
+  assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
+
+  const declared = state.members ?? [];
+  const members = indexById(declared, "members");
+  for (const member of declared) validateMember(member);
+  indexById(state.transactions, "transactions");
+
+  const expenseByMember = new Map<MemberId, MinorUnits>();
+  const refundByMember = new Map<MemberId, MinorUnits>();
+  const countByMember = new Map<MemberId, number>();
+  for (const member of declared) {
+    expenseByMember.set(member.id, 0);
+    refundByMember.set(member.id, 0);
+    countByMember.set(member.id, 0);
+  }
+
+  let unattributedExpenseMinor = 0;
+  let unattributedRefundMinor = 0;
+  let unattributedCount = 0;
+  let grossExpensesMinor = 0;
+  let refundsMinor = 0;
+
+  for (const transaction of state.transactions) {
+    assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
+    assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
+    assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
+    if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
+    if (transaction.kind !== "expense" && transaction.kind !== "refund") continue;
+    assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+
+    const isRefund = transaction.kind === "refund";
+    if (isRefund) {
+      refundsMinor = addMinor(refundsMinor, transaction.amountMinor, "refundsMinor");
+    } else {
+      grossExpensesMinor = addMinor(grossExpensesMinor, transaction.amountMinor, "grossExpensesMinor");
+    }
+
+    const memberId = transaction.memberId;
+    if (memberId === undefined) {
+      if (isRefund) {
+        unattributedRefundMinor = addMinor(unattributedRefundMinor, transaction.amountMinor, "unattributed refundMinor");
+      } else {
+        unattributedExpenseMinor = addMinor(unattributedExpenseMinor, transaction.amountMinor, "unattributed expenseMinor");
+      }
+      unattributedCount += 1;
+      continue;
+    }
+
+    assertStableId(memberId, `transaction ${transaction.id} memberId`);
+    requireEntity(members, memberId, `transaction ${transaction.id} memberId`);
+    const bucket = isRefund ? refundByMember : expenseByMember;
+    const label = isRefund ? "member refundMinor" : "member expenseMinor";
+    bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, transaction.amountMinor, label));
+    countByMember.set(memberId, (countByMember.get(memberId) ?? 0) + 1);
+  }
+
+  const expensesMinor = addMinor(grossExpensesMinor, -refundsMinor, "expensesMinor");
+  const byMember = createIdRecord<MemberId, MemberExpenseMetrics>();
+  const memberMetrics: MemberExpenseMetrics[] = [];
+  let attributedMinor = 0;
+
+  for (const member of declared) {
+    const metrics: MemberExpenseMetrics = {
+      memberId: member.id,
+      ...expenseShare(
+        expenseByMember.get(member.id) ?? 0,
+        refundByMember.get(member.id) ?? 0,
+        countByMember.get(member.id) ?? 0,
+        expensesMinor,
+      ),
+    };
+    attributedMinor = addMinor(attributedMinor, metrics.actualMinor, "attributedMinor");
+    memberMetrics.push(metrics);
+    byMember[member.id] = metrics;
+  }
+
+  return {
+    budgetId: budget.id,
+    expensesMinor,
+    attributedMinor,
+    members: memberMetrics,
+    byMember,
+    unattributed: expenseShare(
+      unattributedExpenseMinor,
+      unattributedRefundMinor,
+      unattributedCount,
+      expensesMinor,
+    ),
   };
 }
 

@@ -94,4 +94,65 @@ describe("canonical fixtures", () => {
     oversizedExpected.expected.accountBalances = Array.from({ length: 1001 }, () => structuredClone(oversizedExpected.expected.accountBalances[0]));
     expect(() => parseCanonicalFixture(oversizedExpected)).toThrow(/schema validation/i);
   });
+
+  it("projects the canonical participant onto every operation of G-000 and G-001", () => {
+    for (const fixture of [G000, G001]) {
+      const state = toDomainBudgetState(fixture);
+      expect(state.members).toEqual([{
+        id: "11111111-1111-4111-8111-111111111112",
+        name: "Владелец",
+        role: "owner",
+        active: true,
+      }]);
+      expect(state.transactions.every((transaction) => transaction.memberId === state.members?.[0]?.id)).toBe(true);
+    }
+  });
+
+  it("maps a non-owner canonical role onto a member and an archived participant onto inactive", () => {
+    type MutableMembers = { members: { localRole: string; archivedAt: string | null }[] };
+    const fixture = structuredClone(G000) as unknown as MutableMembers;
+    fixture.members[0]!.localRole = "editor";
+    fixture.members[0]!.archivedAt = "2026-07-31T00:00:00Z";
+
+    expect(toDomainBudgetState(parseCanonicalFixture(fixture)).members).toEqual([{
+      id: "11111111-1111-4111-8111-111111111112",
+      name: "Владелец",
+      role: "member",
+      active: false,
+    }]);
+  });
+
+  it("carries the optional G-002 participants and leaves the unlabelled operation alone", () => {
+    const state = toDomainBudgetState(G002);
+    expect(state.members?.map((member) => [member.id, member.role])).toEqual([
+      ["71111111-1111-4111-8111-111111111111", "owner"],
+      ["71111111-1111-4111-8111-111111111112", "member"],
+    ]);
+    expect(state.transactions.map((transaction) => transaction.memberId ?? null)).toEqual([
+      "71111111-1111-4111-8111-111111111111",
+      "71111111-1111-4111-8111-111111111111",
+      "71111111-1111-4111-8111-111111111112",
+      null,
+    ]);
+  });
+
+  it("keeps a state written before members existed valid and rejects a dangling label", () => {
+    type MutableState = { state: { members?: unknown; transactions: { memberId?: string }[] } };
+    const legacy = structuredClone(G002) as unknown as MutableState;
+    delete legacy.state.members;
+    for (const transaction of legacy.state.transactions) delete transaction.memberId;
+    expect(toDomainBudgetState(parseCanonicalFixture(legacy)).members).toBeUndefined();
+
+    const dangling = structuredClone(G002) as unknown as MutableState;
+    dangling.state.transactions[3]!.memberId = "71111111-1111-4111-8111-111111111119";
+    expect(() => parseCanonicalFixture(dangling)).toThrow(/memberId references unknown id/);
+
+    const duplicate = structuredClone(G002) as unknown as { state: { members: { id: string }[] } };
+    duplicate.state.members[1]!.id = duplicate.state.members[0]!.id;
+    expect(() => parseCanonicalFixture(duplicate)).toThrow(/G-002 members contains duplicate id/);
+
+    const badRole = structuredClone(G002) as unknown as { state: { members: { role: string }[] } };
+    badRole.state.members[0]!.role = "editor";
+    expect(() => parseCanonicalFixture(badRole)).toThrow(/schema validation/i);
+  });
 });
