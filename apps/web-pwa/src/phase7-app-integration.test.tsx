@@ -285,6 +285,15 @@ describe("phase 7 App composition", () => {
     expect(source.match(/repository\.setLastSuccessfulBackup/g)).toHaveLength(1);
   });
 
+  it("App tells the user about a cleared attribution instead of swallowing it", () => {
+    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+
+    expect(source).toMatch(
+      /await restoreBudgetBackup\([\s\S]*\(\) => \{ clearedLabels \+= 1; \},[\s\S]*if \(clearedLabels > 0\) \{[\s\S]*setMessage\(/,
+    );
+    expect(source).toContain("Снято меток участника:");
+  });
+
   it("rejects a damaged restore before save, publication, or revision changes", async () => {
     const initial = sixOperationState();
     const revision = "10000000-0000-4000-8000-000000000077";

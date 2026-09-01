@@ -1,7 +1,9 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateMemberExpenses,
   type BudgetState,
+  type Transaction,
 } from "@family-budget/domain";
 import {
   ValidatedBackupCodec,
@@ -11,6 +13,7 @@ import {
 export const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
 export const BACKUP_LIMITS = {
   accounts: 100,
+  members: 100,
   categories: 500,
   budgets: 240,
   goals: 200,
@@ -40,6 +43,15 @@ export interface PreparedBudgetBackup {
   readonly text: string;
   readonly createdAt: string;
 }
+
+/** A repair the gate applied to the restored state, so that nothing changes silently. */
+export interface BackupRepair {
+  readonly kind: "unknown_member_attribution";
+  readonly transactionId: string;
+  readonly memberId: string;
+}
+
+export type BackupRepairReporter = (repair: BackupRepair) => void;
 
 const RENDERABLE_PLANNING_HORIZON_MONTHS = 24;
 
@@ -110,6 +122,7 @@ function requireUuid(value: string, label: string): void {
 
 function validateBudgetStateUuids(state: BudgetState): void {
   requireUuid(state.activeBudgetId, "activeBudgetId");
+  state.members?.forEach((item, index) => requireUuid(item.id, `members[${index}].id`));
   state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
   state.categories.forEach((item, index) => requireUuid(item.id, `categories[${index}].id`));
   state.budgets.forEach((budget, budgetIndex) => {
@@ -119,7 +132,13 @@ function validateBudgetStateUuids(state: BudgetState): void {
   state.goals.forEach((item, index) => requireUuid(item.id, `goals[${index}].id`));
   state.annualCommitments.forEach((item, index) => requireUuid(item.id, `annualCommitments[${index}].id`));
   state.scheduledExpenses.forEach((item, index) => requireUuid(item.id, `scheduledExpenses[${index}].id`));
-  state.transactions.forEach((item, index) => requireUuid(item.id, `transactions[${index}].id`));
+  state.transactions.forEach((item, index) => {
+    requireUuid(item.id, `transactions[${index}].id`);
+    // A malformed label is malformed data, judged like every other identifier here; an
+    // identifier that is merely unknown is a different case, repaired by
+    // clearUnknownMemberAttribution.
+    if (item.memberId !== undefined) requireUuid(item.memberId, `transactions[${index}].memberId`);
+  });
 }
 
 function requireSafeMinor(value: number, label: string, allowNegative = false): void {
@@ -131,6 +150,17 @@ function requireSafeMinor(value: number, label: string, allowNegative = false): 
 function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
   const state = requireRecord(value, "Бюджет");
   requireString(state.activeBudgetId, "activeBudgetId", true, BACKUP_LIMITS.idLength);
+
+  // Absent in every copy written before members existed, and such a copy stays valid.
+  if (state.members !== undefined) {
+    requireArray(state.members, "members", BACKUP_LIMITS.members).forEach((item, index) => {
+      const member = requireRecord(item, `members[${index}]`);
+      requireString(member.id, `members[${index}].id`, true, BACKUP_LIMITS.idLength);
+      requireString(member.name, `members[${index}].name`, false, BACKUP_LIMITS.nameLength);
+      requireEnum(member.role, ["owner", "member"], `members[${index}].role`);
+      requireBoolean(member.active, `members[${index}].active`);
+    });
+  }
 
   requireArray(state.accounts, "accounts", BACKUP_LIMITS.accounts).forEach((item, index) => {
     const account = requireRecord(item, `accounts[${index}]`);
@@ -195,6 +225,9 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireEnum(transaction.status, ["posted", "pending", "draft"], `transactions[${index}].status`);
     const kind = requireEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transactions[${index}].kind`);
     requireNumber(transaction.amountMinor, `transactions[${index}].amountMinor`);
+    if (transaction.memberId !== undefined) {
+      requireString(transaction.memberId, `transactions[${index}].memberId`, true, BACKUP_LIMITS.idLength);
+    }
     if (kind === "income" || kind === "expense" || kind === "refund") {
       requireString(transaction.accountId, `transactions[${index}].accountId`, true, BACKUP_LIMITS.idLength);
     }
@@ -295,12 +328,44 @@ export function normalizeBudgetState(value: LegacyBudgetState): BudgetState {
   };
 }
 
-/** Structural validation followed by all domain calculations that enforce model invariants. */
-export function prepareBudgetState(value: unknown): BudgetState {
+/**
+ * Clears an attribution whose participant the copy does not carry, and says so out loud.
+ *
+ * The restored state has to be one the domain accepts, and `calculateMemberExpenses` refuses a
+ * transaction whose `memberId` names nobody. The answer is the one the sync journal already
+ * gives: rejecting the operation would quietly take every purchase attributed to a deleted
+ * person out of the family's budget, so the operation stays to the kopeck and only the label
+ * goes. Nothing else in the state is touched — no calculation reads a `memberId`, so no figure
+ * moves because a label was dropped — and every clearing is reported, because nothing may
+ * disappear from a restored copy in silence.
+ */
+function clearUnknownMemberAttribution(state: BudgetState, report?: BackupRepairReporter): BudgetState {
+  const known = new Set((state.members ?? []).map((member) => member.id));
+  let cleared = false;
+  // Read first, copied only where there is something to clear: almost no transaction needs it.
+  const transactions = state.transactions.map((transaction): Transaction => {
+    const memberId = transaction.memberId;
+    if (memberId === undefined || known.has(memberId)) return transaction;
+    const { memberId: _unknown, ...unlabelled } = transaction;
+    cleared = true;
+    report?.({ kind: "unknown_member_attribution", transactionId: transaction.id, memberId });
+    return unlabelled;
+  });
+  return cleared ? { ...state, transactions } : state;
+}
+
+/**
+ * Structural validation followed by all domain calculations that enforce model invariants.
+ *
+ * Returns the state to store: identical to the input except for attributions cleared by
+ * {@link clearUnknownMemberAttribution}, each of them passed to `report`.
+ */
+export function prepareBudgetState(value: unknown, report?: BackupRepairReporter): BudgetState {
   requireBaseShape(value);
-  const state = normalizeBudgetState(value);
-  requirePlanningShape(state);
-  validateBudgetStateUuids(state);
+  const normalized = normalizeBudgetState(value);
+  requirePlanningShape(normalized);
+  validateBudgetStateUuids(normalized);
+  const state = clearUnknownMemberAttribution(normalized, report);
 
   const activeBudget = state.budgets.find((budget) => budget.id === state.activeBudgetId);
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");
@@ -311,14 +376,22 @@ export function prepareBudgetState(value: unknown): BudgetState {
     activeBudget.startDate.slice(0, 7),
     RENDERABLE_PLANNING_HORIZON_MONTHS,
   );
+  // The split by participant is a calculation of its own, so it is the only place where a
+  // member's own fields are enforced by the domain; a copy that would crash it never lands.
+  calculateMemberExpenses(state);
   return state;
 }
 
-export function parseAndValidateBudgetBackup(text: string): BudgetState {
-  return new ValidatedBackupCodec(prepareBudgetState).parse(text);
+export function parseAndValidateBudgetBackup(text: string, report?: BackupRepairReporter): BudgetState {
+  return new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, report)).parse(text);
 }
 
-/** Serializes first and records metadata only when the complete backup is valid. */
+/**
+ * Serializes first and records metadata only when the complete backup is valid.
+ *
+ * The file carries the state as {@link prepareBudgetState} returns it, so an attribution that
+ * names nobody is written out cleared rather than baked into the copy.
+ */
 export async function createBudgetBackup(
   state: BudgetState,
   persistLastSuccessfulBackup: (createdAt: string) => Promise<void>,
@@ -337,11 +410,12 @@ export async function restoreBudgetBackup(
   file: BackupFile,
   save: (state: BudgetState) => Promise<void>,
   publish: (state: BudgetState) => void,
+  report?: BackupRepairReporter,
 ): Promise<BudgetState> {
   if (file.size > MAX_BACKUP_FILE_BYTES) {
     throw new Error("Резервная копия больше допустимых 5 МБ.");
   }
-  const next = parseAndValidateBudgetBackup(await file.text());
+  const next = parseAndValidateBudgetBackup(await file.text(), report);
   await save(next);
   publish(next);
   return next;

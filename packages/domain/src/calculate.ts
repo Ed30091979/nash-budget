@@ -506,12 +506,29 @@ function expenseShare(
  * like. Counts the same operations as `calculateBudget`: posted expenses and refunds inside
  * the budget window, so `attributedMinor` plus `unattributed.actualMinor` is exactly
  * `BudgetMetrics.expensesMinor`.
+ *
+ * Validates every transaction the way `calculateBudget` validates it — the same references,
+ * plus the label — and validates all of them, whatever their status and whichever side of the
+ * budget window they fall on. Two reasons, and neither is tidiness. A metric built on a state
+ * the main calculation rejects is a metric compared against a figure that does not exist, so
+ * the invariant `attributedMinor + unattributed.actualMinor === expensesMinor` would be
+ * checked against nothing. And a label checked only on the operations that happen to be
+ * counted lets a dangling one sit in a draft, in a transfer or in last month's expense until
+ * the day it is posted or the window moves — a state that is valid for months and then is not,
+ * without anybody having touched the label. The sync journal already sweeps every transaction
+ * it holds, with no regard for status or window (`clearUnknownAttribution`); this makes the
+ * domain say the same thing from its own side, and strictly: the journal repairs a dangling
+ * label and reports it, the domain never sees one and never silently drops one.
  */
 export function calculateMemberExpenses(
   state: BudgetState,
   budgetId: string = state.activeBudgetId,
 ): MemberExpenseBreakdown {
+  const accounts = indexById(state.accounts, "accounts");
+  const categories = indexById(state.categories, "categories");
   const budgets = indexById(state.budgets, "budgets");
+  const goals = indexById(state.goals, "goals");
+  const transactions = indexById(state.transactions, "transactions");
   const budget = requireEntity(budgets, budgetId, "calculateMemberExpenses");
   assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
   assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
@@ -519,7 +536,6 @@ export function calculateMemberExpenses(
   const declared = state.members ?? [];
   const members = indexById(declared, "members");
   for (const member of declared) validateMember(member);
-  indexById(state.transactions, "transactions");
 
   const expenseByMember = new Map<MemberId, MinorUnits>();
   const refundByMember = new Map<MemberId, MinorUnits>();
@@ -537,12 +553,16 @@ export function calculateMemberExpenses(
   let refundsMinor = 0;
 
   for (const transaction of state.transactions) {
-    assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
-    assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
-    assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
+    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+    // The label is a reference like any other and is checked here, before the status and
+    // window filter, so no dangling one can hide in an operation this budget does not count.
+    const memberId = transaction.memberId;
+    if (memberId !== undefined) {
+      assertStableId(memberId, `transaction ${transaction.id} memberId`);
+      requireEntity(members, memberId, `transaction ${transaction.id} memberId`);
+    }
     if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
     if (transaction.kind !== "expense" && transaction.kind !== "refund") continue;
-    assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
 
     const isRefund = transaction.kind === "refund";
     if (isRefund) {
@@ -551,7 +571,6 @@ export function calculateMemberExpenses(
       grossExpensesMinor = addMinor(grossExpensesMinor, transaction.amountMinor, "grossExpensesMinor");
     }
 
-    const memberId = transaction.memberId;
     if (memberId === undefined) {
       if (isRefund) {
         unattributedRefundMinor = addMinor(unattributedRefundMinor, transaction.amountMinor, "unattributed refundMinor");
@@ -562,8 +581,6 @@ export function calculateMemberExpenses(
       continue;
     }
 
-    assertStableId(memberId, `transaction ${transaction.id} memberId`);
-    requireEntity(members, memberId, `transaction ${transaction.id} memberId`);
     const bucket = isRefund ? refundByMember : expenseByMember;
     const label = isRefund ? "member refundMinor" : "member expenseMinor";
     bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, transaction.amountMinor, label));

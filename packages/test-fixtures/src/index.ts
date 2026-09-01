@@ -75,7 +75,7 @@ interface CanonicalTransaction {
 }
 
 export interface PlanningFixture {
-  readonly schemaVersion: "1.0.0";
+  readonly schemaVersion: "1.1.0";
   readonly fixtureId: "G-002";
   readonly title: string;
   readonly startMonth: string;

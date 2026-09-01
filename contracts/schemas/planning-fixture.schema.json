@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:family-budget:contracts:planning-fixture:1.0.0",
+  "$id": "urn:family-budget:contracts:planning-fixture:1.1.0",
   "title": "Family budget planning golden fixture",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "fixtureId", "title", "startMonth", "horizonMonths", "minorUnit", "state", "expected"],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
+    "schemaVersion": { "const": "1.1.0" },
     "fixtureId": { "const": "G-002" },
     "title": { "type": "string", "minLength": 1, "maxLength": 200 },
     "startMonth": { "$ref": "#/$defs/month" },

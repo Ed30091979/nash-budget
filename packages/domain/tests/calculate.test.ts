@@ -875,6 +875,85 @@ describe("calculateMemberExpenses", () => {
     expect(() => calculateMemberExpenses(base, "missing")).toThrow(/calculateMemberExpenses references unknown id missing/);
   });
 
+  it("checks the label on every transaction, not only on the ones this budget counts", () => {
+    const base = makeMemberBudget();
+    // A transfer and a goal contribution need a second account, so the state carries one.
+    const withOperation = (transaction: Transaction): BudgetState => ({
+      ...base,
+      accounts: [
+        ...base.accounts,
+        { id: "savings", name: "Savings", type: "savings", currency: "RUB", openingBalanceMinor: 0, active: true },
+      ],
+      goals: [{ id: "goal", name: "Подушка", linkedAccountId: "savings", targetMinor: 5_000_000, openingContributedMinor: 0, plannedContributionMinor: 0, status: "active" }],
+      transactions: [...base.transactions, transaction],
+    });
+    // None of these five is a posted expense or refund inside July, so none of them moves a
+    // kopeck of the breakdown — and every one of them still has to have its label checked.
+    const unseen: readonly Transaction[] = [
+      { id: "t-8", occurredOn: "2026-07-08", status: "posted", kind: "income", amountMinor: 1_000, accountId: "account", memberId: "ghost" },
+      { id: "t-8", occurredOn: "2026-07-08", status: "posted", kind: "transfer", amountMinor: 1_000, fromAccountId: "account", toAccountId: "savings", memberId: "ghost" },
+      { id: "t-8", occurredOn: "2026-07-08", status: "posted", kind: "goal_contribution", amountMinor: 1_000, fromAccountId: "account", toAccountId: "savings", goalId: "goal", memberId: "ghost" },
+      { id: "t-8", occurredOn: "2026-07-08", status: "draft", kind: "expense", amountMinor: 1_000, accountId: "account", categoryId: "food", memberId: "ghost" },
+      { id: "t-8", occurredOn: "2026-09-08", status: "posted", kind: "expense", amountMinor: 1_000, accountId: "account", categoryId: "food", memberId: "ghost" },
+    ];
+
+    for (const transaction of unseen) {
+      const state = withOperation(transaction);
+      expect(() => calculateBudget(state)).not.toThrow();
+      expect(() => calculateMemberExpenses(state)).toThrow(/transaction t-8 memberId references unknown id ghost/);
+      // The same operation with a declared label is accepted and still changes nothing.
+      const { memberId: _ghost, ...plain } = transaction;
+      const labelled = withOperation({ ...transaction, memberId: "member-a" } as Transaction);
+      expect(calculateMemberExpenses(labelled)).toEqual(calculateMemberExpenses(withOperation(plain as Transaction)));
+    }
+
+    expect(() => calculateMemberExpenses(withOperation({
+      id: "t-8", occurredOn: "2026-07-08", status: "pending", kind: "expense", amountMinor: 1_000, accountId: "account", categoryId: "food", memberId: "   ",
+    }))).toThrow(/transaction t-8 memberId must have a non-empty stable id/);
+  });
+
+  it("rejects the transaction references the main calculation rejects, instead of measuring them", () => {
+    const base = makeMemberBudget();
+    const broken: BudgetState = {
+      ...base,
+      transactions: [
+        { id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_000_000, accountId: "ghost-account", categoryId: "food", memberId: "member-a" },
+      ],
+    };
+    const income: BudgetState = {
+      ...base,
+      transactions: [
+        { id: "t-1", occurredOn: "2026-07-02", status: "posted", kind: "expense", amountMinor: 1_000_000, accountId: "account", categoryId: "salary", memberId: "member-a" },
+      ],
+    };
+
+    expect(() => calculateBudget(broken)).toThrow(/transaction t-1 references unknown id ghost-account/);
+    expect(() => calculateMemberExpenses(broken)).toThrow(/transaction t-1 references unknown id ghost-account/);
+    expect(() => calculateBudget(income)).toThrow(/transaction t-1 must reference an expense category/);
+    expect(() => calculateMemberExpenses(income)).toThrow(/transaction t-1 must reference an expense category/);
+  });
+
+  it("reports no share when the window ends below zero, not only when it ends at zero", () => {
+    const base = makeMemberBudget();
+    // The expense is posted in June, outside the July window; only its refund lands inside,
+    // so the net expense of the budget is negative rather than merely zero.
+    const state: BudgetState = {
+      ...base,
+      transactions: [
+        { id: "t-1", occurredOn: "2026-06-30", status: "posted", kind: "expense", amountMinor: 1_000_000, accountId: "account", categoryId: "food", memberId: "member-a" },
+        { id: "t-2", occurredOn: "2026-07-03", status: "posted", kind: "refund", amountMinor: 1_000_000, accountId: "account", categoryId: "food", originalTransactionId: "t-1", memberId: "member-b" },
+      ],
+    };
+    const breakdown = calculateMemberExpenses(state);
+
+    expect(breakdown.expensesMinor).toBe(-1_000_000);
+    expect(breakdown.expensesMinor).toBe(calculateBudget(state).expensesMinor);
+    expect(breakdown.byMember["member-a"]).toEqual({ memberId: "member-a", expenseMinor: 0, refundMinor: 0, actualMinor: 0, transactionCount: 0, share: null });
+    expect(breakdown.byMember["member-b"]).toEqual({ memberId: "member-b", expenseMinor: 0, refundMinor: 1_000_000, actualMinor: -1_000_000, transactionCount: 1, share: null });
+    expect(breakdown.unattributed.share).toBeNull();
+    expect(breakdown.members.every((item) => item.share === null)).toBe(true);
+  });
+
   it("keeps special member IDs as own keys on a null-prototype record", () => {
     const base = makeMemberBudget();
     const breakdown = calculateMemberExpenses({

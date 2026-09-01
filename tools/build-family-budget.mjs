@@ -108,15 +108,25 @@ const fixturePath = path.join(projectDir, "contracts", "fixtures", "g-002.json")
 await assertSafeFileTarget(outputPath, outputDir);
 await assertSafeFileTarget(inspectionPath, outputDir);
 
+// The contract is Semantic Versioning (contracts/README.md), so this consumer pins the major
+// and accepts every compatible minor: adding an optional field to the schema is exactly the
+// change that must not stop the build, while an unknown major must stop it before a single
+// figure is read. Equality here is what kept two different fixtures under one version number.
+const SUPPORTED_SCHEMA_MAJOR = 1;
+function schemaMajor(value) {
+  const parsed = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(String(value));
+  return parsed ? Number(parsed[1]) : null;
+}
+
 const fixture = JSON.parse(await fs.readFile(fixturePath, "utf8"));
 if (
   fixture?.fixtureId !== "G-002"
-  || fixture?.schemaVersion !== "1.0.0"
+  || schemaMajor(fixture?.schemaVersion) !== SUPPORTED_SCHEMA_MAJOR
   || fixture?.horizonMonths !== 24
   || fixture?.minorUnit?.currency !== "RUB"
   || !Number.isInteger(fixture?.minorUnit?.exponent)
 ) {
-  throw new Error("Canonical G-002 fixture has an unexpected contract");
+  throw new Error(`Canonical G-002 fixture has an unexpected contract: ${String(fixture?.fixtureId)} schema ${String(fixture?.schemaVersion)}, expected G-002 schema ${SUPPORTED_SCHEMA_MAJOR}.x.y`);
 }
 
 const state = fixture.state;

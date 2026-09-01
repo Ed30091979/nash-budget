@@ -1,7 +1,10 @@
 import {
   calculateAnnualPlan,
+  calculateMemberExpenses,
   makePlanningSeed,
   type BudgetState,
+  type Member,
+  type Transaction,
 } from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
 import { describe, expect, it, vi } from "vitest";
@@ -448,5 +451,200 @@ describe("экспорт бюджета", () => {
 
     expect(persist).toHaveBeenCalledExactlyOnceWith(exactCreatedAt);
     expect(storedCreatedAt).toBe(previousCreatedAt);
+  });
+});
+
+const OWNER: Member = { id: "b1111111-1111-4111-8111-111111111111", name: "Аня", role: "owner", active: true };
+const PARTNER: Member = { id: "b2222222-2222-4222-8222-222222222222", name: "Пётр", role: "member", active: false };
+const DELETED_MEMBER_ID = "b3333333-3333-4333-8333-333333333333";
+
+function withMembers(state: BudgetState, members: readonly unknown[]): unknown {
+  return { ...state, members };
+}
+
+/** A posted expense inside the active budget window: the one the split by participant counts. */
+function countedExpense(state: BudgetState): Transaction {
+  const budget = state.budgets.find((item) => item.id === state.activeBudgetId)!;
+  const found = state.transactions.find((transaction) => (
+    transaction.kind === "expense"
+    && transaction.status === "posted"
+    && transaction.occurredOn >= budget.startDate
+    && transaction.occurredOn <= budget.endDate
+  ));
+  if (!found) throw new Error("Test fixture posted expense is missing.");
+  return found;
+}
+
+function withAttribution(state: unknown, memberId: string): unknown {
+  const budget = state as BudgetState;
+  const target = countedExpense(budget);
+  return {
+    ...budget,
+    transactions: budget.transactions.map((transaction) => (
+      transaction.id === target.id ? { ...transaction, memberId } : transaction
+    )),
+  };
+}
+
+describe("участники в резервной копии", () => {
+  it("восстанавливает копию без участников без единой ошибки и без выдуманной коллекции", () => {
+    const legacy = makePlanningSeed();
+
+    const restored = prepareBudgetState(legacy);
+
+    expect(restored).toEqual(legacy);
+    expect(restored.members).toBeUndefined();
+    expect("members" in restored).toBe(false);
+    const breakdown = calculateMemberExpenses(restored);
+    expect(breakdown.members).toEqual([]);
+    expect(breakdown.attributedMinor).toBe(0);
+    expect(breakdown.unattributed.actualMinor).toBe(breakdown.expensesMinor);
+  });
+
+  it("сохраняет участников и метку операции при round-trip", async () => {
+    const labelled = withAttribution(withMembers(makePlanningSeed(), [OWNER, PARTNER]), OWNER.id);
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(labelled));
+
+    expect(restored).toEqual(labelled);
+    expect(restored.members).toEqual([OWNER, PARTNER]);
+    expect(calculateMemberExpenses(restored).byMember[OWNER.id]!.transactionCount).toBe(1);
+    await expect(restoreBudgetBackup(backupFile(labelled), save, publish)).resolves.toEqual(labelled);
+    expect(save).toHaveBeenCalledExactlyOnceWith(labelled);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(labelled);
+  });
+
+  it.each([
+    ["роль вне домена", [{ ...OWNER, role: "ГЛАВНЫЙ" }], /members\[0\]\.role: недопустимое значение/],
+    ["признак активности строкой", [{ ...OWNER, active: "yes" }], /members\[0\]\.active: ожидалось логическое значение/],
+    ["идентификатор не UUID", [{ ...OWNER, id: "member-1" }], /members\[0\]\.id: некорректный UUID/],
+    ["пустой идентификатор", [{ ...OWNER, id: "" }], /members\[0\]\.id: ожидалась непустая строка/],
+    ["имя не строка", [{ ...OWNER, name: 42 }], /members\[0\]\.name: ожидалась строка/],
+    ["имя длиннее допустимого", [{ ...OWNER, name: "я".repeat(BACKUP_LIMITS.nameLength + 1) }], /members\[0\]\.name: строка длиннее/],
+    ["участник не объект", ["Аня"], /members\[0\]: ожидался объект/],
+    ["участники не список", null, /members: ожидался список/],
+  ])("отклоняет копию: %s — до save/publish", async (_name, members, expected) => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = withMembers(makePlanningSeed(), members as readonly unknown[]);
+
+    expect(() => prepareBudgetState(malformed)).toThrow(expected);
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(expected);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет не-UUID метку участника у операции", async () => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = withAttribution(withMembers(makePlanningSeed(), [{ ...OWNER, id: "member-1" }]), "member-1");
+
+    expect(() => prepareBudgetState(malformed)).toThrow(/некорректный UUID/);
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(/некорректный UUID/);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("ограничивает число участников наравне с прочими коллекциями", async () => {
+    const excess = Array.from({ length: BACKUP_LIMITS.members + 1 }, (_, index) => ({
+      ...OWNER,
+      id: `b0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      // Если лимит не сработает первым, проверка формы упадёт с другой ошибкой.
+      role: "ГЛАВНЫЙ",
+    }));
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const file = backupFile(withMembers(makePlanningSeed(), excess));
+
+    expect(file.size).toBeLessThan(MAX_BACKUP_FILE_BYTES);
+    await expect(restoreBudgetBackup(file, save, publish)).rejects.toThrow(
+      `members: допускается не более ${BACKUP_LIMITS.members} элементов`,
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет двух участников с одним идентификатором", () => {
+    const duplicate = withMembers(makePlanningSeed(), [OWNER, { ...PARTNER, id: OWNER.id }]);
+
+    expect(() => prepareBudgetState(duplicate)).toThrow(/members contains duplicate id/);
+  });
+
+  it("снимает метку на несуществующего участника, не трогая ни операцию, ни суммы", async () => {
+    const seed = makePlanningSeed();
+    const labelled = withAttribution(withMembers(seed, [OWNER]), DELETED_MEMBER_ID);
+    const target = countedExpense(seed);
+    const repairs: unknown[] = [];
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    const restored = await restoreBudgetBackup(
+      backupFile(labelled),
+      save,
+      publish,
+      (repair) => repairs.push(repair),
+    );
+
+    expect(repairs).toEqual([
+      { kind: "unknown_member_attribution", transactionId: target.id, memberId: DELETED_MEMBER_ID },
+    ]);
+    expect(restored.transactions).toHaveLength(seed.transactions.length);
+    expect(restored.transactions.find((item) => item.id === target.id)).toEqual(target);
+    expect(restored.transactions.find((item) => item.id === target.id)?.memberId).toBeUndefined();
+    expect(restored.members).toEqual([OWNER]);
+    expect(save).toHaveBeenCalledExactlyOnceWith(restored);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(restored);
+
+    const before = calculateMemberExpenses(seed);
+    const after = calculateMemberExpenses(restored);
+    expect(after.expensesMinor).toBe(before.expensesMinor);
+    expect(after.attributedMinor).toBe(0);
+    expect(after.unattributed.actualMinor).toBe(before.unattributed.actualMinor);
+  });
+
+  it("снимает метку и когда коллекции участников в копии нет вовсе", () => {
+    const seed = makePlanningSeed();
+    const target = countedExpense(seed);
+    const repairs: unknown[] = [];
+
+    const restored = prepareBudgetState(
+      withAttribution(seed, DELETED_MEMBER_ID),
+      (repair) => repairs.push(repair),
+    );
+
+    expect(repairs).toHaveLength(1);
+    expect(restored).toEqual(seed);
+    expect(() => calculateMemberExpenses(restored)).not.toThrow();
+    expect(restored.transactions.find((item) => item.id === target.id)).toEqual(target);
+  });
+
+  it("не даёт создать копию из состояния, которое уронило бы разбивку по участникам", async () => {
+    const persist = vi.fn(async (_createdAt: string) => undefined);
+    const broken = withAttribution(
+      withMembers(makePlanningSeed(), [{ ...OWNER, id: "member-1", role: "ГЛАВНЫЙ", active: "yes" }]),
+      DELETED_MEMBER_ID,
+    ) as BudgetState;
+
+    await expect(
+      createBudgetBackup(broken, persist, { createdAt: "2026-07-17T12:00:00.000Z" }),
+    ).rejects.toThrow(/members\[0\]\.role: недопустимое значение/);
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("не сохраняет метку на несуществующего участника в созданной копии", async () => {
+    const seed = makePlanningSeed();
+    const persist = vi.fn(async (_createdAt: string) => undefined);
+    const labelled = withAttribution(withMembers(seed, [OWNER]), DELETED_MEMBER_ID) as BudgetState;
+
+    const created = await createBudgetBackup(labelled, persist, { createdAt: "2026-07-17T12:00:00.000Z" });
+    const restored = parseAndValidateBudgetBackup(created.text);
+
+    expect(created.text).not.toContain(DELETED_MEMBER_ID);
+    expect(restored.transactions).toEqual(seed.transactions);
+    expect(() => calculateMemberExpenses(restored)).not.toThrow();
   });
 });

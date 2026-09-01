@@ -432,11 +432,16 @@ export default function App() {
               setLastSuccessfulBackup(createdAt);
             }}
             onRestoreBackup={async (file) => {
+              let clearedLabels = 0;
               await restoreBudgetBackup(
                 file,
                 (restored) => budgetSave.apply(() => restored).then(() => undefined),
                 () => undefined,
+                () => { clearedLabels += 1; },
               );
+              if (clearedLabels > 0) {
+                setMessage(`Снято меток участника: ${clearedLabels}. Такого участника в копии нет; сами операции и все суммы восстановлены без изменений.`);
+              }
             }}
             onPersistClear={() => repository.clear()}
             onPublishEmpty={() => {
