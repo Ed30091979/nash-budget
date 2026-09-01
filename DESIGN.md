@@ -78,6 +78,15 @@ font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Robot
 | `body-strong` | 15 / 22 | 600 | 0 |
 | `caption` | 13 / 18 | 400 | 0 |
 | `label` — капс-метка | 11 / 14 | 600 | 0.08em |
+| `code` — код приглашения, отпечаток ключа | по ступени: 20 / 26 либо 17 / 23 | 600 | 0.08em |
+
+Роль `code` — единственное исключение из системного стека, и она закрытая: код приглашения и отпечаток ключа. Оба диктуют голосом и сверяют на слух, поэтому ноль обязан отличаться от «O», а единица от «I» и «l»:
+
+```
+font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+```
+
+Больше моноширинного шрифта в интерфейсе нет: суммы набираются системным стеком с `tabular-nums`, и этого им достаточно.
 
 Обязательно: `font-variant-numeric: tabular-nums` на всех числах, `-webkit-text-size-adjust: 100%`, `overflow-wrap: anywhere` на пользовательских строках (названия категорий), `text-wrap: balance` на заголовках.
 

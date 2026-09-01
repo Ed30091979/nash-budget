@@ -480,7 +480,7 @@ export default function App() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const networkStatus = networkStatusPresentation(nativeRuntime, online);
-  const syncIndicator = syncIndicatorPresentation(family.status);
+  const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
   // 3.4 and 5.4.1: the one loud signal of this system. It is not a toast, it has no close button
   // and no timer, and it follows the person onto whichever screen they are on — the family screen
   // renders its own copy, so this one steps aside there.
@@ -581,6 +581,7 @@ export default function App() {
             onCreateBackup={createBackup}
             invite={family.invite}
             status={family.status}
+            syncRound={family.syncRound}
             integrity={family.integrity}
             now={Date.now()}
             busy={family.busy}

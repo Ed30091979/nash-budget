@@ -11,7 +11,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { startVisibilityAwarePolling, type VisibilityAwarePoll } from "./controller";
+import { SyncClientError, SyncServerError } from "@family-budget/sync-client";
+
+import { runSyncRound, startVisibilityAwarePolling, type VisibilityAwarePoll } from "./controller";
 
 function harness(startsHidden = false) {
   let hidden = startsHidden;
@@ -135,6 +137,51 @@ describe("опрос семьи и видимость вкладки", () => {
   });
 });
 
+describe("исход круга синхронизации не пропадает", () => {
+  const engine = (behaviour: () => Promise<{ readonly pull: { readonly applied: number } }>) => ({
+    sync: behaviour,
+  });
+
+  it("удавшийся круг отдаёт «ok» и число применённых операций", async () => {
+    await expect(runSyncRound(engine(async () => ({ pull: { applied: 3 } })))).resolves.toEqual({
+      applied: 3,
+      outcome: "ok",
+    });
+  });
+
+  it("недоступный сервер — «unreachable», и приложение остаётся рабочим", async () => {
+    await expect(
+      runSyncRound(
+        engine(async () => {
+          throw new SyncClientError("transport_failed", "the sync server could not be reached");
+        }),
+      ),
+    ).resolves.toEqual({ applied: 0, outcome: "unreachable" });
+  });
+
+  it("умерший вход и отозванное устройство — «refused»: само это не пройдёт", async () => {
+    for (const code of ["unauthorized", "device_revoked"] as const) {
+      await expect(
+        runSyncRound(
+          engine(async () => {
+            throw new SyncServerError(401, code);
+          }),
+        ),
+      ).resolves.toEqual({ applied: 0, outcome: "refused" });
+    }
+  });
+
+  it("круг не бросает наружу ничего: отказ — это значение", async () => {
+    await expect(
+      runSyncRound(
+        engine(() => {
+          throw new Error("что угодно");
+        }),
+      ),
+    ).resolves.toEqual({ applied: 0, outcome: "refused" });
+  });
+});
+
 describe("цикл синхронизации подключён к видимости, а не к голому интервалу", () => {
   const source = readFileSync(new URL("./controller.ts", import.meta.url), "utf8");
 
@@ -148,5 +195,14 @@ describe("цикл синхронизации подключён к видимо
     expect(source.match(/window\.setInterval\(/gu)).toHaveLength(1);
     expect(source).toContain("setInterval: (callback, ms) => window.setInterval(callback, ms),");
     expect(source).toContain("timer = poll.setInterval(() => poll.run(), poll.intervalMs);");
+  });
+
+  it("каждый круг записывает свой исход, и пустых «поймали и забыли» в файле нет", () => {
+    // Оба места, где идёт круг, — опрос и отправка после записи — идут через `runSyncRound`,
+    // и оба кладут исход в состояние. Иначе индикатор снова говорил бы «синхронизировано»
+    // при лежащем сервере.
+    expect(source.match(/runSyncRound\(/gu)).toHaveLength(3);
+    expect(source.match(/setSyncRound\(/gu)).toHaveLength(3);
+    expect(source).not.toMatch(/await engine\.sync\(\);\s*\n\s*\} catch \{/u);
   });
 });

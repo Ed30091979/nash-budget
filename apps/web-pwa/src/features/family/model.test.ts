@@ -1,5 +1,13 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
+
 import { makeSeedBudget, type BudgetState, type Transaction } from "@family-budget/domain";
-import type { SyncStatusReport, SyncStop } from "@family-budget/sync-client";
+import {
+  SyncClientError,
+  SyncServerError,
+  type SyncStatusReport,
+  type SyncStop,
+} from "@family-budget/sync-client";
 import type { JournalIntegrity } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
@@ -8,7 +16,9 @@ import {
   MEMBER_FILTER_ALL,
   MEMBER_FILTER_NONE,
   SYNC_INDICATOR_STATES,
+  SYNC_ROUND_OUTCOMES,
   UNATTRIBUTED_AUTHOR,
+  classifySyncFailure,
   filterTransactionsByMember,
   formatInviteCode,
   formatInviteExpiry,
@@ -49,25 +59,76 @@ function stop(overrides: Partial<SyncStop> = {}): SyncStop {
 }
 
 describe("индикатор состояния синхронизации", () => {
-  it("знает ровно четыре состояния и берёт их только из отчёта", () => {
+  it("знает ровно четыре состояния, и каждое из них достижимо", () => {
     expect([...SYNC_INDICATOR_STATES]).toEqual(["local", "synced", "waiting", "error"]);
 
-    expect(syncIndicatorPresentation(null)).toEqual({
+    expect(syncIndicatorPresentation(null, "ok")).toEqual({
       state: "local",
       text: "локально",
       ariaLabel: "Состояние синхронизации: локально",
       className: "sync-badge local",
     });
-    expect(syncIndicatorPresentation(report()).state).toBe("synced");
-    expect(syncIndicatorPresentation(report({ queued: 3 })).state).toBe("waiting");
-    expect(syncIndicatorPresentation(report({ stop: stop() })).state).toBe("error");
+    expect(syncIndicatorPresentation(report(), "ok")).toEqual({
+      state: "synced",
+      text: "синхронизировано",
+      ariaLabel: "Состояние синхронизации: синхронизировано",
+      className: "sync-badge synced",
+    });
+    expect(syncIndicatorPresentation(report({ queued: 3 }), "ok")).toEqual({
+      state: "waiting",
+      text: "ожидает сети",
+      ariaLabel: "Состояние синхронизации: ожидает сети",
+      className: "sync-badge waiting",
+    });
+    expect(syncIndicatorPresentation(report({ stop: stop() }), "ok")).toEqual({
+      state: "error",
+      text: "ошибка синхронизации",
+      ariaLabel: "Состояние синхронизации: ошибка синхронизации",
+      className: "sync-badge error",
+    });
   });
 
-  it("отказ важнее очереди: остановленный курсор не показывается как ожидание сети", () => {
-    const presentation = syncIndicatorPresentation(report({ queued: 5, stop: stop() }));
-    expect(presentation.state).toBe("error");
-    expect(presentation.text).toBe("ошибка синхронизации");
-    expect(presentation.ariaLabel).toBe("Состояние синхронизации: ошибка синхронизации");
+  it("упавший круг не показывается как «синхронизировано» — даже когда отчёт молчит", () => {
+    // Отчёт здесь ровно тот же, что у здорового устройства: круг, не дошедший до сервера,
+    // не пишет ни курсора, ни очереди, ни остановки. Раньше это и было зелёной надписью.
+    const unreachable = syncIndicatorPresentation(report(), "unreachable");
+    expect(unreachable.state).toBe("waiting");
+    expect(unreachable.text).toBe("ожидает сети");
+    expect(unreachable.ariaLabel).toBe("Состояние синхронизации: ожидает сети — сервер недоступен");
+
+    const refused = syncIndicatorPresentation(report(), "refused");
+    expect(refused.state).toBe("error");
+    expect(refused.text).toBe("ошибка синхронизации");
+    expect(refused.ariaLabel).toBe("Состояние синхронизации: ошибка синхронизации — сервер отказал");
+  });
+
+  it("отказ сервера важнее пустой очереди, а тревога — важнее отказа", () => {
+    expect(syncIndicatorPresentation(report({ queued: 5 }), "refused").state).toBe("error");
+    expect(syncIndicatorPresentation(report({ queued: 5, stop: stop() }), "unreachable").state).toBe(
+      "error",
+    );
+  });
+
+  it("без учётной записи исход круга ничего не меняет: продукт локальный и говорит это", () => {
+    for (const round of SYNC_ROUND_OUTCOMES) {
+      expect(syncIndicatorPresentation(null, round).state).toBe("local");
+      expect(syncIndicatorPresentation(null, round).ariaLabel).toBe(
+        "Состояние синхронизации: локально",
+      );
+    }
+  });
+
+  it("различает «до сервера не дошли» и «сервер отказал» по коду, а не по тексту ошибки", () => {
+    expect([...SYNC_ROUND_OUTCOMES]).toEqual(["ok", "unreachable", "refused"]);
+    expect(classifySyncFailure(new SyncClientError("transport_failed", "нет связи"))).toBe(
+      "unreachable",
+    );
+    expect(classifySyncFailure(new SyncServerError(401, "unauthorized"))).toBe("refused");
+    expect(classifySyncFailure(new SyncServerError(403, "device_revoked"))).toBe("refused");
+    expect(classifySyncFailure(new SyncClientError("epoch_conflict", "эпоха"))).toBe("refused");
+    // Что угодно иное — тоже отказ: неизвестное молчанием не считается.
+    expect(classifySyncFailure(new Error("что-то"))).toBe("refused");
+    expect(classifySyncFailure(undefined)).toBe("refused");
   });
 });
 
@@ -231,12 +292,19 @@ describe("отпечатки ключей по 5.4.1", () => {
     expect(presentation?.note).toContain("пришло от сервера");
     expect(presentation?.createsPin).toBe(true);
 
-    const repin = peerFingerprintPresentation({ state: "repin_required" }, offered);
-    expect(repin?.origin).toBe("unverified_candidate");
-    expect(repin?.createsPin).toBe(true);
-    expect(repin?.note).toContain("отозвано");
-
     expect(peerFingerprintPresentation({ state: "absent" }, undefined)).toBeNull();
+  });
+
+  it("«требуется пере-закрепление» сюда не принимается: 5.4.1 требует показать оба значения", () => {
+    // Ветка, трактовавшая это состояние как «пина нет», показывала одно новое значение — ровно
+    // то, что 5.4.1 запрещает. Состояния в приложении пока нет, и типом оно сюда не проходит:
+    // @ts-expect-error — repin_required не входит в LocalPinState
+    peerFingerprintPresentation({ state: "repin_required" }, offered);
+
+    // И самой ветки в источнике больше нет — ловушка убрана, а не спрятана за типом.
+    const source = readFileSync(new URL("./model.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("Прежнее подтверждение отозвано");
+    expect(source).not.toContain('pin.state === "repin_required"');
   });
 });
 

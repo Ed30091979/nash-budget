@@ -48,7 +48,10 @@ describe("приложение с экраном семьи", () => {
 
   it("индикатор синхронизации стоит в шапке рядом с прежним сетевым, а не вместо него", () => {
     expect(source).toContain("networkStatusPresentation(nativeRuntime, online)");
-    expect(source).toContain("syncIndicatorPresentation(family.status)");
+    // Исход последнего круга — второй аргумент, а не догадка: без него шапка говорила бы
+    // «синхронизировано» при лежащем сервере.
+    expect(source).toContain("syncIndicatorPresentation(family.status, family.syncRound)");
+    expect(source).toContain("syncRound={family.syncRound}");
     expect(source).toMatch(
       /<span className=\{networkStatus\.className\}[\s\S]{0,600}<span className=\{syncIndicator\.className\}/u,
     );
@@ -161,5 +164,17 @@ describe("таблица закреплённых отпечатков", () => {
     expect(writes).toHaveLength(2);
     expect(controller).toContain("confirmFingerprint(deviceId)");
     expect(controller).toContain("opened.senderKeyFingerprint");
+  });
+
+  it("подтверждение создаёт пин и не переписывает уже существующий", () => {
+    const controller = readFileSync(new URL("./controller.ts", import.meta.url), "utf8");
+    const confirm = controller.slice(
+      controller.indexOf("confirmFingerprint(deviceId)"),
+      controller.indexOf("},", controller.indexOf("confirmFingerprint(deviceId)")),
+    );
+    // 5.4.1: подтверждение *создаёт* пин. Кнопки для перезаписи на экране нет (`createsPin`
+    // ложно при существующем пине), но проверяет тот, кто пишет, а не тот, кто рисует.
+    expect(confirm).toContain('if (pins.has(deviceId)) throw new Error("a pin for this device already exists");');
+    expect(confirm.indexOf("pins.has(deviceId)")).toBeLessThan(confirm.indexOf("writeSyncState"));
   });
 });

@@ -16,7 +16,6 @@ import {
   createHttpTransport,
   fromBase64,
   toBase64,
-  type PinState,
   type SyncStatusReport,
   type SyncTransport,
 } from "@family-budget/sync-client";
@@ -40,7 +39,12 @@ import { restoreJournal, type JournalIntegrity } from "@family-budget/sync-proto
 import { createFamilyApi, describeFamilyError, type DeviceRecord, type FamilyApi, type MemberRecord, type MembershipSnapshot } from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
 import { budgetJournalDrafts } from "./journal";
-import { normalizeEmail } from "./model";
+import {
+  classifySyncFailure,
+  normalizeEmail,
+  type LocalPinState,
+  type SyncRoundOutcome,
+} from "./model";
 import {
   PINS_STATE_KEY,
   forgetSession,
@@ -215,10 +219,15 @@ export interface FamilyController {
   readonly members: readonly MemberRecord[];
   readonly devices: readonly DeviceRecord[];
   readonly ownFingerprint: Uint8Array | null;
-  readonly pinOf: (deviceId: string) => PinState;
+  readonly pinOf: (deviceId: string) => LocalPinState;
   readonly offeredFingerprintOf: (deviceId: string) => Uint8Array | undefined;
   readonly invite: ActiveInvite | null;
   readonly status: SyncStatusReport | null;
+  /**
+   * Исход последнего круга. Отдельно от `status` потому, что это разные источники: отчёт —
+   * записанное состояние, исход — то, чем кончилась попытка его пополнить.
+   */
+  readonly syncRound: SyncRoundOutcome;
   readonly integrity: JournalIntegrity | null;
   readonly busy: boolean;
   readonly message: string | null;
@@ -335,6 +344,37 @@ export function startVisibilityAwarePolling(poll: VisibilityAwarePoll): () => vo
   };
 }
 
+/** Ровно та часть движка, которую делает круг. Тест подставляет сюда объект в две строки. */
+export interface SyncRoundEngine {
+  sync(): Promise<{ readonly pull: { readonly applied: number } }>;
+}
+
+export interface SyncRoundResult {
+  readonly applied: number;
+  readonly outcome: SyncRoundOutcome;
+}
+
+/**
+ * Один круг синхронизации — и его исход, который никуда не пропадает.
+ *
+ * Здесь была пустая `catch`, а рядом обещание, что «отчёт ниже это покажет». Отчёт этого показать
+ * не мог: он собирается из курсора, очереди и записи об остановке, а все три пишутся только после
+ * ответа сервера. Круг, не дошедший до сервера, не менял ничего — и индикатор оставался зелёным
+ * при лежащем сервере, умершем токене обновления и отозванном устройстве.
+ *
+ * Поэтому исход возвращается значением, а не проглатывается: `unreachable` — до сервера не дошли,
+ * `refused` — сервер ответил и отказал. Приложение при любом из них остаётся полностью рабочим;
+ * молчит оно теперь только тогда, когда молчать не о чем.
+ */
+export async function runSyncRound(engine: SyncRoundEngine): Promise<SyncRoundResult> {
+  try {
+    const result = await engine.sync();
+    return { applied: result.pull.applied, outcome: "ok" };
+  } catch (failure) {
+    return { applied: 0, outcome: classifySyncFailure(failure) };
+  }
+}
+
 /**
  * Reads the pin table, tolerating anything that is not one.
  *
@@ -374,6 +414,7 @@ export function useFamily(
   const [offered, setOffered] = useState<ReadonlyMap<string, Uint8Array>>(new Map());
   const [invite, setInvite] = useState<ActiveInvite | null>(null);
   const [status, setStatus] = useState<SyncStatusReport | null>(null);
+  const [syncRound, setSyncRound] = useState<SyncRoundOutcome>("ok");
   const [integrity, setIntegrity] = useState<JournalIntegrity | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -552,11 +593,9 @@ export function useFamily(
         afterWrite: (engine) => {
           // Отправка — отдельно от записи: очередь уже переживёт перезапуск, а сеть может лежать.
           void (async () => {
-            try {
-              await engine.sync();
-            } catch {
-              // Офлайн — не ошибка сценария. Очередь ждёт связи, индикатор её показывает.
-            }
+            // Офлайн — не ошибка сценария, но и не «синхронизировано»: исход круга запоминается
+            // здесь тем же способом, что и в опросе, и индикатор показывает именно его.
+            setSyncRound((await runSyncRound(engine)).outcome);
             await refreshSyncState(engine, true);
           })();
         },
@@ -570,6 +609,7 @@ export function useFamily(
     if (!isSyncActive(serverUrl, session) || session?.familyId == null || api === null) {
       setStatus(null);
       setIntegrity(null);
+      setSyncRound("ok");
       return;
     }
     let cancelled = false;
@@ -580,15 +620,13 @@ export function useFamily(
       try {
         const engine = await engineFor();
         if (engine === null || cancelled) return;
-        let applied = 0;
-        try {
-          const result = await engine.sync();
-          applied = result.pull.applied;
-        } catch {
-          // Сервер недоступен — приложение остаётся полностью рабочим, отчёт ниже это покажет.
-        }
+        const result = await runSyncRound(engine);
         if (cancelled) return;
-        await refreshSyncState(engine, applied > 0);
+        // Исход круга — состояние, а не пустое место: без него шапка говорила бы
+        // «синхронизировано» при лежащем сервере, умершем токене и отозванном устройстве, потому
+        // что отчёт ниже собирается из записей, которых неудавшийся круг не делает.
+        setSyncRound(result.outcome);
+        await refreshSyncState(engine, result.applied > 0);
       } finally {
         running = false;
       }
@@ -940,6 +978,11 @@ export function useFamily(
        */
       confirmFingerprint(deviceId) {
         run(async () => {
+          // Пин создаётся один раз и подтверждением не переписывается: закреплённое значение
+          // сравнивают с реальностью, а перезапись превратила бы сверку в «подтвердить то, что
+          // прислал сервер». Кнопки для этого на экране нет — но проверяет тот, кто пишет, а не
+          // тот, кто рисует.
+          if (pins.has(deviceId)) throw new Error("a pin for this device already exists");
           const candidate = offered.get(deviceId);
           if (candidate === undefined) throw new Error("no candidate fingerprint for this device");
           const nextPins = new Map(pins);
@@ -949,16 +992,12 @@ export function useFamily(
           return "Отпечаток закреплён. Дальше сверка сравнивает эту запись, а не ответ сервера.";
         });
       },
-
-      dismissNotice() {
-        setMessage(null);
-      },
     }),
     [api, membership, offered, pendingEmail, pins, registerLocalMember, run, session, store],
   );
 
   const pinOf = useCallback(
-    (deviceId: string): PinState => {
+    (deviceId: string): LocalPinState => {
       const fingerprint = pins.get(deviceId);
       return fingerprint === undefined ? { state: "absent" } : { state: "pinned", fingerprint };
     },
@@ -981,6 +1020,7 @@ export function useFamily(
     offeredFingerprintOf,
     invite,
     status,
+    syncRound,
     integrity,
     busy,
     message,

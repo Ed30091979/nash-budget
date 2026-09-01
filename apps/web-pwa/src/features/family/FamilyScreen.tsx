@@ -11,9 +11,9 @@
  * to WebCrypto is a callback in {@link FamilyActions}, so the markup can be rendered and asserted
  * without either.
  */
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { PinState, SyncStatusReport } from "@family-budget/sync-client";
+import type { SyncStatusReport } from "@family-budget/sync-client";
 import type { JournalIntegrity } from "@family-budget/sync-protocol";
 
 import { activateDialogEnvironment, handleDialogKeyboard } from "../data-management/dialog-accessibility";
@@ -34,6 +34,9 @@ import {
   syncNotice,
   withheldHeadline,
   withheldRows,
+  type JoinConsequence,
+  type LocalPinState,
+  type SyncRoundOutcome,
 } from "./model";
 import type { FamilySession } from "./session";
 
@@ -57,7 +60,6 @@ export interface FamilyActions {
   revokeDevice(deviceId: string): void;
   /** 5.4.1: the person's confirmation is what *creates* the pin. Nothing else may create one. */
   confirmFingerprint(deviceId: string): void;
-  dismissNotice(): void;
 }
 
 export interface FamilyScreenProps {
@@ -69,7 +71,7 @@ export interface FamilyScreenProps {
   readonly devices: readonly DeviceRecord[];
   /** This device's own fingerprint, computed from its own public key. Never from a response. */
   readonly ownFingerprint: Uint8Array | null;
-  readonly pinOf: (deviceId: string) => PinState;
+  readonly pinOf: (deviceId: string) => LocalPinState;
   /** `SHA-256(SPKI)` as the server offered it. Used only where no pin exists (5.4). */
   readonly offeredFingerprintOf: (deviceId: string) => Uint8Array | undefined;
   /** Names for the identifiers the server list carries. They live in the budget, not on a server. */
@@ -87,6 +89,8 @@ export interface FamilyScreenProps {
   readonly onCreateBackup: () => Promise<void>;
   readonly invite: ActiveInvite | null;
   readonly status: SyncStatusReport | null;
+  /** Чем кончился последний круг синхронизации. Отчёт о нём молчит — см. `runSyncRound`. */
+  readonly syncRound: SyncRoundOutcome;
   readonly integrity: JournalIntegrity | null;
   readonly now: number;
   readonly busy: boolean;
@@ -109,6 +113,15 @@ function shortId(value: string): string {
   return value.slice(0, 8);
 }
 
+/** Вопрос, который экран задаёт перед необратимым действием, и ничего больше. */
+type Confirmation =
+  | { readonly kind: "leave" }
+  | { readonly kind: "revoke"; readonly deviceId: string }
+  | { readonly kind: "join"; readonly code: string };
+
+/** Копию делает экран «Данные»; здесь та же кнопка на месте вопроса и своя занятость. */
+type BackupState = "idle" | "running" | "done" | "failed";
+
 export function FamilyScreen(props: FamilyScreenProps) {
   const [email, setEmail] = useState(props.session?.email ?? "");
   const [loginCode, setLoginCode] = useState("");
@@ -117,25 +130,28 @@ export function FamilyScreen(props: FamilyScreenProps) {
   // remembers *which* envelope was dismissed: a stop on a different `opId` is a different fact and
   // comes back on its own.
   const [dismissedStopOpId, setDismissedStopOpId] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<
-    | { readonly kind: "leave" }
-    | { readonly kind: "revoke"; readonly deviceId: string }
-    | { readonly kind: "join"; readonly code: string }
-    | null
-  >(null);
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
   // Копию делает экран «Данные», а здесь — та же кнопка на месте вопроса, поэтому и занятость
   // своя: `props.busy` принадлежит семье и о выгрузке файла ничего не знает.
-  const [backupState, setBackupState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [backupState, setBackupState] = useState<BackupState>("idle");
   const dialogRef = useRef<HTMLElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const restoreRef = useRef<(() => void) | null>(null);
+  // Кнопка, которой диалог открыли. Без неё Esc и «Отмена» роняли фокус на тело документа, и
+  // следующий Tab начинал обход экрана сначала — от кнопки «назад», а не от того места, где
+  // человек работал. Экран «Данные» делает ровно это же своим `clearTriggerRef`.
+  const dialogTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const joinSubmitRef = useRef<HTMLButtonElement>(null);
+  // 5.4.1 начинается по кнопке тревоги, и переход к сверке — перевод фокуса, а не адрес с
+  // решёткой: якорь писал бы в историю браузера, а фокус за ним идёт не во всяком браузере.
+  const fingerprintsRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (confirming === null) return;
     restoreRef.current = activateDialogEnvironment(
       document.getElementById("root"),
       cancelRef.current,
-      null,
+      dialogTriggerRef.current,
     );
     return () => {
       restoreRef.current?.();
@@ -148,13 +164,15 @@ export function FamilyScreen(props: FamilyScreenProps) {
   // unwritable without a non-null assertion on every line.
   const session = props.session;
   const membership = props.membership;
-  const indicator = syncIndicatorPresentation(props.status);
+  const indicator = syncIndicatorPresentation(props.status, props.syncRound);
   const alarm = syncAlarm(props.status?.stop ?? null);
   const stop = props.status?.stop ?? null;
   const notice = stop !== null && stop.opId === dismissedStopOpId ? null : syncNotice(stop);
   const withheld = withheldRows(props.integrity);
   const headline = withheldHeadline(withheld);
-  const memberNameOf = new Map(props.members.map((member) => [member.memberId, member]));
+  // Не `memberNameOf`: так звался и проп рядом, и два разных обращения с одним именем стояли
+  // в трёх строках друг от друга. Здесь — запись участника, там — его имя.
+  const memberById = new Map(props.members.map((member) => [member.memberId, member]));
 
   const submitEmail = (event: FormEvent) => {
     event.preventDefault();
@@ -173,6 +191,7 @@ export function FamilyScreen(props: FamilyScreenProps) {
     const code = joinCode.trim();
     if (code.length === 0) return;
     setBackupState("idle");
+    dialogTriggerRef.current = joinSubmitRef.current;
     setConfirming({ kind: "join", code });
   };
 
@@ -190,90 +209,22 @@ export function FamilyScreen(props: FamilyScreenProps) {
       : null;
 
   const dialog = confirming === null ? null : (
-    <div className="confirmation-backdrop" role="presentation">
-      <section
-        ref={dialogRef}
-        className="confirmation-dialog"
-        role="alertdialog"
-        tabIndex={-1}
-        aria-modal="true"
-        aria-labelledby="family-confirm-title"
-        aria-describedby="family-confirm-description"
-        onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
-          if (!dialogRef.current) return;
-          handleDialogKeyboard(event, dialogRef.current, !props.busy, () => setConfirming(null));
-        }}
-      >
-        <h3 id="family-confirm-title">
-          {consequence
-            ? consequence.title
-            : confirming.kind === "leave"
-              ? "Выйти из семьи?"
-              : "Отозвать это устройство?"}
-        </h3>
-        <p id="family-confirm-description">
-          {consequence
-            ? consequence.body
-            : confirming.kind === "leave"
-              ? "Это устройство перестанет получать операции семьи. Бюджет останется на устройстве целиком — ничего не удаляется. Ключ семьи у вас останется до тех пор, пока владелец не сменит его."
-              : "Устройство потеряет доступ к серверу семьи немедленно. Ключ семьи, уже лежащий на нём, отзывом не стирается — закрывает доступ только смена ключа владельцем."}
-        </p>
-        {consequence ? (
-          <div className="dialog-aside">
-            <p>{consequence.backupLine}</p>
-            {backupState === "done" ? (
-              <p className="dialog-aside-result" role="status">
-                Копия скачана. Прежний бюджет восстанавливается из этого файла на экране «Данные».
-              </p>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={backupState === "running"}
-                  onClick={runBackup}
-                >
-                  {backupState === "running" ? "Копия готовится…" : consequence.backupActionLabel}
-                </button>
-                {backupState === "failed" ? (
-                  <p className="dialog-aside-result" role="alert">
-                    Копию сделать не удалось. Бюджет не изменён — вступление можно отложить и
-                    повторить попытку на экране «Данные».
-                  </p>
-                ) : null}
-              </>
-            )}
-          </div>
-        ) : null}
-        <div className="dialog-actions">
-          <button
-            ref={cancelRef}
-            type="button"
-            disabled={props.busy || backupState === "running"}
-            onClick={() => setConfirming(null)}
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            className={confirming.kind === "join" ? "primary-button" : "danger-button"}
-            disabled={props.busy || backupState === "running"}
-            onClick={() => {
-              if (confirming.kind === "join") props.actions.joinByCode(confirming.code);
-              else if (confirming.kind === "leave") props.actions.leaveFamily();
-              else props.actions.revokeDevice(confirming.deviceId);
-              setConfirming(null);
-            }}
-          >
-            {consequence
-              ? consequence.confirmLabel
-              : confirming.kind === "leave"
-                ? "Выйти из семьи"
-                : "Отозвать устройство"}
-          </button>
-        </div>
-      </section>
-    </div>
+    <FamilyConfirmation
+      confirming={confirming}
+      consequence={consequence}
+      busy={props.busy}
+      backupState={backupState}
+      dialogRef={dialogRef}
+      cancelRef={cancelRef}
+      onBackup={runBackup}
+      onCancel={() => setConfirming(null)}
+      onConfirm={() => {
+        if (confirming.kind === "join") props.actions.joinByCode(confirming.code);
+        else if (confirming.kind === "leave") props.actions.leaveFamily();
+        else props.actions.revokeDevice(confirming.deviceId);
+        setConfirming(null);
+      }}
+    />
   );
 
   return (
@@ -310,9 +261,16 @@ export function FamilyScreen(props: FamilyScreenProps) {
               Остановлено на записи <code>{alarm.opId}</code>, номер <b>{alarm.seq}</b>, попыток подряд{" "}
               <b>{alarm.attempts}</b>.
             </p>
-            <a className="primary-button" href="#family-fingerprints">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                fingerprintsRef.current?.focus({ preventScroll: true });
+                fingerprintsRef.current?.scrollIntoView({ block: "start" });
+              }}
+            >
               {alarm.actionLabel}
-            </a>
+            </button>
           </div>
         </section>
       ) : null}
@@ -328,10 +286,9 @@ export function FamilyScreen(props: FamilyScreenProps) {
           <button
             className="secondary-button"
             type="button"
-            onClick={() => {
-              setDismissedStopOpId(stop?.opId ?? null);
-              props.actions.dismissNotice();
-            }}
+            // Только состояние экрана: прежде здесь же гасилось `message` контроллера, то есть
+            // сообщение об успехе постороннего действия исчезало от «Понятно» на уведомлении.
+            onClick={() => setDismissedStopOpId(stop?.opId ?? null)}
           >
             Понятно
           </button>
@@ -480,7 +437,12 @@ export function FamilyScreen(props: FamilyScreenProps) {
                 />
               </div>
               <div className="family-actions">
-                <button className="primary-button" type="submit" disabled={props.busy || joinCode.trim().length === 0}>
+                <button
+                  ref={joinSubmitRef}
+                  className="primary-button"
+                  type="submit"
+                  disabled={props.busy || joinCode.trim().length === 0}
+                >
                   Вступить
                 </button>
               </div>
@@ -567,7 +529,13 @@ export function FamilyScreen(props: FamilyScreenProps) {
             </section>
           ) : null}
 
-          <section className="section-card" id="family-fingerprints" aria-labelledby="family-devices-title">
+          <section
+            ref={fingerprintsRef}
+            className="section-card"
+            id="family-fingerprints"
+            tabIndex={-1}
+            aria-labelledby="family-devices-title"
+          >
             <div className="section-title">
               <div>
                 <h2 id="family-devices-title">Устройства и отпечатки ключей</h2>
@@ -595,7 +563,7 @@ export function FamilyScreen(props: FamilyScreenProps) {
                     pin,
                     props.offeredFingerprintOf(device.deviceId),
                   );
-                  const owner = memberNameOf.get(device.memberId);
+                  const owner = memberById.get(device.memberId);
                   return (
                     <article className="device-row" key={device.deviceId}>
                       <div>
@@ -640,7 +608,10 @@ export function FamilyScreen(props: FamilyScreenProps) {
                             className="secondary-button"
                             type="button"
                             disabled={props.busy}
-                            onClick={() => setConfirming({ kind: "revoke", deviceId: device.deviceId })}
+                            onClick={(event) => {
+                              dialogTriggerRef.current = event.currentTarget;
+                              setConfirming({ kind: "revoke", deviceId: device.deviceId });
+                            }}
                           >
                             Отозвать устройство
                           </button>
@@ -668,7 +639,10 @@ export function FamilyScreen(props: FamilyScreenProps) {
                   className="danger-button"
                   type="button"
                   disabled={props.busy}
-                  onClick={() => setConfirming({ kind: "leave" })}
+                  onClick={(event) => {
+                    dialogTriggerRef.current = event.currentTarget;
+                    setConfirming({ kind: "leave" });
+                  }}
                 >
                   Выйти из семьи
                 </button>
@@ -686,6 +660,118 @@ export function FamilyScreen(props: FamilyScreenProps) {
 
       {dialog === null ? null : typeof document === "undefined" ? dialog : createPortal(dialog, document.body)}
     </section>
+  );
+}
+
+/**
+ * Вопрос перед необратимым действием — отдельным компонентом, а не куском экрана.
+ *
+ * Диалог уходит порталом в тело документа, поэтому правило `.family-screen button` до него не
+ * достаёт и цели нажатия у него свои. Отдельный компонент — это то, чем тест отрисовывает диалог
+ * без браузера и меряет эти цели по факту, а не по строке в файле стилей: именно так находка
+ * «44 pt вместо 48» и уцелела прошлый раз.
+ */
+export function FamilyConfirmation({
+  confirming,
+  consequence,
+  busy,
+  backupState,
+  dialogRef,
+  cancelRef,
+  onBackup,
+  onCancel,
+  onConfirm,
+}: {
+  readonly confirming: Confirmation;
+  readonly consequence: JoinConsequence | null;
+  readonly busy: boolean;
+  readonly backupState: BackupState;
+  readonly dialogRef: RefObject<HTMLElement | null>;
+  readonly cancelRef: RefObject<HTMLButtonElement | null>;
+  readonly onBackup: () => void;
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}) {
+  return (
+    <div className="confirmation-backdrop" role="presentation">
+      <section
+        ref={dialogRef}
+        className="confirmation-dialog"
+        role="alertdialog"
+        tabIndex={-1}
+        aria-modal="true"
+        aria-labelledby="family-confirm-title"
+        aria-describedby="family-confirm-description"
+        onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+          if (!dialogRef.current) return;
+          handleDialogKeyboard(event, dialogRef.current, !busy, onCancel);
+        }}
+      >
+        <h3 id="family-confirm-title">
+          {consequence
+            ? consequence.title
+            : confirming.kind === "leave"
+              ? "Выйти из семьи?"
+              : "Отозвать это устройство?"}
+        </h3>
+        <p id="family-confirm-description">
+          {consequence
+            ? consequence.body
+            : confirming.kind === "leave"
+              ? "Это устройство перестанет получать операции семьи. Бюджет останется на устройстве целиком — ничего не удаляется. Ключ семьи у вас останется до тех пор, пока владелец не сменит его."
+              : "Устройство потеряет доступ к серверу семьи немедленно. Ключ семьи, уже лежащий на нём, отзывом не стирается — закрывает доступ только смена ключа владельцем."}
+        </p>
+        {consequence ? (
+          <div className="dialog-aside">
+            <p>{consequence.backupLine}</p>
+            {backupState === "done" ? (
+              <p className="dialog-aside-result" role="status">
+                Копия скачана. Прежний бюджет восстанавливается из этого файла на экране «Данные».
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={backupState === "running"}
+                  onClick={onBackup}
+                >
+                  {backupState === "running" ? "Копия готовится…" : consequence.backupActionLabel}
+                </button>
+                {backupState === "failed" ? (
+                  <p className="dialog-aside-result" role="alert">
+                    Копию сделать не удалось. Бюджет не изменён — вступление можно отложить и
+                    повторить попытку на экране «Данные».
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+        <div className="dialog-actions">
+          <button
+            ref={cancelRef}
+            type="button"
+            disabled={busy || backupState === "running"}
+            onClick={onCancel}
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            className={confirming.kind === "join" ? "primary-button" : "danger-button"}
+            disabled={busy || backupState === "running"}
+            onClick={onConfirm}
+          >
+            {consequence
+              ? consequence.confirmLabel
+              : confirming.kind === "leave"
+                ? "Выйти из семьи"
+                : "Отозвать устройство"}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 

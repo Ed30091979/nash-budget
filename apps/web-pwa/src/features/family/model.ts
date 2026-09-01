@@ -10,7 +10,12 @@
  */
 import type { BudgetState, Member, MemberId, Transaction } from "@family-budget/domain";
 import { formatKeyFingerprint } from "@family-budget/sync-crypto";
-import type { PinState, SyncStatusReport, SyncStop } from "@family-budget/sync-client";
+import {
+  SyncClientError,
+  type PinState,
+  type SyncStatusReport,
+  type SyncStop,
+} from "@family-budget/sync-client";
 import type { JournalIntegrity, WithheldEntity } from "@family-budget/sync-protocol";
 
 /* ───────────────────────────── Индикатор состояния ───────────────────────────── */
@@ -18,10 +23,16 @@ import type { JournalIntegrity, WithheldEntity } from "@family-budget/sync-proto
 /**
  * The four states of the indicator, and no fifth.
  *
- * They are read out of {@link SyncStatusReport} and out of nothing else — not out of
- * `navigator.onLine`, not out of a timer. A device with a queue is "ожидает сети" whether or not
- * the browser believes it has one: what the person needs to know is that their own change has not
- * reached the family yet, and the browser's opinion about connectivity does not change that.
+ * They are read out of {@link SyncStatusReport} and out of the outcome of the last round — never
+ * out of `navigator.onLine` and never out of a timer. A device with a queue is «ожидает сети»
+ * whether or not the browser believes it has one: what the person needs to know is that their own
+ * change has not reached the family yet, and the browser's opinion about connectivity does not
+ * change that.
+ *
+ * Отчёта одного не хватает, и это выяснилось дорого: он собирается из записей, которых
+ * неудавшийся круг не делает, поэтому по нему лежащий сервер неотличим от тишины. Отсюда второй
+ * источник — и по-прежнему четыре состояния, а не пятое: «до сервера не дошли» это «ожидает
+ * сети», «сервер отказал» — «ошибка синхронизации».
  */
 export const SYNC_INDICATOR_STATES = ["local", "synced", "waiting", "error"] as const;
 export type SyncIndicatorState = (typeof SYNC_INDICATOR_STATES)[number];
@@ -41,21 +52,66 @@ const SYNC_INDICATOR_TEXT: Readonly<Record<SyncIndicatorState, string>> = {
 };
 
 /**
+ * Чем кончился последний круг синхронизации — и это отдельная величина от {@link SyncStatusReport}.
+ *
+ * Отчёт собирается из записанного состояния: курсора, очереди и записи об остановке. Ни одна из
+ * трёх не пишется, когда круг не дошёл до сервера, поэтому по отчёту лежащий сервер, умерший
+ * токен обновления и отозванное устройство выглядят ровно как тишина — то есть как
+ * «синхронизировано». Исход круга здесь для того, чтобы они так не выглядели.
+ *
+ * `unreachable` — до сервера не дошли; `refused` — сервер ответил и отказал. Разница видна
+ * человеку: первое проходит само, когда вернётся связь, второе само не пройдёт.
+ */
+export const SYNC_ROUND_OUTCOMES = ["ok", "unreachable", "refused"] as const;
+export type SyncRoundOutcome = (typeof SYNC_ROUND_OUTCOMES)[number];
+
+/**
+ * Отказ круга — в одну из двух половин, и обе берутся из кода ошибки, а не из её текста.
+ *
+ * `transport_failed` транспорт ставит там, где `fetch` не дал ответа вовсе (и там, где ответ был
+ * не JSON, — с точки зрения устройства это то же самое: договорённого ответа нет). Всё остальное
+ * — отказ, о котором сервер сказал сам, и он сам не пройдёт.
+ */
+export function classifySyncFailure(failure: unknown): Exclude<SyncRoundOutcome, "ok"> {
+  return failure instanceof SyncClientError && failure.code === "transport_failed"
+    ? "unreachable"
+    : "refused";
+}
+
+/** Причина, дописанная к ярлыку для скринридера: видимый текст остаётся его началом. */
+const SYNC_ROUND_CAUSE: Readonly<Record<Exclude<SyncRoundOutcome, "ok">, string>> = {
+  unreachable: "сервер недоступен",
+  refused: "сервер отказал",
+};
+
+/**
  * `null` is the local-only product, and it is the first branch on purpose.
  *
  * Section 9: without an account there is no synchronisation to report on, so the indicator says
  * «локально» and the app has made no request to be able to say it.
+ *
+ * `round` не имеет значения по умолчанию нарочно: круг, чей исход забыли передать, — это ровно
+ * тот случай, из которого выросла зелёная надпись при лежащем сервере, и компилятор о нём
+ * спрашивает на каждом месте вызова.
  */
 export function syncIndicatorPresentation(
   report: SyncStatusReport | null,
+  round: SyncRoundOutcome,
 ): SyncIndicatorPresentation {
   const state: SyncIndicatorState =
-    report === null ? "local" : report.stop !== null ? "error" : report.queued > 0 ? "waiting" : "synced";
+    report === null
+      ? "local"
+      : report.stop !== null || round === "refused"
+        ? "error"
+        : round === "unreachable" || report.queued > 0
+          ? "waiting"
+          : "synced";
   const text = SYNC_INDICATOR_TEXT[state];
+  const cause = report === null || round === "ok" ? null : SYNC_ROUND_CAUSE[round];
   return {
     state,
     text,
-    ariaLabel: `Состояние синхронизации: ${text}`,
+    ariaLabel: `Состояние синхронизации: ${text}${cause === null ? "" : ` — ${cause}`}`,
     className: `sync-badge ${state}`,
   };
 }
@@ -279,17 +335,29 @@ export function ownFingerprintPresentation(fingerprint: Uint8Array): Fingerprint
 }
 
 /**
+ * Пин, каким его знает это приложение: он либо есть, либо его нет.
+ *
+ * `PinState` семейства `sync-client` знает и третье — `repin_required`. Здесь оно не принимается
+ * нарочно (см. {@link peerFingerprintPresentation}), и это проверяет компилятор, а не дисциплина
+ * вызывающего.
+ */
+export type LocalPinState = Extract<PinState, { readonly state: "pinned" | "absent" }>;
+
+/**
  * The peer's fingerprint, chosen by the local pin and never by the server's answer.
  *
  * `offered` is the SPKI hash the server volunteered. It is used **only** when there is no pin: with
  * a pin present, showing the server's value would replace «сравнить пин с реальностью» with
  * «сравнить две копии подставленного значения», which 5.4 forbids in as many words.
  *
- * `repin_required` is treated as «пина нет»: trust in the old pin is gone, so the ceremony starts
- * from the beginning, and the value on the screen is a candidate again.
+ * `repin_required` сюда не приходит и приниматься не должно. 5.4.1 требует показать в этом
+ * состоянии **оба** значения — прежний пин и нового кандидата — и прямо запрещает показывать одно;
+ * ветка, трактовавшая его как «пина нет», делала запрещённое. Состояния в приложении пока нет
+ * (`pinOf` отвечает только `pinned` и `absent`), поэтому вместо готовой ловушки — тип, который
+ * такой пин сюда не пропускает. Появится состояние — появится и показ обоих значений.
  */
 export function peerFingerprintPresentation(
-  pin: PinState,
+  pin: LocalPinState,
   offered: Uint8Array | undefined,
 ): FingerprintPresentation | null {
   if (pin.state === "pinned") {
@@ -306,10 +374,7 @@ export function peerFingerprintPresentation(
     origin: "unverified_candidate",
     text: formatKeyFingerprint(offered),
     originLabel: "Непроверенный отпечаток",
-    note:
-      pin.state === "repin_required"
-        ? "Прежнее подтверждение отозвано, поэтому значение снова пришло от сервера. Сверьте его голосом или лично — только после этого оно снова станет подтверждённым."
-        : "Значение пришло от сервера и поэтому нуждается в подтверждении. Сверьте его голосом или лично: подтверждение создаёт закреплённую запись.",
+    note: "Значение пришло от сервера и поэтому нуждается в подтверждении. Сверьте его голосом или лично: подтверждение создаёт закреплённую запись.",
     createsPin: true,
   };
 }
