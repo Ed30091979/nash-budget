@@ -14,6 +14,13 @@
  *    is written against the revision it was folded on. A local write that lands in between wins
  *    the race, and the delivery is folded again on top of it rather than over it.
  *
+ * 4. **5.5 step 8** — the epoch is a single value. The engine is constructed with the key it
+ *    holds and that key's epoch number, and every request, every envelope and every record it
+ *    writes names *that* number. A cursor found under an earlier one is the ordinary outcome of a
+ *    rotation and is reset to the beginning of the new epoch; a cursor found under a later one is
+ *    a step down and is refused. Neither is allowed to degenerate into «ключ семьи не совпадает»,
+ *    which is the one alarm this system has and is spent on a forged envelope alone.
+ *
  * And one property from section 9, which is a property of what this file does *not* do: nothing
  * here runs until an account exists. The engine is constructed after sign-in, so with no account
  * there is no queue, no cursor and not one request.
@@ -41,6 +48,7 @@ import { toBase64 } from "./base64.js";
 import { SyncClientError } from "./errors.js";
 import { applyDelivery } from "./intake.js";
 import type { SyncTransport } from "./transport.js";
+import { SYNC_STOP_REASONS } from "./types.js";
 import type {
   AcceptedEpoch,
   OutgoingEnvelope,
@@ -49,6 +57,7 @@ import type {
   SyncCursor,
   SyncStatusReport,
   SyncStop,
+  SyncStopReason,
 } from "./types.js";
 
 /** Names of the records this engine keeps in the sync store. */
@@ -151,12 +160,14 @@ export class SyncEngine {
     }
   }
 
-  async readCursor(): Promise<SyncCursor> {
+  /** The cursor as the store holds it, checked but not yet measured against the epoch held. */
+  private async storedCursor(): Promise<SyncCursor> {
     const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.cursor);
     if (stored === undefined || stored === null) return { keyEpoch: this.keyEpoch, seq: 0 };
     const record = stored as Partial<SyncCursor>;
     if (
       !Number.isSafeInteger(record.keyEpoch) ||
+      (record.keyEpoch as number) < 1 ||
       !Number.isSafeInteger(record.seq) ||
       (record.seq as number) < 0
     ) {
@@ -165,25 +176,123 @@ export class SyncEngine {
     return { keyEpoch: record.keyEpoch as number, seq: record.seq as number };
   }
 
-  async readStop(): Promise<SyncStop | null> {
-    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.stop);
-    return (stored as SyncStop | undefined) ?? null;
+  /**
+   * The barrier of 5.5 step 8, and the only place where two epoch numbers are allowed to meet.
+   *
+   * Everything else in this class names `this.keyEpoch` — the epoch of the key the engine was
+   * constructed with, which is the key its envelopes are sealed under and the key its deliveries
+   * are opened with. The store may still hold a cursor of the epoch before it, and that is not an
+   * error: it is what a rotation leaves behind. The journal of the retired epoch was deleted by
+   * the server (5.5 step 7), so there is nothing to continue and the cursor starts again at `0`.
+   *
+   * The other direction is not a rotation and never becomes one. A cursor further ahead than the
+   * key this device holds would have the engine re-read a journal it has already passed under a
+   * key that cannot open it — every envelope failing its tag, and the alarm of 3.4 raised on a
+   * state error. It is refused by name instead.
+   */
+  private resolveCursor(stored: SyncCursor): SyncCursor {
+    if (stored.keyEpoch === this.keyEpoch) return stored;
+    if (stored.keyEpoch > this.keyEpoch) {
+      throw new SyncClientError(
+        "epoch_conflict",
+        "the stored cursor names a later key epoch than the key this device holds",
+      );
+    }
+    return { keyEpoch: this.keyEpoch, seq: 0 };
   }
 
-  async readEpoch(): Promise<AcceptedEpoch> {
-    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.epoch);
-    if (stored === undefined || stored === null) {
-      return { keyEpoch: this.keyEpoch, keyDigest: this.keyDigest, live: false };
+  async readCursor(): Promise<SyncCursor> {
+    return this.resolveCursor(await this.storedCursor());
+  }
+
+  /**
+   * The alarm state, read back with the same suspicion as the cursor.
+   *
+   * `attempts` is compared against the threshold of 3.4 and `reason` selects the message: a record
+   * that came back with a string where the counter was, or with a reason no branch of this build
+   * knows, would turn a comparison into `"9" >= 10` and a screen into a blank.
+   */
+  async readStop(): Promise<SyncStop | null> {
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.stop);
+    if (stored === undefined || stored === null) return null;
+    const record = stored as Partial<SyncStop>;
+    if (
+      typeof record.reason !== "string" ||
+      !(SYNC_STOP_REASONS as readonly string[]).includes(record.reason) ||
+      !Number.isSafeInteger(record.seq) ||
+      (record.seq as number) < 0 ||
+      typeof record.opId !== "string" ||
+      record.opId.length === 0 ||
+      !Number.isSafeInteger(record.attempts) ||
+      (record.attempts as number) < 0
+    ) {
+      throw new SyncClientError("corrupt_sync_state", "the stored stop is not a stop");
     }
-    return stored as AcceptedEpoch;
+    return {
+      reason: record.reason as SyncStopReason,
+      seq: record.seq as number,
+      opId: record.opId,
+      attempts: record.attempts as number,
+    };
+  }
+
+  /**
+   * The epoch this device has accepted, measured against the epoch it actually holds.
+   *
+   * Three cases and no fourth. The record names the epoch held — it is returned as written, and
+   * its `live` is the proof of 5.4.1. It names an *earlier* one — the rotation has already been
+   * accepted by 5.4 elsewhere, so the record is superseded by the epoch in hand, which is not
+   * live until this device's own envelope comes back numbered *in it*. It names a later one, or
+   * the same one under a different key digest — the first is the step down 5.4.1 refuses outright
+   * and the second is the substitution the whole of 5.4.1 exists to catch. Both are refused here,
+   * loudly and by their own name, rather than left to surface as an alarm about somebody's key.
+   */
+  async readEpoch(): Promise<AcceptedEpoch> {
+    const held: AcceptedEpoch = {
+      keyEpoch: this.keyEpoch,
+      keyDigest: this.keyDigest,
+      live: false,
+    };
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.epoch);
+    if (stored === undefined || stored === null) return held;
+    const record = stored as Partial<AcceptedEpoch>;
+    if (
+      !Number.isSafeInteger(record.keyEpoch) ||
+      (record.keyEpoch as number) < 1 ||
+      typeof record.keyDigest !== "string" ||
+      !/^[0-9a-f]{64}$/.test(record.keyDigest) ||
+      typeof record.live !== "boolean"
+    ) {
+      throw new SyncClientError("corrupt_sync_state", "the stored epoch is not an epoch");
+    }
+    const keyEpoch = record.keyEpoch as number;
+    if (keyEpoch > this.keyEpoch) {
+      throw new SyncClientError(
+        "epoch_conflict",
+        "the stored epoch is later than the key this device holds",
+      );
+    }
+    if (keyEpoch < this.keyEpoch) return held;
+    if (record.keyDigest !== this.keyDigest) {
+      throw new SyncClientError(
+        "epoch_conflict",
+        "the stored epoch holds the same number under another key",
+      );
+    }
+    return { keyEpoch, keyDigest: record.keyDigest, live: record.live };
   }
 
   async status(): Promise<SyncStatusReport> {
+    const stored = await this.storedCursor();
+    const cursor = this.resolveCursor(stored);
     return {
-      cursor: await this.readCursor(),
+      cursor,
       queued: await this.repository.countOutbox(),
       epoch: await this.readEpoch(),
-      stop: await this.readStop(),
+      // The stop names an envelope of the cursor's epoch. When a rotation has left that cursor
+      // behind, the envelope went with the journal it belonged to (5.5 step 7) and the alarm is
+      // no longer about anything; `pull()` erases the record itself on its next run.
+      stop: stored.keyEpoch === cursor.keyEpoch ? await this.readStop() : null,
     };
   }
 
@@ -302,20 +411,76 @@ export class SyncEngine {
     const confirmable = answer.accepted
       .filter((entry) => sent.has(entry.opId) && Number.isSafeInteger(entry.seq) && entry.seq > 0)
       .map((entry) => entry.opId);
+    // Which epoch the numbered envelopes were actually sealed under. The proof of 5.4.1 belongs to
+    // that epoch and to no other, so it is read off the envelopes rather than assumed from the
+    // record on disk: a queue drained across a rotation can still hold envelopes of the epoch
+    // before it, and a number given to one of those proves that the *old* key is live.
+    const confirmedIds = new Set(confirmable);
+    const proven = new Set(
+      queued
+        .filter((record) => confirmedIds.has(record.opId))
+        .map((record) => (record.envelope as OutgoingEnvelope).keyEpoch),
+    );
     const confirmed = await this.repository.confirmOutbox(confirmable);
 
     if (confirmed > 0) {
-      // 5.4.1: the proof that an epoch is live is that the server took one of this device's own
-      // envelopes in it and gave it a number. Until then the previous key is kept.
+      // The removal above is right whatever the epoch — the server numbered those envelopes, and
+      // 3.3 clears the queue against a number and nothing else. What follows the removal is the
+      // mark, and it is written for the epoch this engine seals under, addressed by number and by
+      // digest rather than copied from whatever the record happened to hold.
+      for (const sealedEpoch of proven) {
+        if (sealedEpoch !== this.keyEpoch) {
+          throw new SyncClientError(
+            "epoch_conflict",
+            "the server numbered an envelope of an epoch this device no longer seals under",
+          );
+        }
+      }
       const epoch = await this.readEpoch();
       if (!epoch.live) {
         await this.repository.writeSyncState([
-          { key: SYNC_STATE_KEYS.epoch, value: { ...epoch, live: true } },
+          {
+            key: SYNC_STATE_KEYS.epoch,
+            value: { keyEpoch: this.keyEpoch, keyDigest: this.keyDigest, live: true },
+          },
         ]);
       }
     }
 
     return { confirmed, pending: await this.repository.countOutbox() };
+  }
+
+  /**
+   * Puts the cursor on the epoch the key in hand belongs to — 5.5 step 8 — before the first
+   * request of a pull.
+   *
+   * «Сбрасывает курсор на `(keyEpoch', 0)` и заново проходит журнал»: the retired epoch's
+   * envelopes were destroyed with it, its numbering has nothing to do with the new one, and the
+   * alarm that stood against one of its envelopes is about an envelope that no longer exists. All
+   * three are rewritten here, in one write and before the first request, so a device interrupted
+   * between the reset and the first page does not come back and walk the new journal from a
+   * number of the old one.
+   *
+   * What this is *not* is a way into a new epoch. The key was accepted before this engine was
+   * built — by the chain of 5.4 or by a ceremony a person ran — and no answer of the server takes
+   * part in the decision. This function reacts to the key the engine already holds.
+   */
+  private async openEpoch(): Promise<{
+    readonly cursor: SyncCursor;
+    readonly stop: SyncStop | null;
+  }> {
+    const stored = await this.storedCursor();
+    const cursor = this.resolveCursor(stored);
+    if (stored.keyEpoch === cursor.keyEpoch) return { cursor, stop: await this.readStop() };
+    // `readEpoch` carries the liveness proof over when it has already been earned in this epoch,
+    // and refuses the two states that are not a rotation at all.
+    const epoch = await this.readEpoch();
+    await this.repository.writeSyncState([
+      { key: SYNC_STATE_KEYS.cursor, value: { ...cursor } },
+      { key: SYNC_STATE_KEYS.stop, value: null },
+      { key: SYNC_STATE_KEYS.epoch, value: { ...epoch } },
+    ]);
+    return { cursor, stop: null };
   }
 
   /**
@@ -330,15 +495,17 @@ export class SyncEngine {
     let requests = 0;
     let applied = 0;
     let checkpoints = 0;
-    let cursor = await this.readCursor();
+    const opened = await this.openEpoch();
+    let cursor = opened.cursor;
     let stop: SyncStop | null = null;
     const notices: PullResult["notices"][number][] = [];
-    const priorStop = await this.readStop();
-    let priorAttempts = priorStop === null ? 0 : priorStop.attempts;
+    let priorAttempts = opened.stop === null ? 0 : opened.stop.attempts;
 
     for (let page = 0; page < MAX_PAGES_PER_PULL; page += 1) {
       const answer = await this.transport.fetch(this.familyId, {
-        keyEpoch: cursor.keyEpoch,
+        // The epoch of the key in hand, the same one `applyDelivery` measures the delivery
+        // against below. The cursor contributes the number it is the cursor of, and nothing else.
+        keyEpoch: this.keyEpoch,
         after: cursor.seq,
         limit: this.fetchLimit,
       });
@@ -363,7 +530,13 @@ export class SyncEngine {
           // Nothing was folded, so neither the journal nor the cursor moved and the document
           // cannot have changed. Writing it anyway would have created an empty budget on a device
           // whose very first delivery was refused — which is precisely the case an alarm covers.
+          //
+          // The cursor is written all the same, at the value it already has. The stop names an
+          // envelope, an envelope belongs to an epoch, and the cursor beside it is what records
+          // which one: without it, a device whose *first* delivery raised the alarm would carry
+          // that alarm across a rotation with nothing to date it by.
           await this.repository.writeSyncState([
+            { key: SYNC_STATE_KEYS.cursor, value: { ...result.cursor } },
             { key: SYNC_STATE_KEYS.stop, value: result.stop === null ? null : { ...result.stop } },
           ]);
         } else {

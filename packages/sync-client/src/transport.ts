@@ -21,7 +21,10 @@ export interface FetchQuery {
   readonly keyEpoch: number;
   /** Exclusive lower bound: the `seq` this device has already applied. */
   readonly after: number;
-  /** A constant of this client, never a number read out of a server response. */
+  /**
+   * A constant of this client, never a number read out of a server response — and, being the
+   * client's own, the number the answer is measured against before a byte of it is parsed.
+   */
   readonly limit: number;
 }
 
@@ -140,10 +143,11 @@ export function createHttpTransport(options: HttpTransportOptions): SyncTranspor
       throw new SyncClientError("transport_failed", "the sync server answered with a non-JSON body");
     }
     if (!response.ok) {
+      // Both halves of the refusal are the other side's bytes. `SyncServerError` keeps the code
+      // only if it is one the server's own enumeration spells, and keeps only the numeric fields
+      // the contract names — the message is dropped here and never read.
       const error = isRecord(payload) && isRecord(payload.error) ? payload.error : {};
-      const code = typeof error.code === "string" ? error.code : "internal";
-      const { code: _code, message: _message, ...details } = error;
-      throw new SyncServerError(response.status, code, details);
+      throw new SyncServerError(response.status, error.code, error);
     }
     return payload;
   }
@@ -184,6 +188,17 @@ export function createHttpTransport(options: HttpTransportOptions): SyncTranspor
       );
       if (!isRecord(payload) || !Array.isArray(payload.envelopes)) {
         throw new SyncClientError("malformed_response", "fetch answer has no envelope list");
+      }
+      // The limit travelled *to* the server; nothing so far made it hold on the way back. Checked
+      // before the page is parsed, because the page is parsed and then folded, and an answer of a
+      // hundred thousand envelopes to a request for two hundred is work this client never asked
+      // for. It also makes the end-of-journal test of 3.6 a comparison rather than a coincidence:
+      // "shorter than the limit" only means the end of the journal if "longer" is impossible.
+      if (payload.envelopes.length > query.limit) {
+        throw new SyncClientError(
+          "malformed_response",
+          "the page is longer than the limit this client asked for",
+        );
       }
       return {
         keyEpoch: requireNumber(payload.keyEpoch, "keyEpoch"),

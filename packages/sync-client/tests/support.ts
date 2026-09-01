@@ -29,6 +29,8 @@ export const FAMILY_ID = "0f000000-0000-4000-8000-00000000fa11";
 export const DEVICE_A = "0000000a-0000-4000-8000-000000000001";
 export const DEVICE_B = "0000000b-0000-4000-8000-000000000002";
 export const FIRST_EPOCH = 1;
+/** The epoch a rotation puts the family on — 5.5. */
+export const SECOND_EPOCH = 2;
 
 export const databaseNames = new Set<string>();
 
@@ -83,7 +85,10 @@ export async function sealOperation(
     familyId: FAMILY_ID,
     opId: operation.opId,
     deviceId: operation.deviceId,
-    keyEpoch: FIRST_EPOCH,
+    // The epoch is part of the AAD (5.2), so an override of it has to reach the sealing itself.
+    // Pasted over the finished envelope it would only produce a broken tag, and a test of an
+    // honest envelope of another epoch would be testing a forged one.
+    keyEpoch: overrides.keyEpoch ?? FIRST_EPOCH,
   };
   const sealed = await sealEnvelope(familyKey, header, utf8(encodeOperation(operation)));
   return {
@@ -242,7 +247,9 @@ interface StoredEnvelope extends DeliveredEnvelope {}
  */
 export class FakeSyncServer implements SyncTransport {
   private readonly envelopes: StoredEnvelope[] = [];
-  private counter = 0;
+  /** One counter per epoch: 5.5 step 1 gives a new epoch its own `seq`, starting at `1`. */
+  private readonly counters = new Map<number, number>();
+  private received = 0;
   keyEpoch = FIRST_EPOCH;
   offline = false;
   /** Commits the next submission and then drops the answer, as a cut link would. */
@@ -257,9 +264,22 @@ export class FakeSyncServer implements SyncTransport {
 
   /** Puts an envelope into the journal without a client, as another family device would. */
   seed(envelope: OutgoingEnvelope): number {
-    this.counter += 1;
-    this.envelopes.push({ ...envelope, seq: this.counter, receivedAt: this.counter });
-    return this.counter;
+    const next = (this.counters.get(envelope.keyEpoch) ?? 0) + 1;
+    this.counters.set(envelope.keyEpoch, next);
+    this.received += 1;
+    this.envelopes.push({ ...envelope, seq: next, receivedAt: this.received });
+    return next;
+  }
+
+  /**
+   * 5.5 step 7, as far as a client can see it: the new epoch is in force and the retired one's
+   * envelopes are physically gone. The owner's re-encrypted journal is seeded afterwards, under
+   * the new epoch's own numbering.
+   */
+  rotateTo(keyEpoch: number): void {
+    const surviving = this.envelopes.filter((envelope) => envelope.keyEpoch >= keyEpoch);
+    this.envelopes.splice(0, this.envelopes.length, ...surviving);
+    this.keyEpoch = keyEpoch;
   }
 
   /** Removes an envelope from the middle of the journal, as a server that held one back would. */

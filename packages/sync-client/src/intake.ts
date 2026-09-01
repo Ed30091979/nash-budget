@@ -216,7 +216,7 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
         return { snapshot, cursor, applied, checkpoints, notices, stop: stop("update_required", envelope, 0) };
       }
       checkpoints += 1;
-      cursor = { keyEpoch: envelope.keyEpoch, seq: envelope.seq };
+      cursor = { keyEpoch: params.acceptedEpoch, seq: envelope.seq };
       continue;
     }
 
@@ -257,8 +257,10 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     snapshot = applyOperations(snapshot, [operation]);
     applied += 1;
     // 3.4 step 10 — the caller performs the single transaction; this function decides what goes
-    // into it.
-    cursor = { keyEpoch: envelope.keyEpoch, seq: envelope.seq };
+    // into it. The epoch of the cursor is the epoch of the key that opened the envelope, which
+    // step 1 has already established the header agrees with; taking it from the header instead
+    // would make the one number the whole client keys off a value the server writes.
+    cursor = { keyEpoch: params.acceptedEpoch, seq: envelope.seq };
   }
 
   return { snapshot, cursor, applied, checkpoints, notices, stop: null };

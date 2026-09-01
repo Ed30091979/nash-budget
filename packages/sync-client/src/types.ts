@@ -56,21 +56,29 @@ export interface AcceptedEpoch {
   readonly live: boolean;
 }
 
-/** Why the intake stopped. The cursor never moves past the envelope named here. */
-export type SyncStopReason =
+/**
+ * Why the intake stopped. The cursor never moves past the envelope named here.
+ *
+ * A list and not a bare union, because the stop is written to disk and read back: a record whose
+ * `reason` is a string no branch of this build knows would reach a screen as no message at all.
+ */
+export const SYNC_STOP_REASONS = [
   /**
    * A tag check failed on an envelope of this device's own live epoch, or an envelope arrived
    * under another epoch number with no legitimately announced epoch change behind it. 3.4 and
    * 5.4.1 give both the same treatment: alarm from the first envelope, cursor stopped, and no
    * automatic skip — not after ten retries, not after a day, not ever.
    */
-  | "key_mismatch"
+  "key_mismatch",
   /** 3.4 step 2: the numbering skipped. The cursor stays put and the request is repeated. */
-  | "journal_incomplete"
+  "journal_incomplete",
   /** 3.4 steps 4 and 5, after the tag verified: this build cannot read what the family wrote. */
-  | "update_required"
+  "update_required",
   /** 3.4 step 6 and the bounds check: quarantine, with no automatic skip in this phase. */
-  | "quarantined";
+  "quarantined",
+] as const;
+
+export type SyncStopReason = (typeof SYNC_STOP_REASONS)[number];
 
 export interface SyncStop {
   readonly reason: SyncStopReason;

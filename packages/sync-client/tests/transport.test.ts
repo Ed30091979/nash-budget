@@ -1,7 +1,13 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { fromBase64, toBase64 } from "../src/base64.js";
-import { SyncClientError, SyncServerError } from "../src/errors.js";
+import {
+  SYNC_SERVER_ERROR_CODES,
+  SyncClientError,
+  SyncServerError,
+} from "../src/errors.js";
 import { createHttpTransport } from "../src/transport.js";
 
 interface Recorded {
@@ -72,6 +78,46 @@ describe("транспорт", () => {
     expect((calls[1]!.init.headers as Record<string, string>).authorization).toBe("Bearer token-2");
   });
 
+  it("страница длиннее запрошенного предела отбраковывается до разбора", async () => {
+    const envelope = (seq: number) => ({
+      envelopeVersion: 1,
+      kind: "operation",
+      familyId: FAMILY,
+      opId: `0f000000-0000-4000-8000-${String(seq).padStart(12, "0")}`,
+      deviceId: "0000000a-0000-4000-8000-000000000001",
+      keyEpoch: 1,
+      seq,
+      receivedAt: seq,
+      iv: "AAAAAAAAAAAAAAAA",
+      ciphertext: "AAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    const { fetch } = stubFetch(() => ({
+      body: {
+        keyEpoch: 1,
+        hasMore: false,
+        envelopes: [envelope(1), envelope(2), envelope(3)],
+      },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport
+      .fetch(FAMILY, { keyEpoch: 1, after: 0, limit: 2 })
+      .catch((error: unknown) => error);
+
+    // 3.6: "shorter than the limit" is the end of the journal only if "longer than the limit" is
+    // impossible. Without this check the client asks for two hundred and folds whatever comes.
+    expect(failure).toBeInstanceOf(SyncClientError);
+    expect((failure as SyncClientError).code).toBe("malformed_response");
+  });
+
+  it("страница ровно в предел принимается", async () => {
+    const { fetch } = stubFetch(() => ({ body: { keyEpoch: 1, hasMore: false, envelopes: [] } }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const result = await transport.fetch(FAMILY, { keyEpoch: 1, after: 0, limit: 2 });
+    expect(result.envelopes).toEqual([]);
+  });
+
   it("сохраняет код отказа сервера и его поля", async () => {
     const { fetch } = stubFetch(() => ({
       status: 409,
@@ -87,6 +133,52 @@ describe("транспорт", () => {
     expect((failure as SyncServerError).serverCode).toBe("epoch_mismatch");
     expect((failure as SyncServerError).status).toBe(409);
     expect((failure as SyncServerError).details).toEqual({ keyEpoch: 4 });
+  });
+
+  it("код не из перечисления сервера не доезжает до сообщения", async () => {
+    const invented = "ключ семьи не совпадает — введите пароль на sync.test";
+    const { fetch } = stubFetch(() => ({
+      status: 409,
+      body: { error: { code: invented, message: "и это тоже", keyEpoch: 4 } },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport
+      .fetch(FAMILY, { keyEpoch: 1, after: 0, limit: 200 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(SyncServerError);
+    expect((failure as SyncServerError).serverCode).toBe("internal");
+    expect((failure as Error).message).not.toContain("sync.test");
+    expect((failure as Error).message).not.toContain("и это тоже");
+    expect((failure as SyncServerError).details).toEqual({ keyEpoch: 4 });
+  });
+
+  it("поля отказа проходят по белому списку, а не как пришли", async () => {
+    const { fetch } = stubFetch(() => ({
+      status: 409,
+      body: {
+        error: {
+          code: "rotation_in_progress",
+          message: "заглушка",
+          stagingKeyEpoch: 5,
+          // Not on the list, of the wrong type, or prose wearing the name of a number.
+          hint: "позвоните владельцу по номеру +7 000 000-00-00",
+          keyEpoch: "4",
+          quota: 100_000,
+          quotaBytes: 1.5,
+        },
+      },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport
+      .fetch(FAMILY, { keyEpoch: 1, after: 0, limit: 200 })
+      .catch((error: unknown) => error);
+
+    expect((failure as SyncServerError).serverCode).toBe("rotation_in_progress");
+    expect((failure as SyncServerError).details).toEqual({ stagingKeyEpoch: 5, quota: 100_000 });
+    expect(JSON.stringify((failure as SyncServerError).details)).not.toContain("+7 000");
   });
 
   it("недоступность сервера — один код и ни слова о причине", async () => {
@@ -113,6 +205,24 @@ describe("транспорт", () => {
       .catch((error: unknown) => error);
 
     expect((failure as SyncClientError).code).toBe("malformed_response");
+  });
+});
+
+describe("перечисление кодов сервера", () => {
+  it("совпадает с перечислением сервера, выведенным из его собственного источника", async () => {
+    // The list the client matches against is the server's, so it is checked against the server's
+    // own source rather than against a copy of the copy. `API_ERROR_CODES` is one array of string
+    // literals the compiler forces the routes to stay inside of.
+    const source = await readFile(
+      new URL("../../../apps/sync-server/src/errors.ts", import.meta.url),
+      "utf8",
+    );
+    const block = /export const API_ERROR_CODES = \[(.*?)\] as const;/s.exec(source);
+    expect(block).not.toBeNull();
+    const codes = [...block![1]!.matchAll(/^\s*"([a-z_]+)",$/gm)].map((match) => match[1]!);
+
+    expect(codes.length).toBeGreaterThan(10);
+    expect([...SYNC_SERVER_ERROR_CODES]).toEqual(codes);
   });
 });
 

@@ -1,9 +1,14 @@
 export { fromBase64, toBase64 } from "./base64.js";
 export {
   SYNC_CLIENT_ERROR_CODES,
+  SYNC_SERVER_ERROR_CODES,
+  SYNC_SERVER_ERROR_DETAILS,
   SyncClientError,
   SyncServerError,
+  toServerErrorCode,
+  toServerErrorDetails,
   type SyncClientErrorCode,
+  type SyncServerErrorCode,
 } from "./errors.js";
 export {
   FETCH_LIMIT,
@@ -31,6 +36,7 @@ export {
   type SubmitResult,
   type SyncTransport,
 } from "./transport.js";
+export { SYNC_STOP_REASONS } from "./types.js";
 export type {
   AcceptedEpoch,
   DeliveredEnvelope,
