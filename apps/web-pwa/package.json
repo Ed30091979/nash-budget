@@ -15,6 +15,9 @@
   "dependencies": {
     "@family-budget/domain": "workspace:*",
     "@family-budget/storage": "workspace:*",
+    "@family-budget/sync-client": "workspace:*",
+    "@family-budget/sync-crypto": "workspace:*",
+    "@family-budget/sync-protocol": "workspace:*",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "workbox-window": "7.4.1"

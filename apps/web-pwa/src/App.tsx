@@ -5,6 +5,7 @@ import {
   makePlanningSeed,
   type AnnualCommitment,
   type BudgetState,
+  type Member,
   type ScheduledExpense,
   type Transaction,
 } from "@family-budget/domain";
@@ -15,6 +16,19 @@ import {
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { DashboardScreen, OperationsSearch } from "./features/dashboard";
 import { DataManagementScreen } from "./features/data-management";
+import {
+  FamilyScreen,
+  MEMBER_FILTER_ALL,
+  filterTransactionsByMember,
+  memberFilterOptions,
+  membersById,
+  resolveSyncServerUrl,
+  syncAlarm,
+  syncIndicatorPresentation,
+  transactionAuthorLabel,
+  useFamily,
+  type MemberFilter,
+} from "./features/family";
 import { OperationsScreen } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
@@ -23,7 +37,7 @@ import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./b
 import { formatMoney, moneyScale } from "./money";
 import { createBudgetRepository } from "./storage-repository";
 
-export type Screen = "today" | "year" | "planning" | "operations" | "more";
+export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family";
 type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -227,6 +241,12 @@ function storageText(health: StorageHealth | null): string {
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
   const nativeRuntime = useMemo(() => isCapacitorNativeRuntime(), []);
+  // Section 9: the address is configuration and is absent by default, so the whole family layer
+  // below is inert in a build that was not given one — no request, no queue, no schema bump.
+  const syncServerUrl = useMemo(
+    () => resolveSyncServerUrl(import.meta.env as unknown as Readonly<Record<string, unknown>>),
+    [],
+  );
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const budgetRef = useRef<BudgetState | null>(null);
   const revisionRef = useRef<string | null>(null);
@@ -239,6 +259,7 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null);
   const [operationDraftDirty, setOperationDraftDirty] = useState(false);
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
+  const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   const previousScreenRef = useRef<Screen>(screen);
   const hasUnsavedDraft = operationDraftDirty || planningDraftDirty;
   budgetRef.current = budget;
@@ -257,6 +278,18 @@ export default function App() {
       setBudget(next);
     },
   }), [repository]);
+
+  const family = useFamily(repository, syncServerUrl, {
+    // 2.2 keeps names off the server, so the participant is written into the local budget instead.
+    // It is an ordinary budget change and goes through the same compare-and-set as every other.
+    registerLocalMember: async (member) => {
+      if (!budgetRef.current) return;
+      await budgetSave.apply((state) => ({
+        ...state,
+        members: [...(state.members ?? []).filter((item) => item.id !== member.id), member],
+      }));
+    },
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -343,6 +376,7 @@ export default function App() {
     () => new Map(budget?.categories.map((category) => [category.id, category]) ?? []),
     [budget],
   );
+  const memberById = useMemo(() => (budget ? membersById(budget) : new Map()), [budget]);
 
   const publishInitialBudget = (next: BudgetState) => {
     budgetRef.current = next;
@@ -379,13 +413,19 @@ export default function App() {
     .filter((row) => row.metric);
   const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   const safeToSpendMinor = plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor;
-  const recentTransactions = [...budget.transactions]
+  const postedTransactions = [...budget.transactions]
     .filter((transaction) => transaction.status === "posted")
-    .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn))
-    .slice(0, 5);
+    .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
+  const recentTransactions = filterTransactionsByMember(postedTransactions, memberFilter).slice(0, 5);
+  const memberOptions = memberFilterOptions(budget);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const networkStatus = networkStatusPresentation(nativeRuntime, online);
+  const syncIndicator = syncIndicatorPresentation(family.status);
+  // 3.4 and 5.4.1: the one loud signal of this system. It is not a toast, it has no close button
+  // and no timer, and it follows the person onto whichever screen they are on — the family screen
+  // renders its own copy, so this one steps aside there.
+  const keyAlarm = syncAlarm(family.status?.stop ?? null);
   const navigate = (destination: Screen) => {
     if (shouldChangeScreen(
       screen,
@@ -402,19 +442,35 @@ export default function App() {
       <SkipLink />
       <header className="app-header">
         <div className="brand"><span className="brand-mark">₽</span><div><strong>Наш бюджет</strong><small>видим месяц и будущее</small></div></div>
-        <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
+        <div className="header-badges">
+          <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
+          {/* Без входа шапка остаётся ровно такой, какой была: «локально» живёт на экране «Семья»
+              и на карточке перехода в «Ещё», а второй пилюли в шапке у локального пользователя
+              не появляется вовсе. */}
+          {syncIndicator.state === "local" ? null : <span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span>}
+        </div>
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">
         <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
         <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
         <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />
-        <NavButton active={screen === "more"} icon="more" label="Ещё" onClick={() => navigate("more")} />
+        <NavButton active={screen === "more" || screen === "family"} icon="more" label="Ещё" onClick={() => navigate("more")} />
       </nav>
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
         <div className="route-screen" data-screen={screen}>
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
+          {keyAlarm && screen !== "family" ? (
+            <section className="key-alarm" role="alert" aria-labelledby="app-key-alarm-title">
+              <span className="key-alarm-mark" aria-hidden="true">!</span>
+              <div>
+                <h2 id="app-key-alarm-title">{keyAlarm.title}</h2>
+                <p>{keyAlarm.body}</p>
+                <button className="primary-button" type="button" onClick={() => navigate("family")}>{keyAlarm.actionLabel}</button>
+              </div>
+            </section>
+          ) : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => navigate("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
@@ -451,6 +507,29 @@ export default function App() {
               setLastSuccessfulBackup(null);
               setLoadState("empty");
             }}
+            onFamily={() => navigate("family")}
+            syncIndicator={syncIndicator}
+          /> : null}
+          {screen === "family" ? <FamilyScreen
+            serverUrl={family.serverUrl}
+            session={family.session}
+            membership={family.membership}
+            members={family.members}
+            devices={family.devices}
+            ownFingerprint={family.ownFingerprint}
+            pinOf={family.pinOf}
+            offeredFingerprintOf={family.offeredFingerprintOf}
+            memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}
+            invite={family.invite}
+            status={family.status}
+            integrity={family.integrity}
+            now={Date.now()}
+            busy={family.busy}
+            message={family.message}
+            error={family.error}
+            awaitingLoginCode={family.awaitingLoginCode}
+            actions={family.actions}
+            onBack={() => navigate("more")}
           /> : null}
         </div>
       </main>
@@ -476,7 +555,7 @@ type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
 type BudgetMetrics = ReturnType<typeof calculateBudget>;
 type CategoryRow = { category: BudgetState["categories"][number]; metric: BudgetMetrics["categoryMetrics"][string] | undefined };
 
-function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTransactions, categoryById, onAdd, onYear }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; onAdd: () => void; onYear: () => void }) {
+function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, onAdd, onYear }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; onAdd: () => void; onYear: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -512,7 +591,16 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
 
     <button className="year-preview" type="button" onClick={onYear}><span><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><strong>→</strong></button>
 
-    <section className="section-card"><SectionTitle title="Последние записи" note="Фактические операции" /><TransactionList transactions={recentTransactions} categoryById={categoryById} /></section>
+    <section className="section-card">
+      <SectionTitle title="Последние записи" note="Фактические операции" />
+      {memberOptions.length > 2 ? <div className="field member-filter">
+        <label htmlFor="history-member-filter">Кто записал</label>
+        <select id="history-member-filter" value={memberFilter} onChange={(event) => onMemberFilterChange(event.target.value as MemberFilter)}>
+          {memberOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div> : null}
+      <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} />
+    </section>
   </>;
 }
 
@@ -553,9 +641,9 @@ function CategoryList({ rows }: { rows: CategoryRow[] }) {
   })}</ul>;
 }
 
-function TransactionList({ transactions, categoryById }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]> }) {
+function TransactionList({ transactions, categoryById, memberById, showAuthor }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean }) {
   if (!transactions.length) return <p className="empty-state">Здесь появятся операции.</p>;
-  return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon">{transactionSign(transaction)}</span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
+  return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon">{transactionSign(transaction)}</span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}{showAuthor ? ` · ${transactionAuthorLabel(memberById, transaction.memberId)}` : ""}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
 }
 
 function MoreScreen(props: {
@@ -568,6 +656,8 @@ function MoreScreen(props: {
   onRestoreBackup: Parameters<typeof DataManagementScreen>[0]["onRestoreBackup"];
   onPersistClear: () => Promise<void>;
   onPublishEmpty: () => void;
+  onFamily: () => void;
+  syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }) {
   return <>
     <div className="screen-heading"><div><span className="card-kicker">Приложение</span><h1>Данные и установка</h1><p>Бюджет работает локально и без регистрации.</p></div></div>
@@ -582,6 +672,7 @@ function MoreScreen(props: {
       onPersistClear={props.onPersistClear}
       onPublishEmpty={props.onPublishEmpty}
     />
-    <section className="section-card"><SectionTitle title="Конфиденциальность MVP" note="Данные остаются в этом браузере" /><p className="body-copy">Нет регистрации, рекламы и аналитики. Облачную семейную синхронизацию добавим отдельным безопасным этапом.</p></section>
+    <button className="year-preview" type="button" onClick={props.onFamily}><span><b>Семья и синхронизация</b><small>Участники, приглашение, отпечатки ключей. Без входа приложение работает как сейчас.</small></span><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></button>
+    <section className="section-card"><SectionTitle title="Конфиденциальность" note="Данные остаются в этом браузере, пока вы не вошли" /><p className="body-copy">Нет рекламы и аналитики. Семейная синхронизация необязательна: пока вы не вошли, приложение не обращается к сети и ничего не отправляет.</p></section>
   </>;
 }

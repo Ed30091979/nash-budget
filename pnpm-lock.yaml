@@ -63,6 +63,15 @@ importers:
       '@family-budget/storage':
         specifier: workspace:*
         version: link:../../packages/storage
+      '@family-budget/sync-client':
+        specifier: workspace:*
+        version: link:../../packages/sync-client
+      '@family-budget/sync-crypto':
+        specifier: workspace:*
+        version: link:../../packages/sync-crypto
+      '@family-budget/sync-protocol':
+        specifier: workspace:*
+        version: link:../../packages/sync-protocol
       react:
         specifier: 19.2.7
         version: 19.2.7
