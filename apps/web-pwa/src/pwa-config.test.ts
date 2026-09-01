@@ -9,6 +9,7 @@ import {
   PWA_MANIFEST,
   SECURITY_HEADERS,
   resolvePwaBuildId,
+  securityHeadersFor,
 } from "../vite.config";
 
 const configSource = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
@@ -68,7 +69,10 @@ describe("PWA production configuration", () => {
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
     });
-    expect(configSource).toContain("headers: SECURITY_HEADERS");
+    // Заголовки preview собираются той же функцией, что и разворачиваемые: сборка без адреса
+    // сервера даёт ровно прежний набор, а сборка с адресом — тот же набор с одной поправкой.
+    expect(configSource).toContain("headers: securityHeadersFor(syncServerOrigin)");
+    expect(securityHeadersFor(null)).toEqual({ ...SECURITY_HEADERS });
   });
 });
 

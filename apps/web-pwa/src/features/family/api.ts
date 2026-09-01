@@ -150,6 +150,14 @@ export interface FamilyApiOptions {
   /** Read before every request, so a refreshed token is picked up without a restart. */
   readonly accessToken: () => string | null | Promise<string | null>;
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * Обновляет доступ по отказу «вход устарел» и говорит, получилось ли.
+   *
+   * Доступ живёт пятнадцать минут (6.1), refresh-токен — тридцать дней. Без этого вызова человек
+   * с полностью действующей сессией через пятнадцать минут читал «Вход устарел. Войдите ещё раз».
+   * Повтор ровно один: второй отказ — настоящий, и его показывают.
+   */
+  readonly refreshAccess?: () => Promise<boolean>;
 }
 
 export interface FamilyApi {
@@ -197,7 +205,12 @@ export function createFamilyApi(options: FamilyApiOptions): FamilyApi {
   const base = options.baseUrl.replace(/\/+$/u, "");
   const doFetch = options.fetch ?? globalThis.fetch;
 
-  async function request(path: string, init: RequestInit, authenticated = true): Promise<unknown> {
+  async function request(
+    path: string,
+    init: RequestInit,
+    authenticated = true,
+    mayRefresh = true,
+  ): Promise<unknown> {
     const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
     if (authenticated) {
       const token = await options.accessToken();
@@ -225,7 +238,14 @@ export function createFamilyApi(options: FamilyApiOptions): FamilyApi {
     }
     if (!response.ok) {
       const error = isRecord(payload) && isRecord(payload.error) ? payload.error : {};
-      throw new FamilyApiError(toServerErrorCode(error.code), response.status);
+      const code = toServerErrorCode(error.code);
+      // Истёкший доступ — не «войдите заново», а один вызов обновления и один повтор. Повтор
+      // помечен `mayRefresh: false`, поэтому цепочка обновлений невозможна; сам `/auth/refresh`
+      // сюда не попадает вовсе — он не аутентифицированный.
+      if (code === "unauthorized" && authenticated && mayRefresh && options.refreshAccess) {
+        if (await options.refreshAccess()) return request(path, init, authenticated, false);
+      }
+      throw new FamilyApiError(code, response.status);
     }
     return payload;
   }

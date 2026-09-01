@@ -104,6 +104,27 @@ describe("участник в локальном бюджете", () => {
   });
 });
 
+describe("запись бюджета подключена к журналу", () => {
+  it("координатор записи спрашивает журнал на каждом сохранении", () => {
+    // Не «один раз при сборке»: семья создаётся посреди сессии, и запомненный ответ означал бы
+    // журнал, начинающий вестись только после перезагрузки.
+    expect(source).toContain("journalWrite: () => journalWriteRef.current");
+    expect(source).toContain("journalWriteRef.current = family.writeBudget;");
+    // Единственный funnel записи остался единственным: экраны по-прежнему зовут budgetSave.apply.
+    const applies = source.match(/budgetSave\.apply\(/gu) ?? [];
+    expect(applies.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("чужие операции доходят до экрана, а не только до базы", () => {
+    expect(source).toContain("publishRemoteBudget: (value, revision) => {");
+    // Пока идёт своя запись, показ откладывается: её сравнение ревизии — источник истины.
+    expect(source).toMatch(
+      /publishRemoteBudget[\s\S]{0,500}if \(budgetRef\.current === null \|\| budgetSave\.locked\) return;/u,
+    );
+    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,700}prepareBudgetState\(value\)/u);
+  });
+});
+
 describe("таблица закреплённых отпечатков", () => {
   it("переживает запись и чтение и отбрасывает всё, что не отпечаток", () => {
     const pins = new Map([

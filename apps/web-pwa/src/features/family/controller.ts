@@ -7,15 +7,18 @@
  * the effects below start with `serverUrl === null` and `session === null` and stop there.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BudgetState } from "@family-budget/domain";
 import type { IndexedDbBudgetRepository } from "@family-budget/storage";
 import {
   SYNC_STATE_KEYS,
   SyncEngine,
+  SyncServerError,
   createHttpTransport,
   fromBase64,
   toBase64,
   type PinState,
   type SyncStatusReport,
+  type SyncTransport,
 } from "@family-budget/sync-client";
 import {
   computeBindProof,
@@ -36,6 +39,7 @@ import { restoreJournal, type JournalIntegrity } from "@family-budget/sync-proto
 
 import { createFamilyApi, describeFamilyError, type DeviceRecord, type FamilyApi, type MemberRecord, type MembershipSnapshot } from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
+import { budgetJournalDrafts } from "./journal";
 import { normalizeEmail } from "./model";
 import {
   PINS_STATE_KEY,
@@ -52,6 +56,22 @@ const DEVICE_KEY_STATE_KEY = "device-key";
 const FAMILY_KEY_STATE_KEY = "family-key";
 /** The invite this device issued and is still reading out. Local: the server never sees the code. */
 const INVITE_STATE_KEY = "issued-invite";
+/**
+ * Откуда берётся бюджет этой семьи — и это решается один раз, при вступлении в неё.
+ *
+ * `local` пишет устройство, которое семью **создало**: его бюджет и есть бюджет семьи, поэтому
+ * первая же запись отправляет в журнал всё состояние целиком. Без этого второе устройство
+ * получило бы одну операцию и ни одной категории, к которой её отнести.
+ *
+ * `family` пишет устройство, которое **вступило** по коду: бюджет придёт к нему журналом, и
+ * посев здесь означал бы, что личный бюджет вступающего молча вливается в семейный. Признак
+ * хранится, а не вычисляется из «журнал пуст», ровно потому, что журнал пуст в обоих случаях.
+ */
+export const JOURNAL_ORIGIN_KEY = "journal-origin";
+export type JournalOrigin = "local" | "family";
+
+/** Как часто устройство в семье само спрашивает журнал. Одна цифра, не выведенная из ответа. */
+const SYNC_INTERVAL_MS = 15_000;
 
 interface StoredDeviceKey {
   readonly keyPair: CryptoKeyPair;
@@ -88,6 +108,96 @@ export interface FamilyControllerOptions {
    * this is where it is put there — once, when the family is created or joined.
    */
   readonly registerLocalMember?: (member: LocalMember) => Promise<void>;
+  /**
+   * Показывает состояние, которое принесли чужие операции.
+   *
+   * Приём уже записал его в документ одной транзакцией с курсором и журналом — экрану остаётся
+   * узнать, что документ изменился. Без этого вызова операция, введённая на другом устройстве,
+   * лежала бы в базе и не появлялась бы на экране до перезапуска.
+   */
+  readonly publishRemoteBudget?: (value: unknown, revision: string) => void;
+}
+
+/**
+ * Результат записи бюджета через журнал.
+ *
+ * Форма нарочно совпадает с `saveIfRevision`: координатор записи в `App.tsx` не должен знать, чем
+ * он писал. `null` — это «журнала нет» (нет адреса сервера, нет сессии, нет семьи или ключа), и
+ * тогда вызывающий пишет ровно так, как писал до синхронизации.
+ */
+export type JournalWriteOutcome =
+  | { readonly status: "saved"; readonly value: unknown; readonly revision: string }
+  | {
+      readonly status: "conflict";
+      readonly current: { readonly value: unknown; readonly revision: string } | null;
+    };
+
+export interface BudgetJournalWrite {
+  (input: {
+    readonly expectedRevision: string | null;
+    readonly previous: BudgetState;
+    readonly next: BudgetState;
+  }): Promise<JournalWriteOutcome | null>;
+}
+
+export interface JournalWriterOptions {
+  /** Движок семьи или `null`, если журнала нет. Спрашивается на каждой записи. */
+  readonly engineFor: () => Promise<SyncEngine | null>;
+  readonly store: SyncStateStore;
+  /** Участник этого устройства: он попадает в заголовок каждой операции. */
+  readonly memberId: () => string | undefined;
+  /** Прежняя запись документа. Нужна там, где журналу сказать нечего. */
+  readonly saveIfRevision: (
+    expectedRevision: string | null,
+    value: unknown,
+  ) => Promise<JournalWriteOutcome>;
+  /** Что сделать после того, как операции легли в очередь. Обычно — отправка. */
+  readonly afterWrite?: (engine: SyncEngine) => void;
+}
+
+/**
+ * Запись бюджета журналом. Единственный путь, которым изменение попадает в очередь операций.
+ *
+ * Отвечает `null`, когда журнала нет: без адреса сервера, без сессии, без семьи и без ключа
+ * вызывающий пишет ровно тем же сравнением ревизии, что и до синхронизации. Проверка стоит
+ * первой и до любого чтения хранилища — это она держит обещание, а не дисциплина вызывающего.
+ *
+ * Посев (сравнение с `null` вместо прежнего состояния) делает только устройство, создавшее семью,
+ * и только пока журнал пуст: его бюджет и есть бюджет семьи. Устройство, вступившее по коду,
+ * посева не делает никогда — иначе его личный бюджет молча влился бы в семейный.
+ *
+ * Показывается то, что действительно легло в документ, а не то, что просили записать: шлюз
+ * целостности показывает снимок, только когда его можно показать, иначе документ сохраняет
+ * прежнее состояние (решение 19). Поэтому результат читается с диска, а не собирается из
+ * намерения — иначе экран показывал бы изменение, которого перезапуск не найдёт.
+ */
+export function createBudgetJournalWriter(options: JournalWriterOptions): BudgetJournalWrite {
+  return async ({ expectedRevision, previous, next }) => {
+    const engine = await options.engineFor();
+    if (engine === null) return null;
+    const origin = await options.store
+      .readSyncState<JournalOrigin>(JOURNAL_ORIGIN_KEY)
+      .catch(() => undefined);
+    const journal = await options.store
+      .readSyncState(SYNC_STATE_KEYS.journal)
+      .catch(() => undefined);
+    const seed = origin === "local" && journal === undefined;
+    const drafts = budgetJournalDrafts(seed ? null : previous, next, options.memberId());
+    if (drafts.length === 0) {
+      // Ни одна сущность не изменилась. Журналу сказать нечего, и запись идёт прежним путём,
+      // чтобы форма состояния на диске всё равно догнала показанную.
+      return options.saveIfRevision(expectedRevision, next);
+    }
+    const committed = await engine.enqueue(drafts);
+    const document = await options.store.loadVersioned().catch(() => null);
+    options.afterWrite?.(engine);
+    if (document !== null) return { status: "saved", value: document.value, revision: document.revision };
+    return {
+      status: "saved",
+      value: committed.snapshot.integrity.ready ? committed.snapshot.state : previous,
+      revision: committed.revision,
+    };
+  };
 }
 
 /** «Анна» out of «anna@example.com». Local, cosmetic, and editable later in the budget itself. */
@@ -115,6 +225,14 @@ export interface FamilyController {
   readonly error: string | null;
   readonly awaitingLoginCode: boolean;
   readonly actions: FamilyActions;
+  /**
+   * Запись бюджета через журнал семьи, или `null`, когда журнала нет.
+   *
+   * Это единственный путь, которым изменение бюджета попадает в очередь операций. Он отвечает
+   * `null` раньше любого чтения хранилища, если нет адреса сервера или сессии, — и именно это, а
+   * не дисциплина вызывающего, держит обещание «без входа ничего не меняется».
+   */
+  readonly writeBudget: BudgetJournalWrite;
 }
 
 interface SyncStateStore {
@@ -122,6 +240,34 @@ interface SyncStateStore {
   writeSyncState(entries: readonly { readonly key: string; readonly value: unknown }[]): Promise<void>;
   clearSyncData(): Promise<void>;
   countOutbox(): Promise<number>;
+  loadVersioned(): Promise<{ readonly value: unknown; readonly revision: string } | null>;
+}
+
+/**
+ * Транспорт, который на «вход устарел» обновляет токен и повторяет запрос — один раз.
+ *
+ * Доступ живёт пятнадцать минут (6.1), а обновление у клиента было и не вызывалось ниоткуда: через
+ * пятнадцать минут работы синхронизация останавливалась с надписью «вход устарел» при полностью
+ * действующей сессии. Повтор ровно один: если и он получил отказ, отказ настоящий и его показывают.
+ */
+export function transportWithTokenRefresh(
+  inner: SyncTransport,
+  refreshAccess: () => Promise<boolean>,
+): SyncTransport {
+  const once = async <T>(call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call();
+    } catch (failure) {
+      if (!(failure instanceof SyncServerError) || failure.serverCode !== "unauthorized") throw failure;
+      if (!(await refreshAccess())) throw failure;
+      return call();
+    }
+  };
+  return {
+    submit: (familyId, envelopes) => once(() => inner.submit(familyId, envelopes)),
+    fetch: (familyId, query) => once(() => inner.fetch(familyId, query)),
+    keys: (familyId) => once(() => inner.keys(familyId)),
+  };
 }
 
 /**
@@ -185,6 +331,11 @@ export function useFamily(
   // Held in a ref so that the actions below do not change identity every render because of it.
   const registerLocalMemberRef = useRef(options.registerLocalMember);
   registerLocalMemberRef.current = options.registerLocalMember;
+  const publishRemoteBudgetRef = useRef(options.publishRemoteBudget);
+  publishRemoteBudgetRef.current = options.publishRemoteBudget;
+  const apiRef = useRef<FamilyApi | null>(null);
+  /** Одно обновление на все запросы сразу: refresh-токен поворачивается, и второй с тем же не пройдёт. */
+  const refreshingRef = useRef<Promise<boolean> | null>(null);
 
   const registerLocalMember = useCallback(async (member: LocalMember) => {
     try {
@@ -194,6 +345,47 @@ export function useFamily(
     }
   }, []);
 
+  /**
+   * Обновление доступа по отказу, ровно одно на все ждущие запросы.
+   *
+   * Сервер поворачивает refresh-токен на каждом использовании (6.1), поэтому два одновременных
+   * обновления — это второе с уже потраченным токеном и выход из учётной записи на ровном месте.
+   * Новая сессия кладётся в `sessionRef` до записи на диск: повтор запроса должен уйти с новым
+   * токеном, даже если запись в IndexedDB ещё идёт.
+   */
+  const refreshAccess = useCallback(async (): Promise<boolean> => {
+    const running = refreshingRef.current;
+    if (running !== null) return running;
+    const attempt = (async () => {
+      const api = apiRef.current;
+      const current = sessionRef.current;
+      if (api === null || current === null) return false;
+      try {
+        const tokens = await api.refresh(current.refreshToken);
+        const next: FamilySession = {
+          ...current,
+          accountId: tokens.accountId,
+          deviceId: tokens.deviceId,
+          accessToken: tokens.accessToken,
+          accessExpiresAt: tokens.accessExpiresAt,
+          refreshToken: tokens.refreshToken,
+        };
+        sessionRef.current = next;
+        await persistSession(store, next);
+        setSession(next);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    refreshingRef.current = attempt;
+    try {
+      return await attempt;
+    } finally {
+      refreshingRef.current = null;
+    }
+  }, [store]);
+
   const api: FamilyApi | null = useMemo(
     () =>
       serverUrl === null
@@ -201,9 +393,41 @@ export function useFamily(
         : createFamilyApi({
             baseUrl: serverUrl,
             accessToken: () => sessionRef.current?.accessToken ?? null,
+            refreshAccess,
           }),
-    [serverUrl],
+    [refreshAccess, serverUrl],
   );
+  apiRef.current = api;
+
+  /**
+   * Движок семьи, собранный на месте из того, что лежит на диске, — или `null`.
+   *
+   * Собирается на каждый вызов, а не хранится: ключ семьи, эпоха и сессия меняются вступлением,
+   * сменой ключа и выходом, и движок, переживший любое из этих событий, шифровал бы под ключ,
+   * которого у семьи уже нет. Первые две проверки — адрес и сессия — стоят до единственного
+   * чтения хранилища, поэтому на локальном пути этот вызов не трогает базу вовсе.
+   */
+  const engineFor = useCallback(async (): Promise<SyncEngine | null> => {
+    const current = sessionRef.current;
+    if (serverUrl === null || current === null || current.familyId === null) return null;
+    const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY).catch(() => undefined);
+    if (stored === undefined) return null;
+    return new SyncEngine({
+      repository: repository as never,
+      transport: transportWithTokenRefresh(
+        createHttpTransport({
+          baseUrl: serverUrl,
+          accessToken: () => sessionRef.current?.accessToken ?? "",
+        }),
+        refreshAccess,
+      ),
+      familyId: current.familyId,
+      deviceId: current.deviceId,
+      familyKey: stored.key,
+      keyEpoch: stored.keyEpoch,
+      keyDigest: toHex(await familyKeyFingerprint(stored.key)),
+    });
+  }, [refreshAccess, repository, serverUrl, store]);
 
   /* ── Старт: одно чтение, и только чтение. Схему оно не поднимает. ── */
   useEffect(() => {
@@ -227,7 +451,66 @@ export function useFamily(
     };
   }, [serverUrl, store, reload]);
 
-  /* ── Состояние синхронизации из SyncStatusReport, а не из догадок. ── */
+  /**
+   * Сообщает экрану, что журнал и очередь изменились, и подаёт состояние наверх.
+   *
+   * Читается настоящее состояние движка, а не догадка: отчёт берётся из `status()`, целостность —
+   * из записанного журнала, а показанное состояние — из документа, который приём уже записал одной
+   * транзакцией с курсором. Ни одна из трёх величин здесь не выводится из другой.
+   */
+  const refreshSyncState = useCallback(
+    async (engine: SyncEngine, publishDocument: boolean): Promise<void> => {
+      try {
+        setStatus(await engine.status());
+      } catch {
+        setStatus(null);
+      }
+      try {
+        const journal = await store.readSyncState(SYNC_STATE_KEYS.journal);
+        setIntegrity(journal === undefined ? null : restoreJournal(journal).integrity);
+      } catch {
+        setIntegrity(null);
+      }
+      if (!publishDocument) return;
+      try {
+        const document = await store.loadVersioned();
+        if (document !== null) publishRemoteBudgetRef.current?.(document.value, document.revision);
+      } catch {
+        // Документ не прочитался — экран остаётся на том состоянии, которое уже показывает.
+      }
+    },
+    [store],
+  );
+
+  const writeBudget = useMemo(
+    () =>
+      createBudgetJournalWriter({
+        engineFor,
+        store,
+        memberId: () => sessionRef.current?.memberId ?? undefined,
+        saveIfRevision: (revision, value) =>
+          (repository as unknown as {
+            saveIfRevision(
+              expectedRevision: string | null,
+              state: unknown,
+            ): Promise<JournalWriteOutcome>;
+          }).saveIfRevision(revision, value),
+        afterWrite: (engine) => {
+          // Отправка — отдельно от записи: очередь уже переживёт перезапуск, а сеть может лежать.
+          void (async () => {
+            try {
+              await engine.sync();
+            } catch {
+              // Офлайн — не ошибка сценария. Очередь ждёт связи, индикатор её показывает.
+            }
+            await refreshSyncState(engine, true);
+          })();
+        },
+      }),
+    [engineFor, refreshSyncState, repository, store],
+  );
+
+  /* ── Состояние синхронизации и приём чужих операций. Ни того, ни другого без входа. ── */
   useEffect(() => {
     if (!isSyncActive(serverUrl, session) || session?.familyId == null || api === null) {
       setStatus(null);
@@ -235,38 +518,34 @@ export function useFamily(
       return;
     }
     let cancelled = false;
-    void (async () => {
+    let running = false;
+    const round = async () => {
+      if (running || cancelled) return;
+      running = true;
       try {
-        const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY);
-        if (stored === undefined) return;
-        const engine = new SyncEngine({
-          repository: repository as never,
-          transport: createHttpTransport({
-            baseUrl: serverUrl!,
-            accessToken: () => sessionRef.current?.accessToken ?? "",
-          }),
-          familyId: session!.familyId!,
-          deviceId: session!.deviceId,
-          familyKey: stored.key,
-          keyEpoch: stored.keyEpoch,
-          keyDigest: toHex(await familyKeyFingerprint(stored.key)),
-        });
-        const report = await engine.status();
-        if (!cancelled) setStatus(report);
-      } catch {
-        if (!cancelled) setStatus(null);
+        const engine = await engineFor();
+        if (engine === null || cancelled) return;
+        let applied = 0;
+        try {
+          const result = await engine.sync();
+          applied = result.pull.applied;
+        } catch {
+          // Сервер недоступен — приложение остаётся полностью рабочим, отчёт ниже это покажет.
+        }
+        if (cancelled) return;
+        await refreshSyncState(engine, applied > 0);
+      } finally {
+        running = false;
       }
-      try {
-        const journal = await store.readSyncState(SYNC_STATE_KEYS.journal);
-        if (!cancelled && journal !== undefined) setIntegrity(restoreJournal(journal).integrity);
-      } catch {
-        if (!cancelled) setIntegrity(null);
-      }
-    })();
+    };
+    void round();
+    const timer = window.setInterval(() => void round(), SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [api, repository, serverUrl, session, store, reload]);
+    // `session` целиком в зависимостях был бы перезапуском цикла на каждое обновление токена.
+  }, [api, engineFor, refreshSyncState, serverUrl, session?.familyId, session?.deviceId, reload]);
 
   /* ── Список семьи. Ни одного запроса без сессии. ── */
   useEffect(() => {
@@ -425,6 +704,9 @@ export function useFamily(
               key: FAMILY_KEY_STATE_KEY,
               value: { key: familyKey, keyEpoch: created.keyEpoch } satisfies StoredFamilyKey,
             },
+            // Бюджет этого устройства становится бюджетом семьи: первая запись отправит в журнал
+            // всё состояние целиком, иначе второму устройству не к чему будет отнести операцию.
+            { key: JOURNAL_ORIGIN_KEY, value: "local" satisfies JournalOrigin },
           ]);
           const next: FamilySession = {
             ...session,
@@ -526,6 +808,9 @@ export function useFamily(
               value: { key: opened.familyKey, keyEpoch: claimed.keyEpoch } satisfies StoredFamilyKey,
             },
             { key: PINS_STATE_KEY, value: serializePins(nextPins) },
+            // Бюджет придёт журналом. Посева здесь нет и быть не может: он влил бы личный бюджет
+            // вступающего в семейный, и семья увидела бы чужие счета как свои.
+            { key: JOURNAL_ORIGIN_KEY, value: "family" satisfies JournalOrigin },
           ]);
           setPins(nextPins);
           const next: FamilySession = {
@@ -638,5 +923,6 @@ export function useFamily(
     error,
     awaitingLoginCode: pendingEmail !== null,
     actions,
+    writeBudget,
   };
 }

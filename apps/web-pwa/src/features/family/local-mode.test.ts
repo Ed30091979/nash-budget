@@ -10,7 +10,10 @@ import "fake-indexeddb/auto";
 import { makeSeedBudget } from "@family-budget/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createAppBudgetSaveCoordinator } from "../../App";
+import { prepareBudgetState } from "../../backup";
 import { createBudgetRepository } from "../../storage-repository";
+import { createBudgetJournalWriter } from "./controller";
 import {
   isSyncActive,
   loadSession,
@@ -87,6 +90,64 @@ describe("без входа приложение работает ровно к�
     expect(await openedVersion(name)).toBe(2);
   });
 
+  it("запись бюджета без семьи идёт прежним путём и не создаёт ни очереди, ни журнала", async () => {
+    const name = databaseName("journal-off");
+    const repository = createBudgetRepository({ databaseName: name });
+    const created = await repository.createIfAbsent(prepareBudgetState(makeSeedBudget()));
+    expect(created.status).toBe("created");
+
+    // Ровно тот же путь, что в приложении: координатор спрашивает журнал на каждой записи, а
+    // журнал без адреса сервера и без сессии отвечает «меня нет».
+    const readSyncState = vi.spyOn(repository, "readSyncState");
+    const writer = createBudgetJournalWriter({
+      engineFor: async () => null,
+      store: repository as never,
+      memberId: () => undefined,
+      saveIfRevision: (revision, value) =>
+        repository.saveIfRevision(revision, value as never) as never,
+    });
+
+    let shown = prepareBudgetState(created.value);
+    let revision: string | null = null;
+    const coordinator = createAppBudgetSaveCoordinator({
+      repository: repository as never,
+      getCurrent: () => shown,
+      getRevision: () => revision,
+      setRevision: (value) => {
+        revision = value;
+      },
+      publish: (next, value) => {
+        shown = next;
+        revision = value;
+      },
+      journalWrite: () => writer,
+    });
+
+    const saved = await coordinator.apply((state) => ({
+      ...state,
+      transactions: [
+        ...state.transactions,
+        {
+          id: "55555555-5555-4555-8555-55555555ffff",
+          occurredOn: "2026-07-09",
+          status: "posted",
+          kind: "expense",
+          amountMinor: 400_000,
+          accountId: "22222222-2222-4222-8222-222222222221",
+          categoryId: "33333333-3333-4333-8333-333333333333",
+        },
+      ],
+    }));
+    expect(saved.transactions).toHaveLength(6);
+
+    // «Журнала нет» решается до единственного чтения хранилища, поэтому схема не поднимается.
+    expect(readSyncState).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    expect(await repository.countOutbox()).toBe(0);
+    expect(await repository.syncRecordCount()).toEqual({ outbox: 0, state: 0 });
+    expect(await openedVersion(name)).toBe(2);
+  });
+
   it("вход и только вход поднимает схему до версии с синхронизацией", async () => {
     const name = databaseName("signed-in");
     const repository = createBudgetRepository({ databaseName: name });
@@ -133,6 +194,21 @@ describe("без входа приложение работает ровно к�
     for (const source of sources) {
       expect(source).not.toMatch(/https?:\/\/(?!127\.0\.0\.1|localhost)/u);
     }
+  });
+
+  it("движок семьи отказывает раньше, чем притрагивается к хранилищу", async () => {
+    const controller = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("./controller.ts", import.meta.url), "utf8"),
+    );
+    // Порядок проверок — это и есть обещание: адрес и сессия решают всё до чтения ключа семьи,
+    // потому что само чтение подняло бы схему устройства, которое никогда не входило.
+    expect(controller).toMatch(
+      /const current = sessionRef\.current;\s*\n\s*if \(serverUrl === null \|\| current === null \|\| current\.familyId === null\) return null;\s*\n\s*const stored = await store\.readSyncState/u,
+    );
+    // И запись бюджета спрашивает движок первым делом, до любого чтения журнала.
+    expect(controller).toMatch(
+      /const engine = await options\.engineFor\(\);\s*\n\s*if \(engine === null\) return null;/u,
+    );
   });
 
   it("сеть закрыта, пока нет и адреса, и сессии", () => {

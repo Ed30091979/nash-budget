@@ -27,6 +27,7 @@ import {
   syncIndicatorPresentation,
   transactionAuthorLabel,
   useFamily,
+  type BudgetJournalWrite,
   type MemberFilter,
 } from "./features/family";
 import { OperationsScreen } from "./features/operations";
@@ -65,18 +66,31 @@ const transactionLabels: Record<Transaction["kind"], string> = {
   goal_contribution: "Взнос в цель",
 };
 
+type BudgetSaveResult =
+  | { readonly status: "saved"; readonly value: unknown; readonly revision: string }
+  | {
+      readonly status: "conflict";
+      readonly current: { readonly value: unknown; readonly revision: string } | null;
+    };
+
 interface AppBudgetSaveOptions {
   readonly repository: {
     loadVersioned(): Promise<{ readonly value: BudgetState; readonly revision: string } | null>;
-    saveIfRevision(expectedRevision: string | null, state: BudgetState): Promise<
-      | { readonly status: "saved"; readonly value: BudgetState; readonly revision: string }
-      | { readonly status: "conflict"; readonly current: { readonly value: BudgetState; readonly revision: string } | null }
-    >;
+    saveIfRevision(expectedRevision: string | null, state: BudgetState): Promise<BudgetSaveResult>;
   };
   readonly getCurrent: () => BudgetState;
   readonly getRevision: () => string | null;
   readonly setRevision: (revision: string) => void;
   readonly publish: (state: BudgetState, revision: string) => void;
+  /**
+   * Запись через журнал семьи, когда она есть.
+   *
+   * Читается на каждом сохранении, а не один раз при сборке: семья создаётся и покидается посреди
+   * сессии, и координатор, запомнивший ответ, писал бы мимо журнала до перезагрузки. `null` —
+   * «журнала нет», и тогда путь ниже ровно тот, каким он был до синхронизации: те же чтения, та же
+   * проверка ревизии, то же сообщение о конфликте.
+   */
+  readonly journalWrite?: () => BudgetJournalWrite | null;
 }
 
 export const BUDGET_WRITE_CONFLICT_MESSAGE = "Бюджет уже изменён в другой вкладке. Показана сохранённая версия; повторите изменение.";
@@ -186,8 +200,14 @@ export function createAppBudgetSaveCoordinator(options: AppBudgetSaveOptions) {
             options.setRevision(snapshot.revision);
           }
 
-          const candidate = prepareBudgetState(change(options.getCurrent()));
-          const saved = await options.repository.saveIfRevision(expectedRevision, candidate);
+          const previous = options.getCurrent();
+          const candidate = prepareBudgetState(change(previous));
+          const journal = options.journalWrite?.() ?? null;
+          const saved =
+            (journal === null
+              ? null
+              : await journal({ expectedRevision, previous, next: candidate })) ??
+            (await options.repository.saveIfRevision(expectedRevision, candidate));
           if (saved.status === "conflict") {
             if (saved.current) {
               const winner = prepareBudgetState(saved.current.value);
@@ -263,6 +283,10 @@ export default function App() {
   const previousScreenRef = useRef<Screen>(screen);
   const hasUnsavedDraft = operationDraftDirty || planningDraftDirty;
   budgetRef.current = budget;
+  // Экран семьи собирается ниже, а координатор записи — выше него: путь записи через журнал
+  // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
+  // начинает вести журнал сразу, без перезагрузки.
+  const journalWriteRef = useRef<BudgetJournalWrite | null>(null);
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
     repository,
@@ -277,6 +301,7 @@ export default function App() {
       revisionRef.current = revision;
       setBudget(next);
     },
+    journalWrite: () => journalWriteRef.current,
   }), [repository]);
 
   const family = useFamily(repository, syncServerUrl, {
@@ -289,7 +314,25 @@ export default function App() {
         members: [...(state.members ?? []).filter((item) => item.id !== member.id), member],
       }));
     },
+    // Чужие операции уже записаны в документ одной транзакцией с курсором; здесь они попадают на
+    // экран. Пока идёт собственная запись, показ откладывается: её сравнение ревизии — источник
+    // истины, и подменять состояние у неё под руками нельзя.
+    publishRemoteBudget: (value, revision) => {
+      // Обновляется тот бюджет, который экран показывает. Показывать нечего — значит и обновлять
+      // нечего: приложение без бюджета стоит на онбординге, и подменять его состоянием из журнала
+      // означало бы онбординг поверх готового бюджета.
+      if (budgetRef.current === null || budgetSave.locked) return;
+      try {
+        const next = prepareBudgetState(value);
+        budgetRef.current = next;
+        revisionRef.current = revision;
+        setBudget(next);
+      } catch {
+        // Пришедшее состояние не собирается в показуемый бюджет — экран остаётся на прежнем.
+      }
+    },
   });
+  journalWriteRef.current = family.writeBudget;
 
   useEffect(() => {
     let cancelled = false;

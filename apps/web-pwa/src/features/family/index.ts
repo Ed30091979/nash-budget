@@ -1,5 +1,14 @@
 export { FamilyScreen, type ActiveInvite, type FamilyActions, type FamilyScreenProps } from "./FamilyScreen";
-export { useFamily, type FamilyController } from "./controller";
+export {
+  createBudgetJournalWriter,
+  transportWithTokenRefresh,
+  useFamily,
+  type BudgetJournalWrite,
+  type FamilyController,
+  type JournalWriteOutcome,
+  type JournalWriterOptions,
+} from "./controller";
+export { budgetJournalDrafts } from "./journal";
 export * from "./model";
 export {
   isSyncActive,

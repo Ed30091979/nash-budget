@@ -2,6 +2,16 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  CONNECT_SRC_SELF,
+  HTTP_CSP,
+  META_CSP,
+  resolveSyncServerOrigin,
+  securityHeadersFor,
+  withSyncServerOrigin,
+} from "../vite.config";
+import { resolveSyncServerUrl } from "./features/family/session";
+
 const indexHtml = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const deployHeaders = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
 const securityHeaders = JSON.parse(
@@ -92,5 +102,77 @@ describe("web content security policy", () => {
     expect(
       sources.some((source) => /^(?:https?:\/\/|wss?:\/\/)?(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/iu.test(source)),
     ).toBe(false);
+  });
+});
+
+/**
+ * Адрес сервера синхронизации в политике.
+ *
+ * `connect-src 'self'` отклонял каждый запрос к серверу семьи, и отклонение политикой не похоже
+ * в приложении ни на что: запрос не уходит, ответа нет, сервер «недоступен». Поэтому адрес
+ * попадает в политику — и только он, и только в эту директиву.
+ */
+describe("источник сервера семьи в политике", () => {
+  it("трогает ровно одну директиву и не ослабляет остальные", () => {
+    const extended = withSyncServerOrigin(META_CSP, "https://sync.example.org");
+    expect(extended).toContain("connect-src 'self' https://sync.example.org");
+    expect(extended.replace(" https://sync.example.org", "")).toBe(META_CSP);
+
+    // Остальные директивы — буква в букву прежние.
+    const before = new Map(META_CSP.split(";").map((entry) => entry.trim().split(/\s+/u)[0]!).map((name, index) => [name, index]));
+    for (const directive of extended.split(";").map((entry) => entry.trim())) {
+      const [name] = directive.split(/\s+/u);
+      expect(before.has(name!)).toBe(true);
+      if (name !== "connect-src") expect(META_CSP).toContain(directive);
+    }
+  });
+
+  it("без настроенного адреса политика не меняется вовсе", () => {
+    expect(withSyncServerOrigin(META_CSP, null)).toBe(META_CSP);
+    expect(withSyncServerOrigin(HTTP_CSP, null)).toBe(HTTP_CSP);
+    expect(securityHeadersFor(null)["Content-Security-Policy"]).toBe(HTTP_CSP);
+  });
+
+  it("произвольный источник в политику не попадает", () => {
+    expect(resolveSyncServerOrigin({})).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "*" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "https://*.example.org" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "https:" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "javascript:alert(1)" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "ws://sync.example.org" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "https://user:pass@sync.example.org" })).toBeNull();
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: 42 })).toBeNull();
+  });
+
+  it("адрес сводится к источнику: путь и запрос в политику не едут", () => {
+    expect(resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "http://127.0.0.1:8787/" })).toBe(
+      "http://127.0.0.1:8787",
+    );
+    expect(
+      resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: "https://sync.example.org/v1?x=1" }),
+    ).toBe("https://sync.example.org");
+  });
+
+  it("политика и приложение читают один и тот же ключ конфигурации", () => {
+    for (const value of [
+      "http://127.0.0.1:8787",
+      "https://sync.example.org/v1",
+      "нет",
+      "",
+    ]) {
+      const url = resolveSyncServerUrl({ VITE_SYNC_SERVER_URL: value });
+      const origin = resolveSyncServerOrigin({ VITE_SYNC_SERVER_URL: value });
+      // Одно из двух: адреса нет у обоих, или запросы приложения укладываются в разрешённый источник.
+      if (url === null) expect(origin).toBeNull();
+      else expect(url.startsWith(`${origin}`)).toBe(true);
+    }
+  });
+
+  it("политика без ровно этой директивы не дополняется молча", () => {
+    expect(() => withSyncServerOrigin("connect-src 'self' https://other", "https://sync.example.org")).toThrow(
+      /connect-src/u,
+    );
+    expect(META_CSP).toContain(CONNECT_SRC_SELF);
   });
 });
