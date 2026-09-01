@@ -169,6 +169,24 @@ export function buildServer(options: SyncServerOptions): SyncServer {
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof ApiError) {
+      // A refusal a route wrote, answered in the route's own words — with one exception, and it is
+      // the rule `internal` states in `errors.ts`: "the cause is logged without a body; the client
+      // is told nothing else". An `ApiError` of `500` is the server's account of a state it did not
+      // expect, not something the caller can act on, and three of them ("epoch row is missing")
+      // used to travel to the client verbatim and leave no trace in the log at all — while the
+      // branch at the end of this handler logged every other five-hundred and replaced its message.
+      // One rule, applied wherever the status says five hundred.
+      if (error.statusCode >= 500) {
+        request.log.error(
+          { err: error.name, code: error.code, cause: error.message },
+          "unhandled error",
+        );
+        void reply
+          .code(error.statusCode)
+          .header("content-type", JSON_CONTENT_TYPE)
+          .send(JSON.stringify({ error: { code: error.code, message: "internal error" } }));
+        return;
+      }
       void reply
         .code(error.statusCode)
         .header("content-type", JSON_CONTENT_TYPE)

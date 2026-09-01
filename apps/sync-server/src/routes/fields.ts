@@ -39,13 +39,6 @@ export const emailField = {
 
 export const loginCodeField = { type: "string", pattern: "^[0-9]{6}$" } as const;
 
-/** A positive integer that stays inside the safe range; epochs and cursors are counted, not measured. */
-export const counterField = {
-  type: "integer",
-  minimum: 0,
-  maximum: Number.MAX_SAFE_INTEGER,
-} as const;
-
 export const epochField = {
   type: "integer",
   minimum: 1,

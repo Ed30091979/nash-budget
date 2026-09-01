@@ -13,9 +13,9 @@
  */
 import type { FastifyInstance } from "fastify";
 
-import { equalBytes, hmacSha256, isUuidV4, randomBytes, sha256 } from "../bytes.ts";
+import { equalBytes, hmacSha256, randomBytes } from "../bytes.ts";
 import type { ServerContext } from "../context.ts";
-import { ApiError, invalid, unauthorized } from "../errors.ts";
+import { ApiError, unauthorized } from "../errors.ts";
 import {
   LOGIN_CODE_MAX_ATTEMPTS,
   LOGIN_CODE_MAX_REQUESTS_PER_HOUR,
@@ -276,8 +276,4 @@ export function registerAuthRoutes(app: FastifyInstance, context: ServerContext)
       .run(auth.deviceId);
     return { status: "signed_out" };
   });
-
-  void sha256;
-  void isUuidV4;
-  void invalid;
 }

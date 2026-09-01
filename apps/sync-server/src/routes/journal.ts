@@ -165,15 +165,19 @@ export function registerJournalRoutes(app: FastifyInstance, context: ServerConte
         "INSERT INTO envelope (family_id, key_epoch, op_id, seq, envelope_version, kind," +
           " device_id, iv, ciphertext, received_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
-      const countRow = context.db.prepare(
-        "SELECT COUNT(*) AS n FROM envelope WHERE family_id = ? AND key_epoch = ?",
-      );
-
       // One transaction for the whole batch — 3.3 says "в одной транзакции" — and the driver is
-      // synchronous, so nothing can interleave between the count, the numbering and the insert.
+      // synchronous, so nothing can interleave between the numbering and the insert.
       const assign = context.db.transaction(() => {
+        // Both halves of the budget of 3.2.1 are read off the epoch row, and the envelope count is
+        // `seq_counter` itself. It is not an approximation of the row count, it is the row count:
+        // every accepted envelope takes the next number and nothing ever deletes one envelope of a
+        // *writable* epoch. Deletion happens twice in this server and neither leaves a survivor to
+        // miscount — cancelling a rotation drops the staging epoch's row along with its envelopes,
+        // and completing one empties the epoch it retires, which then accepts no writes at all.
+        //
+        // The `SELECT COUNT(*)` this replaces was the scan migration 2 was written to remove: an
+        // index range of up to a hundred thousand rows, walked on every batch from every device.
         let counter = epoch.seq_counter;
-        let stored = (countRow.get(membership.familyId, targetEpoch) as { n: number }).n;
         let bytes = epoch.ciphertext_bytes;
         let written = 0;
         const accepted: { opId: string; seq: number }[] = [];
@@ -188,7 +192,7 @@ export function registerJournalRoutes(app: FastifyInstance, context: ServerConte
             accepted.push({ opId: envelope.opId, seq: existing.seq });
             continue;
           }
-          if (stored >= FAMILY_ENVELOPE_QUOTA) {
+          if (counter >= FAMILY_ENVELOPE_QUOTA) {
             throw conflict("quota_exhausted", "the family quota for this epoch is exhausted", {
               keyEpoch: targetEpoch,
               quota: FAMILY_ENVELOPE_QUOTA,
@@ -206,7 +210,6 @@ export function registerJournalRoutes(app: FastifyInstance, context: ServerConte
             });
           }
           counter += 1;
-          stored += 1;
           written += 1;
           bytes += envelope.ciphertextBytes.length;
           insert.run(

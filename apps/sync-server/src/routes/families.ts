@@ -55,7 +55,9 @@ export function registerFamilyRoutes(app: FastifyInstance, context: ServerContex
         .prepare("SELECT family_id FROM family WHERE family_id = ?")
         .get(input.familyId);
       if (clash !== undefined) {
-        throw new ApiError(409, "already_in_family", "this family identifier is taken");
+        // Its own code, not the one above: the caller is in no family and the remedy is another
+        // identifier, which is the opposite of what "you already have a family" tells them to do.
+        throw new ApiError(409, "family_exists", "this family identifier is taken");
       }
       const now = context.now();
       context.db.transaction(() => {

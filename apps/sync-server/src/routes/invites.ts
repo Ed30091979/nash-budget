@@ -25,7 +25,6 @@ import {
   INVITE_CLAIM_DAY_MS,
   INVITE_CLAIM_FAILURES_PER_DAY,
   INVITE_CLAIM_FAILURES_PER_WINDOW,
-  INVITE_CLAIM_SCAN_ROWS,
   INVITE_CLAIM_WINDOW_MS,
   INVITE_CREATES_PER_WINDOW,
   INVITE_CREATE_WINDOW_MS,
@@ -144,7 +143,9 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         .prepare("SELECT invite_id FROM invite WHERE invite_id = ?")
         .get(input.inviteId);
       if (clash !== undefined) {
-        throw new ApiError(409, "invite_invalid", "this invite identifier is taken");
+        // The issuing owner's clash, and not the joining device's `invite_invalid`: one is fixed
+        // by choosing another identifier, the other by asking for another code.
+        throw new ApiError(409, "invite_exists", "this invite identifier is taken");
       }
       // 5.3 fixes the TTL at `24` hours, and the server sets it. Accepting an expiry from the
       // client would not be a limit: the issuer would be free to write ten years.
@@ -221,28 +222,30 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
       }
       const digest = sha256(decodeBytes(authToken, "authToken", { exact: SHA256_BYTES }));
       sweepExpiredInvites();
-      // 5.3 asks for a constant-time comparison, and it is still here — every candidate row is
-      // compared with `equalBytes`, without an early exit. What is no longer here is the walk over
-      // every live invite in the database. That walk was constant-time in the wrong variable: its
-      // length was the number of live invites, which any owner could raise, on a synchronous
-      // driver, for every claim made by anyone.
+      // What used to stand here was a walk over every live invite in the database, comparing each
+      // digest with `equalBytes` for the constant-time comparison 5.3 asks for. The walk is gone:
+      // it was constant-time in the wrong variable — its length was the number of live invites,
+      // which any owner could raise, on a synchronous driver, for every claim made by anyone.
       //
-      // The lookup is keyed by the digest and capped at a fixed number of rows, so the work a
-      // claim costs is a constant. Being keyed leaks nothing an attacker can walk: the value in
-      // the index is `SHA-256(authToken)`, and to steer one byte of it they would have to choose a
-      // preimage. What the code protects is the `60`-bit code behind `authToken`, and that is
-      // guarded by the counters above — `5` failures in `15` minutes, `20` in a day.
-      const rows = context.db
+      // With the row found through `invite_digest`, the comparison is the index's and there is
+      // nothing left in this function to compare: the predicate is equality on the digest, so a
+      // row that comes back matches by construction and a loop over the result could reject
+      // nothing. Constancy of work is `LIMIT 1` and the equality behind it, not a loop; the
+      // ordering is there so that the one row is a chosen row rather than whichever the engine
+      // reached first, in the collision case that would return more than one.
+      //
+      // Being keyed leaks nothing an attacker can walk: the value in the index is
+      // `SHA-256(authToken)`, and to steer one byte of it they would have to choose a preimage.
+      // What guards the `60`-bit code behind `authToken` is the pair of counters above — `5`
+      // failures in `15` minutes, `20` in a day — and it is the only thing that ever did.
+      const matched = context.db
         .prepare(
           "SELECT * FROM invite WHERE auth_token_digest = ? AND used_at IS NULL" +
-            " AND expires_at > ? AND ciphertext IS NOT NULL LIMIT ?",
+            " AND expires_at > ? AND ciphertext IS NOT NULL" +
+            " ORDER BY created_at DESC, invite_id ASC LIMIT 1",
         )
-        .all(digest, context.now(), INVITE_CLAIM_SCAN_ROWS) as InviteRow[];
-      let matched: InviteRow | null = null;
-      for (const row of rows) {
-        if (equalBytes(digest, new Uint8Array(row.auth_token_digest))) matched = row;
-      }
-      if (matched === null || matched.ciphertext === null) {
+        .get(digest, context.now()) as InviteRow | undefined;
+      if (matched === undefined || matched.ciphertext === null) {
         context.throttleRecord(accountBucket);
         context.throttleRecord(ipBucket);
         throw notFound("no invite matches this token");

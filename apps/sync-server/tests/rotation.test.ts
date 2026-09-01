@@ -212,6 +212,33 @@ test("a cancelled attempt takes its epoch number with it", async () => {
   expect(harness.server.context.stagingEpoch(family.familyId)?.key_epoch).toBe(3);
 });
 
+test("cancelling asks whether there is an attempt to cancel before it deletes anything", async () => {
+  harness = createHarness();
+  const owner = await signIn(harness);
+  const family = await createFamily(harness, owner);
+  expect((await send(harness, owner, family, [envelope(family.familyId, owner.deviceId, 1)])).statusCode).toBe(200);
+
+  // The epoch in force, handed to the function that cancels attempts. Its `state = 'staging'`
+  // condition carries the whole decision, and while it stood at the end of the transaction it
+  // guarded only the row: everything else — the family's envelopes, its wraps, its confirmation —
+  // was already deleted by the time the condition was consulted. Nothing in the server calls it
+  // this way today, which is exactly why the order needs holding down.
+  harness.server.context.cancelRotation(family.familyId, 1);
+
+  const kept = harness.server.db
+    .prepare("SELECT COUNT(*) AS n FROM envelope WHERE family_id = ? AND key_epoch = 1")
+    .get(family.familyId) as { n: number };
+  expect(kept.n).toBe(1);
+  expect(harness.server.context.activeEpoch(family.familyId, 1)?.state).toBe("active");
+  const journal = await call(
+    harness,
+    "GET",
+    `/v1/families/${family.familyId}/envelopes?keyEpoch=1&after=0`,
+    { token: owner.accessToken },
+  );
+  expect(journal.json().envelopes).toHaveLength(1);
+});
+
 test("a rotation is cancelled after 30 idle minutes and after 6 hours regardless of progress", async () => {
   harness = createHarness();
   const owner = await signIn(harness);

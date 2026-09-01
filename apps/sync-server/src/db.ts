@@ -180,8 +180,9 @@ const MIGRATIONS: readonly string[] = [
   -- read the table to find out there is nothing to delete.
   CREATE INDEX invite_expires ON invite (expires_at);
   -- The claim of 5.3 looks a row up by the digest it was given rather than walking every live
-  -- invite. The comparison stays constant-time in the route; what changes is that the number of
-  -- rows it touches is a constant instead of a length the issuing owners choose. See invites.ts.
+  -- invite. The comparison is this index's, and the route takes the single row it returns: what
+  -- changes is that the work of a claim is a constant instead of a length the issuing owners
+  -- choose. What guards the code itself is the failure counter of 5.3. See invites.ts.
   CREATE INDEX invite_digest ON invite (auth_token_digest);
   -- 6.1: the code table is written by an unauthenticated request, so it is swept by expiry the
   -- same way the throttle windows are.
@@ -189,7 +190,9 @@ const MIGRATIONS: readonly string[] = [
 
   -- 3.2.1, counted in bytes as well as in envelopes. Kept on the row and maintained inside the
   -- insertion transaction: a SUM over a hundred thousand rows on every batch would be the same
-  -- unbounded scan this migration exists to remove.
+  -- unbounded scan this migration exists to remove. The count of envelopes needs no column of its
+  -- own — \`seq_counter\` is that number for every epoch that can still be written to, and the
+  -- route reads it from here instead of counting rows. See journal.ts.
   ALTER TABLE epoch ADD COLUMN ciphertext_bytes INTEGER NOT NULL DEFAULT 0;
   UPDATE epoch SET ciphertext_bytes = COALESCE((
     SELECT SUM(LENGTH(e.ciphertext)) FROM envelope e
@@ -244,14 +247,26 @@ export function openDatabase(path: string): Db {
   return db;
 }
 
-export function migrate(db: Db): void {
+/**
+ * Brings a database up to `upTo`, which is the whole schema unless a caller says otherwise.
+ *
+ * The parameter is not a deployment option — `openDatabase` never passes one — and it exists so
+ * that the upgrade can be tested at all. Every path into a running server arrives at a database
+ * that is either empty or already current, which means a migration is run against *populated*
+ * tables by production and by nothing else, and that is the run where a rebuild can drop the rows
+ * it meant to carry. With `upTo` a test builds a database at an earlier version, writes into it
+ * what the older build would have written, and migrates it the rest of the way. See
+ * `tests/migrations.test.ts`.
+ */
+export function migrate(db: Db, upTo: number = MIGRATIONS.length): void {
   const current = Number((db.pragma("user_version", { simple: true }) as number | bigint) ?? 0);
   if (current > MIGRATIONS.length) {
     throw new Error(
       `database schema version ${current} is newer than this build understands (${MIGRATIONS.length})`,
     );
   }
-  for (let version = current; version < MIGRATIONS.length; version += 1) {
+  const target = Math.min(upTo, MIGRATIONS.length);
+  for (let version = current; version < target; version += 1) {
     const sql = MIGRATIONS[version];
     if (sql === undefined) throw new Error(`missing migration ${version + 1}`);
     db.exec("BEGIN");

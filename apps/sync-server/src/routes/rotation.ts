@@ -311,7 +311,7 @@ export function registerRotationRoutes(app: FastifyInstance, context: ServerCont
     async (request) => {
       const auth = context.authenticate(request);
       const { familyId } = request.params as { familyId: string };
-      context.requireOwner(context.requireFamily(auth, familyId));
+      const membership = context.requireOwner(context.requireFamily(auth, familyId));
       const staging = context.stagingEpoch(familyId);
       if (staging === undefined) {
         throw new ApiError(409, "no_rotation", "no rotation is in progress for this family");
@@ -320,7 +320,9 @@ export function registerRotationRoutes(app: FastifyInstance, context: ServerCont
       // timeout — otherwise an attempt stuck on a lost device would block exactly the rotation
       // that the loss of that device makes necessary.
       context.cancelRotation(familyId, staging.key_epoch);
-      return { cancelledKeyEpoch: staging.key_epoch, keyEpoch: context.requireMembership(auth).keyEpoch };
+      // The epoch in force is the one already resolved: cancelling deletes the staging row and
+      // leaves `family.key_epoch` alone, which is the whole point of being able to cancel.
+      return { cancelledKeyEpoch: staging.key_epoch, keyEpoch: membership.keyEpoch };
     },
   );
 }

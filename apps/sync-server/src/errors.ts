@@ -28,6 +28,15 @@ export const API_ERROR_CODES = [
   "rate_limited",
   /** The account is already in a family; 2.1 allows at most one. */
   "already_in_family",
+  /**
+   * The `familyId` offered at creation belongs to some family already.
+   *
+   * Not `already_in_family`: that one is about the caller, and the answer to it is "you are done,
+   * you have a family". This one is about the identifier, and the answer is to generate another
+   * one and try again. The two used to share a code, and a client branching on it would have shown
+   * one of the two users the other's remedy.
+   */
+  "family_exists",
   /** The account is in no family, and the route needs one. */
   "no_family",
   /** 3.3 step 2 / 5.5 step 1: an epoch is in `staging`, writing is closed for everyone. */
@@ -36,10 +45,32 @@ export const API_ERROR_CODES = [
   "epoch_mismatch",
   /** 3.2.1: `100 000` envelopes per epoch. */
   "quota_exhausted",
-  /** No `staging` epoch to advance, complete or cancel. */
+  /**
+   * The rotation the caller names cannot be carried further: none is in progress, the attempt is
+   * not the one in progress, or its `rotateConfirm` has not been uploaded yet (5.5, 5.4).
+   */
   "no_rotation",
-  /** The invite does not exist, has expired, or has already been used. */
+  /**
+   * The epoch in force carries no `rotationId`, so no out-of-band wrap can cite one (5.5, last
+   * part).
+   *
+   * Nothing to do with a rotation, which is why it is no longer spelled `no_rotation`: a client
+   * that read that code here would offer to finish or retry a rotation that was never declared.
+   * Every epoch this server creates is given a `rotationId` — the family's first by 6.2, each
+   * later one by 5.5 step 1 — so this is a state the code refuses to assume away rather than one
+   * a caller can reach.
+   */
+  "epoch_not_wrappable",
+  /** The invite does not exist, has expired, or has already been used. `404`. */
   "invite_invalid",
+  /**
+   * The `inviteId` offered at creation belongs to an invite already. `409`.
+   *
+   * The issuing device's remedy is a fresh identifier; the joining device's remedy for
+   * `invite_invalid` is a fresh code from the owner. Nothing connects the two, and they shared a
+   * code — and, being thrown with two different statuses, could not even be told apart by that.
+   */
+  "invite_exists",
   /** A wrap for this device and epoch already exists (5.5, last part). */
   "wrap_exists",
   /** The `deviceId` is known but registered with a different public key. */

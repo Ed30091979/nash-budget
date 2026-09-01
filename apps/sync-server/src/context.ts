@@ -55,6 +55,21 @@ interface DeviceRow {
   readonly refresh_expires_at: number | null;
 }
 
+/**
+ * The first string that sorts after every string beginning with `prefix`.
+ *
+ * The last character is raised by one, which is what makes `bucket < end` mean "does not start
+ * with the prefix" rather than "is shorter than something". SQLite compares `TEXT` under `BINARY`,
+ * i.e. by UTF-8 bytes, and every bucket prefix in this server is ASCII (`envelopes:`,
+ * `login-code:`, `invite-claim:`, `invite-create:`), where raising one code unit and raising one
+ * byte are the same act. An empty prefix has no successor and means the whole table.
+ */
+function bucketPrefixEnd(prefix: string): string {
+  const last = prefix.codePointAt(prefix.length - 1);
+  if (last === undefined) return "\uffff";
+  return prefix.slice(0, -1) + String.fromCodePoint(last + 1);
+}
+
 export class ServerContext {
   readonly db: Db;
   readonly config: SyncServerConfig;
@@ -119,7 +134,7 @@ export class ServerContext {
   requireMembership(auth: AuthContext): Membership {
     const row = this.db
       .prepare(
-        "SELECT m.family_id, m.member_id, m.role, f.key_epoch, f.max_key_epoch, f.owner_member_id" +
+        "SELECT m.family_id, m.member_id, m.role, f.owner_member_id" +
           " FROM member m JOIN family f ON f.family_id = m.family_id" +
           " WHERE m.account_id = ? AND m.removed_at IS NULL",
       )
@@ -128,14 +143,15 @@ export class ServerContext {
           family_id: string;
           member_id: string;
           role: MemberRole;
-          key_epoch: number;
-          max_key_epoch: number;
           owner_member_id: string;
         }
       | undefined;
     if (row === undefined) {
       throw new ApiError(403, "no_family", "this account is not a member of any family");
     }
+    // The epoch is read *after* the sweep and not from the join above: a sweep that cancels a
+    // timed-out rotation writes to `epoch`, and the numbers a caller acts on have to be the ones
+    // left standing when it is done.
     this.sweepRotations(row.family_id);
     const family = this.db
       .prepare("SELECT key_epoch, max_key_epoch FROM family WHERE family_id = ?")
@@ -220,17 +236,24 @@ export class ServerContext {
    */
   cancelRotation(familyId: string, keyEpoch: number): void {
     const run = this.db.transaction(() => {
-      this.db
-        .prepare("DELETE FROM envelope WHERE family_id = ? AND key_epoch = ?")
+      // The `state = 'staging'` guard is the first statement and not the last one. It always
+      // carried the whole condition — only a staging attempt may be cancelled — but standing at
+      // the end it guarded only itself: called with the epoch in force, this function emptied that
+      // epoch of its envelopes, its wraps and its confirmation and then declined to delete the
+      // row, which is the family's data gone and no rotation cancelled.
+      const removed = this.db
+        .prepare("DELETE FROM epoch WHERE family_id = ? AND key_epoch = ? AND state = 'staging'")
         .run(familyId, keyEpoch);
+      if (removed.changes === 0) return;
+      // The envelopes of that epoch go with the row: `envelope` names `epoch` in a foreign key
+      // declared `ON DELETE CASCADE`, and `openDatabase` is where `foreign_keys` is turned on.
+      // `key_wrap` and `epoch_confirm` carry no such reference — 5.5 step 7 has them outlive the
+      // epoch they belong to on the *successful* path — so a cancelled attempt deletes them here.
       this.db
         .prepare("DELETE FROM key_wrap WHERE family_id = ? AND key_epoch = ?")
         .run(familyId, keyEpoch);
       this.db
         .prepare("DELETE FROM epoch_confirm WHERE family_id = ? AND key_epoch = ?")
-        .run(familyId, keyEpoch);
-      this.db
-        .prepare("DELETE FROM epoch WHERE family_id = ? AND key_epoch = ? AND state = 'staging'")
         .run(familyId, keyEpoch);
     });
     run();
@@ -267,12 +290,18 @@ export class ServerContext {
    * invite lookups — so a sweep that deleted every row older than the *caller's* window would let
    * the shortest window erase the longest one's counter. Concretely: one envelope batch would wipe
    * the invite-lookup counter of 5.3, the counter that stands between a copied invite box and a
-   * `60`-bit code, and it would do it from an ordinary authenticated request. `substr` rather than
-   * `LIKE` because `_` is a wildcard there and a bucket prefix is not a pattern.
+   * `60`-bit code, and it would do it from an ordinary authenticated request.
+   *
+   * Written as a range and not as `LIKE`, and not as `substr` either. `LIKE` is wrong outright —
+   * `_` is a wildcard there and a bucket prefix is not a pattern. `substr` was right and cost a
+   * full scan of the table: a function of the column is not something an index can be read
+   * through, and this sweep runs on every envelope batch, every login-code request, every invite
+   * created and every invite claimed. `bucket >= prefix AND bucket < successor` selects exactly
+   * the same rows, literally, and reads them through `throttle_bucket_at`.
    */
   throttleSweep(bucketPrefix: string, windowMs: number): void {
     this.db
-      .prepare("DELETE FROM throttle WHERE substr(bucket, 1, ?) = ? AND at <= ?")
-      .run(bucketPrefix.length, bucketPrefix, this.now() - windowMs);
+      .prepare("DELETE FROM throttle WHERE bucket >= ? AND bucket < ? AND at <= ?")
+      .run(bucketPrefix, bucketPrefixEnd(bucketPrefix), this.now() - windowMs);
   }
 }

@@ -114,12 +114,6 @@ export const MAX_LIVE_INVITES_PER_FAMILY = 1;
 export const INVITE_CREATES_PER_WINDOW = 5;
 export const INVITE_CREATE_WINDOW_MS = 60 * 60 * 1000;
 
-/**
- * Rows the claim lookup may touch. Keyed by the digest, so honest traffic returns exactly one; the
- * bound is here so that the work of a claim is a constant and not a length someone else writes.
- */
-export const INVITE_CLAIM_SCAN_ROWS = 8;
-
 /** 5.3: `5` failed invite lookups per `15` minutes and `20` per day, per account and per IP. */
 export const INVITE_CLAIM_FAILURES_PER_WINDOW = 5;
 export const INVITE_CLAIM_WINDOW_MS = 15 * 60 * 1000;

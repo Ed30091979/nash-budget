@@ -16,8 +16,15 @@
  * never take such a wrap, because that is exactly how the continuity chain was once bypassed — a
  * wrap of the current epoch changes the key without changing the number, and nothing has to be
  * confirmed. The receiver enforces it by comparing key digests; the server enforces what it can,
- * which is that a wrap for `(family, epoch, device)` is written once and a second one is refused
- * with `wrap_exists` rather than silently overwriting the first.
+ * which is that the slot `(family, epoch, device)` is not free for the taking — a second wrap is
+ * refused with `wrap_exists` rather than silently overwriting the first.
+ *
+ * "Written once" is not quite the rule, and the exception is deliberate: the owner may replace a
+ * wrap that the owner did not place. Written once for everyone, any member could fill another
+ * device's slot first and leave it filled — no route deletes a wrap — and the owner would be
+ * unable to hand over the real one without a full rotation. That is an insider's denial of exactly
+ * the path 5.5 provides so that a rotation is *not* needed, and it is not a key substitution: the
+ * receiver compares key digests (5.6). The reasoning sits again at the check itself.
  *
  * The fetch path is written to take **no input at all** beyond the family in the URL. It would be
  * natural to let the device say which epoch it has accepted and answer with the difference, and it
@@ -85,9 +92,12 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
       const epoch = context.activeEpoch(membership.familyId, membership.keyEpoch);
       if (epoch === undefined) throw new ApiError(500, "internal", "epoch row is missing");
       if (epoch.rotation_id === null) {
+        // Not `no_rotation`: no rotation was asked for here, and a client told otherwise would
+        // offer to finish one. 5.5 has the out-of-band wrap carry the `rotationId` that produced
+        // the epoch in force, and this epoch has none to carry.
         throw new ApiError(
           409,
-          "no_rotation",
+          "epoch_not_wrappable",
           "this epoch carries no rotation identifier and cannot be wrapped for out of band",
         );
       }

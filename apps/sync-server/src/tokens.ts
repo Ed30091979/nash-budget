@@ -31,13 +31,6 @@ export interface AccessTokenClaims {
   readonly exp: number;
 }
 
-export interface IssuedTokens {
-  readonly accessToken: string;
-  readonly accessExpiresAt: number;
-  readonly refreshToken: string;
-  readonly refreshExpiresAt: number;
-}
-
 function utf8(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
