@@ -1,0 +1,23 @@
+// One program for `src` and `tests` together.
+//
+// `allowImportingTsExtensions` is on because every import in this package names a `.ts` file. That
+// is not a style choice: `pnpm dev` runs the sources through `node --experimental-strip-types`,
+// which resolves specifiers exactly as written and has no build step to rewrite them, so the
+// extension in the source has to be the extension on disk. Nothing is emitted from here —
+// `noEmit` comes from the base config — so the flag costs nothing else.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // `DOM` is here for one import and one only: `@family-budget/sync-crypto` is browser code by
+    // design (its own `tsconfig.src.json` withholds the Node types from it), and its sources name
+    // WebCrypto globals such as `CryptoKeyPair` that live in the DOM library. `invites.ts` imports
+    // `InviteWireRecord` from it on purpose — that type is what keeps the accepted invite fields
+    // and the issuer's secrets apart — so this program has to be able to read that package.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"],
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": false
+  },
+  "include": ["src", "tests"]
+}
