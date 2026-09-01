@@ -1,0 +1,11 @@
+// The tests, which may use Node. The sources are pulled in through ordinary imports and are
+// checked here as well; `tsconfig.src.json` remains the one program that decides whether `src`
+// compiles without Node.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tests.tsbuildinfo"
+  },
+  "include": ["tests"]
+}

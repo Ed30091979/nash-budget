@@ -57,8 +57,11 @@ async function createV2(
   database.close();
 }
 
+// Opened without a version on purpose: the repository upgrades the database to its own current
+// version, and a reader that named a number would fail with VersionError the moment that number
+// moved. These helpers assert what is *in* the store, never which version holds it.
 async function readV1Documents(databaseName: string): Promise<unknown[]> {
-  const database = await requestResult(indexedDB.open(databaseName, 1));
+  const database = await requestResult(indexedDB.open(databaseName));
   const documents = await requestResult(database.transaction("documents", "readonly").objectStore("documents").getAll());
   database.close();
   return documents;
@@ -68,7 +71,7 @@ async function readV2Document(
   databaseName: string,
   key: string,
 ): Promise<{ schemaVersion: number; revision?: string; value: unknown } | undefined> {
-  const database = await requestResult(indexedDB.open(databaseName, 2));
+  const database = await requestResult(indexedDB.open(databaseName));
   const document = await requestResult(
     database.transaction("documents", "readonly").objectStore("documents").get(key),
   );

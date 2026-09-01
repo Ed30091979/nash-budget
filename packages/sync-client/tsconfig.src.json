@@ -1,0 +1,11 @@
+// The shipped code. `types: []` switches off the automatic pickup of every `@types/*` package
+// reachable from this directory, so `@types/node` — hoisted at the workspace root — stays
+// invisible to `src` however it was installed.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [],
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.src.tsbuildinfo"
+  },
+  "include": ["src"]
+}

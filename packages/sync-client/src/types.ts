@@ -1,0 +1,126 @@
+import type { JournalSnapshot, OpId } from "@family-budget/sync-protocol";
+
+/**
+ * An envelope as it travels: the header in the clear, the IV and the ciphertext in base64.
+ *
+ * The same six header fields the AAD binds (5.2), and no others. `seq` and `receivedAt` are not
+ * here because the sender does not have them — the server assigns both after the envelope is
+ * sealed, which is exactly why 3.4 makes the client check `seq` continuity itself.
+ */
+export interface OutgoingEnvelope {
+  readonly envelopeVersion: number;
+  readonly kind: string;
+  readonly familyId: string;
+  readonly opId: OpId;
+  readonly deviceId: string;
+  readonly keyEpoch: number;
+  readonly iv: string;
+  readonly ciphertext: string;
+}
+
+/** What the server hands back: the sealed envelope plus the two numbers it stamped on it. */
+export interface DeliveredEnvelope extends OutgoingEnvelope {
+  readonly seq: number;
+  readonly receivedAt: number;
+}
+
+/**
+ * Decision 15: the cursor is the pair `(keyEpoch, seq)`, and it lives only on the client.
+ *
+ * `seq: 0` means "nothing of this epoch has been applied", so the first envelope of an epoch must
+ * be number `1` — the rule 3.4 step 2 states, expressed as arithmetic rather than as a special
+ * case.
+ */
+export interface SyncCursor {
+  readonly keyEpoch: number;
+  readonly seq: number;
+}
+
+/**
+ * The epoch this device has accepted, and the digest of the key it accepted it with.
+ *
+ * Local state and nothing else. 5.4.1 is explicit that the accepted epoch never travels to the
+ * server: a server told which epoch a device holds can offer it a chain starting where it is
+ * weakest, or read off which devices are behind and pick a convenient minute to ask a person to
+ * confirm a key. Every request this package makes is therefore free of it — see `keys()` in
+ * `transport.ts`, which takes no parameters at all.
+ *
+ * `live` records the proof of liveness of 5.4.1: the epoch is only "accepted" for the purpose of
+ * refusing a step down once the server has taken at least one of this device's own envelopes in
+ * it and answered with a `seq`.
+ */
+export interface AcceptedEpoch {
+  readonly keyEpoch: number;
+  /** `SHA-256(FK)` in lower-case hex — the value that decides "I have already closed this epoch". */
+  readonly keyDigest: string;
+  readonly live: boolean;
+}
+
+/** Why the intake stopped. The cursor never moves past the envelope named here. */
+export type SyncStopReason =
+  /**
+   * A tag check failed on an envelope of this device's own live epoch, or an envelope arrived
+   * under another epoch number with no legitimately announced epoch change behind it. 3.4 and
+   * 5.4.1 give both the same treatment: alarm from the first envelope, cursor stopped, and no
+   * automatic skip — not after ten retries, not after a day, not ever.
+   */
+  | "key_mismatch"
+  /** 3.4 step 2: the numbering skipped. The cursor stays put and the request is repeated. */
+  | "journal_incomplete"
+  /** 3.4 steps 4 and 5, after the tag verified: this build cannot read what the family wrote. */
+  | "update_required"
+  /** 3.4 step 6 and the bounds check: quarantine, with no automatic skip in this phase. */
+  | "quarantined";
+
+export interface SyncStop {
+  readonly reason: SyncStopReason;
+  /** The `seq` the delivery stopped on. */
+  readonly seq: number;
+  /** The `opId` of the envelope, as its open header spelled it. Data, never prose. */
+  readonly opId: OpId;
+  /**
+   * Consecutive failed attempts on this very envelope. 3.4: `10` is a threshold of *retries* of
+   * one envelope, after which the message changes from «не удалось прочитать» to «ключ семьи не
+   * совпадает». It is never a threshold of how many different envelopes failed — after the first
+   * failure the cursor stops, so a second different one is never delivered.
+   */
+  readonly attempts: number;
+}
+
+/** 3.4 step 7: the stamp was folded, but this device's clock did not follow it there. */
+export interface LamportNotice {
+  readonly opId: OpId;
+  /** The device the operation names as its author. Data for the consumer to render. */
+  readonly deviceId: string;
+}
+
+export interface IntakeResult {
+  readonly snapshot: JournalSnapshot;
+  readonly cursor: SyncCursor;
+  /** Operations folded into {@link snapshot} by this delivery. */
+  readonly applied: number;
+  /** Checkpoint envelopes read and passed over; comparison (3.6) belongs to a later phase. */
+  readonly checkpoints: number;
+  readonly notices: readonly LamportNotice[];
+  /** `null` when the whole delivery was consumed. */
+  readonly stop: SyncStop | null;
+}
+
+export interface PushResult {
+  /** Envelopes the server numbered and this device removed from the queue. */
+  readonly confirmed: number;
+  /** Envelopes still waiting after this attempt. */
+  readonly pending: number;
+}
+
+export interface PullResult extends Omit<IntakeResult, "snapshot"> {
+  /** Requests actually made. Zero means the cursor was already at the end of the journal. */
+  readonly requests: number;
+}
+
+export interface SyncStatusReport {
+  readonly cursor: SyncCursor;
+  readonly queued: number;
+  readonly epoch: AcceptedEpoch;
+  readonly stop: SyncStop | null;
+}

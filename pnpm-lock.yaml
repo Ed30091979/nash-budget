@@ -116,6 +116,31 @@ importers:
         specifier: 6.2.4
         version: 6.2.4
 
+  packages/sync-client:
+    dependencies:
+      '@family-budget/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@family-budget/sync-crypto':
+        specifier: workspace:*
+        version: link:../sync-crypto
+      '@family-budget/sync-protocol':
+        specifier: workspace:*
+        version: link:../sync-protocol
+    devDependencies:
+      '@family-budget/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@family-budget/test-fixtures':
+        specifier: workspace:*
+        version: link:../test-fixtures
+      '@types/node':
+        specifier: 26.1.1
+        version: 26.1.1
+      fake-indexeddb:
+        specifier: 6.2.4
+        version: 6.2.4
+
   packages/sync-crypto:
     dependencies:
       hash-wasm:

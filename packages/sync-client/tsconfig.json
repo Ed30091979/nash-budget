@@ -1,0 +1,10 @@
+// Two programs, for the same reason `@family-budget/sync-crypto` has two.
+//
+// `src` ships to the browser and to the Capacitor shell: `fetch`, WebCrypto and IndexedDB are all
+// it may name. A stray `Buffer` or `node:crypto` that type-checked here would only be found on a
+// device. The tests, on the other hand, run under Node, so the Node types are granted to them and
+// withheld from `src`, and `tsc -b` checks both programs.
+{
+  "files": [],
+  "references": [{ "path": "./tsconfig.src.json" }, { "path": "./tsconfig.tests.json" }]
+}
