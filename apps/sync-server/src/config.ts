@@ -7,8 +7,6 @@
  * unverifiable. `deliverLoginCode` is the only way a one-time code leaves the process: the request
  * logger never sees it, and there is no default that writes it anywhere.
  */
-import { randomBytes } from "./bytes.ts";
-
 export type LoginCodeSink = (email: string, code: string) => void;
 
 export interface SyncServerConfig {
@@ -40,7 +38,18 @@ export interface SyncServerOptions {
   readonly logLevel?: string;
 }
 
-export function resolveConfig(options: SyncServerOptions): SyncServerConfig {
+/**
+ * Everything the configuration fixes except the token secret.
+ *
+ * The secret is resolved after the database is open, because when the caller does not supply one
+ * it is *loaded* rather than generated — see `loadOrCreateTokenSecret`. Leaving a freshly random
+ * value here was how a restart silently invalidated every login code in a file database.
+ */
+export type ResolvedConfig = Omit<SyncServerConfig, "tokenSecret"> & {
+  readonly tokenSecret?: Uint8Array;
+};
+
+export function resolveConfig(options: SyncServerOptions): ResolvedConfig {
   const allowedOrigins = [...(options.allowedOrigins ?? [])];
   for (const origin of allowedOrigins) {
     if (origin === "*") {
@@ -56,7 +65,7 @@ export function resolveConfig(options: SyncServerOptions): SyncServerConfig {
   return {
     databasePath: options.databasePath ?? ":memory:",
     allowedOrigins,
-    tokenSecret: options.tokenSecret ?? randomBytes(32),
+    ...(options.tokenSecret === undefined ? {} : { tokenSecret: options.tokenSecret }),
     now: options.now ?? (() => Date.now()),
     deliverLoginCode: options.deliverLoginCode,
     ...(options.logStream === undefined ? {} : { logStream: options.logStream }),

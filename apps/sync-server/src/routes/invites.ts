@@ -19,15 +19,19 @@ import type { InviteWireRecord } from "@family-budget/sync-crypto";
 
 import { equalBytes, sha256, toBase64 } from "../bytes.ts";
 import type { ServerContext } from "../context.ts";
-import { ApiError, notFound } from "../errors.ts";
+import { ApiError, invalid, notFound } from "../errors.ts";
 import {
   AES_GCM_IV_BYTES,
   INVITE_CLAIM_DAY_MS,
   INVITE_CLAIM_FAILURES_PER_DAY,
   INVITE_CLAIM_FAILURES_PER_WINDOW,
+  INVITE_CLAIM_SCAN_ROWS,
   INVITE_CLAIM_WINDOW_MS,
+  INVITE_CREATES_PER_WINDOW,
+  INVITE_CREATE_WINDOW_MS,
   INVITE_TTL_MS,
   MAX_INVITE_BOX_BYTES,
+  MAX_LIVE_INVITES_PER_FAMILY,
   SHA256_BYTES,
 } from "../limits.ts";
 import { decodeBytes } from "./decode.ts";
@@ -71,11 +75,17 @@ interface InviteRow {
 }
 
 export function registerInviteRoutes(app: FastifyInstance, context: ServerContext): void {
-  /** 5.3: the box is deleted on use and on expiry. Expiry has no event, so it is swept. */
-  const sweepInviteBoxes = (): void => {
-    context.db
-      .prepare("UPDATE invite SET ciphertext = NULL WHERE expires_at <= ? AND ciphertext IS NOT NULL")
-      .run(context.now());
+  /**
+   * 5.3: the box is deleted on use and on expiry. Expiry has no event, so it is swept.
+   *
+   * The row goes with the box, and that is the difference from the first version of this function.
+   * Emptying the ciphertext left a row per invite ever issued, for ever, and those rows were what
+   * every claim in the system had to walk. Nothing needs them: a claim requires a live box, a join
+   * requires an unexpired invite, and what 5.4 keeps for the owner's HMAC — the `bindProof` and
+   * the `inviteId` — lives on the device row, not here.
+   */
+  const sweepExpiredInvites = (): void => {
+    context.db.prepare("DELETE FROM invite WHERE expires_at <= ?").run(context.now());
   };
 
   app.post(
@@ -120,7 +130,16 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         exact: SHA256_BYTES,
       });
       const now = context.now();
-      sweepInviteBoxes();
+      sweepExpiredInvites();
+      // Issuing is a rate-limited act like claiming one, and for the same reason: every live
+      // invite is a row the whole system carries, and until this counter existed the number of
+      // them was chosen by whichever owner cared to write a loop. The bucket is the family, which
+      // no outsider can reach — `requireOwner` above has already refused everyone else.
+      const createBucket = `invite-create:family:${membership.familyId}`;
+      context.throttleSweep("invite-create:", INVITE_CREATE_WINDOW_MS);
+      if (context.throttleCount(createBucket, INVITE_CREATE_WINDOW_MS) >= INVITE_CREATES_PER_WINDOW) {
+        throw new ApiError(429, "rate_limited", "too many invites issued for this family");
+      }
       const clash = context.db
         .prepare("SELECT invite_id FROM invite WHERE invite_id = ?")
         .get(input.inviteId);
@@ -129,26 +148,49 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
       }
       // 5.3 fixes the TTL at `24` hours, and the server sets it. Accepting an expiry from the
       // client would not be a limit: the issuer would be free to write ten years.
-      context.db
-        .prepare(
-          "INSERT INTO invite (invite_id, family_id, key_epoch, auth_token_digest, iv," +
-            " ciphertext, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .run(
-          input.inviteId,
-          membership.familyId,
-          membership.keyEpoch,
-          authTokenDigest,
-          iv,
-          ciphertext,
-          now,
-          now + INVITE_TTL_MS,
-        );
+      const expiresAt = now + INVITE_TTL_MS;
+      const superseded = context.db.transaction(() => {
+        // 5.3 knows one live code per family at a time, and this is where that is made true. The
+        // older code is deleted rather than left beside the new one: two live boxes are two
+        // offline targets for the same `60` bits, and the family gains nothing from the second.
+        // It also gives 5.3 the withdrawal it otherwise lacks — a code read out to the wrong
+        // person is replaced instead of standing for a day.
+        const live = context.db
+          .prepare(
+            "SELECT invite_id FROM invite WHERE family_id = ? AND used_at IS NULL AND expires_at > ?" +
+              " ORDER BY created_at DESC",
+          )
+          .all(membership.familyId, now) as { invite_id: string }[];
+        const doomed = live.slice(Math.max(0, MAX_LIVE_INVITES_PER_FAMILY - 1));
+        for (const row of doomed) {
+          context.db.prepare("DELETE FROM invite WHERE invite_id = ?").run(row.invite_id);
+        }
+        context.db
+          .prepare(
+            "INSERT INTO invite (invite_id, family_id, key_epoch, auth_token_digest, iv," +
+              " ciphertext, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          )
+          .run(
+            input.inviteId,
+            membership.familyId,
+            membership.keyEpoch,
+            authTokenDigest,
+            iv,
+            ciphertext,
+            now,
+            expiresAt,
+          );
+        return doomed.map((row) => row.invite_id);
+      })();
+      context.throttleRecord(createBucket);
       return reply.code(201).send({
         inviteId: input.inviteId,
         familyId: membership.familyId,
         keyEpoch: membership.keyEpoch,
-        expiresAt: now + INVITE_TTL_MS,
+        expiresAt,
+        // Said out loud, because a code that has just stopped working is something the issuing
+        // device has to be able to tell the person holding it.
+        supersededInviteIds: superseded,
       });
     },
   );
@@ -178,16 +220,24 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         }
       }
       const digest = sha256(decodeBytes(authToken, "authToken", { exact: SHA256_BYTES }));
-      sweepInviteBoxes();
-      // 5.3 asks for a constant-time comparison. An index probe on the digest would leak which
-      // stored value was reached; the live invites are walked instead and every one is compared,
-      // without an early exit, so the work done does not depend on which row matched or whether
-      // any did. Live invites are few — one per family at a time, with a 24-hour TTL.
+      sweepExpiredInvites();
+      // 5.3 asks for a constant-time comparison, and it is still here — every candidate row is
+      // compared with `equalBytes`, without an early exit. What is no longer here is the walk over
+      // every live invite in the database. That walk was constant-time in the wrong variable: its
+      // length was the number of live invites, which any owner could raise, on a synchronous
+      // driver, for every claim made by anyone.
+      //
+      // The lookup is keyed by the digest and capped at a fixed number of rows, so the work a
+      // claim costs is a constant. Being keyed leaks nothing an attacker can walk: the value in
+      // the index is `SHA-256(authToken)`, and to steer one byte of it they would have to choose a
+      // preimage. What the code protects is the `60`-bit code behind `authToken`, and that is
+      // guarded by the counters above — `5` failures in `15` minutes, `20` in a day.
       const rows = context.db
         .prepare(
-          "SELECT * FROM invite WHERE used_at IS NULL AND expires_at > ? AND ciphertext IS NOT NULL",
+          "SELECT * FROM invite WHERE auth_token_digest = ? AND used_at IS NULL" +
+            " AND expires_at > ? AND ciphertext IS NOT NULL LIMIT ?",
         )
-        .all(context.now()) as InviteRow[];
+        .all(digest, context.now(), INVITE_CLAIM_SCAN_ROWS) as InviteRow[];
       let matched: InviteRow | null = null;
       for (const row of rows) {
         if (equalBytes(digest, new Uint8Array(row.auth_token_digest))) matched = row;
@@ -238,6 +288,7 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
       }
       const digest = sha256(decodeBytes(input.authToken, "authToken", { exact: SHA256_BYTES }));
       const bindProof = decodeBytes(input.bindProof, "bindProof", { exact: SHA256_BYTES });
+      sweepExpiredInvites();
       const invite = context.db
         .prepare("SELECT * FROM invite WHERE invite_id = ?")
         .get(input.inviteId) as InviteRow | undefined;
@@ -251,6 +302,18 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         !equalBytes(digest, new Uint8Array(invite.auth_token_digest))
       ) {
         throw new ApiError(404, "invite_invalid", "the invite is unknown, used or expired");
+      }
+      // The joining device chooses its own `memberId`, and since migration 2 that identifier is
+      // unique within its family rather than globally. Two consequences, both wanted: a collision
+      // with another family's member is impossible, so this route stopped being a way to ask
+      // whether some identifier exists somewhere; and a collision inside *this* family — the one
+      // the caller holds an invite to, so nothing is disclosed by saying so — is answered in words
+      // instead of arriving as a constraint violation and a `500`.
+      const taken = context.db
+        .prepare("SELECT member_id FROM member WHERE family_id = ? AND member_id = ?")
+        .get(invite.family_id, input.memberId);
+      if (taken !== undefined) {
+        throw invalid("this member identifier is already used in that family");
       }
       const now = context.now();
       context.db.transaction(() => {

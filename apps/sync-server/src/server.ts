@@ -18,7 +18,7 @@ import Fastify, {
 import type { SyncServerConfig, SyncServerOptions } from "./config.ts";
 import { resolveConfig } from "./config.ts";
 import { ServerContext } from "./context.ts";
-import { type Db, openDatabase } from "./db.ts";
+import { type Db, loadOrCreateTokenSecret, openDatabase } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { MAX_BATCH_BODY_BYTES } from "./limits.ts";
 import { registerAuthRoutes } from "./routes/auth.ts";
@@ -58,8 +58,15 @@ export interface SyncServer {
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
 export function buildServer(options: SyncServerOptions): SyncServer {
-  const config = resolveConfig(options);
-  const db = openDatabase(config.databasePath);
+  const resolved = resolveConfig(options);
+  const db = openDatabase(resolved.databasePath);
+  // The secret is the database's when the caller does not bring one: it authenticates rows that
+  // outlive the process — the login codes of 6.1 — and a value regenerated at every start would
+  // refuse them all, in the words reserved for a wrong code.
+  const config: SyncServerConfig = {
+    ...resolved,
+    tokenSecret: resolved.tokenSecret ?? loadOrCreateTokenSecret(db, resolved.now()),
+  };
   const context = new ServerContext(db, config);
 
   const app = Fastify({

@@ -173,9 +173,11 @@ export function registerFamilyRoutes(app: FastifyInstance, context: ServerContex
       if (target === undefined) throw notFound("no such member in this family");
       const now = context.now();
       context.db.transaction(() => {
+        // Scoped by the family, because since migration 2 the key of a member is the pair: the
+        // identifier is chosen by the client and is only unique inside its own family.
         context.db
-          .prepare("UPDATE member SET removed_at = ? WHERE member_id = ?")
-          .run(now, target.member_id);
+          .prepare("UPDATE member SET removed_at = ? WHERE family_id = ? AND member_id = ?")
+          .run(now, membership.familyId, target.member_id);
         revokeAccountDevices(context.db, target.account_id, now);
       })();
       // 6.6: the rotation that follows is mandatory and is the owner's device's job, not the
@@ -200,8 +202,8 @@ export function registerFamilyRoutes(app: FastifyInstance, context: ServerContex
       const now = context.now();
       context.db.transaction(() => {
         context.db
-          .prepare("UPDATE member SET removed_at = ? WHERE member_id = ?")
-          .run(now, membership.memberId);
+          .prepare("UPDATE member SET removed_at = ? WHERE family_id = ? AND member_id = ?")
+          .run(now, membership.familyId, membership.memberId);
         revokeAccountDevices(context.db, auth.accountId, now);
       })();
       return { memberId: membership.memberId, removedAt: now, rotationRequired: true };

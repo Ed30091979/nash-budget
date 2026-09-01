@@ -186,6 +186,7 @@ export function registerRotationRoutes(app: FastifyInstance, context: ServerCont
           ? null
           : decodeBytes(input.epochConfirm, "epochConfirm", { min: 1, max: MAX_EPOCH_CONFIRM_BYTES });
 
+      const wrote = decodedWraps.length > 0 || epochConfirm !== null;
       context.db.transaction(() => {
         for (const wrap of decodedWraps) {
           // Replacing is allowed while the epoch is still staging: 5.4 has the owner regenerate a
@@ -224,12 +225,23 @@ export function registerRotationRoutes(app: FastifyInstance, context: ServerCont
             )
             .run(familyId, staging.key_epoch, input.rotationId, epochConfirm, now);
         }
-        context.db
-          .prepare("UPDATE epoch SET last_progress_at = ? WHERE family_id = ? AND key_epoch = ?")
-          .run(now, familyId, staging.key_epoch);
+        // 5.5 measures the idle timeout in *progress*, and an empty request is not progress. It
+        // used to move the mark all the same, which turned the thirty-minute timeout into a thing
+        // the rotating device could postpone indefinitely by sending `{}` twice an hour — and a
+        // staging epoch holds writing closed for the whole family while it lasts. The mark moves
+        // when a wrap or a confirmation was actually written, and not otherwise.
+        if (wrote) {
+          context.db
+            .prepare("UPDATE epoch SET last_progress_at = ? WHERE family_id = ? AND key_epoch = ?")
+            .run(now, familyId, staging.key_epoch);
+        }
       })();
 
-      return { keyEpoch: staging.key_epoch, wraps: decodedWraps.length, lastProgressAt: now };
+      return {
+        keyEpoch: staging.key_epoch,
+        wraps: decodedWraps.length,
+        lastProgressAt: wrote ? now : staging.last_progress_at,
+      };
     },
   );
 
@@ -274,6 +286,12 @@ export function registerRotationRoutes(app: FastifyInstance, context: ServerCont
         // just been retired, and a family member who left keeps that key.
         context.db
           .prepare("DELETE FROM envelope WHERE family_id = ? AND key_epoch = ?")
+          .run(familyId, membership.keyEpoch);
+        // Its byte budget goes with its envelopes. The retired epoch accepts no writes, so this
+        // changes nothing that can be observed; a counter left standing for rows that no longer
+        // exist is simply a lie kept on a row.
+        context.db
+          .prepare("UPDATE epoch SET ciphertext_bytes = 0 WHERE family_id = ? AND key_epoch = ?")
           .run(familyId, membership.keyEpoch);
         // 5.5 step 7 again: every live invite goes too. An invite box carries the family key of
         // the epoch it was issued in, and that epoch has just stopped being the family's.

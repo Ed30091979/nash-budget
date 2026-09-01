@@ -19,6 +19,7 @@ import { ApiError, invalid, unauthorized } from "../errors.ts";
 import {
   LOGIN_CODE_MAX_ATTEMPTS,
   LOGIN_CODE_MAX_REQUESTS_PER_HOUR,
+  LOGIN_CODE_REQUESTS_PER_SOURCE,
   LOGIN_CODE_REQUEST_WINDOW_MS,
   LOGIN_CODE_TTL_MS,
   MAX_SPKI_BYTES,
@@ -67,7 +68,16 @@ export function issueTokenPair(
   deviceId: string,
 ): Record<string, unknown> {
   const now = context.now();
-  const access = signAccessToken(context.config.tokenSecret, accountId, deviceId, now);
+  const serial = context.db
+    .prepare("SELECT token_serial FROM device WHERE device_id = ?")
+    .get(deviceId) as { token_serial: number } | undefined;
+  const access = signAccessToken(
+    context.config.tokenSecret,
+    accountId,
+    deviceId,
+    serial?.token_serial ?? 0,
+    now,
+  );
   const refresh = issueRefreshToken(deviceId, now);
   context.db
     .prepare("UPDATE device SET refresh_token_hash = ?, refresh_expires_at = ? WHERE device_id = ?")
@@ -82,22 +92,53 @@ export function issueTokenPair(
   };
 }
 
+/** The bucket of 6.1's per-address limit. One name, used by the limiter and by the reset alike. */
+function emailBucket(email: string): string {
+  return `login-code:email:${email}`;
+}
+
 export function registerAuthRoutes(app: FastifyInstance, context: ServerContext): void {
+  /**
+   * 6.1: a code lives `10` minutes. Until this sweep the row outlived it by however long it took
+   * someone to try the code — and nobody ever tries a code they did not receive, so a row written
+   * for an address that never answers stayed for good. The table is written by an unauthenticated
+   * request, which makes "stays for good" the whole of the problem.
+   */
+  const sweepLoginCodes = (): void => {
+    context.db.prepare("DELETE FROM login_code WHERE expires_at <= ?").run(context.now());
+  };
+
   app.post(
     "/v1/auth/code",
     { schema: { body: body({ email: emailField }, ["email"]) } },
     async (request, reply) => {
       const { email: raw } = request.body as { email: string };
       const email = normalizeEmail(raw);
-      const bucket = `login-code:${email}`;
+      const bucket = emailBucket(email);
+      // The second bucket is the point of this pair. 6.1 fixes `3` an hour per address, and the
+      // address is a field of the body: `3` an hour multiplied by every address anyone cares to
+      // type is not a limit, and each one used to leave a row behind. The source of the request is
+      // the one dimension the sender does not choose, so it carries a ceiling of its own.
+      const sourceBucket = `login-code:source:${request.ip}`;
       context.throttleSweep("login-code:", LOGIN_CODE_REQUEST_WINDOW_MS);
+      sweepLoginCodes();
       if (
         context.throttleCount(bucket, LOGIN_CODE_REQUEST_WINDOW_MS) >=
         LOGIN_CODE_MAX_REQUESTS_PER_HOUR
       ) {
         throw new ApiError(429, "rate_limited", "too many code requests for this address");
       }
+      if (
+        context.throttleCount(sourceBucket, LOGIN_CODE_REQUEST_WINDOW_MS) >=
+        LOGIN_CODE_REQUESTS_PER_SOURCE
+      ) {
+        // Deliberately the same words as the line above: which of the two counters was reached is
+        // not something the sender is told, and 6.1 already requires this endpoint to answer
+        // identically whatever it knows about the address.
+        throw new ApiError(429, "rate_limited", "too many code requests for this address");
+      }
       context.throttleRecord(bucket);
+      context.throttleRecord(sourceBucket);
       const code = generateLoginCode();
       context.db
         .prepare(
@@ -151,7 +192,9 @@ export function registerAuthRoutes(app: FastifyInstance, context: ServerContext)
         throw invalidCode;
       }
       context.db.prepare("DELETE FROM login_code WHERE email = ?").run(email);
-      context.throttleClear(`login-code:${email}`);
+      // Only the address's own counter. The per-source ceiling is not the sender's to reset — a
+      // successful sign-in from one address would otherwise clear the count of every other.
+      context.throttleClear(emailBucket(email));
 
       const now = context.now();
       const account = context.db
@@ -219,11 +262,16 @@ export function registerAuthRoutes(app: FastifyInstance, context: ServerContext)
 
   app.post("/v1/auth/logout", async (request) => {
     const auth = context.authenticate(request);
-    // 6.6/6.7 keep "revoke" for the destructive act; signing out only drops the refresh token, so
-    // the device can sign in again with a fresh code and still holds the family key it had.
+    // 6.6/6.7 keep "revoke" for the destructive act; signing out is not destructive — the device
+    // can sign in again with a fresh code and still holds the family key it had. What it must be
+    // is *immediate*: the serial is incremented alongside the refresh token, so every access token
+    // already issued to this device stops being accepted at the door. Dropping only the refresh
+    // token left the session alive for up to the fifteen minutes of 6.1, which is a strange thing
+    // for a server to do one route away from a revocation that acts at once.
     context.db
       .prepare(
-        "UPDATE device SET refresh_token_hash = NULL, refresh_expires_at = NULL WHERE device_id = ?",
+        "UPDATE device SET refresh_token_hash = NULL, refresh_expires_at = NULL," +
+          " token_serial = token_serial + 1 WHERE device_id = ?",
       )
       .run(auth.deviceId);
     return { status: "signed_out" };

@@ -17,6 +17,16 @@ export interface AccessTokenClaims {
   readonly sub: string;
   /** `deviceId`. The token names the device so that revocation (6.7) can act on it at once. */
   readonly did: string;
+  /**
+   * The device's token serial at the moment of issue.
+   *
+   * 6.1 has signing out drop the refresh token, and that used to be all it dropped: the access
+   * token of a signed-out device stayed good for the rest of its fifteen minutes, while 6.7's
+   * revocation acts at the door immediately. The serial closes the gap without a clock — signing
+   * out increments the device's serial, and a token that names the previous one is no longer the
+   * session it was issued for.
+   */
+  readonly tsn: number;
   readonly iat: number;
   readonly exp: number;
 }
@@ -36,12 +46,14 @@ export function signAccessToken(
   secret: Uint8Array,
   accountId: string,
   deviceId: string,
+  tokenSerial: number,
   now: number,
 ): { token: string; expiresAt: number } {
   const expiresAt = now + ACCESS_TOKEN_TTL_MS;
   const claims: AccessTokenClaims = {
     sub: accountId,
     did: deviceId,
+    tsn: tokenSerial,
     iat: Math.floor(now / 1000),
     exp: Math.floor(expiresAt / 1000),
   };
@@ -76,11 +88,15 @@ export function verifyAccessToken(
     return null;
   }
   if (typeof claims !== "object" || claims === null) return null;
-  const { sub, did, iat, exp } = claims as Record<string, unknown>;
+  const { sub, did, tsn, iat, exp } = claims as Record<string, unknown>;
   if (typeof sub !== "string" || typeof did !== "string") return null;
+  // A token without a serial is not an older token to be tolerated, it is a token this build did
+  // not issue: the field is signed like the rest, so the only way to arrive without one is to have
+  // been made elsewhere.
+  if (typeof tsn !== "number" || !Number.isSafeInteger(tsn)) return null;
   if (typeof iat !== "number" || typeof exp !== "number") return null;
   if (exp * 1000 <= now) return null;
-  return { sub, did, iat, exp };
+  return { sub, did, tsn, iat, exp };
 }
 
 /**

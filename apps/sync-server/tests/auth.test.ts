@@ -10,6 +10,7 @@ import { afterEach, expect, test } from "vitest";
 import {
   LOGIN_CODE_MAX_ATTEMPTS,
   LOGIN_CODE_MAX_REQUESTS_PER_HOUR,
+  LOGIN_CODE_REQUESTS_PER_SOURCE,
   LOGIN_CODE_REQUEST_WINDOW_MS,
   LOGIN_CODE_TTL_MS,
 } from "../src/limits.ts";
@@ -108,6 +109,43 @@ test("no more than three codes an hour for one address", async () => {
   expect(afterTheHour.response.statusCode).toBe(202);
 });
 
+test("a code nobody ever tries does not stay in the table", async () => {
+  harness = createHarness();
+  const rows = (): { email: string }[] =>
+    harness!.server.db.prepare("SELECT email FROM login_code").all() as { email: string }[];
+
+  await requestCode(harness, "asked-for@example.test");
+  expect(rows()).toHaveLength(1);
+
+  // 6.1 gives the code ten minutes. Nothing used to remove the row but an attempt to use it, and
+  // an address that never answers never makes one — so an unauthenticated request left a row for
+  // good. The next request sweeps what has expired.
+  harness.advance(LOGIN_CODE_TTL_MS + 1);
+  await requestCode(harness, "someone-else@example.test");
+  expect(rows().map((row) => row.email)).toEqual(["someone-else@example.test"]);
+});
+
+test("the address is not the only bucket: the source of the request has a ceiling of its own", async () => {
+  harness = createHarness();
+  // Every one of these is a different address, so 6.1's three-an-hour is nowhere near reached; the
+  // address is a field of the body, and a limit keyed on it alone is a limit the sender sets.
+  for (let request = 1; request <= LOGIN_CODE_REQUESTS_PER_SOURCE; request += 1) {
+    const response = await requestCode(harness, `flood-${request}@example.test`);
+    expect(response.response.statusCode, `request ${request}`).toBe(202);
+  }
+  const refused = await requestCode(harness, "flood-one-more@example.test");
+  expect(refused.response.statusCode).toBe(429);
+  expect(refused.response.json().error.code).toBe("rate_limited");
+  const stored = harness.server.db.prepare("SELECT COUNT(*) AS n FROM login_code").get() as {
+    n: number;
+  };
+  expect(stored.n).toBeLessThanOrEqual(LOGIN_CODE_REQUESTS_PER_SOURCE);
+
+  harness.advance(LOGIN_CODE_REQUEST_WINDOW_MS + 1);
+  const afterTheHour = await requestCode(harness, "flood-one-more@example.test");
+  expect(afterTheHour.response.statusCode).toBe(202);
+}, 60_000);
+
 test("the answer to a code request does not depend on whether the account exists", async () => {
   harness = createHarness();
   const known = await signIn(harness, "known@example.test");
@@ -149,6 +187,31 @@ test("the refresh token is rotated on every use and the spent one is dead", asyn
   });
   expect(replayed.statusCode).toBe(401);
   expect(replayed.json().error.code).toBe("unauthorized");
+});
+
+test("signing out ends the access token too, not the refresh token alone", async () => {
+  harness = createHarness();
+  const session = await signIn(harness, EMAIL);
+  expect((await call(harness, "GET", "/v1/families/me", { token: session.accessToken })).statusCode)
+    .toBe(403);
+
+  const out = await call(harness, "POST", "/v1/auth/logout", { token: session.accessToken });
+  expect(out.statusCode).toBe(200);
+  // 6.7 revokes at the door and takes effect at once. Signing out used to leave the access token
+  // good for the rest of its fifteen minutes, which is not what the word says.
+  const afterwards = await call(harness, "GET", "/v1/families/me", { token: session.accessToken });
+  expect(afterwards.statusCode).toBe(401);
+  expect(afterwards.json().error.code).toBe("unauthorized");
+  const refreshed = await call(harness, "POST", "/v1/auth/refresh", {
+    payload: { refreshToken: session.refreshToken },
+  });
+  expect(refreshed.statusCode).toBe(401);
+
+  // And signing out is not revocation: the same device signs in again and is itself once more.
+  const again = await signIn(harness, EMAIL, session.deviceId);
+  expect((await call(harness, "GET", "/v1/families/me", { token: again.accessToken })).statusCode)
+    .toBe(403);
+  expect(again.deviceId).toBe(session.deviceId);
 });
 
 test("a revoked device is refused at the door with the status 6.7 expects", async () => {

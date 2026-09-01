@@ -36,6 +36,8 @@ export interface EpochRow {
   readonly family_id: string;
   readonly key_epoch: number;
   readonly seq_counter: number;
+  /** 3.2.1 in bytes: the ciphertext the epoch already holds. Maintained with the insertion. */
+  readonly ciphertext_bytes: number;
   readonly state: "staging" | "active" | "retired";
   readonly rotation_id: string | null;
   readonly rotating_device_id: string | null;
@@ -48,6 +50,7 @@ interface DeviceRow {
   readonly device_id: string;
   readonly account_id: string;
   readonly revoked_at: number | null;
+  readonly token_serial: number;
   readonly refresh_token_hash: Uint8Array | null;
   readonly refresh_expires_at: number | null;
 }
@@ -79,12 +82,16 @@ export class ServerContext {
     const claims = verifyAccessToken(this.config.tokenSecret, header.slice(7), this.now());
     if (claims === null) throw unauthorized("invalid or expired access token");
     const device = this.db
-      .prepare("SELECT device_id, account_id, revoked_at FROM device WHERE device_id = ?")
+      .prepare("SELECT device_id, account_id, revoked_at, token_serial FROM device WHERE device_id = ?")
       .get(claims.did) as DeviceRow | undefined;
     if (device === undefined || device.account_id !== claims.sub) throw unauthorized();
     if (device.revoked_at !== null) {
       throw new ApiError(401, "device_revoked", "this device has been revoked");
     }
+    // 6.1: signing out ends the session, and the access token is half of one. Without this
+    // comparison "signed out" meant "signed out in a quarter of an hour", which is not what the
+    // word says and not what 6.7 does one line above for a revoked device.
+    if (device.token_serial !== claims.tsn) throw unauthorized("this session has been ended");
     this.db
       .prepare("UPDATE device SET last_seen_at = ? WHERE device_id = ?")
       .run(this.now(), device.device_id);
@@ -97,8 +104,8 @@ export class ServerContext {
     if (parsed === null) return null;
     const device = this.db
       .prepare(
-        "SELECT device_id, account_id, revoked_at, refresh_token_hash, refresh_expires_at" +
-          " FROM device WHERE device_id = ?",
+        "SELECT device_id, account_id, revoked_at, token_serial, refresh_token_hash," +
+          " refresh_expires_at FROM device WHERE device_id = ?",
       )
       .get(parsed.deviceId) as DeviceRow | undefined;
     if (device === undefined || device.revoked_at !== null) return null;

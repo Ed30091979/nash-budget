@@ -312,3 +312,99 @@ test("an out-of-rotation wrap is written once and never replaced", async () => {
   expect(outside.statusCode).toBe(403);
   expect(outside.json().error.code).toBe("forbidden");
 }, 60_000);
+
+test("a member may not hold another device's wrap slot against the owner", async () => {
+  harness = createHarness();
+  const { owner, family, member } = await familyOfTwo(harness);
+  const { session: third } = await addMember(harness, owner, family);
+  const slot = {
+    deviceId: third.deviceId,
+    salt: Buffer.alloc(32, 4).toString("base64"),
+    iv: Buffer.alloc(12, 5).toString("base64"),
+    ciphertext: Buffer.alloc(48, 6).toString("base64"),
+  };
+  const url = `/v1/families/${family.familyId}/keys`;
+
+  // 5.6 path «в» lets any member wrap the key for another device, so a member gets there first.
+  const squatted = await call(harness, "POST", url, {
+    token: member.accessToken,
+    payload: slot,
+  });
+  expect(squatted.statusCode).toBe(201);
+
+  // Written once must not mean "whoever wrote first decides". The owner replaces a wrap the owner
+  // did not place; otherwise a member's one request would deny the whole family the path of 5.5
+  // that exists precisely so that a rotation is not needed.
+  const real = { ...slot, ciphertext: Buffer.alloc(48, 7).toString("base64") };
+  const replaced = await call(harness, "POST", url, { token: owner.accessToken, payload: real });
+  expect(replaced.statusCode).toBe(201);
+  expect(replaced.json().replacedSenderDeviceId).toBe(member.deviceId);
+  const listed = await call(harness, "GET", url, { token: third.accessToken });
+  expect(listed.json().wraps).toHaveLength(1);
+  expect(listed.json().wraps[0].ciphertext).toBe(real.ciphertext);
+  expect(listed.json().wraps[0].senderDeviceId).toBe(owner.deviceId);
+
+  // And once the wrap is the owner's, it is written once again — for the member, and for the
+  // owner too. 5.5 keeps the row it protects.
+  const memberAgain = await call(harness, "POST", url, {
+    token: member.accessToken,
+    payload: { ...slot, ciphertext: Buffer.alloc(48, 8).toString("base64") },
+  });
+  expect(memberAgain.statusCode).toBe(409);
+  expect(memberAgain.json().error.code).toBe("wrap_exists");
+  const ownerAgain = await call(harness, "POST", url, {
+    token: owner.accessToken,
+    payload: { ...slot, ciphertext: Buffer.alloc(48, 9).toString("base64") },
+  });
+  expect(ownerAgain.statusCode).toBe(409);
+  expect(ownerAgain.json().error.code).toBe("wrap_exists");
+}, 60_000);
+
+
+test("an empty progress request does not postpone the idle timeout", async () => {
+  harness = createHarness();
+  const owner = await signIn(harness);
+  const family = await createFamily(harness, owner);
+  const rotationId = uuid();
+  const declared = await call(harness, "POST", `/v1/families/${family.familyId}/rotation`, {
+    token: owner.accessToken,
+    payload: { rotationId },
+  });
+  expect(declared.statusCode).toBe(201);
+
+  // One minute short of the thirty of 5.5, the leading device sends a request that carries
+  // nothing: no wrap, no confirmation. It is accepted — there is nothing wrong with it — and it is
+  // not progress. Counted as progress it would let the device hold the family in "writing closed"
+  // for the whole six-hour ceiling by sending the same emptiness twice an hour.
+  harness.advance(ROTATION_IDLE_TIMEOUT_MS - 60_000);
+  await refreshSession(harness, owner);
+  const empty = await call(harness, "POST", `/v1/families/${family.familyId}/rotation/keys`, {
+    token: owner.accessToken,
+    payload: { rotationId },
+  });
+  expect(empty.statusCode).toBe(200);
+  expect(empty.json().lastProgressAt).toBe(declared.json().startedAt);
+
+  harness.advance(60_001);
+  await refreshSession(harness, owner);
+  const swept = await call(harness, "GET", "/v1/families/me", { token: owner.accessToken });
+  expect(swept.json().rotation).toBeNull();
+  expect(swept.json().keyEpoch).toBe(1);
+
+  // A request that carries something is progress, and moves the mark: the difference is what was
+  // written, not what was asked for.
+  const second = uuid();
+  const restarted = await call(harness, "POST", `/v1/families/${family.familyId}/rotation`, {
+    token: owner.accessToken,
+    payload: { rotationId: second },
+  });
+  expect(restarted.statusCode).toBe(201);
+  harness.advance(60_000);
+  await refreshSession(harness, owner);
+  const real = await call(harness, "POST", `/v1/families/${family.familyId}/rotation/keys`, {
+    token: owner.accessToken,
+    payload: { rotationId: second, epochConfirm: Buffer.alloc(32, 6).toString("base64") },
+  });
+  expect(real.statusCode).toBe(200);
+  expect(real.json().lastProgressAt).toBe(harness.now);
+}, 60_000);

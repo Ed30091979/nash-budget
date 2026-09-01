@@ -122,7 +122,9 @@ export async function call(
 export async function signIn(
   harness: Harness,
   email = `user-${randomUUID()}@example.test`,
-  deviceId = randomUUID(),
+  // Plainly a string: signing in again on a device that already exists is an ordinary case (6.1),
+  // and the identifier then comes from a session rather than from a fresh `randomUUID`.
+  deviceId: string = randomUUID(),
 ): Promise<Session> {
   const requested = await call(harness, "POST", "/v1/auth/code", { payload: { email } });
   if (requested.statusCode !== 202) throw new Error(`code request failed: ${requested.body}`);

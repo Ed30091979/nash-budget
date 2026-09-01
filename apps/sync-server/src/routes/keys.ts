@@ -121,16 +121,35 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
         throw forbidden("forbidden", "a device does not wrap the family key for itself");
       }
 
+      // Who put the existing wrap there, if there is one. The role is read from the family's own
+      // member list rather than taken from the row, because the row records a device and roles
+      // live on members.
       const existing = context.db
         .prepare(
-          "SELECT device_id FROM key_wrap WHERE family_id = ? AND key_epoch = ? AND device_id = ?",
+          "SELECT w.sender_device_id, m.role AS sender_role FROM key_wrap w" +
+            " LEFT JOIN device d ON d.device_id = w.sender_device_id" +
+            " LEFT JOIN member m ON m.account_id = d.account_id AND m.family_id = w.family_id" +
+            " AND m.removed_at IS NULL" +
+            " WHERE w.family_id = ? AND w.key_epoch = ? AND w.device_id = ?",
         )
-        .get(membership.familyId, membership.keyEpoch, input.deviceId);
-      if (existing !== undefined) {
-        // Not an overwrite. 5.5: a device that already has this epoch's key must never accept a
-        // wrap of it, and a server that let the row be replaced would be offering exactly the
-        // "key change without an epoch change" that the confirmation chain exists to make
-        // impossible. A genuinely new key for the same device needs a rotation, number included.
+        .get(membership.familyId, membership.keyEpoch, input.deviceId) as
+        | { sender_device_id: string; sender_role: string | null }
+        | undefined;
+      // 5.5: a wrap is written once, and a server that silently replaced it would be offering the
+      // "key change without an epoch change" that the confirmation chain of 5.4 exists to make
+      // impossible. That is why the refusal stays — but it has to count the sender, and until now
+      // it did not. Any member could put a wrap of their own into another device's slot first;
+      // the slot never freed, no route deleted it, and the owner was left unable to hand over the
+      // real wrap without a full rotation. That is not a key substitution — the receiver compares
+      // key digests (5.6) and refuses — it is an insider's denial of exactly the path 5.5 provides
+      // so that a rotation is *not* needed.
+      //
+      // So: the owner may replace a wrap that the owner did not place. A wrap placed by the owner
+      // is still written once, for everyone, the owner included. The narrow reading of 5.5 is
+      // preserved where it protects something, and dropped where it only held a door shut.
+      const replaceable =
+        existing !== undefined && membership.role === "owner" && existing.sender_role !== "owner";
+      if (existing !== undefined && !replaceable) {
         throw new ApiError(409, "wrap_exists", "a wrap of this epoch already exists for that device", {
           keyEpoch: membership.keyEpoch,
         });
@@ -146,7 +165,11 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
       context.db
         .prepare(
           "INSERT INTO key_wrap (family_id, key_epoch, device_id, sender_device_id," +
-            " rotation_id, salt, iv, ciphertext, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " rotation_id, salt, iv, ciphertext, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)" +
+            " ON CONFLICT (family_id, key_epoch, device_id) DO UPDATE SET" +
+            " sender_device_id = excluded.sender_device_id, rotation_id = excluded.rotation_id," +
+            " salt = excluded.salt, iv = excluded.iv, ciphertext = excluded.ciphertext," +
+            " created_at = excluded.created_at",
         )
         .run(
           membership.familyId,
@@ -165,6 +188,9 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
         senderDeviceId: auth.deviceId,
         rotationId: epoch.rotation_id,
         createdAt: now,
+        // Said out loud: the receiving device is being handed something in place of what was
+        // there, and 5.6 has it compare key digests before accepting either.
+        replacedSenderDeviceId: replaceable ? (existing?.sender_device_id ?? null) : null,
       });
     },
   );
