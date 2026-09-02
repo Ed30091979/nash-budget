@@ -15,8 +15,10 @@ import {
 } from "@family-budget/storage";
 import { BackButton } from "./components/BackButton";
 import { Icon, IconSprite, type IconName } from "./components/Icon";
+import { Money } from "./components/Money";
+import { categoryVisual } from "./category-visual";
 import { UpdatePrompt } from "./components/UpdatePrompt";
-import { DashboardScreen, OperationsSearch } from "./features/dashboard";
+import { DashboardScreen } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
 import {
   FamilyScreen,
@@ -243,7 +245,9 @@ function formatMonth(value: string): string {
 }
 
 function transactionCategoryId(transaction: Transaction): string | null {
-  return transaction.kind === "expense" || transaction.kind === "refund" ? transaction.categoryId : null;
+  if (transaction.kind === "expense" || transaction.kind === "refund") return transaction.categoryId;
+  // Доход тоже бывает с категорией, и тогда строка называет её: «Зарплата», а не «Доход».
+  return transaction.kind === "income" ? transaction.categoryId ?? null : null;
 }
 
 // §6: вид операции показывает глиф из спрайта, а не знак «+/−» текстом. Смысл дублирован
@@ -539,7 +543,7 @@ export default function App() {
           {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
-          {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
+          {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
             storageHealth={storageHealth}
@@ -635,22 +639,22 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
     <div className="eyebrow">{formatMonth(plan.startMonth)}</div>
     <section className={`hero-card${safeToSpendMinor < 0 ? " danger" : ""}`}>
       <span>Можно на повседневные расходы</span>
-      <strong data-money-scale={moneyScale(safeToSpend)}>{safeToSpend}</strong>
+      <strong data-money-scale={moneyScale(safeToSpend)}><Money value={safeToSpendMinor} /></strong>
       <p>Остаток лимитов после уже записанных покупок. Обязательные платежи и накопления учтены отдельно.</p>
       <button className="hero-button" type="button" onClick={onAdd}><Icon name="plus" size={20} />Записать покупку</button>
     </section>
 
-    {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row) => `${row.category.name}: +${formatMoney(row.metric?.overMinor ?? 0)}`).join(" · ")}</span></div> : null}
+    {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row, index) => <span key={row.category.id}>{index > 0 ? " · " : ""}{row.category.name}: <Money value={row.metric?.overMinor ?? 0} sign="+" /></span>)}</span></div> : null}
 
     <div className="quick-grid">
-      <QuickCard icon="repeat" label="Платежи месяца" value={formatMoney(plan.currentMonth.scheduledExpenseMinor)} />
-      <QuickCard icon="calendar-clock" label="Отложить к срокам" value={formatMoney(plan.currentMonth.annualReserveMinor)} />
-      <QuickCard icon="wallet" label="Не распределено" value={formatMoney(plan.currentMonth.spendableAfterPlanMinor)} />
+      <QuickCard icon="repeat" label="Платежи месяца" value={plan.currentMonth.scheduledExpenseMinor} />
+      <QuickCard icon="calendar-clock" label="Отложить к срокам" value={plan.currentMonth.annualReserveMinor} />
+      <QuickCard icon="wallet" label="Не распределено" value={plan.currentMonth.spendableAfterPlanMinor} />
     </div>
 
     {next ? <section className="next-card">
-      <div><span className="card-kicker">Ближайший крупный платёж</span><h2>{next.name}</h2><p>{formatDate(next.dueDate)} · {formatMoney(next.amountMinor)}</p></div>
-      <div className="reserve-pill"><span>Откладывать</span><b>{formatMoney(nextMetrics?.monthlyReserveMinor ?? 0)}/мес</b></div>
+      <div><span className="card-kicker">Ближайший крупный платёж</span><h2>{next.name}</h2><p>{formatDate(next.dueDate)} · <Money value={next.amountMinor} /></p></div>
+      <div className="reserve-pill"><span>Откладывать</span><b><Money value={nextMetrics?.monthlyReserveMinor ?? 0} />/мес</b></div>
     </section> : null}
 
     <section className="section-card">
@@ -673,8 +677,8 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
   </>;
 }
 
-function QuickCard({ icon, label, value }: { icon: IconName; label: string; value: string }) {
-  return <article className="quick-card"><span className="quick-icon"><Icon name={icon} size={20} /></span><span className="quick-label">{label}</span><strong>{value}</strong></article>;
+function QuickCard({ icon, label, value }: { icon: IconName; label: string; value: number }) {
+  return <article className="quick-card"><span className="quick-icon"><Icon name={icon} size={20} /></span><span className="quick-label">{label}</span><strong><Money value={value} /></strong></article>;
 }
 
 function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
@@ -689,12 +693,12 @@ function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: Budget
 }
 
 function CommitmentRow({ item, metrics, category }: { item: AnnualCommitment; metrics: AnnualPlan["commitments"][string] | undefined; category?: string }) {
-  return <article className="plan-row"><span className="plan-icon"><Icon name="calendar-clock" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {item.recurrence === "annual" ? "каждый год" : "один раз"} · {formatDate(item.dueDate)}</small><span className={`status-chip ${metrics?.status}`}>{statusLabels[metrics?.status ?? ""] ?? ""}</span></div><p><b>{formatMoney(item.amountMinor)}</b><span>{formatMoney(metrics?.monthlyReserveMinor ?? 0)}/мес</span></p></article>;
+  return <article className="plan-row"><span className="plan-icon"><Icon name="calendar-clock" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {item.recurrence === "annual" ? "каждый год" : "один раз"} · {formatDate(item.dueDate)}</small><span className={`status-chip ${metrics?.status}`}>{statusLabels[metrics?.status ?? ""] ?? ""}</span></div><p><b><Money value={item.amountMinor} /></b><span><Money value={metrics?.monthlyReserveMinor ?? 0} />/мес</span></p></article>;
 }
 
 function ScheduleRow({ item, category }: { item: ScheduledExpense; category?: string }) {
   const schedule = item.mode === "monthly" ? "каждый месяц" : item.months?.map((month) => calendarMonths[month - 1]).join(", ");
-  return <article className="plan-row"><span className="plan-icon"><Icon name="repeat" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {schedule} · до {item.dueDay}-го</small></div><p><b>{formatMoney(item.amountMinor)}</b><span>за месяц</span></p></article>;
+  return <article className="plan-row"><span className="plan-icon"><Icon name="repeat" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {schedule} · до {item.dueDay}-го</small></div><p><b><Money value={item.amountMinor} /></b><span>за месяц</span></p></article>;
 }
 
 function SectionTitle({ title, note, icon }: { title: string; note: string; icon?: IconName }) {
@@ -706,13 +710,39 @@ function CategoryList({ rows }: { rows: CategoryRow[] }) {
     if (!metric) return null;
     const percent = (metric.execution ?? 0) * 100;
     const progress = Math.min(Math.max(percent, 0), 100);
-    return <li key={category.id}><div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><progress className={`progress-track ${metric.status}`} max={100} value={progress} aria-label={`${category.name}: ${Math.round(progress)}% лимита`} /><div className="category-values"><span>Потрачено <b>{formatMoney(metric.actualMinor)}</b></span><span>Осталось <b>{formatMoney(metric.remainingMinor)}</b></span></div></li>;
+    const visual = categoryVisual(category);
+    return <li key={category.id}>
+      <span className={`category-tile tone-${visual.tone}`}><Icon name={visual.icon} size={24} /></span>
+      <div className="category-body">
+        <div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div>
+        <progress className={`progress-track ${metric.status}`} max={100} value={progress} aria-label={`${category.name}: ${Math.round(progress)}% лимита`} />
+        <div className="category-values"><span>Потрачено <b><Money value={metric.actualMinor} /></b></span><span>Осталось <b><Money value={metric.remainingMinor} /></b></span></div>
+      </div>
+    </li>;
   })}</ul>;
 }
 
 function TransactionList({ transactions, categoryById, memberById, showAuthor }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean }) {
   if (!transactions.length) return <p className="empty-state"><span className="empty-state-mark"><Icon name="inbox" size={32} /></span>Здесь появятся операции.</p>;
-  return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon"><Icon name={transactionIcons[transaction.kind]} size={24} /></span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}{showAuthor ? ` · ${transactionAuthorLabel(memberById, transaction.memberId)}` : ""}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
+  return <ul className="transaction-list">{transactions.map((transaction) => {
+    const categoryId = transactionCategoryId(transaction);
+    const category = categoryId === null ? undefined : categoryById.get(categoryId);
+    const visual = category ? categoryVisual(category) : null;
+    return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}>
+      <span className={`transaction-icon ${visual ? `tone-${visual.tone}` : "tone-neutral"}`}><Icon name={visual ? visual.icon : transactionIcons[transaction.kind]} size={24} /></span>
+      <span className="transaction-copy">
+        <strong>{category ? category.name : transactionLabels[transaction.kind]}</strong>
+        <small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}{showAuthor ? ` · ${transactionAuthorLabel(memberById, transaction.memberId)}` : ""}</small>
+      </span>
+      <b><Money value={transaction.amountMinor} sign={transactionSign(transaction.kind)} /></b>
+    </li>;
+  })}</ul>;
+}
+
+/** Направление операции в строке. Сумма хранится положительной, знак принадлежит строке. */
+function transactionSign(kind: Transaction["kind"]): "+" | "−" | undefined {
+  if (kind === "income" || kind === "refund") return "+";
+  return kind === "expense" ? "−" : undefined;
 }
 
 function MoreScreen(props: {

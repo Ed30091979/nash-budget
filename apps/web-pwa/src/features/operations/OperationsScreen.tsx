@@ -8,6 +8,9 @@ import {
   type TransactionKind,
 } from "@family-budget/domain";
 import { Icon, type IconName } from "../../components/Icon";
+import { Money } from "../../components/Money";
+import { categoryVisual } from "../../category-visual";
+import { searchOperations } from "../dashboard";
 import { formatMoney } from "../../money";
 import {
   archiveCategory,
@@ -60,6 +63,46 @@ const statusIcons: Record<CategoryBudgetStatus, IconName> = {
   exhausted: "triangle-alert",
   over_limit: "circle-alert",
 };
+
+// §6: вид операции рисует тот же глиф, что и на «Сегодня» — один смысл, один глиф.
+// Он достаётся только строке без категории: у категорийной строки плитку занимает категория.
+const kindIcons: Record<TransactionKind, IconName> = {
+  income: "arrow-down-left",
+  expense: "arrow-up-right",
+  refund: "rotate-ccw",
+  transfer: "arrow-left-right",
+  goal_contribution: "target",
+};
+
+/** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
+function kindSign(kind: TransactionKind): "+" | "−" | undefined {
+  if (kind === "income" || kind === "refund") return "+";
+  return kind === "expense" ? "−" : undefined;
+}
+
+/** Категория операции, если она у неё есть. Доход тоже бывает с категорией. */
+function transactionCategory(transaction: Transaction, budget: BudgetState): BudgetState["categories"][number] | undefined {
+  const id = transaction.kind === "expense" || transaction.kind === "refund" || transaction.kind === "income"
+    ? transaction.categoryId
+    : undefined;
+  return id === undefined ? undefined : budget.categories.find((item) => item.id === id);
+}
+
+/**
+ * Вторая строка операции — без названия категории: оно уже стоит первой строкой, а повтор в
+ * плотной строке читается как шум.
+ */
+function transactionDetail(transaction: Transaction, budget: BudgetState): string {
+  const account = (id: string) => budget.accounts.find((item) => item.id === id)?.name ?? "Неизвестный счёт";
+  const goal = (id: string) => budget.goals.find((item) => item.id === id)?.name ?? "Неизвестная цель";
+  switch (transaction.kind) {
+    case "income":
+    case "expense": return account(transaction.accountId);
+    case "refund": return `возврат расхода · ${account(transaction.accountId)}`;
+    case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
+    case "goal_contribution": return `${account(transaction.fromAccountId)} → ${goal(transaction.goalId)}`;
+  }
+}
 
 function rubles(minor: number): string {
   return formatMoney(minor);
@@ -232,9 +275,11 @@ function TransactionFields({ budget, draft, patch, categoryQuery, onCategoryQuer
     <AccountSelect id="operation-accountId" label="Счёт зачисления" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
     <CategoryField label="Категория дохода — не обязательно" type="income" budget={budget} value={draft.categoryId} query={categoryQuery} optional onQuery={onCategoryQuery} onValue={(value) => patch("categoryId", value)} onCustom={(name) => onCustomCategory(name, "income")} />
   </>;
+  // Категория стоит раньше счёта: у расхода спрашивают «на что», счёт же почти всегда один и
+  // подставлен заранее. Порядок полей — это и есть порядок вопросов.
   if (draft.kind === "expense") return <>
-    <AccountSelect id="operation-accountId" label="Счёт оплаты" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
     <CategoryField label="Категория расходов" type="expense" budget={budget} value={draft.categoryId} query={categoryQuery} optional={false} onQuery={onCategoryQuery} onValue={(value) => patch("categoryId", value)} onCustom={(name) => onCustomCategory(name, "expense")} />
+    <AccountSelect id="operation-accountId" label="Счёт оплаты" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
   </>;
   if (draft.kind === "refund") {
     const original = budget.transactions.find((item): item is Extract<Transaction, { kind: "expense" }> => item.id === draft.originalTransactionId && item.kind === "expense");
@@ -263,6 +308,9 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // Фильтр истории — тоже не часть черновика: он ничего не записывает.
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyKind, setHistoryKind] = useState<TransactionKind | "all">("all");
   // Строка поиска живёт отдельно от черновика: она ничего не записывает и не делает форму грязной.
   const [categoryQuery, setCategoryQuery] = useState("");
   const [sheet, setSheet] = useState<CategorySheetDraft | null>(null);
@@ -271,15 +319,48 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
   const pristineDraft = useMemo(() => defaultDraft(draft.kind, budget), [budget, draft.kind]);
   const dirty = editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristineDraft);
   const metrics = useMemo(() => calculateBudget(budget), [budget]);
-  const history = useMemo(() => [...budget.transactions].sort((left, right) => right.occurredOn.localeCompare(left.occurredOn) || right.id.localeCompare(left.id)), [budget.transactions]);
+  /**
+   * Один список операций вместо двух. Раньше экран показывал полную историю и отдельным блоком
+   * поиск по тем же операциям — две ленты об одном и том же, полтора экрана прокрутки. Теперь
+   * поиск фильтрует саму историю, а «Показать ещё» по-прежнему держит разметку ограниченной:
+   * даже на пятидесяти тысячах операций в DOM попадают только видимые строки.
+   */
+  const filtered = useMemo(
+    () => searchOperations(budget, { query: historyQuery, kind: historyKind }),
+    [budget, historyKind, historyQuery],
+  );
+  const filtering = historyQuery.trim().length > 0 || historyKind !== "all";
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   const categoryIds = new Set(
     activeBudget?.lines
       .filter((item) => item.active !== false)
       .map((item) => item.categoryId) ?? [],
   );
-  const categorySignals = budget.categories.filter((item) => item.active && item.type === "expense" && categoryIds.has(item.id));
-  const usedActiveCategories = budget.categories.filter((category) => category.active && category.type === "expense" && budget.transactions.some((transaction) => (transaction.kind === "expense" || transaction.kind === "refund") && transaction.categoryId === category.id));
+  /**
+   * Одна секция вместо двух. «Сигналы лимитов» и «Использованные категории» перечисляли одни и
+   * те же категории с разных сторон: первая — те, у кого есть строка плана, вторая — те, по кому
+   * есть операции. Здесь они объединены: у строки с планом есть состояние лимита, у остальных —
+   * только история и кнопка «В архив». Категория без плана не объявляется как `status`: сообщать
+   * нечего, а роль обещала бы состояние, которого нет.
+   */
+  const spentByCategory = new Map<string, number>();
+  for (const transaction of budget.transactions) {
+    if (transaction.kind !== "expense" && transaction.kind !== "refund") continue;
+    const previous = spentByCategory.get(transaction.categoryId) ?? 0;
+    spentByCategory.set(transaction.categoryId, previous + 1);
+  }
+  const categoryRows = budget.categories
+    .filter((item) => item.active && item.type === "expense" && (categoryIds.has(item.id) || spentByCategory.has(item.id)))
+    .map((category) => ({
+      category,
+      metric: categoryIds.has(category.id) ? metrics.categoryMetrics[category.id] : undefined,
+    }));
+  /**
+   * Категории, которые можно убрать из новых операций. Действие редкое и управляющее, поэтому оно
+   * свёрнуто под самим списком, а не повторяет его кнопкой в каждой строке: строка от этого росла
+   * вдвое, а список категорий — на целый экран.
+   */
+  const archivable = budget.categories.filter((category) => category.active && category.type === "expense" && spentByCategory.has(category.id));
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -383,6 +464,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
     if (busy) return;
     runCategoryChange((state) => restoreCategory(state, id), () => selectCategory(id));
   };
+  const editingTransaction = editingId === null ? undefined : budget.transactions.find((item) => item.id === editingId);
+  const editingLabel = editingTransaction
+    ? `${kindLabels[editingTransaction.kind]} ${rubles(editingTransaction.amountMinor)} от ${editingTransaction.occurredOn}`
+    : "";
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
@@ -406,7 +491,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
     setDraft(draftFromTransaction(transaction));
     setEditingId(transaction.id);
     clearTransient();
-    window.setTimeout(() => document.getElementById("operation-kind")?.focus(), 0);
+    window.setTimeout(() => document.getElementById("operation-amount")?.focus(), 0);
   };
   const requestDelete = (transaction: Transaction) => {
     setConfirmation({ type: "delete", id: transaction.id, label: `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}` });
@@ -414,29 +499,26 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
   };
 
   return <div className="operations-screen">
-    <header className="screen-heading"><div><span className="card-kicker">Фактические деньги</span><h1>Операции</h1><p>Доходы, покупки, возвраты, переводы и накопления хранятся одной полной историей.</p></div></header>
-
-    <div className="quick-grid" aria-label="Итоги бюджета">
-      <article className="quick-card"><span className="quick-label">Доход</span><strong>{rubles(metrics.incomeMinor)}</strong></article>
-      <article className="quick-card"><span className="quick-label">Расходы с учётом возвратов</span><strong>{rubles(metrics.expensesMinor)}</strong></article>
-      <article className="quick-card"><span className="quick-label">Капитал</span><strong>{rubles(metrics.capitalMinor)}</strong></article>
-    </div>
-    <section className="section-card" aria-labelledby="account-balances-title"><h2 id="account-balances-title">Остатки на счетах</h2><dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd>{rubles(metrics.accountBalancesMinor[account.id] ?? 0)}</dd></div>)}</dl></section>
-
+    {/* §8: экран «Записать» — это форма. Она стоит первой, а всё, что подтверждает и объясняет
+        запись, идёт под ней. Заголовок экрана — заголовок самой формы: второго на экране нет,
+        и читающему с экрана не приходится слушать одно название дважды. */}
     <section className="section-card" aria-labelledby="operation-form-title">
-      <h2 id="operation-form-title">{editingId ? "Редактировать операцию" : "Записать операцию"}</h2>
+      <h1 id="operation-form-title">{editingId ? "Редактировать операцию" : "Записать операцию"}</h1>
       {/* Пока лист открыт, форма под ним выключена из фокуса и из дерева доступности: лист
           модальный, и Tab не должен уводить в поля, которые он собой закрывает. */}
       <form onSubmit={submit} noValidate aria-busy={busy} inert={sheet !== null}>
         <fieldset disabled={busy}>
           <legend>Данные операции</legend>
+          <div className="field amount-field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
           <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as TransactionKind)}>{Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
-          <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
-          <div className="field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
           <TransactionFields budget={budget} draft={draft} patch={patch} categoryQuery={categoryQuery} onCategoryQuery={setCategoryQuery} onCustomCategory={openCategorySheet} />
+          <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
           <FieldError message={error} />
           <button className="primary-button" type="submit" disabled={busy} aria-busy={busy} aria-label={editingId ? "Проверить изменения операции" : `Сохранить операцию «${kindLabels[draft.kind]}»`}>{editingId ? "Проверить изменения" : "Сохранить"}</button>
           {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button> : null}
+          {/* Удаление живёт здесь, а не в каждой строке списка: разрушающее действие не должно
+              стоять под пальцем при пролистывании истории. */}
+          {editingTransaction ? <button className="secondary-button danger-button" type="button" disabled={busy} aria-label={`Удалить операцию «${editingLabel}»`} onClick={() => requestDelete(editingTransaction)}>Удалить</button> : null}
           {!editingId && dirty ? <button className="secondary-button" type="button" onClick={() => reset()}>Очистить черновик</button> : null}
         </fieldset>
       </form>
@@ -459,14 +541,70 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
       </div> : null}
     </section>
 
-    <section className="section-card" aria-labelledby="limit-signals-title"><h2 id="limit-signals-title">Сигналы лимитов</h2><div className="plan-list">{categorySignals.map((category) => {
-      const metric = metrics.categoryMetrics[category.id];
-      if (!metric) return null;
-      return <article className="plan-row signal-row" role="status" aria-label={`${category.name}: ${statusLabels[metric.status]}, использовано ${rubles(metric.actualMinor)} из ${rubles(metric.availableMinor)}, ${percentage(metric.execution)}`} key={category.id}><span className={`plan-icon signal-icon ${metric.status}`}><Icon name={statusIcons[metric.status]} size={24} /></span><div><strong>{category.name}{category.active ? "" : " (в архиве)"}</strong><small>Использовано {rubles(metric.actualMinor)} из {rubles(metric.availableMinor)} · {percentage(metric.execution)}</small><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><p><b>{metric.status === "over_limit" ? `+${rubles(metric.overMinor)}` : rubles(metric.remainingMinor)}</b><span>{metric.status === "over_limit" ? "сверх лимита" : "осталось"}</span></p></article>;
-    })}</div></section>
+    {/* §1: одна секция вместо двух списков одних и тех же категорий. Строка — две строки текста
+        и плитка: название с состоянием и одна строка чисел. Проценты остаются в объявлении для
+        читающих с экрана, а глазу в плотном списке важнее «сколько осталось». */}
+    <section className="section-card" aria-labelledby="category-signals-title"><h2 id="category-signals-title">Категории месяца</h2><div className="plan-list">{categoryRows.map(({ category, metric }) => {
+      const visual = categoryVisual(category);
+      const planned = metric !== undefined;
+      const over = planned && metric.status === "over_limit";
+      return <article className="plan-row signal-row" role={planned ? "status" : undefined} aria-label={planned ? `${category.name}: ${statusLabels[metric.status]}, использовано ${rubles(metric.actualMinor)} из ${rubles(metric.availableMinor)}, ${percentage(metric.execution)}` : undefined} key={category.id}>
+        <span className={`plan-icon tone-${visual.tone}`}><Icon name={visual.icon} size={24} /></span>
+        <div className="signal-copy">
+          <div className="signal-head"><strong>{category.name}</strong>{planned ? <span className={`status-chip ${metric.status}`}><Icon name={statusIcons[metric.status]} size={20} />{statusLabels[metric.status]}</span> : null}</div>
+          {planned
+            ? <small><Money value={metric.actualMinor} /> из <Money value={metric.availableMinor} /> · {over ? "сверх лимита" : "осталось"} <b>{over ? <Money value={metric.overMinor} /> : <Money value={metric.remainingMinor} />}</b></small>
+            : <small>Без лимита в этом месяце · только история операций</small>}
+        </div>
+      </article>;
+    })}{categoryRows.length === 0 ? <p className="field-hint">Лимиты этого месяца ещё не заданы, а операций по категориям пока нет.</p> : null}</div>
+      {archivable.length ? <details className="row-disclosure">
+        <summary>Убрать категорию из списка</summary>
+        <p className="field-hint">Архив прячет категорию из новых операций и сохраняет её в истории и расчётах.</p>
+        <ul className="chip-list">{archivable.map((category) => <li key={category.id}><button className="secondary-button" type="button" disabled={busy} aria-label={`Архивировать использованную категорию «${category.name}»`} onClick={() => void runChange((state) => archiveCategory(state, category.id), () => undefined)}>{category.name}</button></li>)}</ul>
+      </details> : null}
+    </section>
 
-    {usedActiveCategories.length ? <section className="section-card" aria-labelledby="used-categories-title"><h2 id="used-categories-title">Использованные категории</h2><p>Архив скрывает категорию из новых операций, но сохраняет её в истории и расчётах.</p><ul className="planning-edit-list">{usedActiveCategories.map((category) => <li key={category.id}><strong>{category.name}</strong><button className="text-button" type="button" disabled={busy} aria-label={`Архивировать использованную категорию «${category.name}»`} onClick={() => void runChange((state) => archiveCategory(state, category.id), () => undefined)}>В архив</button></li>)}</ul></section> : null}
+    {/* Итоги — справка, а не действие: они свёрнуты, пока их не спросят (§1, уплотнение). */}
+    <details className="section-card collapsible-card">
+      <summary><span>Итоги и остатки</span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
+      <div className="quick-grid" aria-label="Итоги бюджета">
+        <article className="quick-card"><span className="quick-label">Доход</span><strong><Money value={metrics.incomeMinor} /></strong></article>
+        <article className="quick-card"><span className="quick-label">Расходы с учётом возвратов</span><strong><Money value={metrics.expensesMinor} /></strong></article>
+        <article className="quick-card"><span className="quick-label">Капитал</span><strong><Money value={metrics.capitalMinor} /></strong></article>
+      </div>
+      <dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd><Money value={metrics.accountBalancesMinor[account.id] ?? 0} /></dd></div>)}</dl>
+    </details>
 
-    <section className="section-card" aria-labelledby="operations-history-title"><h2 id="operations-history-title">Полная история</h2>{history.length ? <ul className="planning-edit-list">{history.slice(0, visibleCount).map((transaction) => <li key={transaction.id}><div><strong>{kindLabels[transaction.kind]} · {rubles(transaction.amountMinor)}</strong><span>{transaction.occurredOn} · {transactionContext(transaction, budget)}</span></div><button className="secondary-button" type="button" disabled={busy} aria-label={`Изменить операцию «${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}»`} onClick={() => beginEdit(transaction)}>Изменить</button><button className="text-button" type="button" disabled={busy} aria-label={`Удалить операцию «${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}»`} onClick={() => requestDelete(transaction)}>Удалить</button></li>)}</ul> : <p>Операций пока нет.</p>}{visibleCount < history.length ? <button className="secondary-button" type="button" disabled={busy} aria-label={`Показать ещё операции, осталось ${history.length - visibleCount}`} onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>Показать ещё ({history.length - visibleCount})</button> : null}<p role="status">Показано {Math.min(visibleCount, history.length)} из {history.length}</p></section>
+    <section className="section-card" aria-labelledby="operations-history-title">
+      <h2 id="operations-history-title">Полная история</h2>
+      <div className="search-controls">
+        <label htmlFor="operation-history-search">Поиск по категории, счёту или сумме</label>
+        <input id="operation-history-search" type="search" autoComplete="off" maxLength={80} value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setVisibleCount(PAGE_SIZE); }} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+        <label htmlFor="operation-history-kind">Вид операции</label>
+        <select id="operation-history-kind" value={historyKind} onChange={(event) => { setHistoryKind(event.target.value as TransactionKind | "all"); setVisibleCount(PAGE_SIZE); }}>
+          <option value="all">Все виды</option>
+          {Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+        <button className="secondary-button" type="button" disabled={!filtering} onClick={() => { setHistoryQuery(""); setHistoryKind("all"); setVisibleCount(PAGE_SIZE); }}>Сбросить</button>
+      </div>
+      {filtered.length ? <ul className="transaction-list">{filtered.slice(0, visibleCount).map(({ transaction }) => {
+        const category = transactionCategory(transaction, budget);
+        const visual = category ? categoryVisual(category) : null;
+        const name = `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}`;
+        return <li className={`transaction-row history-row ${transaction.kind}`} key={transaction.id}>
+          {/* Вся строка — одна цель нажатия: она открывает операцию в форме наверху, где её и
+              меняют, и удаляют. Две текстовые кнопки в каждой строке занимали отдельный ряд и
+              растили список вдвое, а разрушающее действие стояло под пальцем в каждой строке. */}
+          <button className="row-open" type="button" disabled={busy} aria-label={`Изменить операцию «${name}»`} onClick={() => beginEdit(transaction)}>
+            <span className={`transaction-icon ${visual ? `tone-${visual.tone}` : "tone-neutral"}`}><Icon name={visual ? visual.icon : kindIcons[transaction.kind]} size={24} /></span>
+            <span className="transaction-copy"><strong>{category ? category.name : kindLabels[transaction.kind]}</strong><small>{transaction.occurredOn} · {category ? kindLabels[transaction.kind] : transactionDetail(transaction, budget)}</small></span>
+            <b><Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} /></b>
+          </button>
+        </li>;
+      })}</ul> : <p className="empty-state"><span className="empty-state-mark"><Icon name="inbox" size={32} /></span>{filtering ? "По этому запросу операций нет." : "Операций пока нет."}</p>}
+      {visibleCount < filtered.length ? <button className="secondary-button" type="button" disabled={busy} aria-label={`Показать ещё операции, осталось ${filtered.length - visibleCount}`} onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>Показать ещё ({filtered.length - visibleCount})</button> : null}
+      <p role="status">{filtering ? `Найдено ${filtered.length} из ${budget.transactions.length}. ` : ""}Показано {Math.min(visibleCount, filtered.length)} из {filtered.length}</p>
+    </section>
   </div>;
 }

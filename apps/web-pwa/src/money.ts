@@ -35,7 +35,31 @@ export function moneyScale(text: string): MoneyScale {
   return "l";
 }
 
-export function formatMoney(minor: number): string {
+/**
+ * Типографский минус U+2212 (DESIGN §7.6). В табличном режиме он равен ширине цифры, поэтому
+ * столбец с отрицательной суммой не съезжает; дефис-минус в этой роли и уже, и читается как
+ * перенос. Знак — только про показ: ввод и разбор минус не принимают вовсе.
+ */
+export const MINUS_SIGN = "−";
+
+/**
+ * Сумма, разобранная на части для вёрстки (DESIGN §7.7).
+ *
+ * Разбор делает `Intl.NumberFormat.formatToParts`, а не регулярное выражение по готовой строке:
+ * разделитель разрядов и отбивка перед знаком валюты — неразрывные пробелы, и рука ошибается на
+ * них раньше, чем платформа. `currency` приходит вместе со своей отбивкой, поэтому вёрстка не
+ * дописывает пробел от себя и не теряет его.
+ */
+export interface MoneyParts {
+  /** `−` для отрицательной суммы, иначе пустая строка. */
+  readonly sign: string;
+  /** Разряды и копейки без знака валюты: `1 234,56`. */
+  readonly value: string;
+  /** Неразрывный пробел вместе со знаком валюты: ` ₽`. */
+  readonly currency: string;
+}
+
+export function moneyParts(minor: number): MoneyParts {
   if (!Number.isSafeInteger(minor)) {
     throw new Error("Денежная сумма должна храниться целым числом минимальных единиц.");
   }
@@ -44,26 +68,33 @@ export function formatMoney(minor: number): string {
   const absoluteMinor = exactMinor < 0n ? -exactMinor : exactMinor;
   const rubles = absoluteMinor / 100n;
   const kopecks = absoluteMinor % 100n;
-  const signedRubles: bigint | number =
-    exactMinor < 0n ? (rubles === 0n ? -0 : -rubles) : rubles;
-  const parts = integerMoneyFormatter.formatToParts(signedRubles);
+  const parts = integerMoneyFormatter.formatToParts(rubles);
 
-  if (kopecks === 0n) {
-    return parts.map((part) => part.value).join("");
-  }
+  // Отбивка перед знаком валюты принадлежит знаку: одна вместе с ним и пропадёт, и переедет.
+  const currencyIndex = parts.findIndex((part) => part.type === "currency");
+  let currencyStart = currencyIndex < 0 ? parts.length : currencyIndex;
+  while (currencyStart > 0 && parts[currencyStart - 1]?.type === "literal") currencyStart -= 1;
 
   let lastIntegerIndex = -1;
-  for (let index = 0; index < parts.length; index += 1) {
-    if (parts[index]?.type === "integer") {
-      lastIntegerIndex = index;
-    }
+  for (let index = 0; index < currencyStart; index += 1) {
+    if (parts[index]?.type === "integer") lastIntegerIndex = index;
   }
-  const fraction = kopecks.toString().padStart(2, "0");
-  return parts
-    .map((part, index) =>
-      index === lastIntegerIndex ? `${part.value}${decimalSeparator}${fraction}` : part.value,
-    )
-    .join("");
+  const fraction = kopecks === 0n ? "" : `${decimalSeparator}${kopecks.toString().padStart(2, "0")}`;
+
+  let value = "";
+  let currency = "";
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (index >= currencyStart) currency += part.value;
+    else value += index === lastIntegerIndex ? `${part.value}${fraction}` : part.value;
+  }
+
+  return { sign: exactMinor < 0n && absoluteMinor > 0n ? MINUS_SIGN : "", value, currency };
+}
+
+export function formatMoney(minor: number): string {
+  const parts = moneyParts(minor);
+  return `${parts.sign}${parts.value}${parts.currency}`;
 }
 
 export function parseMoney(value: string): number {

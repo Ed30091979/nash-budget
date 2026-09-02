@@ -1,4 +1,4 @@
-export { DashboardScreen, OperationsSearch, type DashboardScreenProps } from "./DashboardScreen";
+export { DashboardScreen, type DashboardScreenProps } from "./DashboardScreen";
 export {
   createDashboardModel,
   searchOperations,

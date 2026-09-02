@@ -73,22 +73,32 @@ function plainText(markup: string): string {
   return markup.replaceAll("&nbsp;", " ").replaceAll("&#xA0;", " ").replaceAll("\u00a0", " ");
 }
 
+/**
+ * Видимый текст экрана. Строку операции и сумму рядом с ней проверяет то, что читает человек:
+ * знак валюты набран отдельным элементом (§7), плитка категории — третьим, и утверждение о
+ * «</strong><span>» ломалось бы от любой правки вёрстки, ничего не сказав о смысле.
+ */
+function textOf(markup: string): string {
+  return plainText(markup).replace(/<[^>]*>/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
 describe("operations UI", () => {
   it("renders all operation flows, exact summaries and accessible limit signals", () => {
     const html = plainText(renderToStaticMarkup(<OperationsScreen budget={withAllSignalsAndFlows()} onChange={vi.fn(async () => undefined)} />));
+    const text = textOf(html);
 
     for (const label of ["Доход", "Расход", "Возврат", "Перевод", "Взнос в цель"]) {
       expect(html).toContain(`>${label}<`);
     }
     expect(html).toContain("Счёт оплаты");
-    expect(html).toContain("Доход</span><strong>100 000 ₽");
-    expect(html).toContain("Расходы с учётом возвратов</span><strong>78 150 ₽");
-    expect(html).toContain("Капитал</span><strong>21 850 ₽");
-    expect(html).toContain("Основной</dt><dd>6 850 ₽");
-    expect(html).toContain("Накопительный</dt><dd>15 000 ₽");
-    expect(html).toContain("Возврат · 1 500 ₽");
-    expect(html).toContain("Перевод · 5 000 ₽");
-    expect(html).toContain("Взнос в цель · 10 000 ₽");
+    expect(text).toContain("Доход 100 000 ₽");
+    expect(text).toContain("Расходы с учётом возвратов 78 150 ₽");
+    expect(text).toContain("Капитал 21 850 ₽");
+    expect(text).toContain("Основной 6 850 ₽");
+    expect(text).toContain("Накопительный 15 000 ₽");
+    expect(text).toContain("Продукты 2026-07-07 · Возврат +1 500 ₽");
+    expect(text).toContain("Перевод 2026-07-11 · Основной → Накопительный 5 000 ₽");
+    expect(text).toContain("Взнос в цель 2026-07-10 · Основной → Резерв 10 000 ₽");
 
     expect(html).toContain("В норме");
     expect(html).toContain("Почти лимит");
@@ -100,11 +110,15 @@ describe("operations UI", () => {
     expect(html).toContain("150%");
     expect(html).toContain("нет плана");
     expect(html).toMatch(/role="status" aria-label="Точный перелимит: Перелимит,[^"]*150%"/);
-    // §6: состояние лимита рисует векторный глиф, а не текстовый символ. Смысл при этом несёт
-    // не иконка: строка объявлена через `aria-label`, а рядом стоит статус-чип словами.
-    expect(html).toMatch(/<span class="plan-icon signal-icon over_limit"><svg[^>]*aria-hidden="true"[^>]*>/);
-    expect(html).toContain("#glyph-circle-alert");
-    expect(html).not.toMatch(/signal-icon [a-z_]+"[^>]*>[!○✓]/u);
+    // §6: состояние лимита рисует векторный глиф, а не текстовый символ, и стоит он в чипе —
+    // рядом со словом «Перелимит». Плитка строки занята категорией: цвет метит категорию, а не
+    // величину (§8), поэтому «Продукты» окрашены одинаково в норме и в перерасходе.
+    const overChip = html.match(/<span class="status-chip over_limit">.*?<\/span>/su)?.[0] ?? "";
+    expect(overChip).toContain("#glyph-circle-alert");
+    expect(overChip).toContain('aria-hidden="true"');
+    expect(overChip).toContain("Перелимит");
+    expect(html).toMatch(/<span class="plan-icon tone-[a-z]+"><svg[^>]*aria-hidden="true"[^>]*>/);
+    expect(html).not.toMatch(/status-chip [a-z_]+"[^>]*>[!○✓]/u);
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
@@ -122,8 +136,8 @@ describe("operations UI", () => {
     };
     const archived = archiveCategory(withoutActiveLine, SEED_IDS.categories.food);
     const html = plainText(renderToStaticMarkup(<OperationsScreen budget={archived} onChange={vi.fn(async () => undefined)} />));
-    expect(html).toContain("Продукты · возврат расхода");
-    expect(html).toContain("Расход · 31 500 ₽</strong><span>2026-07-05 · Продукты · Основной");
+    expect(textOf(html)).toContain("Продукты 2026-07-07 · Возврат");
+    expect(textOf(html)).toContain("Продукты 2026-07-05 · Расход −31 500 ₽");
     expect(html).not.toContain("Архивировать использованную категорию «Продукты»");
   });
 
@@ -142,7 +156,7 @@ describe("operations UI", () => {
       <OperationsScreen budget={inactiveLine} onChange={vi.fn(async () => undefined)} />,
     ));
     expect(html).not.toContain('role="status" aria-label="Продукты:');
-    expect(html).toContain("Расход · 31 500 ₽</strong><span>2026-07-05 · Продукты · Основной");
+    expect(textOf(html)).toContain("Продукты 2026-07-05 · Расход −31 500 ₽");
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
   });
 
@@ -160,6 +174,39 @@ describe("operations UI", () => {
     expect(html).toContain("Показано 25 из 31");
     expect(html).toContain("Показать ещё (6)");
     expect(html).toContain("aria-label=\"Показать ещё операции, осталось 6\"");
+  });
+
+  it("фильтрует ту же историю, а не показывает вторым списком те же операции", () => {
+    const state = withAllSignalsAndFlows();
+    const html = renderToStaticMarkup(<OperationsScreen budget={state} onChange={vi.fn(async () => undefined)} />);
+    const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+
+    // Один список операций на экране, и поиск стоит над ним, а не над своей копией.
+    expect(html.match(/class="transaction-list"/gu)).toHaveLength(1);
+    expect(textOf(html)).toContain("Поиск по категории, счёту или сумме");
+    expect(textOf(html)).toContain(`Показано ${state.transactions.length} из ${state.transactions.length}`);
+    // Смена запроса и вида возвращает список к первой странице: иначе фильтр показывал бы
+    // «Показать ещё» там, где найденное уже помещается целиком.
+    expect(source.match(/setVisibleCount\(PAGE_SIZE\)/gu)?.length).toBeGreaterThanOrEqual(3);
+    expect(source).toContain("maxLength={80}");
+  });
+
+  it("держит разметку ограниченной на истории в пятьдесят тысяч операций", () => {
+    const seed = makeSeedBudget();
+    const many: Transaction[] = Array.from({ length: 50_000 }, (_, index) => ({
+      id: `b0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      occurredOn: `2026-07-${String((index % 28) + 1).padStart(2, "0")}`,
+      status: "posted",
+      kind: "income",
+      amountMinor: index + 1,
+      accountId: SEED_IDS.accounts.main,
+    }));
+    const html = plainText(renderToStaticMarkup(
+      <OperationsScreen budget={{ ...seed, transactions: [...seed.transactions, ...many] }} onChange={vi.fn(async () => undefined)} />,
+    ));
+
+    expect(html.match(/class="transaction-row history-row/gu)).toHaveLength(25);
+    expect(textOf(html)).toContain("Показано 25 из 50005");
   });
 
   it("locks before await so a same-tick double submit calls onChange once", async () => {

@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildOperationSearchIndex,
   createDashboardModel,
-  OPERATION_PAGE_SIZE,
-  searchOperationPage,
   searchOperations,
 } from "./model";
 
@@ -188,7 +186,7 @@ describe("dashboard derived model", () => {
     expect(result[0]!.context).toContain("возврат расхода");
   });
 
-  it("indexes 50k valid operations once and returns bounded deterministic pages with an exact total", () => {
+  it("indexes 50k valid operations once, deterministically and without touching the state", () => {
     const source = makePlanningSeed();
     const transactions = Array.from({ length: 50_000 }, (_, index) => ({
       id: `a0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
@@ -201,18 +199,14 @@ describe("dashboard derived model", () => {
     const state: BudgetState = { ...source, transactions };
     const index = buildOperationSearchIndex(state);
     const rebuilt = buildOperationSearchIndex(state);
-    const first = searchOperationPage(index);
-    const second = searchOperationPage(index, {}, 1);
+    const found = searchOperations(state, {});
 
-    expect(first.total).toBe(50_000);
-    expect(first.results).toHaveLength(OPERATION_PAGE_SIZE);
-    expect(second.results).toHaveLength(OPERATION_PAGE_SIZE);
-    expect(first.results.map((item) => item.transaction.id))
-      .toEqual(rebuilt.entries.slice(0, OPERATION_PAGE_SIZE).map((item) => item.transaction.id));
-    expect(new Set([
-      ...first.results.map((item) => item.transaction.id),
-      ...second.results.map((item) => item.transaction.id),
-    ]).size).toBe(OPERATION_PAGE_SIZE * 2);
+    // Порядок один и тот же при каждой сборке, счёт точный, а исходный массив не тронут:
+    // сколько строк из этого показать, решает экран, и он же держит разметку ограниченной.
+    expect(index.entries).toHaveLength(50_000);
+    expect(found).toHaveLength(50_000);
+    expect(found.slice(0, 50).map((item) => item.transaction.id))
+      .toEqual(rebuilt.entries.slice(0, 50).map((item) => item.transaction.id));
     expect(state.transactions).toBe(transactions);
   });
 });

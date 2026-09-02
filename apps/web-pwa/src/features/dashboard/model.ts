@@ -61,14 +61,6 @@ export interface OperationSearchIndex {
   readonly searchableById: ReadonlyMap<string, string>;
 }
 
-export interface OperationSearchPage {
-  readonly results: readonly OperationSearchResult[];
-  readonly total: number;
-  readonly page: number;
-  readonly pageSize: number;
-  readonly pageCount: number;
-}
-
 export const OPERATION_PAGE_SIZE = 50;
 const MAX_QUERY_LENGTH = 80;
 const RUSSIAN_LOCALE = "ru-RU";
@@ -342,29 +334,4 @@ function filterOperationSearchIndex(
       if (query.length === 0) return true;
       return index.searchableById.get(transaction.id)!.includes(query);
     });
-}
-
-export function searchOperationPage(
-  index: OperationSearchIndex,
-  filters: OperationSearchFilters = {},
-  requestedPage = 0,
-  pageSize = OPERATION_PAGE_SIZE,
-): OperationSearchPage {
-  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > OPERATION_PAGE_SIZE) {
-    throw new Error(`Страница поиска должна содержать от 1 до ${OPERATION_PAGE_SIZE} операций.`);
-  }
-  if (!Number.isSafeInteger(requestedPage) || requestedPage < 0) {
-    throw new Error("Номер страницы поиска должен быть неотрицательным целым числом.");
-  }
-  const matches = filterOperationSearchIndex(index, filters);
-  const pageCount = Math.max(1, Math.ceil(matches.length / pageSize));
-  const page = Math.min(requestedPage, pageCount - 1);
-  const start = page * pageSize;
-  return {
-    results: matches.slice(start, start + pageSize),
-    total: matches.length,
-    page,
-    pageSize,
-    pageCount,
-  };
 }

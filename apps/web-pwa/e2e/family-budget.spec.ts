@@ -32,12 +32,14 @@ async function expectBudgetSnapshot(
 }
 
 async function expectAddedExpense(page: Page) {
-  await expect(
-    page
-      .getByRole("region", { name: "Полная история" })
-      .getByRole("listitem")
-      .filter({ hasText: /Расход · 9\s*000\s*₽/u }),
-  ).toContainText("2026-07-18");
+  // Строка истории называет категорию, дату с видом операции и сумму со знаком направления.
+  // Проверяется то, что видно в строке, а не порядок тегов внутри неё.
+  const row = page
+    .getByRole("region", { name: "Полная история" })
+    .getByRole("listitem")
+    .filter({ hasText: /9\s*000\s*₽/u });
+  await expect(row).toContainText("2026-07-18");
+  await expect(row).toContainText("Продукты");
 }
 
 test("G-002 survives restore, offline nested navigation, and an explicit A to B update", async ({

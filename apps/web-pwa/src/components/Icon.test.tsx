@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -25,7 +25,14 @@ describe("иконки", () => {
     expect(ids).toHaveLength(ICON_NAMES.length);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ICON_NAMES.length).toBeGreaterThanOrEqual(25);
-    expect(ICON_NAMES.length).toBeLessThanOrEqual(30);
+    // Набор закрытый, но не замороженный: он вырос ровно на глифы категорий (§6). Мерой
+    // закрытости служит не круглое число, а то, что каждый глиф кем-то назван по имени —
+    // спрайт не носит в сборке ни одной иконки, которую никто не рисует.
+    const sources = sourceFiles()
+      .filter((path) => !path.endsWith(`${sep}Icon.tsx`))
+      .map((path) => readFileSync(path, "utf8"))
+      .join("\n");
+    expect(ICON_NAMES.filter((name) => !sources.includes(`"${name}"`))).toEqual([]);
     // §1.5: ни одного внешнего источника — ни ссылки, ни картинки, ни шрифта.
     expect(markup).not.toMatch(/https?:\/\/(?!www\.w3\.org)/u);
     expect(markup).not.toContain("<image");

@@ -21,9 +21,9 @@ import {
 import {
   createDashboardModel,
   DashboardScreen,
-  OperationsSearch,
   searchOperations,
 } from "./features/dashboard";
+import { OperationsScreen } from "./features/operations";
 import {
   makeG000State,
   OPERATIONS_TEST_IDS,
@@ -105,21 +105,32 @@ afterEach(async () => {
   databaseNames.clear();
 });
 
+/**
+ * Видимый текст разметки. Проверять сумму рядом с её подписью нужно по тому, что читает человек,
+ * а не по тегам между ними: знак валюты набран отдельным элементом (§7), и утверждение о
+ * «</span><strong>» ломалось бы от любой правки вёрстки, ничего не сказав о смысле.
+ */
+function textOf(markup: string): string {
+  return markup.replace(/<[^>]*>/gu, " ").replaceAll("\u00a0", " ").replace(/\s+/gu, " ").trim();
+}
+
 describe("phase 7 App composition", () => {
   it("renders G-002 dashboard on Year and keeps planning and search in their intended routes", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
     const dashboard = renderToStaticMarkup(
       <DashboardScreen budget={makePlanningSeed()} startMonth="2026-07" />,
     ).replaceAll("\u00a0", " ");
-    const operations = renderToStaticMarkup(<OperationsSearch budget={sixOperationState()} />);
+    const operations = renderToStaticMarkup(<OperationsScreen budget={sixOperationState()} onChange={async () => undefined} />);
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);
     const twentyFour = createDashboardModel(makePlanningSeed(), "2026-07", 24);
 
-    expect(source).toContain('import { DashboardScreen, OperationsSearch } from "./features/dashboard"');
+    expect(source).toContain('import { DashboardScreen } from "./features/dashboard"');
     expect(source).toContain("<DashboardScreen budget={budget} />");
     expect(source).toContain("Настроить план");
-    expect(source).toMatch(/screen === "operations"[\s\S]*<OperationsScreen[\s\S]*<OperationsSearch budget=\{budget\}/);
-    expect(source).not.toMatch(/screen === "year"[\s\S]{0,300}<OperationsSearch/);
+    // Поиск по операциям живёт на маршруте «Записать» — внутри самой истории, которую он
+    // фильтрует, а не отдельным вторым списком под ней и не на «Годе».
+    expect(source).toMatch(/screen === "operations" \? <OperationsScreen budget=\{budget\}/);
+    expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
     expect(source).not.toMatch(/repository\.save\(/);
 
@@ -131,12 +142,12 @@ describe("phase 7 App composition", () => {
     expect(twentyFour.months.find((item) => item.month === "2028-01")?.annualDueMinor).toBe(7_200_000);
     expect(twentyFour.months.find((item) => item.month === "2028-06")?.annualDueMinor).toBe(0);
     expect(dashboard.match(/class="dashboard-month-card"/g)).toHaveLength(12);
-    expect(dashboard).toContain("Доход, факт</span><strong>180 000");
-    expect(dashboard).toContain("Расходы, факт</span><strong>71 000");
-    expect(dashboard).toContain("Капитал</span><strong>124 000");
-    expect(dashboard).toContain("Повседневные, факт</span><strong>26 000");
-    expect(dashboard).toContain("Остаток повседневного лимита</span><strong>27 000");
-    expect(operations).toContain("Найдено операций: <strong>6</strong> из 6");
+    expect(textOf(dashboard)).toContain("Доход, факт 180 000 ₽");
+    expect(textOf(dashboard)).toContain("Расходы, факт 71 000 ₽");
+    expect(textOf(dashboard)).toContain("Капитал 124 000 ₽");
+    expect(textOf(dashboard)).toContain("Повседневные, факт 26 000 ₽");
+    expect(textOf(dashboard)).toContain("Остаток повседневного лимита 27 000 ₽");
+    expect(textOf(operations)).toContain("Показано 6 из 6");
   });
 
   it("round-trips the canonical six-operation backup through the shared CAS path exactly", async () => {
