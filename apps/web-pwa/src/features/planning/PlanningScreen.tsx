@@ -24,6 +24,7 @@ import {
   type FlexibleDraft,
   type ScheduleDraft,
 } from "./model";
+import { groupedCategoryOptions } from "../operations/category-picker";
 import {
   changeRestoreDraft,
   createSubmissionGate,
@@ -140,14 +141,18 @@ function ActiveReferenceFields({ prefix, budget, categoryId, accountId, onCatego
   errorField: string | null;
   errorMessage: string | null;
 }) {
-  const categories = budget.categories.filter((item) => item.active && item.type === "expense");
+  // Заголовки групп — тот же закрытый перечень домена, что и в форме операции: группировка есть
+  // в данных, и там, где из категорий выбирают, она обязана быть видна.
+  const groups = groupedCategoryOptions(budget, "expense", "", categoryId === "" ? undefined : categoryId);
   const accounts = budget.accounts.filter((item) => item.active);
   return <>
     <div className="field">
       <label htmlFor={`${prefix}-categoryId`}>Категория расходов</label>
       <select id={`${prefix}-categoryId`} value={categoryId} onChange={(event) => onCategory(event.target.value)} {...a11y(`${prefix}-categoryId`, errorField, errorMessage, "categoryId")}>
         <option value="">Выберите категорию</option>
-        {categories.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+        {groups.map((group) => <optgroup label={group.title} key={group.key}>
+          {group.options.map((option) => <option value={option.id} key={option.id}>{option.name}{option.archived ? " (в архиве)" : ""}</option>)}
+        </optgroup>)}
       </select>
       <FieldError id={`${prefix}-categoryId`} message={errorField === "categoryId" ? errorMessage ?? undefined : undefined} />
     </div>

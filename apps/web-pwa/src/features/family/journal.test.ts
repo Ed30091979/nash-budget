@@ -158,4 +158,30 @@ describe("бюджет как операции журнала", () => {
     expect(arrived?.memberId).toBe(MEMBER);
     expect(materialized.members.map((member) => member.name)).toEqual(["Анна"]);
   });
+
+  it("категория дохода доходит до семьи, а её отсутствие не превращается в поле", () => {
+    const state = makeSeedBudget();
+    const categoryId = "0000000a-0000-4000-8000-00000000c001";
+    const income = state.transactions.find((entry) => entry.kind === "income");
+    expect(income).toBeDefined();
+    const labelled: BudgetState = {
+      ...state,
+      categories: [
+        ...state.categories,
+        { id: categoryId, name: "Зарплата", type: "income", group: "income", active: true, sortOrder: 900 },
+      ],
+      transactions: state.transactions.map((entry) =>
+        entry.id === income!.id ? { ...entry, categoryId } : entry,
+      ),
+    };
+
+    const arrived = applyJournal(stamp(labelled)).state.transactions.find(
+      (entry) => entry.id === income!.id,
+    );
+    expect(arrived).toMatchObject({ kind: "income", categoryId });
+
+    // Доход без категории остаётся доходом без категории — поля у него нет вовсе.
+    const plain = applyJournal(stamp(state)).state.transactions.find((entry) => entry.id === income!.id);
+    expect(Object.hasOwn(plain ?? {}, "categoryId")).toBe(false);
+  });
 });

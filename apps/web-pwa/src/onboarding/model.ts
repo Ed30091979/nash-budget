@@ -1,4 +1,10 @@
-import { type BudgetState } from "@family-budget/domain";
+import {
+  categoryNameKey,
+  makeDefaultCategories,
+  type BudgetState,
+  type Category,
+  type CategoryGroup,
+} from "@family-budget/domain";
 import { type CreateIfAbsentResult } from "@family-budget/storage";
 import { parseMoney } from "../money";
 
@@ -60,12 +66,12 @@ export function createInitialOnboardingDraft(startDate = currentMonthStart()): O
     currency: "RUB",
     periodStart: startDate,
     monthlyIncome: "",
-    mandatoryName: "Жильё и счета",
+    mandatoryName: "Жильё",
     mandatoryAmount: "",
     categories: [
       { key: "everyday-1", name: "Продукты", limit: "" },
       { key: "everyday-2", name: "Транспорт", limit: "" },
-      { key: "everyday-3", name: "Дом и мелкие покупки", limit: "" },
+      { key: "everyday-3", name: "Дом и хозяйство", limit: "" },
     ],
   };
 }
@@ -217,11 +223,33 @@ export function buildOnboardingBudgetState(
 
   const accountId = id();
   const budgetId = id();
-  const mandatoryCategoryId = id();
+  /**
+   * Набор категорий и набор строк бюджета — разные вещи.
+   *
+   * Хозяйство заводится со всем стартовым набором домена: пятнадцать расходных категорий в
+   * четырёх группах и восемь доходных. Лимиты при этом по-прежнему спрашиваются только у трёх-пяти
+   * повседневных — иначе онбординг превратился бы в анкету на двадцать три суммы. Названия,
+   * введённые вручную, сначала ищутся в этом наборе и лишь потом заводят двадцать четвёртую
+   * категорию: «Продукты» из формы и «Продукты» из каталога — одна и та же строка расходов.
+   */
+  const categories: Category[] = [...makeDefaultCategories(id)];
+  const useCategory = (rawName: string, group: CategoryGroup): string => {
+    const name = normalizeOnboardingLabel(rawName);
+    const key = categoryNameKey(name);
+    const existing = categories.find(
+      (item) => item.type === "expense" && categoryNameKey(item.name) === key,
+    );
+    if (existing) return existing.id;
+    const sortOrder = Math.max(0, ...categories.map((item) => item.sortOrder)) + 10;
+    if (!Number.isSafeInteger(sortOrder)) throw new Error("Порядок категорий слишком велик.");
+    const created: Category = { id: id(), name, type: "expense", group, active: true, sortOrder };
+    categories.push(created);
+    return created.id;
+  };
+  const mandatoryCategoryId = useCategory(draft.mandatoryName, "mandatory");
   const everyday = draft.categories.map((category) => ({
-    id: id(),
+    id: useCategory(category.name, "everyday"),
     lineId: id(),
-    name: normalizeOnboardingLabel(category.name),
     limitMinor: parseMoney(category.limit),
   }));
   const everydayTotalMinor = safeSum(everyday.map((category) => category.limitMinor), "Повседневные лимиты");
@@ -239,24 +267,7 @@ export function buildOnboardingBudgetState(
       openingBalanceMinor: 0,
       active: true,
     }],
-    categories: [
-      {
-        id: mandatoryCategoryId,
-        name: normalizeOnboardingLabel(draft.mandatoryName),
-        type: "expense",
-        group: "Обязательные",
-        active: true,
-        sortOrder: 10,
-      },
-      ...everyday.map((category, index) => ({
-        id: category.id,
-        name: category.name,
-        type: "expense" as const,
-        group: "Повседневные",
-        active: true,
-        sortOrder: (index + 2) * 10,
-      })),
-    ],
+    categories,
     budgets: [{
       id: budgetId,
       startDate: draft.periodStart,

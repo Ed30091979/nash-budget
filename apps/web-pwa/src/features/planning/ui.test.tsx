@@ -116,4 +116,14 @@ describe("planning UI", () => {
     expect(source).toMatch(/useEffect\(\(\) => \(\) => \{\s*onDirtyChange\(false\);/);
     expect(source).toContain("onDirtyChange?.(false)");
   });
+
+  it("печатает заголовки групп там же, где предлагает выбрать категорию", () => {
+    const html = renderToStaticMarkup(<PlanningScreen budget={makePlanningTestState()} onChange={vi.fn(async () => undefined)} />);
+
+    // Тестовое состояние написано ещё свободными подписями групп; закрытый перечень домена
+    // разбирает их сам, и заголовки печатаются его, а не те, что лежат в документе.
+    expect(html).toContain('<optgroup label="Обязательные платежи">');
+    expect(html).toContain('<optgroup label="Каждый день">');
+    expect(html).not.toContain('<optgroup label="Семья">');
+  });
 });

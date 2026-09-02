@@ -234,6 +234,11 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     if (kind === "expense" || kind === "refund") {
       requireString(transaction.categoryId, `transactions[${index}].categoryId`, true, BACKUP_LIMITS.idLength);
     }
+    // Категория дохода необязательна, как и memberId: копия, написанная до того, как она у дохода
+    // появилась, поля не несёт и остаётся годной навсегда. Если поле есть — оно строка-идентификатор.
+    if (kind === "income" && transaction.categoryId !== undefined) {
+      requireString(transaction.categoryId, `transactions[${index}].categoryId`, true, BACKUP_LIMITS.idLength);
+    }
     if (kind === "transfer" || kind === "goal_contribution") {
       requireString(transaction.fromAccountId, `transactions[${index}].fromAccountId`, true, BACKUP_LIMITS.idLength);
       requireString(transaction.toAccountId, `transactions[${index}].toAccountId`, true, BACKUP_LIMITS.idLength);
@@ -279,6 +284,28 @@ function requirePlanningShape(state: BudgetState): void {
       });
     }
     requireBoolean(item.active, `scheduledExpenses[${index}].active`);
+  });
+}
+
+/**
+ * Категория дохода: необязательная, но не произвольная.
+ *
+ * Домен принимает доход без категории и доход, отнесённый к категории доходного вида, и отвергает
+ * всё, что между. Проверка стоит здесь, а не оставлена расчёту, по той же причине, по какой рядом
+ * проверяются строки бюджета: отказ восстановления обязан называть поле файла, а не всплывать
+ * изнутри `calculateBudget` строкой, которую человеку не с чем сопоставить.
+ */
+function validateIncomeCategories(state: BudgetState): void {
+  const categories = new Map(state.categories.map((category) => [category.id, category]));
+  state.transactions.forEach((transaction, index) => {
+    if (transaction.kind !== "income" || transaction.categoryId === undefined) return;
+    const category = categories.get(transaction.categoryId);
+    if (!category) {
+      throw new Error(`transactions[${index}].categoryId: неизвестная категория ${transaction.categoryId}.`);
+    }
+    if (category.type !== "income") {
+      throw new Error(`transactions[${index}].categoryId: категория должна быть доходной.`);
+    }
   });
 }
 
@@ -370,6 +397,7 @@ export function prepareBudgetState(value: unknown, report?: BackupRepairReporter
   const activeBudget = state.budgets.find((budget) => budget.id === state.activeBudgetId);
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");
   validateAllBudgets(state);
+  validateIncomeCategories(state);
   calculateBudget(state);
   calculateAnnualPlan(
     state,

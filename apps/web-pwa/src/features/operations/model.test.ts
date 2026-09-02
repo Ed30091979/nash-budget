@@ -103,8 +103,8 @@ describe("operation integrity and validation", () => {
   it("creates, edits in place, and deletes income, expense, and refund records", () => {
     const scenarios: readonly { readonly draft: TransactionDraft; readonly edit: TransactionDraft }[] = [
       {
-        draft: { kind: "income", status: "draft", occurredOn: "2026-07-09", amount: "100", accountId: ids.accounts.main },
-        edit: { kind: "income", status: "posted", occurredOn: "2026-07-10", amount: "200", accountId: ids.accounts.main },
+        draft: { kind: "income", categoryId: "", status: "draft", occurredOn: "2026-07-09", amount: "100", accountId: ids.accounts.main },
+        edit: { kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-10", amount: "200", accountId: ids.accounts.main },
       },
       {
         draft: { kind: "expense", status: "draft", occurredOn: "2026-07-09", amount: "100", accountId: ids.accounts.main, categoryId: ids.categories.housing },
@@ -159,7 +159,7 @@ describe("operation integrity and validation", () => {
       accountId: ids.accounts.main, categoryId: ids.categories.housing,
     })).toThrow("тип, категорию или статус");
     expect(() => editTransaction(state, ids.transactions.products, {
-      kind: "income", status: "posted", occurredOn: "2026-07-06", amount: "31500", accountId: ids.accounts.main,
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-06", amount: "31500", accountId: ids.accounts.main,
     })).toThrow("тип, категорию или статус");
     expect(() => editTransaction(state, ids.transactions.products, {
       kind: "expense", status: "pending", occurredOn: "2026-07-06", amount: "31500",
@@ -328,10 +328,10 @@ describe("operation integrity and validation", () => {
       goals: makeG000State().goals.map((item) => ({ ...item, status: "cancelled" as const })),
     };
     expect(() => createTransaction(archived, {
-      kind: "income", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main,
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main,
     }, fixedOperationId)).toThrow("активный счёт");
     const edited = editTransaction(archived, ids.transactions.income, {
-      kind: "income", status: "posted", occurredOn: "2026-07-02", amount: "100000", accountId: ids.accounts.main,
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-02", amount: "100000", accountId: ids.accounts.main,
     });
     expect(edited.transactions[0]?.occurredOn).toBe("2026-07-02");
   });
@@ -385,7 +385,7 @@ describe("operation integrity and validation", () => {
       transactions: 50_000,
     });
     const withNote = {
-      kind: "income", status: "posted", occurredOn: "2026-07-09", amount: "1",
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-09", amount: "1",
       accountId: ids.accounts.main, notes: "=WEBSERVICE(\"https://example.invalid\")".repeat(10_000),
     } as TransactionDraft & { readonly notes: string };
     const created = createTransaction(makeG000State(), withNote, fixedOperationId);

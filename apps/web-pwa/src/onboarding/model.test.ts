@@ -1,4 +1,5 @@
 import { calculateAnnualPlan } from "@family-budget/domain";
+import { categoryPickerView } from "../features/operations/category-picker";
 import { describe, expect, it } from "vitest";
 import {
   buildOnboardingBudgetState,
@@ -65,7 +66,16 @@ describe("onboarding model", () => {
     });
     expect(state.accounts).toHaveLength(1);
     expect(state.accounts[0]?.name).toBe("Для семьи · Наш план · Основной счёт");
-    expect(state.categories).toHaveLength(4);
+    // Полный стартовый набор домена — двадцать три категории — плюс две, названные вручную
+    // («Жильё и счета» и «Дом»); «Продукты» и «Транспорт» из формы попали в готовые, а не в дубли.
+    expect(state.categories).toHaveLength(25);
+    expect(state.categories.filter((item) => item.type === "expense")).toHaveLength(17);
+    expect(state.categories.filter((item) => item.type === "income")).toHaveLength(8);
+    expect(state.categories.map((item) => item.name)).toEqual(expect.arrayContaining([
+      "Кредиты и рассрочки", "Здоровье и аптека", "Зарплата", "Пенсия",
+    ]));
+    expect(state.categories.filter((item) => item.name === "Продукты")).toHaveLength(1);
+    // Лимитов по-прежнему ровно столько, сколько спросили: набор категорий — не набор строк.
     expect(state.budgets[0]?.lines).toHaveLength(3);
     expect(new Set([
       state.activeBudgetId,
@@ -73,7 +83,20 @@ describe("onboarding model", () => {
       ...state.categories.map(({ id }) => id),
       ...state.budgets.flatMap(({ id, lines }) => [id, ...lines.map((line) => line.id)]),
       ...state.scheduledExpenses.map(({ id }) => id),
-    ]).size).toBe(10);
+    ]).size).toBe(31);
+  });
+
+  it("готовый план сразу даёт выбор категорий с заголовками групп", () => {
+    const state = buildOnboardingBudgetState(validDraft(), idFactory());
+
+    const expense = categoryPickerView(state, "expense");
+    expect(expense.groups.map((group) => group.title)).toEqual([
+      "Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее",
+    ]);
+    expect(expense.status).toBe("Найдено 17 категорий");
+    expect(categoryPickerView(state, "income").groups.map((group) => group.title)).toEqual(["Доходы"]);
+    // Названное вручную обязательное лежит в своей группе, а не в «Прочем».
+    expect(expense.groups[0]?.options.map((option) => option.name)).toContain("Жильё и счета");
   });
 
   it("принимает русский десятичный формат и високосный февраль", () => {
@@ -126,7 +149,7 @@ describe("onboarding model", () => {
     const state = buildOnboardingBudgetState(draft, idFactory());
     expect(normalizeOnboardingLabel("\u0418\u0306ога")).toBe("Йога");
     expect(state.accounts[0]?.name).toContain("Для пары · Йога и бюджет");
-    expect(state.categories[1]?.name).toBe("Йога");
+    expect(state.categories.map((item) => item.name)).toContain("Йога");
 
     const duplicate = {
       ...validDraft(),
@@ -156,7 +179,7 @@ describe("onboarding model", () => {
         { key: "3", name: "Дом", limit: "8 000" },
       ],
     }, idFactory());
-    expect(compatibleDisplay.categories[1]?.name).toBe("ＡRENT");
+    expect(compatibleDisplay.categories.map((item) => item.name)).toContain("ＡRENT");
   });
 
   it.each([

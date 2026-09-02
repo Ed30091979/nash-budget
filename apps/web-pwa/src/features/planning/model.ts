@@ -357,7 +357,7 @@ export function createFlexibleLine(
   if (!Number.isSafeInteger(sortOrder)) fail("categories", "Порядок категорий слишком велик.");
   return validateResult({
     ...state,
-    categories: matchingCategory ? state.categories : [...state.categories, { id: categoryId, name, type: "expense", group: "Повседневные", active: true, sortOrder }],
+    categories: matchingCategory ? state.categories : [...state.categories, { id: categoryId, name, type: "expense", group: "everyday", active: true, sortOrder }],
     budgets: state.budgets.map((item) => item.id === budget.id ? { ...item, lines: [...item.lines, line] } : item),
   });
 }

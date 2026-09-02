@@ -96,7 +96,7 @@ describe("operations persistence", () => {
     const beforeFailure = JSON.stringify(current);
     failNext = true;
     await expect(coordinator.apply((state) => createTransaction(state, {
-      kind: "income", status: "posted", occurredOn: "2026-07-10", amount: "100",
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-10", amount: "100",
       accountId: ids.accounts.main,
     }, () => "77000000-0000-4000-8000-000000000002"))).rejects.toThrow("disk");
     expect(JSON.stringify(current)).toBe(beforeFailure);
@@ -112,7 +112,7 @@ describe("operations persistence", () => {
       publish: (state) => { current = state; },
     });
     const income = coordinator.apply((state) => createTransaction(state, {
-      kind: "income", status: "posted", occurredOn: "2026-07-09", amount: "100",
+      kind: "income", categoryId: "", status: "posted", occurredOn: "2026-07-09", amount: "100",
       accountId: ids.accounts.main,
     }, () => "77000000-0000-4000-8000-000000000001"));
     const transfer = coordinator.apply((state) => createTransaction(state, {

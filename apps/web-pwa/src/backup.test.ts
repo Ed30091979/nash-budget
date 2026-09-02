@@ -2,6 +2,7 @@ import {
   calculateAnnualPlan,
   calculateMemberExpenses,
   makePlanningSeed,
+  PLANNING_IDS,
   type BudgetState,
   type Member,
   type Transaction,
@@ -646,5 +647,78 @@ describe("участники в резервной копии", () => {
     expect(created.text).not.toContain(DELETED_MEMBER_ID);
     expect(restored.transactions).toEqual(seed.transactions);
     expect(() => calculateMemberExpenses(restored)).not.toThrow();
+  });
+});
+
+const INCOME_CATEGORY_ID = "7c000000-0000-4000-8000-00000000c001";
+
+/** Копия, в которой один доход отнесён к доходной категории — то, чего до сих пор не бывало. */
+function withIncomeCategory(state: BudgetState, categoryId = INCOME_CATEGORY_ID): BudgetState {
+  return {
+    ...state,
+    categories: [
+      ...state.categories,
+      { id: INCOME_CATEGORY_ID, name: "Зарплата", type: "income", group: "income", active: true, sortOrder: 900 },
+    ],
+    transactions: state.transactions.map((transaction) =>
+      transaction.kind === "income" ? { ...transaction, categoryId } : transaction),
+  };
+}
+
+describe("категория дохода в резервной копии", () => {
+  it("копия без категории у дохода остаётся годной и поля не приобретает", () => {
+    const legacy = makePlanningSeed();
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(legacy));
+
+    expect(restored).toEqual(legacy);
+    const income = restored.transactions.find((item) => item.kind === "income");
+    expect(income).toBeDefined();
+    expect(Object.hasOwn(income ?? {}, "categoryId")).toBe(false);
+  });
+
+  it("сохраняет категорию дохода при round-trip и публикует её", async () => {
+    const labelled = withIncomeCategory(makePlanningSeed());
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(labelled));
+    expect(restored).toEqual(labelled);
+    expect(restored.transactions.find((item) => item.kind === "income"))
+      .toMatchObject({ categoryId: INCOME_CATEGORY_ID });
+
+    await expect(restoreBudgetBackup(backupFile(labelled), save, publish)).resolves.toEqual(labelled);
+    expect(save).toHaveBeenCalledExactlyOnceWith(labelled);
+    expect(publish).toHaveBeenCalledExactlyOnceWith(labelled);
+
+    const exported = await createBudgetBackup(labelled, vi.fn(async () => undefined));
+    expect(parseAndValidateBudgetBackup(exported.text)).toEqual(labelled);
+  });
+
+  it.each([
+    ["неизвестная категория", "7c000000-0000-4000-8000-00000000c009", /неизвестная категория/u],
+    ["расходная категория", PLANNING_IDS.categories.food, /категория должна быть доходной/u],
+  ])("отклоняет доход, отнесённый не туда: %s", async (_label, categoryId, message) => {
+    const broken = withIncomeCategory(makePlanningSeed(), categoryId);
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    await expect(restoreBudgetBackup(backupFile(broken), save, publish)).rejects.toThrow(message);
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("отклоняет пустую и нестроковую категорию дохода", () => {
+    const seed = withIncomeCategory(makePlanningSeed());
+    const replace = (value: unknown) => ({
+      ...seed,
+      transactions: seed.transactions.map((transaction) =>
+        transaction.kind === "income" ? { ...transaction, categoryId: value } : transaction),
+    });
+
+    expect(() => prepareBudgetState(replace("")))
+      .toThrow(/transactions\[\d+\]\.categoryId: ожидалась непустая строка/u);
+    expect(() => prepareBudgetState(replace(42)))
+      .toThrow(/transactions\[\d+\]\.categoryId: ожидалась непустая строка/u);
   });
 });

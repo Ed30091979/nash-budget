@@ -1,7 +1,13 @@
 import {
   calculateBudget,
+  categoryNameKey,
+  createCategory,
+  CategoryValidationError,
+  type BudgetLine,
   type BudgetMetrics,
   type BudgetState,
+  type CategoryGroup,
+  type CategoryType,
   type Transaction,
   type TransactionStatus,
 } from "@family-budget/domain";
@@ -35,6 +41,11 @@ interface CommonTransactionDraft {
 export interface IncomeDraft extends CommonTransactionDraft {
   readonly kind: "income";
   readonly accountId: string;
+  /**
+   * Категория дохода. Пустая строка — «без категории», и это законное состояние: домен объявил
+   * поле необязательным, и доход, записанный без него, обязан сохраняться так же, как раньше.
+   */
+  readonly categoryId: string;
 }
 
 export interface ExpenseDraft extends CommonTransactionDraft {
@@ -189,6 +200,28 @@ function expenseCategoryFor(
   }
 }
 
+/**
+ * Категория дохода, если она названа, — или ничего.
+ *
+ * Пустая строка не ошибка и не «не выбрано ещё»: у дохода категории может не быть вовсе, и такой
+ * доход проходит здесь без единой проверки. Всё остальное сверяется строже, чем на расходной
+ * стороне не бывает: категория обязана существовать, быть доходной и быть активной — кроме той,
+ * что уже стоит в редактируемой операции и с тех пор ушла в архив.
+ */
+function incomeCategoryFor(
+  state: BudgetState,
+  value: string,
+  allowedArchivedId?: string,
+): string | undefined {
+  if (value === "") return undefined;
+  assertIdentifier(value, "categoryId");
+  const category = state.categories.find((item) => item.id === value);
+  if (!category || category.type !== "income" || (!category.active && value !== allowedArchivedId)) {
+    fail("categoryId", "Выберите активную категорию доходов.");
+  }
+  return value;
+}
+
 function goalFor(state: BudgetState, id: string, allowedHistoricalId?: string) {
   assertIdentifier(id, "goalId");
   const goal = state.goals.find((item) => item.id === id);
@@ -217,9 +250,22 @@ function makeTransaction(
   const oldAccounts = current?.kind === draft.kind ? accountIds(current) : [];
 
   switch (draft.kind) {
-    case "income":
+    case "income": {
       accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
-      return { id, kind: "income", occurredOn, status, amountMinor, accountId: draft.accountId };
+      const oldCategoryId = current?.kind === "income" ? current.categoryId : undefined;
+      const categoryId = incomeCategoryFor(state, draft.categoryId, oldCategoryId);
+      // Отсутствующая категория остаётся отсутствующей: `categoryId: undefined` — это не то же
+      // самое, что не иметь поля, ни для домена, ни для журнала синхронизации.
+      return {
+        id,
+        kind: "income",
+        occurredOn,
+        status,
+        amountMinor,
+        accountId: draft.accountId,
+        ...(categoryId === undefined ? {} : { categoryId }),
+      };
+    }
     case "expense": {
       accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
       const oldCategoryId = current?.kind === "expense" ? current.categoryId : undefined;
@@ -380,6 +426,109 @@ export function archiveCategory(state: BudgetState, id: string): BudgetState {
   return validateResult({
     ...state,
     categories: state.categories.map((item) => item.id === id ? { ...item, active: false } : item),
+  });
+}
+
+function parseLimitMoney(value: string): number {
+  try {
+    return parseMoney(value);
+  } catch {
+    return fail("limit", "Введите положительную сумму в рублях, не более двух знаков после запятой.");
+  }
+}
+
+export interface OperationCategoryDraft {
+  readonly name: string;
+  readonly type: CategoryType;
+  readonly group: CategoryGroup;
+  /** Пусто — категория без месячного лимита. Лимит не часть категории, а строка бюджета. */
+  readonly limit: string;
+}
+
+export interface OperationCategoryCreation {
+  readonly state: BudgetState;
+  readonly categoryId: string;
+}
+
+/**
+ * Заводит категорию прямо из формы операции и, если сумма названа, сразу даёт ей месячный лимит.
+ *
+ * Категория создаётся доменом — здесь не повторяется ни одна его проверка имени, группы и вида,
+ * только переводятся его отказы в те же поля, которыми говорит остальная форма. Лимит
+ * необязателен и добавляется отдельной строкой активного бюджета: заводить категорию ради
+ * покупки, лимит на которую никто не планировал, — обычное дело, и требовать сумму значило бы
+ * вернуть тот самый окольный путь через «Добавить лимит», ради ухода от которого всё и делается.
+ */
+export function createOperationCategory(
+  state: BudgetState,
+  draft: OperationCategoryDraft,
+  makeId: OperationsIdFactory = () => crypto.randomUUID(),
+): OperationCategoryCreation {
+  validateState(state);
+  if (state.categories.length >= OPERATIONS_LIMITS.categories) {
+    fail("name", "Достигнут лимит категорий.");
+  }
+  const ids = allDocumentIds(state);
+  let created;
+  try {
+    created = createCategory(
+      state,
+      { name: draft.name, type: draft.type, group: draft.group },
+      () => nextId(ids, makeId),
+    );
+  } catch (error) {
+    if (error instanceof CategoryValidationError) fail(error.field, error.message);
+    throw error;
+  }
+
+  const limit = draft.limit.trim();
+  if (limit.length === 0) {
+    return { state: validateResult(created.state), categoryId: created.category.id };
+  }
+  if (draft.type !== "expense") fail("limit", "Месячный лимит бывает только у расходной категории.");
+  const budget = created.state.budgets.find((item) => item.id === created.state.activeBudgetId);
+  if (!budget) fail("limit", "Активный бюджетный период не найден.");
+  if (budget.lines.length >= OPERATIONS_LIMITS.linesPerBudget) {
+    fail("limit", "Достигнут лимит бюджетных лимитов в периоде.");
+  }
+  const line: BudgetLine = {
+    id: nextId(ids, makeId),
+    categoryId: created.category.id,
+    plannedMinor: parseLimitMoney(limit),
+    active: true,
+  };
+  return {
+    state: validateResult({
+      ...created.state,
+      budgets: created.state.budgets.map((item) =>
+        item.id === budget.id ? { ...item, lines: [...item.lines, line] } : item,
+      ),
+    }),
+    categoryId: created.category.id,
+  };
+}
+
+/**
+ * Возвращает категорию из архива вместо того, чтобы заводить её тёзку.
+ *
+ * Отказывает единственным способом, каким возврат может быть неправ: активная категория того же
+ * вида уже носит это имя, и после возврата их стало бы две. Уже активная категория — не ошибка,
+ * а гонка двух устройств, и состояние просто остаётся прежним.
+ */
+export function restoreCategory(state: BudgetState, id: string): BudgetState {
+  validateState(state);
+  assertIdentifier(id, "categoryId");
+  const category = state.categories.find((item) => item.id === id);
+  if (!category) fail("categoryId", "Категория не найдена.");
+  if (category.active) return state;
+  const key = categoryNameKey(category.name);
+  const clash = state.categories.some(
+    (item) => item.active && item.type === category.type && categoryNameKey(item.name) === key,
+  );
+  if (clash) fail("categoryId", "Активная категория с таким названием уже существует.");
+  return validateResult({
+    ...state,
+    categories: state.categories.map((item) => item.id === id ? { ...item, active: true } : item),
   });
 }
 

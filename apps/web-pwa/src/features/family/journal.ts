@@ -163,7 +163,13 @@ function transactionFields(transaction: Transaction): Record<string, unknown> {
   };
   switch (transaction.kind) {
     case "income":
-      return defined({ ...base, accountId: transaction.accountId });
+      // Категория дохода — вторая необязательная метка операции, и переносится как первая:
+      // отсутствующая остаётся отсутствующей, а не превращается в пустое поле.
+      return defined({
+        ...base,
+        accountId: transaction.accountId,
+        categoryId: transaction.categoryId,
+      });
     case "expense":
       return defined({
         ...base,

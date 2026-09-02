@@ -184,7 +184,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
           </> : null}
 
           {step === 4 ? <>
-            <p className="onboarding-help">Задайте 3–5 лимитов на мелкие покупки. Их можно будет изменить позже.</p>
+            <p className="onboarding-help">Полный набор категорий уже создан — двадцать три, от «Продуктов» до «Зарплаты». Здесь только лимиты: задайте 3–5 сумм на мелкие покупки, остальное можно будет добавить позже.</p>
             <div id="categories" tabIndex={-1}><ErrorText id="categories" message={errors.categories} /></div>
             <div className="category-edit-list">
               {draft.categories.map((category, index) => {

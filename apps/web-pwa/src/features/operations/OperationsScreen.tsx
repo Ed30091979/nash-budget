@@ -3,19 +3,24 @@ import {
   calculateBudget,
   type BudgetState,
   type CategoryBudgetStatus,
+  type CategoryType,
   type Transaction,
   type TransactionKind,
 } from "@family-budget/domain";
 import { formatMoney } from "../../money";
 import {
   archiveCategory,
+  createOperationCategory,
   createTransaction,
   deleteTransaction,
   editTransaction,
+  restoreCategory,
   toOperationsErrorView,
   type TransactionDraft,
 } from "./model";
 import { createOperationsSubmissionGate } from "./form-state";
+import { categoryPickerView, CUSTOM_CATEGORY_VALUE } from "./category-picker";
+import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "./CategorySheet";
 
 interface OperationsScreenProps {
   readonly budget: BudgetState;
@@ -92,7 +97,7 @@ function defaultDraft(kind: TransactionKind, budget: BudgetState): TransactionDr
   const common = { status: "posted" as const, occurredOn, amount: "" };
   switch (kind) {
     case "income":
-      return { ...common, kind, accountId };
+      return { ...common, kind, accountId, categoryId: "" };
     case "expense":
       return { ...common, kind, accountId, categoryId: firstExpenseCategory(budget) };
     case "refund":
@@ -119,7 +124,7 @@ function draftFromTransaction(transaction: Transaction): TransactionDraft {
   };
   switch (transaction.kind) {
     case "income":
-      return { ...common, kind: transaction.kind, accountId: transaction.accountId };
+      return { ...common, kind: transaction.kind, accountId: transaction.accountId, categoryId: transaction.categoryId ?? "" };
     case "expense":
       return { ...common, kind: transaction.kind, accountId: transaction.accountId, categoryId: transaction.categoryId };
     case "refund":
@@ -141,7 +146,9 @@ function transactionContext(transaction: Transaction, budget: BudgetState): stri
   const category = (id: string) => budget.categories.find((item) => item.id === id)?.name ?? "Неизвестная категория";
   const goal = (id: string) => budget.goals.find((item) => item.id === id)?.name ?? "Неизвестная цель";
   switch (transaction.kind) {
-    case "income": return account(transaction.accountId);
+    case "income": return transaction.categoryId === undefined
+      ? account(transaction.accountId)
+      : `${category(transaction.categoryId)} · ${account(transaction.accountId)}`;
     case "expense": return `${category(transaction.categoryId)} · ${account(transaction.accountId)}`;
     case "refund": return `${category(transaction.categoryId)} · возврат расхода · ${account(transaction.accountId)}`;
     case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
@@ -161,12 +168,70 @@ function AccountSelect({ id, label, value, budget, onValue }: { id: string; labe
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} value={value} onChange={(event) => onValue(event.target.value)}><option value="">Выберите счёт</option>{budget.accounts.filter((item) => item.active || item.id === value).map((item) => <option value={item.id} key={item.id}>{item.name}{item.active ? "" : " (в архиве)"}</option>)}</select></div>;
 }
 
-function TransactionFields({ budget, draft, patch }: { budget: BudgetState; draft: TransactionDraft; patch: (key: string, value: string) => void }) {
+interface CategoryFieldProps {
+  readonly label: string;
+  readonly type: CategoryType;
+  readonly budget: BudgetState;
+  readonly value: string;
+  readonly query: string;
+  readonly optional: boolean;
+  readonly onQuery: (value: string) => void;
+  readonly onValue: (value: string) => void;
+  readonly onCustom: (name: string) => void;
+}
+
+/**
+ * Выбор категории: поиск, заголовки групп и «Своя категория» последним элементом.
+ *
+ * Поиск стоит над списком, а не вместо него. Пятнадцать расходных категорий — уже та стена,
+ * из-за которой «приходится всё время мотать»; поле фильтра сужает список на месте, а когда не
+ * находит ничего, последний элемент называет набранное: «Создать «‹текст›»». Выбранная категория
+ * остаётся в списке при любом фильтре и даже из архива — список, из которого исчезло собственное
+ * значение, врал бы о том, что выбрано.
+ */
+function CategoryField({ label, type, budget, value, query, optional, onQuery, onValue, onCustom }: CategoryFieldProps) {
+  const view = categoryPickerView(budget, type, query, value === "" ? undefined : value);
+  return <div className="field category-field">
+    <label htmlFor="operation-category-search">Поиск по категориям</label>
+    <input
+      id="operation-category-search"
+      type="search"
+      autoComplete="off"
+      maxLength={80}
+      placeholder="Начните вводить название"
+      value={query}
+      aria-describedby="operation-category-status"
+      onChange={(event) => onQuery(event.target.value)}
+      onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
+    />
+    <p className="field-hint" id="operation-category-status" role="status">{view.status}</p>
+    <label htmlFor="operation-categoryId">{label}</label>
+    <select
+      id="operation-categoryId"
+      value={value}
+      onChange={(event) => {
+        if (event.target.value === CUSTOM_CATEGORY_VALUE) onCustom(view.createName);
+        else onValue(event.target.value);
+      }}
+    >
+      <option value="">{optional ? "Без категории" : "Выберите категорию"}</option>
+      {view.groups.map((group) => <optgroup label={group.title} key={group.key}>
+        {group.options.map((option) => <option value={option.id} key={option.id}>{option.name}{option.archived ? " (в архиве)" : ""}</option>)}
+      </optgroup>)}
+      <option value={CUSTOM_CATEGORY_VALUE}>{view.createLabel}</option>
+    </select>
+  </div>;
+}
+
+function TransactionFields({ budget, draft, patch, categoryQuery, onCategoryQuery, onCustomCategory }: { budget: BudgetState; draft: TransactionDraft; patch: (key: string, value: string) => void; categoryQuery: string; onCategoryQuery: (value: string) => void; onCustomCategory: (name: string, type: CategoryType) => void }) {
   const activeExpenses = budget.transactions.filter((item) => item.kind === "expense" && item.status === "posted");
-  if (draft.kind === "income") return <AccountSelect id="operation-accountId" label="Счёт зачисления" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />;
+  if (draft.kind === "income") return <>
+    <AccountSelect id="operation-accountId" label="Счёт зачисления" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
+    <CategoryField label="Категория дохода — не обязательно" type="income" budget={budget} value={draft.categoryId} query={categoryQuery} optional onQuery={onCategoryQuery} onValue={(value) => patch("categoryId", value)} onCustom={(name) => onCustomCategory(name, "income")} />
+  </>;
   if (draft.kind === "expense") return <>
     <AccountSelect id="operation-accountId" label="Счёт оплаты" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
-    <div className="field"><label htmlFor="operation-categoryId">Категория расходов</label><select id="operation-categoryId" value={draft.categoryId} onChange={(event) => patch("categoryId", event.target.value)}><option value="">Выберите категорию</option>{budget.categories.filter((item) => item.type === "expense" && (item.active || item.id === draft.categoryId)).map((item) => <option value={item.id} key={item.id}>{item.name}{item.active ? "" : " (в архиве)"}</option>)}</select></div>
+    <CategoryField label="Категория расходов" type="expense" budget={budget} value={draft.categoryId} query={categoryQuery} optional={false} onQuery={onCategoryQuery} onValue={(value) => patch("categoryId", value)} onCustom={(name) => onCustomCategory(name, "expense")} />
   </>;
   if (draft.kind === "refund") {
     const original = budget.transactions.find((item): item is Extract<Transaction, { kind: "expense" }> => item.id === draft.originalTransactionId && item.kind === "expense");
@@ -195,6 +260,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // Строка поиска живёт отдельно от черновика: она ничего не записывает и не делает форму грязной.
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const [sheet, setSheet] = useState<CategorySheetDraft | null>(null);
+  const [sheetError, setSheetError] = useState<string | null>(null);
   const gate = useRef(createOperationsSubmissionGate());
   const pristineDraft = useMemo(() => defaultDraft(draft.kind, budget), [budget, draft.kind]);
   const dirty = editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristineDraft);
@@ -228,6 +297,9 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
   const chooseKind = (kind: TransactionKind) => {
     setDraft(defaultDraft(kind, budget));
     setEditingId(null);
+    setCategoryQuery("");
+    setSheet(null);
+    setSheetError(null);
     clearTransient();
   };
   const runChange = async (change: (current: BudgetState) => BudgetState, success: () => void) => {
@@ -250,6 +322,63 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
     setDraft(defaultDraft(kind, budget));
     setEditingId(null);
     setConfirmation(null);
+    setCategoryQuery("");
+    setSheet(null);
+    setSheetError(null);
+  };
+
+  /**
+   * Лист создания категории поверх формы. Черновик операции не трогается ничем из этого —
+   * сумма, дата и счёт остаются ровно там, где их оставил человек, и после сохранения к ним
+   * добавляется только выбранная категория.
+   */
+  const openCategorySheet = (name: string, type: CategoryType) => {
+    setSheet({ name, type, group: type === "income" ? "income" : "everyday", limit: "" });
+    setSheetError(null);
+    setConfirmation(null);
+  };
+  const closeCategorySheet = () => {
+    setSheet(null);
+    setSheetError(null);
+    window.setTimeout(() => document.getElementById("operation-categoryId")?.focus(), 0);
+  };
+  const selectCategory = (id: string) => {
+    setDraft((current) => patchDraft(current, "categoryId", id));
+    setCategoryQuery("");
+    clearTransient();
+    closeCategorySheet();
+  };
+  const runCategoryChange = (change: (current: BudgetState) => BudgetState, done: () => void) => {
+    void gate.current.run(async () => {
+      setBusy(true);
+      setSheetError(null);
+      try {
+        await onChange(change);
+        done();
+      } catch (cause) {
+        setSheetError(toOperationsErrorView(cause).message);
+        window.setTimeout(() => document.getElementById(CATEGORY_SHEET_ERROR_ID)?.focus(), 0);
+      } finally {
+        setBusy(false);
+      }
+    });
+  };
+  const saveCategory = () => {
+    const pending = sheet;
+    if (!pending || busy) return;
+    let createdId = "";
+    runCategoryChange(
+      (state) => {
+        const result = createOperationCategory(state, pending);
+        createdId = result.categoryId;
+        return result.state;
+      },
+      () => selectCategory(createdId),
+    );
+  };
+  const restoreArchivedCategory = (id: string) => {
+    if (busy) return;
+    runCategoryChange((state) => restoreCategory(state, id), () => selectCategory(id));
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -293,19 +422,32 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
 
     <section className="section-card" aria-labelledby="operation-form-title">
       <h2 id="operation-form-title">{editingId ? "Редактировать операцию" : "Записать операцию"}</h2>
-      <form onSubmit={submit} noValidate aria-busy={busy}>
+      {/* Пока лист открыт, форма под ним выключена из фокуса и из дерева доступности: лист
+          модальный, и Tab не должен уводить в поля, которые он собой закрывает. */}
+      <form onSubmit={submit} noValidate aria-busy={busy} inert={sheet !== null}>
         <fieldset disabled={busy}>
           <legend>Данные операции</legend>
           <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as TransactionKind)}>{Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
           <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
           <div className="field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
-          <TransactionFields budget={budget} draft={draft} patch={patch} />
+          <TransactionFields budget={budget} draft={draft} patch={patch} categoryQuery={categoryQuery} onCategoryQuery={setCategoryQuery} onCustomCategory={openCategorySheet} />
           <FieldError message={error} />
           <button className="primary-button" type="submit" disabled={busy} aria-busy={busy} aria-label={editingId ? "Проверить изменения операции" : `Сохранить операцию «${kindLabels[draft.kind]}»`}>{editingId ? "Проверить изменения" : "Сохранить"}</button>
           {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button> : null}
           {!editingId && dirty ? <button className="secondary-button" type="button" onClick={() => reset()}>Очистить черновик</button> : null}
         </fieldset>
       </form>
+      {sheet ? <CategorySheet
+        budget={budget}
+        draft={sheet}
+        busy={busy}
+        error={sheetError}
+        onPatch={(patch) => setSheet((current) => current ? { ...current, ...patch } : current)}
+        onSave={saveCategory}
+        onCancel={closeCategorySheet}
+        onSelectExisting={selectCategory}
+        onRestore={restoreArchivedCategory}
+      /> : null}
       {confirmation ? <div className="limit-alert" role="alertdialog" aria-labelledby="operation-confirmation-title">
         <b id="operation-confirmation-title">{confirmation.type === "edit" ? "Подтвердить изменение операции?" : "Удалить операцию?"}</b>
         <span>{confirmation.type === "edit" ? "После сохранения все суммы и лимиты будут пересчитаны." : `${confirmation.label}. Все суммы и лимиты будут пересчитаны.`}</span>
