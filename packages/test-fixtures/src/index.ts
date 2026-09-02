@@ -20,7 +20,8 @@ export interface DomainMember {
 }
 
 export type DomainTransaction =
-  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "income"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly memberId?: StableId }
+  /** `categoryId` is optional exactly like `memberId`: income written before income had categories omits it. */
+  | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "income"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId?: StableId; readonly memberId?: StableId }
   | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "expense"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId; readonly memberId?: StableId }
   | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "refund"; readonly amountMinor: MinorUnits; readonly accountId: StableId; readonly categoryId: StableId; readonly originalTransactionId: StableId; readonly memberId?: StableId }
   | { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly kind: "transfer"; readonly amountMinor: MinorUnits; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly memberId?: StableId }
@@ -31,6 +32,7 @@ export interface DomainBudgetState {
   /** Optional: a state written before members existed simply has none. */
   readonly members?: readonly DomainMember[];
   readonly accounts: readonly { readonly id: StableId; readonly name: string; readonly type: "current" | "cash" | "savings" | "reserve"; readonly currency: string; readonly openingBalanceMinor: MinorUnits; readonly active: boolean }[];
+  /** `group` stays a string here: a document written before the closed set carries a free label. */
   readonly categories: readonly { readonly id: StableId; readonly name: string; readonly type: "income" | "expense"; readonly group: string; readonly active: boolean; readonly sortOrder: number }[];
   readonly budgets: readonly { readonly id: StableId; readonly startDate: string; readonly endDate: string; readonly status: "draft" | "open" | "closed"; readonly plannedIncomeMinor: MinorUnits; readonly warningThreshold: number; readonly lines: readonly { readonly id: StableId; readonly categoryId: StableId; readonly plannedMinor: MinorUnits; readonly rolloverMinor?: MinorUnits; readonly adjustmentMinor?: MinorUnits }[] }[];
   readonly goals: readonly { readonly id: StableId; readonly name: string; readonly linkedAccountId: StableId; readonly targetMinor: MinorUnits; readonly openingContributedMinor: MinorUnits; readonly plannedContributionMinor: MinorUnits; readonly status: "active" | "completed" | "cancelled" }[];
@@ -229,6 +231,7 @@ function assertPlanningReferences(fixture: PlanningFixture): void {
   const members = assertUniqueIds(state.members ?? [], "G-002 members");
   const accounts = assertUniqueIds(state.accounts, "G-002 accounts");
   const categories = assertUniqueIds(state.categories, "G-002 categories");
+  const categoryTypes = new Map(state.categories.map((category) => [category.id, category.type]));
   const budgets = assertUniqueIds(state.budgets, "G-002 budgets");
   const goalIds = assertUniqueIds(state.goals, "G-002 goals");
   const goals = new Map(state.goals.map((goal) => [goal.id, goal]));
@@ -250,6 +253,10 @@ function assertPlanningReferences(fixture: PlanningFixture): void {
     if (transaction.memberId !== undefined) requireReference(members, transaction.memberId, `transaction ${transaction.id} memberId`);
     if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") requireReference(accounts, transaction.accountId, `transaction ${transaction.id}`);
     if (transaction.kind === "expense" || transaction.kind === "refund") requireReference(categories, transaction.categoryId, `transaction ${transaction.id}`);
+    if (transaction.kind === "income" && transaction.categoryId !== undefined) {
+      requireReference(categories, transaction.categoryId, `transaction ${transaction.id} categoryId`);
+      if (categoryTypes.get(transaction.categoryId) !== "income") throw new Error(`transaction ${transaction.id} must reference an income category`);
+    }
     if (transaction.kind === "refund") {
       requireReference(transactionIds, transaction.originalTransactionId, `refund ${transaction.id}`);
       const original = transactions.get(transaction.originalTransactionId)!;

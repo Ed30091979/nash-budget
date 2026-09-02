@@ -136,6 +136,44 @@ describe("canonical fixtures", () => {
     ]);
   });
 
+  it("accepts an income category on G-002 and keeps the untagged income of the shipped fixture", () => {
+    type MutableState = {
+      state: {
+        categories: { id: string; name: string; type: string; group: string; active: boolean; sortOrder: number }[];
+        transactions: { kind: string; categoryId?: string }[];
+      };
+    };
+    expect(toDomainBudgetState(G002).transactions.every((transaction) => transaction.kind !== "income" || transaction.categoryId === undefined)).toBe(true);
+
+    const tagged = structuredClone(G002) as unknown as MutableState;
+    tagged.state.categories.push({
+      id: "73333333-3333-4333-8333-333333333391",
+      name: "Зарплата",
+      type: "income",
+      group: "income",
+      active: true,
+      sortOrder: 80,
+    });
+    const income = tagged.state.transactions.find((transaction) => transaction.kind === "income")!;
+    income.categoryId = "73333333-3333-4333-8333-333333333391";
+    const parsed = parseCanonicalFixture(tagged);
+    expect(toDomainBudgetState(parsed).transactions[0]).toMatchObject({
+      kind: "income",
+      categoryId: "73333333-3333-4333-8333-333333333391",
+    });
+  });
+
+  it("rejects an income that names an unknown category or an expense category", () => {
+    type MutableTransactions = { state: { transactions: { kind: string; categoryId?: string }[] } };
+    const dangling = structuredClone(G002) as unknown as MutableTransactions;
+    dangling.state.transactions.find((transaction) => transaction.kind === "income")!.categoryId = "73333333-3333-4333-8333-333333333399";
+    expect(() => parseCanonicalFixture(dangling)).toThrow(/categoryId references unknown id/);
+
+    const wrongType = structuredClone(G002) as unknown as MutableTransactions;
+    wrongType.state.transactions.find((transaction) => transaction.kind === "income")!.categoryId = "73333333-3333-4333-8333-333333333335";
+    expect(() => parseCanonicalFixture(wrongType)).toThrow(/must reference an income category/);
+  });
+
   it("keeps a state written before members existed valid and rejects a dangling label", () => {
     type MutableState = { state: { members?: unknown; transactions: { memberId?: string }[] } };
     const legacy = structuredClone(G002) as unknown as MutableState;

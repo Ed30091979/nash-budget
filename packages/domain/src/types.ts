@@ -17,6 +17,22 @@ export type LocalDate = string;
 
 export type AccountType = "current" | "cash" | "savings" | "reserve";
 export type CategoryType = "income" | "expense";
+
+/**
+ * Closed set of category groups. Four groups hold expenses and one holds income; the display
+ * order is fixed by {@link CATEGORY_GROUPS} rather than by the order of this union.
+ */
+export type ExpenseCategoryGroup = "mandatory" | "everyday" | "personal" | "other";
+export type IncomeCategoryGroup = "income";
+export type CategoryGroup = ExpenseCategoryGroup | IncomeCategoryGroup;
+
+/**
+ * What a stored category actually carries in its `group`. Every category written from now on
+ * holds one of the {@link CategoryGroup} keys, but a document written before the closed set
+ * existed carries a free-form label such as "Повседневные" and must keep opening without a
+ * single edit. Read it through `resolveCategoryGroup`, never by comparing raw strings.
+ */
+export type StoredCategoryGroup = CategoryGroup | (string & {});
 export type BudgetStatus = "draft" | "open" | "closed";
 export type GoalStatus = "active" | "completed" | "cancelled";
 export type ScheduleMode = "monthly" | "selected_months";
@@ -59,9 +75,26 @@ export interface Category {
   readonly id: CategoryId;
   readonly name: string;
   readonly type: CategoryType;
-  readonly group: string;
+  /** One of the {@link CategoryGroup} keys; legacy documents carry a free-form label. */
+  readonly group: StoredCategoryGroup;
   readonly active: boolean;
   readonly sortOrder: number;
+}
+
+/** One entry of a category catalogue: everything a category needs except its identity. */
+export interface CategoryTemplate {
+  readonly name: string;
+  readonly type: CategoryType;
+  readonly group: CategoryGroup;
+}
+
+/** Display metadata for one group of the closed set. */
+export interface CategoryGroupDefinition {
+  readonly key: CategoryGroup;
+  readonly title: string;
+  readonly type: CategoryType;
+  /** Ascending display order across the whole set, expenses first. */
+  readonly order: number;
 }
 
 export interface BudgetLine {
@@ -138,6 +171,14 @@ interface BaseTransaction {
 export interface IncomeTransaction extends BaseTransaction {
   readonly kind: "income";
   readonly accountId: AccountId;
+  /**
+   * Income category. Optional on purpose, exactly like {@link BaseTransaction.memberId}: every
+   * backup written before income had categories omits it and stays valid without a single edit.
+   * When present it must name an active-or-archived category of type `income`. No figure in
+   * {@link BudgetMetrics} or {@link AnnualPlanMetrics} reads it: it labels income, it does not
+   * move it.
+   */
+  readonly categoryId?: CategoryId;
 }
 
 export interface ExpenseTransaction extends BaseTransaction {

@@ -252,9 +252,19 @@ function validateTransactionReferences(
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
 
   switch (transaction.kind) {
-    case "income":
+    case "income": {
       requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const categoryId = transaction.categoryId;
+      // Optional, like memberId: absent in every income written before income had categories.
+      if (categoryId !== undefined) {
+        assertStableId(categoryId, `transaction ${transaction.id} categoryId`);
+        const category = requireEntity(categories, categoryId, `transaction ${transaction.id}`);
+        if (category.type !== "income") {
+          throw new Error(`transaction ${transaction.id} must reference an income category`);
+        }
+      }
       return;
+    }
     case "expense": {
       requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
       const category = requireEntity(
