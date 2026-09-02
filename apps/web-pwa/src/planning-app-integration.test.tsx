@@ -90,15 +90,16 @@ describe("planning app integration", () => {
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
     expect(source).toContain('type Screen = "today" | "year" | "planning"');
-    expect(source).toContain("Настроить план");
+    expect(source).toContain("<DashboardScreen budget={budget} onPlanning={onPlanning} />");
     expect(source).toContain("<BackButton label=\"К горизонту\" onClick={() => navigate(\"year\")} />");
     expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
     expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />");
     expect(source).toContain('active={screen === "year" || screen === "planning"}');
     expect(source).toContain("activeBudget.lines.filter((line) => line.active !== false)");
     expect(source).toContain("category.active && flexibleIds.has(category.id)");
-    expect(source).toContain("annualCommitments.filter((item) => item.active)");
-    expect(source).toContain("scheduledExpenses.filter((item) => item.active)");
+    // Выключенная строка плана на «Год» не попадает — ни крупная, ни регулярная.
+    expect(source).toMatch(/annualCommitments\s*\.filter\(\(item\) => item\.active\)/u);
+    expect(source).toMatch(/scheduledExpenses\s*\.filter\(\(item\) => item\.active\)/u);
     expect(source).toContain('budget.categories.filter((category) => category.active && category.type === "expense")');
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
@@ -106,8 +107,8 @@ describe("planning app integration", () => {
     expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
     expect(source).toContain("() => undefined,");
     expect(source).not.toMatch(/location\.|URLSearchParams|localStorage|sessionStorage/);
-    expect(source.match(/makePlanningSeed\(\)/g)).toHaveLength(1);
-    expect(styles).toMatch(/\.planning-entry \{[^}]*white-space: nowrap/s);
+    expect(source.match(/buildDemoBudgetState\(\)/g)).toHaveLength(1);
+    expect(source).not.toContain("makePlanningSeed");
     // §9: плотная сетка месяцев держит и цель нажатия, и зазор между целями — числа из DESIGN.md.
     const monthTarget = /\.month-checkboxes label \{[^}]*min-height: (\d+)px/su.exec(styles);
     const monthGap = /\.month-checkboxes \{[^}]*gap: (\d+)px/su.exec(styles);

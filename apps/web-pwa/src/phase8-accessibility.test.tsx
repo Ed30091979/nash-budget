@@ -106,9 +106,31 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(styles).toContain("@media (max-width: 520px)");
     expect(styles).toContain("@media (max-width: 360px)");
     expect(styles).toContain("@media (orientation: landscape) and (max-height: 520px)");
-    expect(styles).toMatch(/\.dashboard-chart \{[^}]*overflow-x: auto;/);
-    expect(styles).toMatch(/\.dashboard-table-scroll \{[^}]*overflow-x: auto;/);
-    expect(styles).toMatch(/\.dashboard-month-cards \{[^}]*overflow-x: auto;/);
+    // Здесь стояли три имени класса, и любое переименование внутреннего прокрутчика делало
+    // проверку зелёной и бессмысленной. Проверяется само правило: то, что прокручивается вбок
+    // внутри себя, обязано и уметь сжиматься — иначе прокрутку получит страница целиком.
+    const scrollers = cssRules(styles)
+      .filter((rule) => rule.declarations.includes("overflow-x: auto"))
+      .flatMap((rule) => rule.selectors);
+    const shrinkable = new Set(
+      cssRules(styles)
+        .filter((rule) => rule.declarations.some((declaration) => /^(?:min-width: 0|max-width: 100%)$/u.test(declaration)))
+        .flatMap((rule) => rule.selectors),
+    );
+
+    expect(scrollers.length).toBeGreaterThan(0);
+    expect(scrollers.filter((selector) => !shrinkable.has(selector))).toEqual([]);
+    // И широкая разметка живёт только внутри прокрутчика: правило, требующее себе больше
+    // самого узкого поддерживаемого экрана, обязано лежать в чём-то, что прокручивается вбок.
+    const narrowest = 320;
+    const widened = cssRules(styles)
+      .filter((rule) => rule.declarations.some((declaration) => {
+        const declared = /^min-width: (\d+)px$/u.exec(declaration);
+        return declared !== null && Number(declared[1]) >= narrowest;
+      }))
+      .flatMap((rule) => rule.selectors)
+      .filter((selector) => !selector.startsWith("@") && selector !== "html" && selector !== "body");
+    expect(widened.filter((selector) => !scrollers.some((scroller) => selector.startsWith(scroller)))).toEqual([]);
   });
 
   it("retains text labels for network and budget states instead of color-only status", () => {

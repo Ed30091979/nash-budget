@@ -7,6 +7,7 @@ import {
 const INITIAL_FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const UPDATED_FLEXIBLE_REMAINING = /18\s*000\s*₽/u;
 const PRODUCTS_OVER_LIMIT = /Продукты:\s*\+1\s*000\s*₽/u;
+const TIGHTEST_MONTH_FREE = /13\s*191\s*₽/u;
 
 function expectNavigationSecurityHeaders(response: Response | null) {
   expect(response).not.toBeNull();
@@ -114,9 +115,12 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expect(page.getByRole("status", { name: "Состояние сети: офлайн" })).toBeVisible();
   await page.getByRole("button", { name: "Год", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Финансовый горизонт семьи" })).toBeVisible();
+  // «Год» отвечает за горизонт: одно крупное число — дно горизонта восстановленного G-002.
+  // Остаток повседневного лимита живёт на «Сегодня» и уже проверен снимком выше.
   await expect(
-    page.getByText("Остаток повседневного лимита").locator("..").getByRole("strong"),
-  ).toHaveText(UPDATED_FLEXIBLE_REMAINING);
+    page.getByText("Меньше всего свободно").locator("..").getByRole("strong"),
+  ).toHaveText(TIGHTEST_MONTH_FREE);
+  await expect(page.getByText("в сентябре 2026 и ещё в 4 месяцах горизонта")).toBeVisible();
   await page.getByRole("button", { name: "Записать", exact: true }).click();
   await expect(
     page.getByRole("status").filter({

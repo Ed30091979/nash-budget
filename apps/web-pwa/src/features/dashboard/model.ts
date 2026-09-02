@@ -1,8 +1,6 @@
 import {
   calculateAnnualPlan,
-  calculateBudget,
   normalizeScheduledDueDate,
-  type AnnualCommitment,
   type BudgetState,
   type PlanningMonthMetrics,
   type Transaction,
@@ -27,19 +25,40 @@ export interface DashboardMonth {
   readonly totalExpenseFactMinor: number;
 }
 
-export interface UpcomingPayment {
-  readonly id: string;
-  readonly name: string;
-  readonly dueDate: string;
-  readonly amountMinor: number;
-  readonly kind: "annual" | "one_time" | "scheduled";
+/**
+ * Месяц, которым горизонт отвечает на вопрос «как мы его пройдём».
+ *
+ * Это единственное крупное число экрана «Год» (DESIGN §1): не сумма всех месяцев, которую не с чем
+ * сравнить, а тот месяц, где после всех планов остаётся меньше всего.
+ */
+export interface DashboardTightestMonth {
+  readonly month: string;
+  /** Имя месяца словами: «сентябрь 2026». */
+  readonly label: string;
+  readonly freeMinor: number;
+  /** Плана в этом месяце больше, чем дохода. */
+  readonly shortfall: boolean;
+  /**
+   * Сколько месяцев горизонта делят этот остаток.
+   *
+   * Дно горизонта редко бывает одним месяцем: в каноническом наборе сентябрь–январь стоят на
+   * одной сумме. Назвать один из них «самым тесным» и умолчать об остальных четырёх — соврать,
+   * поэтому подпись героя считает их вслух.
+   */
+  readonly count: number;
 }
 
 export interface DashboardModel {
   readonly horizon: DashboardHorizon;
   readonly months: readonly DashboardMonth[];
-  readonly totals: ReturnType<typeof calculateBudget>;
-  readonly upcomingPayments: readonly UpcomingPayment[];
+  readonly tightest: DashboardTightestMonth;
+  /**
+   * Вывод над графиком, а не подпись осей.
+   *
+   * §4 исследования, пункт 23 (Apple): у графика обязан быть заголовок, который сам сообщает
+   * вывод. «Горизонт: 12 месяцев. В 2026-07 план повседневных расходов…» выводом не был — он
+   * пересказывал таблицу и печатал месяц машинным `2026-07`.
+   */
   readonly summary: string;
 }
 
@@ -83,35 +102,6 @@ function normalizeQuery(value: string): string {
     throw new Error(`Поиск ограничен ${MAX_QUERY_LENGTH} символами.`);
   }
   return normalizeSearchText(trimmed).slice(0, MAX_QUERY_LENGTH);
-}
-
-function annualDateInYear(dueDate: string, year: number): string {
-  if (year > 9999) throw new Error("Горизонт платежа выходит за поддерживаемый календарь.");
-  const month = Number(dueDate.slice(5, 7));
-  const day = Number(dueDate.slice(8, 10));
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
-}
-
-function effectiveAnnualDate(item: AnnualCommitment, startMonth: string): string | null {
-  if (!item.active) return null;
-  if (item.dueDate.slice(0, 7) >= startMonth) return item.dueDate;
-  if (item.recurrence === "one_time") return null;
-
-  const startYear = Number(startMonth.slice(0, 4));
-  const dueYear = Number(item.dueDate.slice(0, 4));
-  let year = dueYear + Math.ceil((startYear - dueYear) / 1);
-  let candidate = annualDateInYear(item.dueDate, year);
-  if (candidate.slice(0, 7) < startMonth) {
-    year += 1;
-    candidate = annualDateInYear(item.dueDate, year);
-  }
-  return candidate;
-}
-
-function nextAnnualDate(value: string, anniversaryDate: string): string {
-  const year = Number(value.slice(0, 4)) + 1;
-  return annualDateInYear(anniversaryDate, year);
 }
 
 function monthFacts(
@@ -159,61 +149,99 @@ function createMonth(
   };
 }
 
-function createUpcomingPayments(
-  state: BudgetState,
+/**
+ * Ближайшее вхождение регулярного расхода, начиная с месяца `startMonth`.
+ *
+ * `null` — расход выключен или его выбранные месяцы кончились в пределах календаря. День платежа
+ * нормализуется доменом: 31-е в коротком месяце становится последним календарным днём.
+ */
+export function nextScheduledDate(
+  item: BudgetState["scheduledExpenses"][number],
   startMonth: string,
-  endMonth: string,
-): readonly UpcomingPayment[] {
-  const annual: UpcomingPayment[] = state.annualCommitments.flatMap((item) => {
-    const firstDate = effectiveAnnualDate(item, startMonth);
-    if (firstDate === null || firstDate.slice(0, 7) > endMonth) return [];
-    const dates = [firstDate];
-    if (item.recurrence === "annual") {
-      let date = firstDate;
-      while (date.slice(0, 7) < endMonth) {
-        date = nextAnnualDate(date, item.dueDate);
-        if (date.slice(0, 7) <= endMonth) dates.push(date);
-      }
-    }
-    return dates.map((dueDate) => ({
-      id: item.id,
-      name: item.name,
-      dueDate,
-      amountMinor: item.amountMinor,
-      kind: item.recurrence,
-    }));
-  });
+): string | null {
+  if (!item.active) return null;
+  let dueMonth = startMonth;
+  while (item.mode === "selected_months" && !item.months?.includes(Number(dueMonth.slice(5, 7)))) {
+    const year = Number(dueMonth.slice(0, 4));
+    const month = Number(dueMonth.slice(5, 7));
+    if (year === 9999 && month === 12) return null;
+    dueMonth = month === 12
+      ? `${String(year + 1).padStart(4, "0")}-01`
+      : `${String(year).padStart(4, "0")}-${String(month + 1).padStart(2, "0")}`;
+  }
+  return normalizeScheduledDueDate(dueMonth, item.dueDay);
+}
 
-  const scheduled: UpcomingPayment[] = state.scheduledExpenses.flatMap((item) => {
-    if (!item.active) return [];
-    let dueMonth = startMonth;
-    while (
-      dueMonth <= endMonth
-      && item.mode === "selected_months"
-      && !item.months?.includes(Number(dueMonth.slice(5, 7)))
-    ) {
-      const year = Number(dueMonth.slice(0, 4));
-      const month = Number(dueMonth.slice(5, 7));
-      if (year === 9999 && month === 12) return [];
-      dueMonth = month === 12
-        ? `${String(year + 1).padStart(4, "0")}-01`
-        : `${String(year).padStart(4, "0")}-${String(month + 1).padStart(2, "0")}`;
-    }
-    if (dueMonth > endMonth) return [];
-    return [{
-      id: item.id,
-      name: item.name,
-      dueDate: normalizeScheduledDueDate(dueMonth, item.dueDay),
-      amountMinor: item.amountMinor,
-      kind: "scheduled" as const,
-    }];
-  });
+/**
+ * Названия месяцев в двух падежах.
+ *
+ * `Intl` даёт только именительный и приписывает «г.» к году, а вывод над графиком — русская фраза:
+ * «свободно меньше всего в сентябре 2026». Два коротких списка честнее, чем фраза, построенная так,
+ * чтобы обойтись без падежа.
+ */
+const MONTH_NAMES: readonly string[] = [
+  "январь", "февраль", "март", "апрель", "май", "июнь",
+  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+];
+const MONTH_NAMES_IN: readonly string[] = [
+  "январе", "феврале", "марте", "апреле", "мае", "июне",
+  "июле", "августе", "сентябре", "октябре", "ноябре", "декабре",
+];
 
-  return [...annual, ...scheduled].sort((left, right) => (
-    left.dueDate.localeCompare(right.dueDate, RUSSIAN_LOCALE)
-      || left.name.localeCompare(right.name, RUSSIAN_LOCALE)
-      || left.id.localeCompare(right.id)
-  ));
+function monthWords(month: string, names: readonly string[]): string {
+  const index = Number(month.slice(5, 7)) - 1;
+  return `${names[index] ?? month} ${month.slice(0, 4)}`;
+}
+
+/** «сентябрь 2026» — как месяц зовут в подписи. */
+export function monthName(month: string): string {
+  return monthWords(month, MONTH_NAMES);
+}
+
+/** «в сентябре 2026» — как месяц зовут внутри фразы. */
+export function monthNameIn(month: string): string {
+  return monthWords(month, MONTH_NAMES_IN);
+}
+
+function tightestMonth(months: readonly DashboardMonth[]): DashboardTightestMonth {
+  const tightest = months.reduce(
+    (lowest, month) => (month.spendableAfterPlanMinor < lowest.spendableAfterPlanMinor ? month : lowest),
+    months[0]!,
+  );
+  return {
+    month: tightest.month,
+    label: monthName(tightest.month),
+    freeMinor: tightest.spendableAfterPlanMinor,
+    shortfall: tightest.spendableAfterPlanMinor < 0,
+    count: months.filter((month) => month.spendableAfterPlanMinor === tightest.spendableAfterPlanMinor).length,
+  };
+}
+
+/**
+ * Вывод, который график сообщает сам.
+ *
+ * Сначала беда, если она есть: месяц, где плана больше дохода, важнее любой другой мысли о
+ * горизонте. Если беды нет — разброс: от самого тесного месяца до самого свободного. Числа названы
+ * словами и не округляются.
+ */
+function horizonSummary(months: readonly DashboardMonth[]): string {
+  const shortfalls = months.filter((month) => month.spendableAfterPlanMinor < 0);
+  if (shortfalls.length === 1) {
+    const only = shortfalls[0]!;
+    return `Плана больше дохода в ${monthNameIn(only.month)}: не хватает ${formatMoney(-only.spendableAfterPlanMinor)}.`;
+  }
+  if (shortfalls.length > 1) {
+    return `Плана больше дохода в ${shortfalls.length} месяцах из ${months.length}, раньше всего — в ${monthNameIn(shortfalls[0]!.month)}.`;
+  }
+  const lowest = tightestMonth(months);
+  const highest = months.reduce(
+    (top, month) => (month.spendableAfterPlanMinor > top.spendableAfterPlanMinor ? month : top),
+    months[0]!,
+  );
+  if (highest.spendableAfterPlanMinor === lowest.freeMinor) {
+    return `Плана хватает во все ${months.length} месяцев: свободно ${formatMoney(lowest.freeMinor)} в каждом.`;
+  }
+  return `Плана хватает во все ${months.length} месяцев: свободно от ${formatMoney(lowest.freeMinor)} в ${monthNameIn(lowest.month)} до ${formatMoney(highest.spendableAfterPlanMinor)} в ${monthNameIn(highest.month)}.`;
 }
 
 export function createDashboardModel(
@@ -228,20 +256,12 @@ export function createDashboardModel(
     activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId),
   );
   const months = annualPlan.months.map((month) => createMonth(state, month, activeFlexibleCategoryIds));
-  const current = months[0]!;
 
   return {
     horizon,
     months,
-    totals: calculateBudget(state),
-    upcomingPayments: createUpcomingPayments(state, startMonth, months.at(-1)!.month),
-    summary: [
-      `Горизонт: ${horizon} месяцев.`,
-      `В ${current.month} план повседневных расходов ${formatMoney(current.flexiblePlanMinor)},`,
-      `факт ${formatMoney(current.flexibleFactMinor)}, остаток ${formatMoney(current.flexibleRemainingMinor)}.`,
-      `Всего по расписанию ${formatMoney(current.scheduledExpenseMinor)},`,
-      `резерв ${formatMoney(current.annualReserveMinor)}, свободно ${formatMoney(current.spendableAfterPlanMinor)}.`,
-    ].join(" "),
+    tightest: tightestMonth(months),
+    summary: horizonSummary(months),
   };
 }
 

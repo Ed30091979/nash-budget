@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOperationSearchIndex,
   createDashboardModel,
+  nextScheduledDate,
   searchOperations,
 } from "./model";
 
@@ -54,11 +55,6 @@ describe("dashboard derived model", () => {
     expect(twelve.months).toHaveLength(12);
     expect(twentyFour.months).toHaveLength(24);
     expect(twentyFour.months.slice(0, 12)).toEqual(twelve.months);
-    expect(twelve.totals).toMatchObject({
-      incomeMinor: 18_000_000,
-      expensesMinor: 7_100_000,
-      capitalMinor: 12_400_000,
-    });
     expect(twelve.months[0]).toMatchObject({
       scheduledExpenseMinor: 5_300_000,
       flexiblePlanMinor: 5_300_000,
@@ -80,60 +76,43 @@ describe("dashboard derived model", () => {
     expect(twentyFour.months.find((item) => item.month === "2028-01")?.annualDueMinor).toBe(7_200_000);
     expect(twentyFour.months.find((item) => item.month === "2028-06")?.annualDueMinor).toBe(0);
 
-    expect(twentyFour.upcomingPayments).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: "Страхование автомобиля", dueDate: "2027-01-15", amountMinor: 7_200_000 }),
-      expect.objectContaining({ name: "Страхование автомобиля", dueDate: "2028-01-15", amountMinor: 7_200_000 }),
-      expect.objectContaining({ name: "Платёж за загородный дом", dueDate: "2027-05-01", amountMinor: 3_600_000 }),
-      expect.objectContaining({ name: "Летний лагерь", dueDate: "2027-06-15", amountMinor: 9_000_000 }),
-    ]));
-    expect(twentyFour.upcomingPayments).not.toContainEqual(expect.objectContaining({ name: "Летний лагерь", dueDate: "2028-06-15" }));
-    expect(twentyFour.upcomingPayments.slice(0, 5)).toEqual([
-      expect.objectContaining({ name: "Аренда / ипотека", dueDate: "2026-07-05", amountMinor: 4_500_000 }),
-      expect.objectContaining({ name: "ЖКХ, интернет и связь", dueDate: "2026-07-15", amountMinor: 800_000 }),
-      expect.objectContaining({ name: "Обучение детей", dueDate: "2026-09-10", amountMinor: 2_500_000 }),
-      expect.objectContaining({ name: "Секции", dueDate: "2026-09-12", amountMinor: 600_000 }),
-      expect.objectContaining({ name: "Страхование автомобиля", dueDate: "2027-01-15", amountMinor: 7_200_000 }),
-    ]);
-    expect(twentyFour.upcomingPayments.filter((item) => item.kind === "scheduled")).toHaveLength(4);
+    // Вывод над графиком — вывод, а не пересказ таблицы (§4 исследования, пункт 23): он сам
+    // называет самый тесный месяц и его сумму, и печатает месяц словами, а не как «2026-07».
+    expect(twelve.tightest).toEqual({
+      month: "2026-09",
+      label: "сентябрь 2026",
+      freeMinor: 1_319_100,
+      shortfall: false,
+      // Сентябрь–январь стоят на одной сумме: дно горизонта считается, а не назначается первому.
+      count: 5,
+    });
+    expect(twelve.summary.replaceAll("\u00a0", " ")).toBe(
+      "Плана хватает во все 12 месяцев: свободно от 13 191 ₽ в сентябре 2026 до 48 750 ₽ в июне 2027.",
+    );
   });
 
   it("finds the nearest selected-month occurrence and normalizes its due day", () => {
     const source = makePlanningSeed();
-    const state: BudgetState = {
-      ...source,
-      scheduledExpenses: [{
-        ...source.scheduledExpenses[2]!,
-        dueDay: 31,
-        months: [2],
-      }],
-    };
-    expect(createDashboardModel(state, "2027-01", 12).upcomingPayments.find(
-      (item) => item.kind === "scheduled",
-    )).toMatchObject({
-      name: "Обучение детей",
-      dueDate: "2027-02-28",
-      kind: "scheduled",
-    });
+    const tuition = { ...source.scheduledExpenses[2]!, dueDay: 31, months: [2] };
+
+    expect(nextScheduledDate(tuition, "2027-01")).toBe("2027-02-28");
+    expect(nextScheduledDate({ ...tuition, months: [2], dueDay: 5 }, "2027-03")).toBe("2028-02-05");
+    expect(nextScheduledDate({ ...source.scheduledExpenses[0]!, dueDay: 31 }, "2026-09")).toBe("2026-09-30");
+    expect(nextScheduledDate({ ...tuition, active: false }, "2027-01")).toBeNull();
   });
 
-  it("clamps a recurring leap-day payment to the target year's month end", () => {
+  it("names a shortfall month before anything else it could say about the horizon", () => {
     const source = makePlanningSeed();
-    const state: BudgetState = {
+    // Один месяц уходит в минус: плановый доход падает ниже уже запланированных расходов.
+    const poor: BudgetState = {
       ...source,
-      annualCommitments: [{
-        ...source.annualCommitments[0]!,
-        dueDate: "2024-02-29",
-        recurrence: "annual",
-      }],
+      budgets: source.budgets.map((budget) => ({ ...budget, plannedIncomeMinor: 12_000_000 })),
     };
+    const model = createDashboardModel(poor, "2026-07", 12);
 
-    const annual = createDashboardModel(state, "2027-01", 24).upcomingPayments.filter(
-      (payment) => payment.kind === "annual",
-    );
-    expect(annual).toEqual([
-      expect.objectContaining({ dueDate: "2027-02-28", kind: "annual" }),
-      expect.objectContaining({ dueDate: "2028-02-29", kind: "annual" }),
-    ]);
+    expect(model.tightest.shortfall).toBe(true);
+    expect(model.summary).toContain("Плана больше дохода");
+    expect(model.summary).not.toContain("хватает");
   });
 
   it("compares flexible fact only with active flexible lines while keeping total metrics separate", () => {
@@ -154,7 +133,6 @@ describe("dashboard derived model", () => {
       flexibleRemainingMinor: 1_900_000,
       totalExpenseFactMinor: 7_100_000,
     });
-    expect(model.totals.expensesMinor).toBe(7_100_000);
   });
 
   it("searches bounded normalized literal context immutably and leaves totals unchanged", () => {

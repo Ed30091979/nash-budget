@@ -49,9 +49,11 @@ describe("onboarding UI contract", () => {
     expect(model).toContain("publish(value)");
     expect(model).not.toContain("repository.save(state)");
     expect(`${component}\n${model}`).not.toMatch(/localStorage|sessionStorage|console\.|URLSearchParams/);
-    expect(app).not.toMatch(/stored\s*\?[^:]*:\s*makePlanningSeed/s);
+    // Демо подставляется только по кнопке и ровно в одном месте: пустое хранилище открывает
+    // онбординг, а не бюджет из демонстрации.
+    expect(app).not.toMatch(/stored\s*\?[^:]*:\s*buildDemoBudgetState/s);
     expect(app).toContain('setLoadState("empty")');
-    expect(app.match(/makePlanningSeed\(\)/g)).toHaveLength(1);
+    expect(app.match(/buildDemoBudgetState\(\)/g)).toHaveLength(1);
     expect(app.match(/result\.status === "existing"/g)).toHaveLength(2);
     expect(operations).toContain('id="operation-amount" inputMode="decimal" maxLength={24}');
     expect(app).not.toMatch(/\sstyle\s*=/);

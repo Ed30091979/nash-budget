@@ -126,9 +126,8 @@ p { line-height: var(--lh-body); }
 /* На тёмном градиенте и на цветных плашках приглушение берётся от их собственной пары контраста:
    `--ink-muted` там не измерен и читался бы грязно. */
 .hero-card { --money-currency-ink: var(--on-hero-label); }
-.reserve-pill, .limit-alert, .explain-card, .year-preview, .month-card > header,
-.month-card.risk footer, .storage-context, .sheet-hint, .transaction-row.income,
-.transaction-row.refund { --money-currency-ink: currentColor; }
+.reserve-pill, .limit-alert, .explain-card, .year-preview, .storage-context, .sheet-hint,
+.transaction-row.income, .transaction-row.refund { --money-currency-ink: currentColor; }
 
 /* §6 Иконки. Спрайт живёт в разметке маршрута и ничего не рисует сам: нулевой размер и
    `aria-hidden` держат его вне потока. Глиф наследует цвет, толщину и скругления от
@@ -299,25 +298,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .row-chevron { flex: none; color: var(--green-deep); }
 
 /* §6 Сегмент-переключатель. */
-.horizon-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
-.horizon-toggle button { min-height: 48px; padding: 8px 12px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-pill); }
-.horizon-toggle button.active { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
-.month-strip { display: grid; grid-auto-columns: minmax(224px, 250px); grid-auto-flow: column; gap: 12px; overflow-x: auto; padding: 2px 1px 16px; scroll-snap-type: x mandatory; }
-.month-card { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); scroll-snap-align: start; }
-.month-card > header { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 12px 16px; color: var(--on-hero); background: var(--green-deep); }
-.month-card > header b { font-size: var(--size-body); font-weight: 600; }
-.month-card > header span { padding: 3px 8px; color: var(--on-hero); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 600; background: var(--on-hero-veil); border: 1px solid var(--on-hero-line); border-radius: var(--radius-pill); }
-.month-card dl { display: grid; gap: 8px; margin: 0; padding: 16px; }
-.month-card dl div { display: flex; gap: 12px; justify-content: space-between; }
-.month-card dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.month-card dd { margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 600; }
-.month-card dl .due { margin: 4px -8px 0; padding: 8px; color: var(--amber-ink); background: var(--amber-soft); border-radius: var(--radius-field); }
-.month-card dl .due dt, .month-card dl .due dd { color: inherit; }
-.month-card footer { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 16px; background: var(--surface-sunken); border-top: 1px solid var(--border); }
-.month-card footer span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.month-card footer b { color: var(--ink); font-size: var(--size-body); font-weight: 700; }
-.month-card.risk footer { color: var(--red-ink); background: var(--red-soft); }
-.month-card.risk footer span, .month-card.risk footer b { color: var(--red-ink); }
 
 /* §1 Уплотнение, а не прятание: справочная секция сворачивается, а не переезжает во вкладку.
    Сводка — цель нажатия не меньше 48 pt, с собственным шевроном вместо системного треугольника. */
@@ -459,8 +439,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; border-radius: var(--radius-field); }
 #categories:focus-visible, #composition:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
-.year-actions { display: flex; flex: none; gap: 8px; align-items: stretch; }
-.planning-entry { white-space: nowrap; }
 .planning-toolbar { display: flex; margin-bottom: 16px; }
 .planning-screen { min-width: 0; }
 .planning-screen > .screen-heading { margin-bottom: 4px; }
@@ -514,7 +492,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .operations-screen .planning-edit-list + .secondary-button { margin-top: 12px; }
 .operations-screen .section-card > p[role="status"] { margin-top: 12px; }
 
-.dashboard-toolbar { display: flex; justify-content: flex-end; margin-bottom: 16px; }
 .dashboard-screen { min-width: 0; }
 .dashboard-screen > * + * { margin-top: 24px; }
 .dashboard-screen > header { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; justify-content: space-between; }
@@ -525,43 +502,36 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .data-management button, .file-button { min-height: 48px; }
 .dashboard-screen > header button { padding: 8px 16px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-pill); }
 .dashboard-screen > header button[aria-pressed="true"] { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
-.dashboard-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
-.dashboard-totals article { display: flex; min-width: 0; flex-direction: column; container-type: inline-size; padding: 16px; background: var(--surface); border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
-.dashboard-totals > article > span, .dashboard-totals > article > strong { display: block; }
-.dashboard-totals > article > span { min-height: 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: break-word; }
-.dashboard-totals strong { margin-top: auto; padding-top: 8px; overflow-wrap: normal; font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 700; }
-@container (max-width: 108px) { .dashboard-totals strong { font-size: var(--size-body); line-height: var(--lh-body); } }
-@container (max-width: 84px) { .dashboard-totals strong { font-size: var(--size-caption); line-height: var(--lh-caption); } }
-#dashboard-text-summary { padding: 16px; margin: 24px 0 0; color: var(--green-ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; background: var(--mint-soft); border: 0; border-radius: var(--radius-section); }
-.dashboard-month-cards { display: grid; grid-auto-columns: minmax(230px, 270px); grid-auto-flow: column; gap: 12px; padding: 2px 1px 16px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; }
-.dashboard-month-card { scroll-snap-align: start; }
-.dashboard-month-card article { height: 100%; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); }
-.dashboard-month-card h2 { padding: 12px 16px; margin: 0; color: var(--on-hero); font-size: var(--size-h3); line-height: var(--lh-h3); letter-spacing: 0; background: var(--green-deep); }
-.dashboard-month-card dl { display: grid; gap: 8px; padding: 16px; margin: 0; }
-.dashboard-month-card dl div { display: flex; gap: 12px; justify-content: space-between; }
-.dashboard-month-card dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.dashboard-month-card dd { margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 600; text-align: right; overflow-wrap: normal; }
-.dashboard-chart { min-width: 0; padding: 16px; overflow-x: auto; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
-.dashboard-chart svg { display: block; min-width: 480px; width: 100%; height: auto; }
-.dashboard-chart text { fill: var(--ink-muted); font-size: 9px; }
-.dashboard-chart__income { fill: var(--green-deep); }
-.dashboard-chart__expense { fill: var(--violet); }
-.dashboard-chart figcaption { margin-top: 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.dashboard-table-scroll { max-width: 100%; margin-top: 24px; overflow-x: auto; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+/* §6 «График горизонта». Заголовок карточки — вывод графика, а не подпись осей (§4 исследования,
+   пункт 23). Координата по горизонтали — процент от собственной ширины графика, по вертикали —
+   пиксель: без `viewBox` единица системы координат равна пикселю, и подпись месяца набирается
+   ровно той ступенью шкалы, которая ей назначена, а не долей от неё. */
+.horizon-chart { min-width: 0; container-type: inline-size; container-name: chart; padding: 20px 16px 16px; margin: 0; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+.horizon-chart > h2 { margin: 0 0 16px; font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 600; letter-spacing: 0; }
+/* Крайние подписи центрированы под своими колонками и выступают на пару пикселей в поле
+   карточки: сдвинуть их к краю значило бы наложить на соседние. */
+.horizon-chart svg { display: block; width: 100%; height: 176px; overflow: visible; }
+.horizon-chart text { fill: var(--ink-muted); font-size: var(--size-label); font-weight: 500; }
+.horizon-chart text.tightest { fill: var(--amber-ink); font-weight: 700; }
+/* Двенадцать подписей на 320 pt сходятся вплотную: половина уходит, кегль остаётся. */
+@container chart (max-width: 290px) { .horizon-chart text.secondary { display: none; } }
+/* Нулевая линия декоративна, пока все месяцы в плюсе, и становится осью, как только появился
+   минус: тогда она несёт смысл и берёт измеренный контраст 5.6:1 вместо цвета разделителя. */
+.horizon-chart__base { fill: var(--border); }
+.horizon-chart__base.axis { fill: var(--ink-muted); }
+.horizon-chart__bar { fill: var(--green-deep); }
+.horizon-chart__bar.tightest { fill: var(--amber-ink); }
+.horizon-chart__bar.short { fill: var(--red-ink); }
+.horizon-chart figcaption { margin-top: 12px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.dashboard-table-scroll { max-width: 100%; overflow-x: auto; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+/* Внутри свёрнутой секции таблица уже лежит на карточке: вторая тень сделала бы карточку в карточке. */
+.collapsible-card > .dashboard-table-scroll { background: transparent; box-shadow: none; }
 .dashboard-table-scroll:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-.dashboard-table-scroll table { width: 100%; min-width: 980px; border-collapse: collapse; font-size: var(--size-caption); }
+.dashboard-table-scroll table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: var(--size-caption); }
 .dashboard-table-scroll caption { padding: 16px; color: var(--ink); font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 600; text-align: left; }
 .dashboard-table-scroll th, .dashboard-table-scroll td { padding: 10px 12px; text-align: right; overflow-wrap: normal; border-top: 1px solid var(--border); }
-.dashboard-table-scroll th:nth-child(-n+2), .dashboard-table-scroll td:nth-child(-n+2) { text-align: left; }
+.dashboard-table-scroll th:first-child, .dashboard-table-scroll td:first-child { text-align: left; }
 .dashboard-table-scroll thead th { color: var(--ink-muted); font-size: var(--size-caption); font-weight: 600; background: var(--surface-sunken); }
-.dashboard-screen > section[aria-labelledby="upcoming-payments-title"] { margin-top: 24px; padding: 20px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
-.dashboard-screen > section h2 { margin: 0; font-size: var(--size-h2); line-height: var(--lh-h2); }
-.dashboard-screen > section ol { display: grid; gap: 0; padding: 0; margin: 16px 0 0; list-style: none; }
-.dashboard-screen > section li { display: flex; gap: 12px; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.dashboard-screen > section li:last-child { border-bottom: 0; }
-.dashboard-screen > section li > strong, .dashboard-screen > section li > span { font-size: var(--size-body); line-height: var(--lh-body); }
-.dashboard-screen > section li strong { font-weight: 600; }
-.dashboard-screen > section li > span { color: var(--ink-muted); font-weight: 400; text-align: right; overflow-wrap: normal; }
 
 .search-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(170px, .4fr) auto; gap: 8px 12px; align-items: end; margin-top: 16px; }
 .search-controls label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
@@ -729,14 +699,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 
 @media (max-width: 520px) {
   .screen-heading { align-items: flex-start; flex-direction: column; }
-  .horizon-toggle { width: 100%; }
   .next-card { align-items: flex-start; flex-direction: column; }
   .reserve-pill { width: 100%; text-align: left; }
   .plan-row { grid-template-columns: 40px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
   .composition-options { grid-template-columns: 1fr; }
-  .year-actions { width: 100%; flex-direction: column; }
-  .planning-entry { width: 100%; }
   .planning-screen .section-card > form > fieldset { grid-template-columns: 1fr; padding: 12px; }
   .planning-screen .section-card > form > fieldset > .field-error, .planning-screen #schedule-months { grid-column: 1; }
   .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -746,13 +713,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .operations-screen .section-card > form > fieldset > .field-error { grid-column: 1; }
   .operations-screen .limit-alert { grid-template-columns: 1fr; }
   .operations-screen .limit-alert > b, .operations-screen .limit-alert > span, .operations-screen .limit-alert > button, .operations-screen .limit-alert > button:last-child { grid-row: auto; grid-column: 1; }
-  .dashboard-toolbar .planning-entry { width: 100%; }
   .dashboard-screen > header [role="group"] { width: 100%; }
-  .dashboard-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .search-controls { grid-template-columns: 1fr; }
   .search-controls label:nth-of-type(1), .search-controls label:nth-of-type(2) { grid-column: 1; }
-  .dashboard-screen > section li, .storage-context { align-items: flex-start; flex-direction: column; }
-  .dashboard-screen > section li > span, .storage-context > span { text-align: left; }
+  .storage-context { align-items: flex-start; flex-direction: column; }
+  .storage-context > span { text-align: left; }
   .data-management-grid { grid-template-columns: 1fr; }
   .data-management-card { min-height: 205px; }
   .key-alarm { grid-template-columns: 1fr; }
@@ -769,7 +734,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 }
 
 @media (max-width: 360px) {
-  .quick-grid, .dashboard-totals { grid-template-columns: 1fr; }
+  .quick-grid { grid-template-columns: 1fr; }
+  .horizon-chart { padding: 16px 8px 12px; }
   .bottom-nav { gap: 8px; padding-right: max(4px, env(safe-area-inset-right)); padding-left: max(4px, env(safe-area-inset-left)); }
   .nav-button { min-width: 0; }
 }

@@ -118,15 +118,16 @@ describe("phase 7 App composition", () => {
   it("renders G-002 dashboard on Year and keeps planning and search in their intended routes", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
     const dashboard = renderToStaticMarkup(
-      <DashboardScreen budget={makePlanningSeed()} startMonth="2026-07" />,
+      <DashboardScreen budget={makePlanningSeed()} startMonth="2026-07" onPlanning={() => undefined} />,
     ).replaceAll("\u00a0", " ");
     const operations = renderToStaticMarkup(<OperationsScreen budget={sixOperationState()} onChange={async () => undefined} />);
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);
     const twentyFour = createDashboardModel(makePlanningSeed(), "2026-07", 24);
 
-    expect(source).toContain('import { DashboardScreen } from "./features/dashboard"');
-    expect(source).toContain("<DashboardScreen budget={budget} />");
-    expect(source).toContain("Настроить план");
+    expect(source).toContain('import { DashboardScreen, nextScheduledDate } from "./features/dashboard"');
+    expect(source).toContain("<DashboardScreen budget={budget} onPlanning={onPlanning} />");
+    // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
+    expect(dashboard).toContain("Настроить план");
     // Поиск по операциям живёт на маршруте «Записать» — внутри самой истории, которую он
     // фильтрует, а не отдельным вторым списком под ней и не на «Годе».
     expect(source).toMatch(/screen === "operations" \? <OperationsScreen budget=\{budget\}/);
@@ -141,12 +142,15 @@ describe("phase 7 App composition", () => {
     expect(twentyFour.months.find((item) => item.month === "2027-06")?.annualDueMinor).toBe(9_000_000);
     expect(twentyFour.months.find((item) => item.month === "2028-01")?.annualDueMinor).toBe(7_200_000);
     expect(twentyFour.months.find((item) => item.month === "2028-06")?.annualDueMinor).toBe(0);
-    expect(dashboard.match(/class="dashboard-month-card"/g)).toHaveLength(12);
-    expect(textOf(dashboard)).toContain("Доход, факт 180 000 ₽");
-    expect(textOf(dashboard)).toContain("Расходы, факт 71 000 ₽");
-    expect(textOf(dashboard)).toContain("Капитал 124 000 ₽");
-    expect(textOf(dashboard)).toContain("Повседневные, факт 26 000 ₽");
-    expect(textOf(dashboard)).toContain("Остаток повседневного лимита 27 000 ₽");
+    // «Год» отвечает за горизонт: одно крупное число, один график и точные значения под ним.
+    // Общие итоги «доход / расходы / капитал» живут на «Записать», в свёрнутых «Итогах и
+    // остатках», и вторым их набором экран больше не занят.
+    expect(textOf(dashboard)).toContain("Меньше всего свободно");
+    expect(textOf(dashboard)).toContain("в сентябре 2026 и ещё в 4 месяцах горизонта");
+    expect(textOf(dashboard)).toContain("13 191 ₽");
+    expect(textOf(dashboard)).toContain("сен 2026 180 000 ₽ 166 809 ₽ 19 809 ₽ 0 ₽ 13 191 ₽");
+    expect(dashboard).not.toContain("Доход, факт");
+    expect(dashboard).not.toContain("Капитал");
     expect(textOf(operations)).toContain("Показано 6 из 6");
   });
 

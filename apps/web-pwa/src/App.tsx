@@ -2,11 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
-  makePlanningSeed,
-  type AnnualCommitment,
   type BudgetState,
   type Member,
-  type ScheduledExpense,
   type Transaction,
 } from "@family-budget/domain";
 import {
@@ -18,7 +15,7 @@ import { Icon, IconSprite, type IconName } from "./components/Icon";
 import { Money } from "./components/Money";
 import { categoryVisual } from "./category-visual";
 import { UpdatePrompt } from "./components/UpdatePrompt";
-import { DashboardScreen } from "./features/dashboard";
+import { DashboardScreen, nextScheduledDate } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
 import {
   FamilyScreen,
@@ -38,6 +35,7 @@ import { OperationsScreen } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
+import { buildDemoBudgetState } from "./onboarding/demo";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, moneyScale } from "./money";
 import { limitBar, localToday, percentStep, periodProgress } from "./limit-pace";
@@ -463,7 +461,7 @@ export default function App() {
   };
 
   const loadDemo = async () => {
-    const result = await persistCompletedOnboarding(repository, makePlanningSeed(), prepareBudgetState, publishInitialBudget);
+    const result = await persistCompletedOnboarding(repository, buildDemoBudgetState(), prepareBudgetState, publishInitialBudget);
     if (result.status === "existing") {
       setMessage("Бюджет уже создан в другой вкладке. Демо не перезаписало сохранённую там версию.");
     }
@@ -691,24 +689,116 @@ function SplitRow({ icon, label, value }: { icon: IconName; label: string; value
   return <div><dt><Icon name={icon} size={20} />{label}</dt><dd><Money value={value} /></dd></div>;
 }
 
+/**
+ * «Год»: горизонт и платежи, которые его создают.
+ *
+ * Списков платежей здесь было три: «Ближайшие активные платежи» на самом горизонте, «Крупные и
+ * ежегодные» и «Расходы по расписанию» под ним. Первый строился из двух последних, то есть каждый
+ * платёж экран называл дважды. Остался один список, упорядоченный по дате ближайшего платежа: у
+ * крупного это его срок, у регулярного — ближайшее вхождение в календарь.
+ */
 function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
+  const payments = planPaymentRows(budget, plan, categoryById);
   return <>
-    <div className="dashboard-toolbar"><button className="primary-button planning-entry" type="button" onClick={onPlanning}>Настроить план</button></div>
-    <DashboardScreen budget={budget} />
+    <DashboardScreen budget={budget} onPlanning={onPlanning} />
 
-    <section className="section-card"><SectionTitle title="Крупные и ежегодные" note="Копим заранее, платим из резерва" /><div className="plan-list">{budget.annualCommitments.filter((item) => item.active).map((item) => <CommitmentRow key={item.id} item={item} metrics={plan.commitments[item.id]} category={categoryById.get(item.categoryId)?.name} />)}</div></section>
-    <section className="section-card"><SectionTitle title="Расходы по расписанию" note="Каждый месяц или только в выбранные месяцы" /><div className="plan-list">{budget.scheduledExpenses.filter((item) => item.active).map((item) => <ScheduleRow key={item.id} item={item} category={categoryById.get(item.categoryId)?.name} />)}</div></section>
-    <section className="explain-card"><b>Как это считается</b><p>Крупный платёж показывается в месяце оплаты, но не вычитается второй раз: до срока приложение ежемесячно резервирует нужную сумму.</p></section>
+    <section className="section-card">
+      <SectionTitle title="Платежи и крупные траты" note="Регулярные платим каждый месяц, крупные копим заранее" />
+      <div className="plan-list">{payments.map((row) => <PlanRow key={row.key} row={row} />)}</div>
+    </section>
+
+    {/* Правило резерва объясняется один раз и по требованию: это справка, а не содержимое экрана. */}
+    <details className="section-card collapsible-card">
+      <summary><span>Как это считается</span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
+      <p className="body-copy">Крупный платёж показывается в месяце оплаты, но не вычитается второй раз: до срока приложение ежемесячно резервирует нужную сумму.</p>
+    </details>
   </>;
 }
 
-function CommitmentRow({ item, metrics, category }: { item: AnnualCommitment; metrics: AnnualPlan["commitments"][string] | undefined; category?: string }) {
-  return <article className="plan-row"><span className="plan-icon"><Icon name="calendar-clock" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {item.recurrence === "annual" ? "каждый год" : "один раз"} · {formatDate(item.dueDate)}</small><span className={`status-chip ${metrics?.status}`}>{statusLabels[metrics?.status ?? ""] ?? ""}</span></div><p><b><Money value={item.amountMinor} /></b><span><Money value={metrics?.monthlyReserveMinor ?? 0} />/мес</span></p></article>;
+interface PlanPaymentRow {
+  readonly key: string;
+  readonly icon: IconName;
+  readonly name: string;
+  /** «Продукты · каждый год · 15 янв» — одна строка вместо трёх подписей. */
+  readonly note: string;
+  readonly amountMinor: number;
+  /** Сколько откладывать в месяц; `null` — регулярный платёж, его не копят. */
+  readonly reserveMinor: number | null;
+  readonly status: string | null;
+  /** Дата ближайшего платежа: по ней список и упорядочен. */
+  readonly dueDate: string;
 }
 
-function ScheduleRow({ item, category }: { item: ScheduledExpense; category?: string }) {
-  const schedule = item.mode === "monthly" ? "каждый месяц" : item.months?.map((month) => calendarMonths[month - 1]).join(", ");
-  return <article className="plan-row"><span className="plan-icon"><Icon name="repeat" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {schedule} · до {item.dueDay}-го</small></div><p><b><Money value={item.amountMinor} /></b><span>за месяц</span></p></article>;
+function planPaymentRows(
+  budget: BudgetState,
+  plan: AnnualPlan,
+  categoryById: Map<string, BudgetState["categories"][number]>,
+): readonly PlanPaymentRow[] {
+  const commitments: PlanPaymentRow[] = budget.annualCommitments
+    .filter((item) => item.active)
+    .map((item) => ({
+      key: `commitment-${item.id}`,
+      icon: "calendar-clock",
+      name: item.name,
+      note: [categoryById.get(item.categoryId)?.name, item.recurrence === "annual" ? "каждый год" : "один раз", formatDate(item.dueDate)]
+        .filter((part) => part).join(" · "),
+      amountMinor: item.amountMinor,
+      reserveMinor: plan.commitments[item.id]?.monthlyReserveMinor ?? 0,
+      status: plan.commitments[item.id]?.status ?? null,
+      dueDate: item.dueDate,
+    }));
+
+  const schedules: PlanPaymentRow[] = budget.scheduledExpenses
+    .filter((item) => item.active)
+    .map((item) => {
+      const dueDate = nextScheduledDate(item, plan.startMonth);
+      return {
+        key: `schedule-${item.id}`,
+        icon: "repeat" as IconName,
+        name: item.name,
+        note: [categoryById.get(item.categoryId)?.name, scheduleWords(item), `до ${item.dueDay}-го`]
+          .filter((part) => part).join(" · "),
+        amountMinor: item.amountMinor,
+        reserveMinor: null,
+        status: null,
+        // Расписание без ближайшего вхождения календарь уже прошёл: такая строка идёт в конец.
+        dueDate: dueDate ?? "9999-12-31",
+      };
+    });
+
+  return [...commitments, ...schedules].sort(
+    (left, right) => left.dueDate.localeCompare(right.dueDate) || left.name.localeCompare(right.name, "ru-RU"),
+  );
+}
+
+/**
+ * Когда платят регулярный расход — одной строкой.
+ *
+ * Девять трёхбуквенных сокращений подряд («янв, фев, мар, апр, май, сен, окт, ноя, дек») занимали
+ * две строки и всё равно читались как шум: сколько месяцев в году платят — вот что человек хочет
+ * знать в списке. Полный набор месяцев остаётся там, где его выбирают, — в плане.
+ */
+function scheduleWords(item: BudgetState["scheduledExpenses"][number]): string {
+  if (item.mode === "monthly") return "каждый месяц";
+  const months = item.months ?? [];
+  if (months.length === 0) return "месяцы не выбраны";
+  if (months.length > 4) return `${months.length} месяцев в году`;
+  return months.map((month) => calendarMonths[month - 1]).join(", ");
+}
+
+function PlanRow({ row }: { row: PlanPaymentRow }) {
+  return <article className="plan-row">
+    <span className="plan-icon"><Icon name={row.icon} size={24} /></span>
+    <div>
+      <strong>{row.name}</strong>
+      <small>{row.note}</small>
+      {row.status ? <span className={`status-chip ${row.status}`}>{statusLabels[row.status] ?? ""}</span> : null}
+    </div>
+    <p>
+      <b><Money value={row.amountMinor} /></b>
+      {row.reserveMinor === null ? null : <span><Money value={row.reserveMinor} />/мес в резерв</span>}
+    </p>
+  </article>;
 }
 
 function SectionTitle({ title, note, icon }: { title: string; note: string; icon?: IconName }) {
