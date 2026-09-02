@@ -42,8 +42,43 @@ interface DeviceRow {
   readonly revoked_at: number | null;
 }
 
+/**
+ * The one spelling of an address this server stores, compares and counts.
+ *
+ * It has to be exactly one, and the reason is not tidiness. `Ivan@Example.Test` and
+ * `ivan@example.test` are one mailbox; stored as two strings they are two rows in `account`
+ * (`UNIQUE` on a column that no longer means what it says), two rows in `login_code`, and two
+ * per-address buckets — which turns 6.1's `3` code requests an hour into three per spelling, and
+ * an address has as many spellings as it has letters. The account that a person "already has"
+ * would also be one they cannot reach by typing their address in a different case.
+ *
+ * Case folding is the whole of the normalisation, and it is enough **because** of the set
+ * {@link emailField} admits. Over ASCII, `toLowerCase` maps `A`–`Z` to `a`–`z`, moves nothing
+ * else, is idempotent, and maps the accepted set into itself — so the string that goes into the
+ * database would pass the very schema that admitted the string that was typed, and it does not
+ * matter whether one validates before normalising or after. That closure is what makes this a
+ * normalisation rather than an edit of the caller's input. Outside ASCII it fails at once: `İ`
+ * lower-cases to two code points, `K` (U+212A) to a plain `k`, and the same address would be one
+ * string or another depending on which of them was typed.
+ *
+ * `toLowerCase` and not `toLocaleLowerCase`: the latter maps `I` to a dotless `ı` under a Turkish
+ * locale, so the identity of an account would depend on the environment of the server process.
+ *
+ * The local part is folded too, though RFC 5321 leaves its interpretation to the receiving host.
+ * The argument here is not the RFC but the ceremony: the code is delivered to the mailbox, so two
+ * spellings that reach one mailbox are one person however they are stored, and treating them as
+ * two accounts buys no safety and costs a duplicate.
+ *
+ * And nothing beyond that. No stripping of `+tags`, no removal of dots inside the local part:
+ * those are one provider's routing rules, and a server that applied them would merge addresses
+ * that are separate mailboxes elsewhere — "one address, one account" traded for "two people, one
+ * account", which is the worse failure of the two. `trim` is gone for the same reason it was
+ * never needed: the schema has no room for surrounding whitespace, so this function had nothing
+ * to remove, and a normaliser that quietly repairs what the schema would refuse is the very move
+ * — checked in one layer, changed in another — that this review is about.
+ */
 function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
+  return email.toLowerCase();
 }
 
 /** Uniform over `000000 … 999999`: rejection sampling, not `% 1_000_000` on a 32-bit draw. */

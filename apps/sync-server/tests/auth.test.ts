@@ -160,6 +160,137 @@ test("the answer to a code request does not depend on whether the account exists
   expect(first.body).toBe(second.body);
 });
 
+test("the address of 6.1 is ASCII, and what is refused is refused before any state", async () => {
+  harness = createHarness();
+  const ch = (code: number): string => String.fromCodePoint(code);
+  const publicKey = Buffer.alloc(91, 4).toString("base64");
+  // Each of these used to be accepted: the pattern excluded `@` and whitespace and nothing else.
+  // The first five are the finding — an address that does not display as what it is — and the
+  // rest are the shapes a mailbox cannot have, refused here rather than discovered by the mail
+  // transport after an account exists.
+  const refused: readonly (readonly [string, string])[] = [
+    [ch(0x202e) + "admin@example.test", "a bidirectional override reverses the text beside it"],
+    ["a" + ch(0x200b) + "dmin@example.test", "a zero-width space is invisible and is not a letter"],
+    [ch(0xfeff) + "admin@example.test", "a byte-order mark in front of a name"],
+    ["a" + ch(0x2066) + "dmin@example.test", "an isolate does the same as an override"],
+    ["ad" + ch(0x0000) + "min@example.test", "3.2 refuses codes below 0x20 in any string"],
+    [ch(0x0430) + "dmin@example.test", "a Cyrillic a in place of the Latin one"],
+    ["admin@" + ch(0x0435) + "xample.test", "the same homoglyph, in the domain"],
+    // The two that would defeat the normalisation rather than the display. Case folding is what
+    // makes one address one string, and outside ASCII it stops being a fold: the first of these
+    // lower-cases into *two* code points, so what is stored is not what was typed; the second is
+    // a Kelvin sign, which lower-cases to a plain `k` and would quietly merge two addresses that
+    // a person reads as different.
+    [ch(0x0130) + "van@example.test", "its lower case is two code points, not one"],
+    ["a" + ch(0x212a) + "@example.test", "a Kelvin sign lower-cases into an ordinary k"],
+    ['"john doe"@example.test', "the quoted local part, legal and never typed"],
+    ["admin@[192.0.2.1]", "the address literal, legal and never typed"],
+    ["admin@example", "a mailbox needs more than one label"],
+    ["admin@example.t", "a one-character last label is not a domain"],
+    ["admin@-example.test", "a label does not begin with a hyphen"],
+    ["admin@example-.test", "a label does not end with one either"],
+    [".admin@example.test", "a dot separates atoms, so it cannot lead"],
+    ["admin.@example.test", "nor trail"],
+    ["ad..min@example.test", "nor stand beside itself"],
+    ["a".repeat(65) + "@example.test", "5321 keeps the local part to 64"],
+    ["admin@@example.test", "two separators are not one"],
+    ["admin @example.test", "a space is not part of an address"],
+  ];
+  for (const [address, why] of refused) {
+    const asked = await call(harness, "POST", "/v1/auth/code", { payload: { email: address } });
+    expect(asked.statusCode, why).toBe(400);
+    expect(asked.json().error.code, why).toBe("invalid_request");
+    // The second door takes the same address and refuses it the same way. `login_code_invalid`
+    // would be the wrong answer here: nothing about a code was reached.
+    const verified = await call(harness, "POST", "/v1/auth/verify", {
+      payload: { email: address, code: "123456", deviceId: uuid(), publicKey },
+    });
+    expect(verified.statusCode, why).toBe(400);
+    expect(verified.json().error.code, why).toBe("invalid_request");
+  }
+
+  // Refused at the schema, so nothing downstream ever saw the string: no row was written for it,
+  // no account was made, and — the one that matters for a rate limit — no bucket was created in
+  // its name. Every one of them, and the tables are as they started.
+  const rows = (table: string): number =>
+    (harness!.server.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+  expect(rows("login_code")).toBe(0);
+  expect(rows("account")).toBe(0);
+  expect(rows("throttle")).toBe(0);
+
+  // And the addresses people actually have still pass, punycode among them: a domain written in
+  // another script arrives here in its `xn--` form, so the ASCII rule needs no exception for it.
+  const accepted = [
+    "plain@example.test",
+    "first.last+tag@sub.example.co.uk",
+    "o'brien@mail.ru",
+    "user-3f2b@example.test",
+    "x@xn--80ak6aa92e.xn--p1ai",
+    "a".repeat(64) + "@example.test",
+  ];
+  for (const address of accepted) {
+    const asked = await call(harness, "POST", "/v1/auth/code", { payload: { email: address } });
+    expect(asked.statusCode, address).toBe(202);
+  }
+  expect(rows("login_code")).toBe(accepted.length);
+});
+
+test("one address is one account, however it is spelled", async () => {
+  harness = createHarness();
+  const publicKey = Buffer.alloc(91, 5).toString("base64");
+  const deviceId = uuid();
+
+  const asked = await call(harness, "POST", "/v1/auth/code", {
+    payload: { email: "Mixed.Case@Example.Test" },
+  });
+  expect(asked.statusCode).toBe(202);
+  // The code is delivered to the folded address and the row is keyed by it, so the second
+  // spelling finds the first one's code instead of missing it.
+  expect(harness.codes.at(-1)?.email).toBe("mixed.case@example.test");
+  const stored = harness.server.db.prepare("SELECT email FROM login_code").all() as {
+    email: string;
+  }[];
+  expect(stored.map((row) => row.email)).toEqual(["mixed.case@example.test"]);
+
+  const verified = await call(harness, "POST", "/v1/auth/verify", {
+    payload: {
+      email: "mixed.case@EXAMPLE.test",
+      code: harness.codes.at(-1)?.code,
+      deviceId,
+      publicKey,
+    },
+  });
+  expect(verified.statusCode).toBe(200);
+  const accountId = verified.json().accountId;
+
+  // A third spelling signs into the same account. Were the spellings kept apart, this would be a
+  // second `account` row for one mailbox — reachable only by typing the address the same way
+  // twice, and carrying a code budget of its own.
+  const again = await requestCode(harness, "MIXED.CASE@EXAMPLE.TEST");
+  expect(again.response.statusCode).toBe(202);
+  const reverified = await call(harness, "POST", "/v1/auth/verify", {
+    payload: { email: "Mixed.Case@Example.Test", code: again.code, deviceId, publicKey },
+  });
+  expect(reverified.statusCode).toBe(200);
+  expect(reverified.json().accountId).toBe(accountId);
+  const accounts = harness.server.db.prepare("SELECT email FROM account").all() as {
+    email: string;
+  }[];
+  expect(accounts.map((row) => row.email)).toEqual(["mixed.case@example.test"]);
+
+  // And the per-address counter of 6.1 is one counter. Three requests in three spellings spend
+  // it; the fourth is refused. The source ceiling is `30` and stands nowhere near this, so the
+  // limit that answered is the address's own.
+  const spellings = ["Rate@Example.Test", "rate@EXAMPLE.test", "RATE@example.TEST"];
+  expect(spellings).toHaveLength(LOGIN_CODE_MAX_REQUESTS_PER_HOUR);
+  for (const spelling of spellings) {
+    expect((await requestCode(harness, spelling)).response.statusCode, spelling).toBe(202);
+  }
+  const fourth = await requestCode(harness, "rate@example.test");
+  expect(fourth.response.statusCode).toBe(429);
+  expect(fourth.response.json().error.code).toBe("rate_limited");
+});
+
 test("no code and no token reaches the log", async () => {
   harness = createHarness();
   const session = await signIn(harness, EMAIL);
