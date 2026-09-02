@@ -20,6 +20,7 @@ import { BackButton } from "../../components/BackButton";
 import { Icon } from "../../components/Icon";
 import { activateDialogEnvironment, handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import type { DeviceRecord, MemberRecord, MembershipSnapshot } from "./api";
+import type { RotationState } from "./controller";
 import { formatLastBackupDate } from "../data-management/model";
 import {
   MEMBER_ROLE_LABELS,
@@ -31,6 +32,9 @@ import {
   normalizeLoginCode,
   ownFingerprintPresentation,
   peerFingerprintPresentation,
+  rotationGapSummary,
+  rotationProgressLine,
+  ROTATION_SKIP_REASONS,
   syncAlarm,
   syncIndicatorPresentation,
   syncNotice,
@@ -42,9 +46,15 @@ import {
 } from "./model";
 import type { FamilySession } from "./session";
 
-/** An invite this device issued and is still reading out to somebody. */
+/**
+ * An invite this device issued and is still reading out to somebody.
+ *
+ * `code` is `null` for a live invite whose code this session no longer holds. That is the ordinary
+ * state after a reload and not a failure: 6.3 keeps the code out of the local database entirely,
+ * so it exists on the screen it was issued on and nowhere else.
+ */
 export interface ActiveInvite {
-  readonly code: string;
+  readonly code: string | null;
   readonly expiresAt: number;
   readonly supersededCount: number;
 }
@@ -60,6 +70,12 @@ export interface FamilyActions {
   leaveFamily(): void;
   removeMember(memberId: string): void;
   revokeDevice(deviceId: string): void;
+  /** 5.5: смена ключа семьи. Делает её устройство владельца, и никто больше. */
+  startRotation(): void;
+  /** Продолжить после остановки на неполном журнале — осознанным решением человека. */
+  continueRotationWithGaps(): void;
+  /** Убрать с экрана итог или отказ прошлой попытки. */
+  dismissRotation(): void;
   /** 5.4.1: the person's confirmation is what *creates* the pin. Nothing else may create one. */
   confirmFingerprint(deviceId: string): void;
 }
@@ -74,6 +90,13 @@ export interface FamilyScreenProps {
   /** This device's own fingerprint, computed from its own public key. Never from a response. */
   readonly ownFingerprint: Uint8Array | null;
   readonly pinOf: (deviceId: string) => LocalPinState;
+  /**
+   * The verdict of the automatic binding check (6.4), or `null` when it never ran for this device.
+   *
+   * Rendered rather than only stored, because 6.4 asks for exactly that: «Расхождение — устройство
+   * помечено как "ключ не подтверждён", владелец получает предупреждение».
+   */
+  readonly bindVerdictOf: (deviceId: string) => "bound" | "failed" | null;
   /** `SHA-256(SPKI)` as the server offered it. Used only where no pin exists (5.4). */
   readonly offeredFingerprintOf: (deviceId: string) => Uint8Array | undefined;
   /** Names for the identifiers the server list carries. They live in the budget, not on a server. */
@@ -94,6 +117,10 @@ export interface FamilyScreenProps {
   /** Чем кончился последний круг синхронизации. Отчёт о нём молчит — см. `runSyncRound`. */
   readonly syncRound: SyncRoundOutcome;
   readonly integrity: JournalIntegrity | null;
+  /** Ход смены ключа семьи (5.5), или `null`, когда её в этой сессии не начинали. */
+  readonly rotation: RotationState | null;
+  /** Тревога «смена ключа не подтверждена» — 5.5 шаг 8. Не гасится сама и не гасится кнопкой. */
+  readonly epochAlarm: string | null;
   readonly now: number;
   readonly busy: boolean;
   readonly message: string | null;
@@ -270,6 +297,28 @@ export function FamilyScreen(props: FamilyScreenProps) {
               }}
             >
               {alarm.actionLabel}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {props.epochAlarm ? (
+        <section className="key-alarm" role="alert" aria-labelledby="epoch-alarm-title">
+          <span className="key-alarm-mark" aria-hidden="true">
+            !
+          </span>
+          <div>
+            <h2 id="epoch-alarm-title">Смена ключа семьи не подтверждена</h2>
+            <p>{props.epochAlarm}</p>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                fingerprintsRef.current?.focus({ preventScroll: true });
+                fingerprintsRef.current?.scrollIntoView({ block: "start" });
+              }}
+            >
+              Сверить отпечатки ключей
             </button>
           </div>
         </section>
@@ -510,7 +559,17 @@ export function FamilyScreen(props: FamilyScreenProps) {
               </div>
               {props.invite ? (
                 <div className="invite-code" role="status" aria-live="polite">
-                  <code>{formatInviteCode(props.invite.code)}</code>
+                  {props.invite.code === null ? (
+                    <small>
+                      Приглашение ещё действует, но код показан один раз и в базу устройства не
+                      записан. Если он потерян — выпустите новый: прежний перестанет действовать.
+                    </small>
+                  ) : (
+                    <>
+                      <code>{formatInviteCode(props.invite.code)}</code>
+                      <small>Код показан один раз и нигде не сохранён — запишите или продиктуйте его сейчас.</small>
+                    </>
+                  )}
                   <small>{formatInviteExpiry(props.invite.expiresAt, props.now)}</small>
                   {props.invite.supersededCount > 0 ? (
                     <small>
@@ -527,6 +586,23 @@ export function FamilyScreen(props: FamilyScreenProps) {
                 </button>
               </div>
             </section>
+          ) : null}
+
+          {membership.role === "owner" ? (
+            <FamilyKeySection
+              keyEpoch={membership.keyEpoch}
+              rotationDue={
+                props.devices.some((device) => device.revokedAt !== null) ||
+                props.members.some((member) => member.removedAt !== null)
+              }
+              serverRotation={membership.rotation}
+              rotation={props.rotation}
+              busy={props.busy}
+              deviceLabel={shortId}
+              onStart={props.actions.startRotation}
+              onContinue={props.actions.continueRotationWithGaps}
+              onDismiss={props.actions.dismissRotation}
+            />
           ) : null}
 
           <section
@@ -574,6 +650,17 @@ export function FamilyScreen(props: FamilyScreenProps) {
                             : "участник неизвестен"} ·
                           последняя связь {formatMoment(device.lastSeenAt)}
                         </small>
+                        {props.bindVerdictOf(device.deviceId) === "failed" ? (
+                          <p className="device-revoked" role="note">
+                            Ключ не подтверждён: открытый ключ этого устройства не сошёлся с кодом
+                            приглашения, по которому оно вступило. Обёртку нового ключа семьи оно
+                            при смене ключа не получит. Сверьте отпечатки голосом или выпустите код
+                            заново.
+                          </p>
+                        ) : null}
+                        {props.bindVerdictOf(device.deviceId) === "bound" ? (
+                          <small>Привязано автоматически: ключ сошёлся с кодом приглашения.</small>
+                        ) : null}
                         {device.revokedAt !== null ? (
                           <p className="device-revoked" role="note">
                             Устройство отозвано {formatMoment(device.revokedAt)}. Ключ семьи, лежащий
@@ -772,6 +859,174 @@ export function FamilyConfirmation({
         </div>
       </section>
     </div>
+  );
+}
+
+
+/**
+ * «Ключ семьи»: то, чем отзыв устройства и удаление участника доводятся до конца — 5.5, 6.6, 6.7.
+ *
+ * Кнопки «сменить ключ» здесь не было вовсе, а обещание было: экран сообщал, что ключ на отозванном
+ * устройстве продолжает работать, и не давал ничего, чем его отобрать. Раздел устроен как длинная
+ * операция с состоянием, а не как мгновенное действие, потому что она такая и есть: человек должен
+ * понимать, что происходит, что будет, если прервать, и что делать при остановке на разрыве
+ * журнала.
+ */
+function FamilyKeySection({
+  keyEpoch,
+  rotationDue,
+  serverRotation,
+  rotation,
+  busy,
+  deviceLabel,
+  onStart,
+  onContinue,
+  onDismiss,
+}: {
+  readonly keyEpoch: number;
+  readonly rotationDue: boolean;
+  readonly serverRotation: MembershipSnapshot["rotation"];
+  readonly rotation: RotationState | null;
+  readonly busy: boolean;
+  readonly deviceLabel: (deviceId: string) => string;
+  readonly onStart: () => void;
+  readonly onContinue: () => void;
+  readonly onDismiss: () => void;
+}) {
+  const running = rotation?.kind === "running";
+  return (
+    <section className="section-card" aria-labelledby="family-key-title">
+      <div className="section-title">
+        <div>
+          <h2 id="family-key-title">Ключ семьи</h2>
+          <p>
+            Сейчас действует эпоха {keyEpoch}. Смена ключа переписывает весь журнал семьи под новый
+            ключ и выдаёт его только тем устройствам, чьи отпечатки закреплены на этом.
+          </p>
+        </div>
+      </div>
+
+      {rotationDue && rotation?.kind !== "done" ? (
+        <p className="family-rotation" role="status">
+          Ключ пора сменить: в семье есть отозванное устройство или удалённый участник. Отзыв гасит
+          токены, но не ключ — он лежит в памяти того устройства и открывает всё, что семья запишет
+          дальше, пока эпоха не сменилась.
+        </p>
+      ) : null}
+
+      {serverRotation && !running ? (
+        <p className="family-rotation" role="status">
+          На сервере висит незавершённая попытка смены ключа (эпоха {serverRotation.keyEpoch}). Пока
+          она висит, семья не может отправлять записи. Новая попытка отменит её и начнётся заново.
+        </p>
+      ) : null}
+
+      {running ? (
+        <div className="rotation-progress" role="status" aria-live="polite">
+          <p>{rotationProgressLine(rotation.progress)}</p>
+          <p className="body-copy">
+            Прерывать безопасно: пока сервер не подтвердил переключение, на этом устройстве
+            остаются оба ключа, и семья продолжает читать журнал старым. Прерванная попытка
+            отменяется, и смену ключа можно начать заново — она возьмёт следующий номер эпохи.
+          </p>
+          <p className="body-copy">
+            Пока идёт смена, вся семья не может отправлять новые записи. Введённое на других
+            устройствах не потеряется — оно уедет в новую эпоху, как только она заработает.
+          </p>
+        </div>
+      ) : null}
+
+      {rotation?.kind === "halted" ? (
+        <section className="key-alarm" role="alert" aria-labelledby="rotation-halt-title">
+          <span className="key-alarm-mark" aria-hidden="true">
+            !
+          </span>
+          <div>
+            <h3 id="rotation-halt-title">Журнал неполон — смена ключа остановлена</h3>
+            <p>
+              Сервер должен был отдать записи с номерами 1 … {rotation.freezeSeq}, но {" "}
+              {rotationGapSummary(rotation.gap)}.
+            </p>
+            <p>
+              Это проверяется до переноса и только здесь: старая эпоха при смене ключа удаляется
+              целиком, и пропуск, не замеченный сейчас, исчезнет вместе с ней — усечённый журнал
+              станет законной новой историей, и увидеть его будет уже нечем.
+            </p>
+            <p>
+              Попытка на сервере отменена, запись в семье снова открыта. Можно подождать и
+              повторить: недостающее могло просто не дойти. Можно продолжить без этих записей — они
+              будут потеряны навсегда, а их номера уедут в первый чекпойнт новой эпохи, чтобы семья
+              видела, что именно потеряно.
+            </p>
+            <div className="family-actions">
+              <button className="danger-button" type="button" disabled={busy} onClick={onContinue}>
+                Продолжить без этих записей
+              </button>
+              <button className="secondary-button" type="button" disabled={busy} onClick={onDismiss}>
+                Отложить
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {rotation?.kind === "done" ? (
+        <div className="rotation-result" role="status">
+          <p>
+            Ключ сменён: эпоха {rotation.previousKeyEpoch} → {rotation.keyEpoch}, перенесено записей{" "}
+            {rotation.moved}. Ключ выдан устройствам: {" "}
+            {rotation.wrapped.length === 0
+              ? "ни одному — других привязанных устройств в семье нет"
+              : rotation.wrapped.map(deviceLabel).join(", ")}
+            .
+          </p>
+          {rotation.skipped.length > 0 ? (
+            <>
+              <p>Без нового ключа остались:</p>
+              <ul className="withheld-list">
+                {rotation.skipped.map((device) => (
+                  <li key={device.deviceId}>
+                    <strong>Устройство {deviceLabel(device.deviceId)}</strong>
+                    <small>{ROTATION_SKIP_REASONS[device.reason]}</small>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {rotation.inheritedGaps.length > 0 ? (
+            <p>
+              В новую эпоху не перенесены записи с номерами{" "}
+              {rotation.inheritedGaps.join(", ")}: они уехали в первый чекпойнт новой эпохи как
+              признанная потеря.
+            </p>
+          ) : null}
+          <button className="secondary-button" type="button" onClick={onDismiss}>
+            Понятно
+          </button>
+        </div>
+      ) : null}
+
+      {rotation?.kind === "failed" ? (
+        <p className="family-error" role="alert">
+          {rotation.message} Ключ на этом устройстве не менялся, попытка на сервере отменена.
+        </p>
+      ) : null}
+
+      <p className="body-copy">
+        Смена ключа — длинная операция: журнал переписывается целиком, и на большом журнале это
+        сотни запросов. Пока она идёт, вся семья не может отправлять записи.
+      </p>
+      <div className="family-actions">
+        <button
+          className={rotationDue ? "primary-button" : "secondary-button"}
+          type="button"
+          disabled={busy || running}
+          onClick={onStart}
+        >
+          {running ? "Смена ключа идёт…" : "Сменить ключ семьи"}
+        </button>
+      </div>
+    </section>
   );
 }
 

@@ -587,6 +587,7 @@ export default function App() {
             devices={family.devices}
             ownFingerprint={family.ownFingerprint}
             pinOf={family.pinOf}
+            bindVerdictOf={family.bindVerdictOf}
             offeredFingerprintOf={family.offeredFingerprintOf}
             memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}
             localBudget={budget}
@@ -596,6 +597,8 @@ export default function App() {
             status={family.status}
             syncRound={family.syncRound}
             integrity={family.integrity}
+            rotation={family.rotation}
+            epochAlarm={family.epochAlarm}
             now={Date.now()}
             busy={family.busy}
             message={family.message}

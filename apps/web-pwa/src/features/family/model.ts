@@ -18,6 +18,8 @@ import {
 } from "@family-budget/sync-client";
 import type { JournalIntegrity, WithheldEntity } from "@family-budget/sync-protocol";
 
+import type { RotationGap, RotationPhase, SkippedDevice } from "./rotation";
+
 /* ───────────────────────────── Индикатор состояния ───────────────────────────── */
 
 /**
@@ -474,4 +476,77 @@ export function joinConsequence(
     backupActionLabel: "Сделать копию сейчас",
     confirmLabel: "Вступить в семью",
   };
+}
+
+/* ───────────────────────────── Смена ключа семьи (5.5) ───────────────────────────── */
+
+/**
+ * Как называется каждая фаза ротации на экране.
+ *
+ * Фазы показываются потому, что ротация — длинная операция с состоянием, а не мгновенная кнопка:
+ * при квоте в `100 000` конвертов перенос журнала — это сотни запросов по мобильной сети (5.5), и
+ * человек, глядящий на неподвижный экран, должен понимать, что происходит и на чём это стоит.
+ */
+export const ROTATION_PHASE_LABELS: Record<RotationPhase, string> = {
+  preparing: "Отправляем накопленные записи",
+  declaring: "Объявляем смену ключа серверу",
+  reading: "Забираем журнал старой эпохи",
+  transferring: "Перешифровываем записи новым ключом",
+  wrapping: "Готовим ключ для остальных устройств",
+  uploading: "Загружаем новую эпоху",
+  completing: "Переключаем эпоху",
+  done: "Смена ключа завершена",
+};
+
+/** Почему устройство осталось без обёртки нового ключа (5.4.1: видно, какое и почему). */
+export const ROTATION_SKIP_REASONS: Record<SkippedDevice["reason"], string> = {
+  revoked: "отозвано — ради этого смена ключа и делается",
+  bind_failed: "ключ не подтверждён: не сошёлся с кодом приглашения",
+  not_pinned: "отпечаток не закреплён: сверьте ключи голосом",
+  no_public_key: "сервер не прислал разборчивый открытый ключ",
+  wrap_failed: "присланный ключ не сошёлся с закреплённым отпечатком",
+};
+
+/**
+ * Строка прогресса: фаза и, когда есть что считать, счёт перенесённых записей.
+ *
+ * Счёт не выдумывается: `total` появляется только после того, как переносимый набор прочитан и
+ * пересчитан на этом устройстве. До тех пор показывается одна фаза — «неизвестно сколько» честнее
+ * полоски, которая ползёт сама по себе.
+ */
+export function rotationProgressLine(progress: {
+  readonly phase: RotationPhase;
+  readonly moved: number;
+  readonly total: number | null;
+}): string {
+  const label = ROTATION_PHASE_LABELS[progress.phase];
+  if (progress.total === null) return `${label}…`;
+  if (progress.phase === "uploading") {
+    return `${label}: ${progress.moved} из ${progress.total}`;
+  }
+  return `${label}: записей ${progress.total}`;
+}
+
+/**
+ * Разрыв журнала — номерами, а не словом «неполон».
+ *
+ * Два случая называются по отдельности, потому что они разные: номера, которых сервер не отдал, и
+ * номера конвертов, которые пришли и не расшифровались (3.4). Второе — след подделки или
+ * повреждения, первое — след усечения.
+ */
+export function rotationGapSummary(gap: RotationGap): string {
+  const parts: string[] = [];
+  if (gap.missing.length > 0) {
+    parts.push(`не отданы сервером: ${formatSeqList(gap.missing)}`);
+  }
+  if (gap.undecryptable.length > 0) {
+    parts.push(`пришли, но не читаются ключом этой эпохи: ${formatSeqList(gap.undecryptable)}`);
+  }
+  return parts.join("; ");
+}
+
+/** Не больше двенадцати номеров подряд: остальное — «и ещё N». */
+export function formatSeqList(values: readonly number[]): string {
+  const shown = values.slice(0, 12).join(", ");
+  return values.length > 12 ? `${shown} и ещё ${values.length - 12}` : shown;
 }

@@ -44,6 +44,10 @@ const ERROR_TEXT: Partial<Record<FamilyErrorCode, string>> = {
   family_exists: "Такая семья уже создана.",
   no_family: "Аккаунт пока не состоит в семье.",
   rotation_in_progress: "В семье идёт смена ключа. Повторите, когда она завершится.",
+  no_rotation: "Эта смена ключа на сервере уже не идёт: её отменили или завершили. Начните заново.",
+  epoch_not_wrappable: "Обёртку этой эпохи выдать нельзя.",
+  wrap_exists: "Обёртка для этого устройства в этой эпохе уже загружена.",
+  batch_too_large: "Пакет слишком велик. Часть журнала не отправлена.",
   epoch_mismatch: "Ключ семьи сменился. Обновите данные семьи и повторите.",
   quota_exhausted: "Квота семьи исчерпана.",
   invite_invalid: "Код приглашения неизвестен, уже использован или просрочен.",
@@ -52,7 +56,24 @@ const ERROR_TEXT: Partial<Record<FamilyErrorCode, string>> = {
   device_key_conflict: "Это устройство зарегистрировано с другим ключом. Переустановите приложение и войдите заново.",
 };
 
+/**
+ * A refusal this feature decided on itself, carrying the sentence a person reads.
+ *
+ * The rule above — no prose of the server's ever reaches a screen — is about the *server's* text,
+ * and it is kept: nothing constructs one of these from a response body. What it does is give the
+ * checks the client performs on its own — the inviter's role against the member list (5.3), the
+ * frozen boundary against this device's own cursor (5.5) — a way to say what happened instead of
+ * being flattened into «не удалось выполнить действие», which is what a bare `Error` becomes.
+ */
+export class FamilyRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FamilyRefusal";
+  }
+}
+
 export function describeFamilyError(error: unknown): string {
+  if (error instanceof FamilyRefusal) return error.message;
   if (error instanceof FamilyApiError) {
     return ERROR_TEXT[error.code] ?? "Сервер отказал в действии. Ничего не изменено.";
   }
@@ -81,6 +102,15 @@ function requireNumber(value: unknown): number {
 
 function optionalNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
+/**
+ * A field that is legitimately absent — `bindProof` and `inviteId` of a device that joined by a
+ * ceremony rather than by a code (6.4). Absent and malformed read alike, as `null`: a value the
+ * owner's device cannot use for the HMAC is the same fact as one it was never given.
+ */
+function optionalString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function requireRole(value: unknown): FamilyRole {
@@ -124,6 +154,18 @@ export interface DeviceRecord {
   readonly deviceId: string;
   readonly memberId: string;
   readonly publicKey: string;
+  /**
+   * The HMAC the joining device sent with its join request, or `null` — 5.4 and 6.4.
+   *
+   * The automatic half of two-way binding lives on this field: the owner's device recomputes it
+   * on the `bindKey` it kept from the invite it issued, and a device whose proof agrees is bound
+   * without anybody comparing twenty symbols aloud. Dropping it here — which is what this parser
+   * used to do — switched that half off entirely and left a substituted public key detectable by
+   * nothing at all.
+   */
+  readonly bindProof: string | null;
+  /** The invite that device joined by, so the proof is recomputed on the right identifier. */
+  readonly inviteId: string | null;
   readonly createdAt: number;
   readonly lastSeenAt: number;
   readonly revokedAt: number | null;
@@ -143,6 +185,32 @@ export interface ClaimedInvite {
   readonly keyEpoch: number;
   readonly iv: string;
   readonly inviteBox: string;
+}
+
+/**
+ * What the server answered when the owner's device declared a rotation — 5.5 step 1.
+ *
+ * Every number here is the server's, and every number here is checked against something this
+ * device knows before it is used: `rotationId` against the value this device generated,
+ * `previousKeyEpoch` against the epoch it holds, `keyEpoch` against being strictly above it, and
+ * `freezeSeq` against its own cursor and its own high-water mark. A limit measured by the value
+ * of the party it limits is not a limit.
+ */
+export interface DeclaredRotation {
+  readonly keyEpoch: number;
+  readonly previousKeyEpoch: number;
+  readonly rotationId: string;
+  readonly freezeSeq: number;
+  readonly rotatingDeviceId: string;
+  readonly startedAt: number;
+}
+
+export interface RotationWrapUpload {
+  readonly deviceId: string;
+  readonly senderDeviceId: string;
+  readonly salt: string;
+  readonly iv: string;
+  readonly ciphertext: string;
 }
 
 export interface FamilyApiOptions {
@@ -199,6 +267,24 @@ export interface FamilyApi {
     readonly memberId: string;
     readonly bindProof: string;
   }): Promise<void>;
+  /** 5.5 step 1. The `rotationId` is this device's own and travels *to* the server. */
+  declareRotation(familyId: string, rotationId: string): Promise<DeclaredRotation>;
+  /** 5.5 steps 5 and 6: the wraps for the remaining bound devices and `rotateConfirm`. */
+  uploadRotationKeys(
+    familyId: string,
+    input: {
+      readonly rotationId: string;
+      readonly epochConfirm?: string;
+      readonly wraps?: readonly RotationWrapUpload[];
+    },
+  ): Promise<{ readonly keyEpoch: number; readonly wraps: number }>;
+  /** 5.5 step 7. The answer is checked against `membership()` before the old key is forgotten. */
+  completeRotation(
+    familyId: string,
+    rotationId: string,
+  ): Promise<{ readonly keyEpoch: number; readonly previousKeyEpoch: number }>;
+  /** 5.5: the owner may cancel an attempt — their own, or one stuck on a device that is gone. */
+  cancelRotation(familyId: string): Promise<{ readonly cancelledKeyEpoch: number }>;
 }
 
 export function createFamilyApi(options: FamilyApiOptions): FamilyApi {
@@ -350,6 +436,8 @@ export function createFamilyApi(options: FamilyApiOptions): FamilyApi {
           deviceId: requireString(entry.deviceId),
           memberId: requireString(entry.memberId),
           publicKey: requireString(entry.publicKey),
+          bindProof: optionalString(entry.bindProof),
+          inviteId: optionalString(entry.inviteId),
           createdAt: requireNumber(entry.createdAt),
           lastSeenAt: requireNumber(entry.lastSeenAt),
           revokedAt: optionalNumber(entry.revokedAt),
@@ -402,6 +490,51 @@ export function createFamilyApi(options: FamilyApiOptions): FamilyApi {
 
     async joinInvite(input) {
       await request("/v1/invites/join", json(input));
+    },
+
+    async declareRotation(familyId, rotationId) {
+      const payload = await request(
+        `/v1/families/${encodeURIComponent(familyId)}/rotation`,
+        json({ rotationId }),
+      );
+      if (!isRecord(payload)) malformed();
+      return {
+        keyEpoch: requireNumber(payload.keyEpoch),
+        previousKeyEpoch: requireNumber(payload.previousKeyEpoch),
+        rotationId: requireString(payload.rotationId),
+        freezeSeq: requireNumber(payload.freezeSeq),
+        rotatingDeviceId: requireString(payload.rotatingDeviceId),
+        startedAt: requireNumber(payload.startedAt),
+      };
+    },
+
+    async uploadRotationKeys(familyId, input) {
+      const payload = await request(
+        `/v1/families/${encodeURIComponent(familyId)}/rotation/keys`,
+        json(input),
+      );
+      if (!isRecord(payload)) malformed();
+      return { keyEpoch: requireNumber(payload.keyEpoch), wraps: requireNumber(payload.wraps) };
+    },
+
+    async completeRotation(familyId, rotationId) {
+      const payload = await request(
+        `/v1/families/${encodeURIComponent(familyId)}/rotation/complete`,
+        json({ rotationId }),
+      );
+      if (!isRecord(payload)) malformed();
+      return {
+        keyEpoch: requireNumber(payload.keyEpoch),
+        previousKeyEpoch: requireNumber(payload.previousKeyEpoch),
+      };
+    },
+
+    async cancelRotation(familyId) {
+      const payload = await request(`/v1/families/${encodeURIComponent(familyId)}/rotation`, {
+        method: "DELETE",
+      });
+      if (!isRecord(payload)) malformed();
+      return { cancelledKeyEpoch: requireNumber(payload.cancelledKeyEpoch) };
     },
   };
 }

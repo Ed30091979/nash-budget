@@ -198,11 +198,16 @@ describe("цикл синхронизации подключён к видимо
   });
 
   it("каждый круг записывает свой исход, и пустых «поймали и забыли» в файле нет", () => {
-    // Оба места, где идёт круг, — опрос и отправка после записи — идут через `runSyncRound`,
-    // и оба кладут исход в состояние. Иначе индикатор снова говорил бы «синхронизировано»
-    // при лежащем сервере.
-    expect(source.match(/runSyncRound\(/gu)).toHaveLength(3);
-    expect(source.match(/setSyncRound\(/gu)).toHaveLength(3);
+    // Прежде здесь стояли два числа — «ровно три и ровно три», — и они говорили о длине файла, а
+    // не о правиле. Третье место, откуда идёт круг (подготовка к смене ключа, 5.5), сломало бы
+    // такую проверку и написанное правильно, и написанное неправильно, одинаково. Проверяется
+    // само правило: сколько в файле кругов, столько и записей исхода. Иначе индикатор снова
+    // говорил бы «синхронизировано» при лежащем сервере.
+    const callSites = (source.match(/runSyncRound\(/gu) ?? []).length - 1; // минус объявление
+    const recorded = (source.match(/setSyncRound\(\(await runSyncRound\(|setSyncRound\(result\.outcome\)/gu) ?? [])
+      .length;
+    expect(callSites).toBeGreaterThan(0);
+    expect(recorded).toBe(callSites);
     expect(source).not.toMatch(/await engine\.sync\(\);\s*\n\s*\} catch \{/u);
   });
 });

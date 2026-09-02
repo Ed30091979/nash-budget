@@ -16,6 +16,7 @@ import {
   createHttpTransport,
   fromBase64,
   toBase64,
+  type OutgoingEnvelope,
   type SyncStatusReport,
   type SyncTransport,
 } from "@family-budget/sync-client";
@@ -33,10 +34,28 @@ import {
   openInvite,
   sealInvite,
   toHex,
+  verifyBindProof,
 } from "@family-budget/sync-crypto";
 import { restoreJournal, type JournalIntegrity } from "@family-budget/sync-protocol";
 
-import { createFamilyApi, describeFamilyError, type DeviceRecord, type FamilyApi, type MemberRecord, type MembershipSnapshot } from "./api";
+import { EPOCH_REFUSAL_TEXT, takeIncomingEpoch } from "./epoch-intake";
+import {
+  rotateFamilyKey,
+  RotationHalted,
+  type RotationGap,
+  type RotationProgress,
+  type SkippedDevice,
+} from "./rotation";
+
+import {
+  createFamilyApi,
+  describeFamilyError,
+  FamilyRefusal,
+  type DeviceRecord,
+  type FamilyApi,
+  type MemberRecord,
+  type MembershipSnapshot,
+} from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
 import { budgetJournalDrafts } from "./journal";
 import {
@@ -58,8 +77,56 @@ import {
 const DEVICE_KEY_STATE_KEY = "device-key";
 /** The family key of the epoch this device has accepted. */
 const FAMILY_KEY_STATE_KEY = "family-key";
-/** The invite this device issued and is still reading out. Local: the server never sees the code. */
+/**
+ * The issuing device's half of a live invite — and, deliberately, **not** the code.
+ *
+ * 6.3 in one sentence: the code «показывается на экране один раз и не хранится ни на сервере, ни в
+ * локальной базе», while `bindKey` «остаётся в локальной базе устройства владельца — он
+ * понадобится для проверки `bindProof`». This record used to hold exactly the opposite pair: the
+ * code was written to disk and never removed, and `bindKey` was dropped on the floor with the rest
+ * of `sealInvite`'s `issuerSecrets`, so the automatic half of binding could not run at all.
+ *
+ * What is kept is what the HMAC of 5.4 is recomputed on: the key, and the four identifiers the
+ * message is built from. It is erased the moment a verdict is reached about the device that joined
+ * by it, and on expiry, which is the other half of 6.3's sentence about it.
+ */
 const INVITE_STATE_KEY = "issued-invite";
+/**
+ * The verdict of the automatic binding check, per device — 6.4.
+ *
+ * Local, like every verdict about a key's authenticity (2.2): the server hands out the public keys
+ * and may not also be the place that records whether they were believed. «bound» is what a
+ * matching `bindProof` writes; «failed» is a device whose proof did not agree, which gets no wrap
+ * at the next rotation and is shown as «ключ не подтверждён».
+ */
+const BIND_STATE_KEY = "device-bind";
+/**
+ * Наибольший `seq`, который это устройство когда-либо видело в текущей эпохе.
+ *
+ * Собственная величина, и в этом весь смысл: 5.5 шаг 2 велит принимать `freezeSeq` «только не
+ * меньшим двух своих величин — собственного курсора и наибольшего `seq`, который он когда-либо
+ * видел». Курсор один этого не даёт: остановка приёма (3.4) держит курсор ниже номера конверта,
+ * на котором она произошла, а этот номер устройство **видело**.
+ */
+const HIGH_WATER_STATE_KEY = "journal-high-water";
+/**
+ * Номера, потерянные при переносе журнала, — 5.5 шаг 2 и 3.6.
+ *
+ * Едут в `inheritedGaps` **первого** чекпойнта новой эпохи и больше никуда: это факт о переходе, а
+ * не о наборе этого устройства, и повторение их в каждом чекпойнте превратило бы одну потерю в
+ * повторяющуюся. Движок сам ставит их только в чекпойнт с индексом `1`.
+ */
+const INHERITED_GAPS_STATE_KEY = "inherited-gaps";
+/**
+ * Ключ эпохи, которую устройство только что покинуло, — 5.4.1.
+ *
+ * «Ключи прошедших эпох стираются… но лишь после доказательства, что новая эпоха живая.» Сервер
+ * вправе отдать обёртку и подтверждение **до** публикации новой эпохи, а потом отменить ротацию по
+ * таймауту; устройство, стёршее старый ключ сразу, оказалось бы выключено из семьи навсегда без
+ * единой подделки. Пока запись жива, движок получает её в `retiredKeys` и переносит ею свою
+ * очередь; она стирается, когда новая эпоха доказана живой и очередь пуста.
+ */
+const RETIRED_KEY_STATE_KEY = "retired-family-key";
 /**
  * Откуда берётся бюджет этой семьи — и это решается один раз, при вступлении в неё.
  *
@@ -87,10 +154,201 @@ interface StoredFamilyKey {
   readonly keyEpoch: number;
 }
 
-interface StoredInvite {
-  readonly code: string;
+/** Отметка о наибольшем виденном `seq`, по эпохам. Эпоха обязательна: номера поэпоховые. */
+export interface HighWaterMark {
+  readonly keyEpoch: number;
+  readonly seq: number;
+}
+
+/**
+ * Новая высокая вода — из курсора и из номера, на котором приём остановился.
+ *
+ * Останов входит в счёт наравне с курсором: конверт, на котором выдача встала, устройство видело,
+ * и `freezeSeq` ниже его номера означал бы, что сервер вырезал ровно то, чего устройство ещё не
+ * применило. Запись другой эпохи не переносится — номера начинаются заново с каждой эпохой.
+ */
+export function nextHighWater(stored: unknown, report: SyncStatusReport): HighWaterMark {
+  const seen = Math.max(report.cursor.seq, report.stop?.seq ?? 0);
+  if (
+    typeof stored === "object" &&
+    stored !== null &&
+    !Array.isArray(stored) &&
+    (stored as HighWaterMark).keyEpoch === report.cursor.keyEpoch &&
+    Number.isSafeInteger((stored as HighWaterMark).seq)
+  ) {
+    return {
+      keyEpoch: report.cursor.keyEpoch,
+      seq: Math.max((stored as HighWaterMark).seq, seen),
+    };
+  }
+  return { keyEpoch: report.cursor.keyEpoch, seq: seen };
+}
+
+/** Прочитанная отметка для запрошенной эпохи, или `0`, когда её нет. */
+export function highWaterFor(stored: unknown, keyEpoch: number): number {
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return 0;
+  const record = stored as HighWaterMark;
+  if (record.keyEpoch !== keyEpoch || !Number.isSafeInteger(record.seq)) return 0;
+  return Math.max(0, record.seq);
+}
+
+/** Пропуски, унаследованные новой эпохой, — читаются только для той эпохи, которой они принадлежат. */
+export function inheritedGapsFor(stored: unknown, keyEpoch: number): readonly number[] {
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return [];
+  const record = stored as { readonly keyEpoch?: unknown; readonly gaps?: unknown };
+  if (record.keyEpoch !== keyEpoch || !Array.isArray(record.gaps)) return [];
+  return record.gaps.filter(
+    (value): value is number => Number.isSafeInteger(value) && (value as number) > 0,
+  );
+}
+
+export interface StoredInvite {
+  readonly inviteId: string;
+  readonly familyId: string;
+  readonly keyEpoch: number;
   readonly expiresAt: number;
   readonly supersededCount: number;
+  /** `bindKey` in lower-case hex — the third of the Argon2id output that binds the joining key. */
+  readonly bindKey: string;
+}
+
+export type BindVerdict = "bound" | "failed";
+
+/**
+ * Reads the issued-invite record, and reads anything that is not one as «нет приглашения».
+ *
+ * The strictness is what erases the old shape rather than tolerating it. A build before this one
+ * wrote `{ code, expiresAt, supersededCount }` here, and a device upgrading into this build must
+ * not go on carrying a plaintext invite code in its database because the fields it does recognise
+ * happened to parse: no `bindKey`, no record — and {@link useFamily} then overwrites it with
+ * `null`, which is what actually removes the code from disk.
+ */
+export function parseStoredInvite(value: unknown): StoredInvite | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.bindKey !== "string" || !/^[0-9a-f]{64}$/u.test(record.bindKey)) return null;
+  if (typeof record.inviteId !== "string" || record.inviteId.length === 0) return null;
+  if (typeof record.familyId !== "string" || record.familyId.length === 0) return null;
+  if (!Number.isSafeInteger(record.keyEpoch)) return null;
+  if (!Number.isSafeInteger(record.expiresAt)) return null;
+  return {
+    inviteId: record.inviteId,
+    familyId: record.familyId,
+    keyEpoch: record.keyEpoch as number,
+    expiresAt: record.expiresAt as number,
+    supersededCount: Number.isSafeInteger(record.supersededCount)
+      ? (record.supersededCount as number)
+      : 0,
+    bindKey: record.bindKey,
+  };
+}
+
+/**
+ * Записи очереди, приведённые к форме конверта, — 5.5 шаг 2 переносит их вместе с журналом.
+ *
+ * Форма проверяется здесь, а не приводится приведением типа: очередь читается с диска, и запись,
+ * оставшаяся от другой версии сборки, не должна попасть в переносимый набор молча. Всё, что не
+ * конверт, отбрасывается — оно и так не отправилось бы.
+ */
+export function queuedEnvelopes(
+  records: readonly { readonly envelope: unknown }[],
+): readonly OutgoingEnvelope[] {
+  const envelopes: OutgoingEnvelope[] = [];
+  for (const record of records) {
+    const value = record.envelope;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+    const candidate = value as Partial<OutgoingEnvelope>;
+    if (
+      !Number.isSafeInteger(candidate.envelopeVersion) ||
+      typeof candidate.kind !== "string" ||
+      typeof candidate.familyId !== "string" ||
+      typeof candidate.opId !== "string" ||
+      typeof candidate.deviceId !== "string" ||
+      !Number.isSafeInteger(candidate.keyEpoch) ||
+      typeof candidate.iv !== "string" ||
+      typeof candidate.ciphertext !== "string"
+    ) {
+      continue;
+    }
+    envelopes.push(candidate as OutgoingEnvelope);
+  }
+  return envelopes;
+}
+
+export function parseBindVerdicts(value: unknown): ReadonlyMap<string, BindVerdict> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return new Map();
+  const verdicts = new Map<string, BindVerdict>();
+  for (const [deviceId, verdict] of Object.entries(value as Record<string, unknown>)) {
+    if (verdict === "bound" || verdict === "failed") verdicts.set(deviceId, verdict);
+  }
+  return verdicts;
+}
+
+export function serializeBindVerdicts(
+  verdicts: ReadonlyMap<string, BindVerdict>,
+): Record<string, BindVerdict> {
+  const record: Record<string, BindVerdict> = {};
+  for (const [deviceId, verdict] of verdicts) record[deviceId] = verdict;
+  return record;
+}
+
+/** What the automatic half of binding decided about the device that used one invite. */
+export interface BindCheckOutcome {
+  readonly deviceId: string;
+  readonly verdict: BindVerdict;
+  /** `SHA-256(SPKI)` of the joined device — the pin a matching proof creates (6.4). */
+  readonly fingerprint: Uint8Array | null;
+}
+
+/**
+ * Recomputes `bindProof` on the `bindKey` kept from the invite — 5.4 and 6.4, the owner's side.
+ *
+ * «Устройство владельца при первом же выходе в сеть забирает `(deviceId, SPKI, bindProof)` нового
+ * устройства и пересчитывает HMAC на своём `bindKey`. Совпадение — устройство помечено привязанным
+ * автоматически, без участия пользователя. Расхождение — устройство помечено как "ключ не
+ * подтверждён"». The check is on the owner's own `inviteId`, never on the one the response names,
+ * which is why substituting that identifier gains the server nothing.
+ *
+ * `null` means there is nothing to decide yet: no device in the list joined by this invite, or the
+ * one that did has not had its proof served. Neither is a verdict, and neither erases the key.
+ */
+export async function checkInviteBinding(
+  invite: StoredInvite,
+  devices: readonly DeviceRecord[],
+): Promise<BindCheckOutcome | null> {
+  const joined = devices.find(
+    (device) => device.inviteId === invite.inviteId && device.bindProof !== null,
+  );
+  if (joined === undefined || joined.bindProof === null) return null;
+  let spki: Uint8Array;
+  let proof: Uint8Array;
+  try {
+    spki = decodeBase64(joined.publicKey, "device key");
+    proof = decodeBase64(joined.bindProof, "bind proof");
+  } catch {
+    // A key or a proof the server could not spell is a device whose binding did not check out.
+    return { deviceId: joined.deviceId, verdict: "failed", fingerprint: null };
+  }
+  let agreed: boolean;
+  try {
+    agreed = await verifyBindProof(
+      fromHex(invite.bindKey),
+      {
+        familyId: invite.familyId,
+        inviteId: invite.inviteId,
+        deviceId: joined.deviceId,
+        spki,
+      },
+      proof,
+    );
+  } catch {
+    return { deviceId: joined.deviceId, verdict: "failed", fingerprint: null };
+  }
+  return {
+    deviceId: joined.deviceId,
+    verdict: agreed ? "bound" : "failed",
+    fingerprint: agreed ? await deviceKeyFingerprint(spki) : null,
+  };
 }
 
 type Repository = IndexedDbBudgetRepository<never> | IndexedDbBudgetRepository<unknown>;
@@ -220,6 +478,13 @@ export interface FamilyController {
   readonly devices: readonly DeviceRecord[];
   readonly ownFingerprint: Uint8Array | null;
   readonly pinOf: (deviceId: string) => LocalPinState;
+  /**
+   * What the automatic half of binding decided about a device (6.4), or `null` when it never ran.
+   *
+   * `null` is the ordinary state of a device that joined by a ceremony rather than by a code:
+   * there is no `bindProof` to check and none is expected.
+   */
+  readonly bindVerdictOf: (deviceId: string) => BindVerdict | null;
   readonly offeredFingerprintOf: (deviceId: string) => Uint8Array | undefined;
   readonly invite: ActiveInvite | null;
   readonly status: SyncStatusReport | null;
@@ -229,6 +494,15 @@ export interface FamilyController {
    */
   readonly syncRound: SyncRoundOutcome;
   readonly integrity: JournalIntegrity | null;
+  /** Ход смены ключа семьи, или `null`, когда её никто не начинал в этой сессии. */
+  readonly rotation: RotationState | null;
+  /**
+   * Отказ приёма новой эпохи — 5.5 шаг 8: «не сбой синхронизации, а сигнал тревоги».
+   *
+   * Устройство осталось на прежней эпохе, продолжает работать локально и показывает, что смена
+   * ключа не подтверждена. Тихого перехода «потому что сервер так сказал» не существует.
+   */
+  readonly epochAlarm: string | null;
   readonly busy: boolean;
   readonly message: string | null;
   readonly error: string | null;
@@ -244,12 +518,16 @@ export interface FamilyController {
   readonly writeBudget: BudgetJournalWrite;
 }
 
-interface SyncStateStore {
+export interface SyncStateStore {
   readSyncState<V = unknown>(key: string): Promise<V | undefined>;
   writeSyncState(entries: readonly { readonly key: string; readonly value: unknown }[]): Promise<void>;
   clearSyncData(): Promise<void>;
   countOutbox(): Promise<number>;
   loadVersioned(): Promise<{ readonly value: unknown; readonly revision: string } | null>;
+  /** Очередь этого устройства — 5.5 шаг 2 переносит её вместе с журналом. */
+  listOutbox(limit?: number): Promise<readonly { readonly opId: string; readonly envelope: unknown }[]>;
+  /** Снимает с очереди ровно те записи, которым сервер выдал `seq`. */
+  confirmOutbox(opIds: readonly string[]): Promise<number>;
 }
 
 /**
@@ -399,6 +677,143 @@ export function serializePins(pins: ReadonlyMap<string, Uint8Array>): Record<str
   return record;
 }
 
+/**
+ * Что показывает экран, пока идёт смена ключа, и чем она кончилась.
+ *
+ * Ротация — длинная операция с состоянием, а не мгновенная кнопка: перенос журнала при квоте в
+ * `100 000` конвертов — это сотни запросов по мобильной сети (5.5). Поэтому у неё есть видимые
+ * фазы, видимая остановка на неполном журнале, требующая решения человека, и видимый итог, в
+ * котором перечислено, какие устройства остались без ключа и почему (5.4.1).
+ */
+export type RotationState =
+  | { readonly kind: "running"; readonly progress: RotationProgress }
+  | {
+      readonly kind: "halted";
+      readonly gap: RotationGap;
+      readonly keyEpoch: number;
+      readonly freezeSeq: number;
+    }
+  | {
+      readonly kind: "done";
+      readonly keyEpoch: number;
+      readonly previousKeyEpoch: number;
+      readonly moved: number;
+      readonly wrapped: readonly string[];
+      readonly skipped: readonly SkippedDevice[];
+      readonly inheritedGaps: readonly number[];
+    }
+  | { readonly kind: "failed"; readonly message: string };
+
+export interface JoinByCodeDeps {
+  readonly api: Pick<FamilyApi, "claimInvite" | "joinInvite" | "members" | "leaveFamily">;
+  readonly store: SyncStateStore;
+  /** This device's identifier, as the server registered it. Enters `bindProof` (5.4). */
+  readonly deviceId: string;
+  /** The `memberId` this device chooses for itself (6.4). */
+  readonly memberId: string;
+  /** The pin table as it stands. The invite adds the owner's pin to it and changes nothing else. */
+  readonly pins: ReadonlyMap<string, Uint8Array>;
+}
+
+export interface JoinByCodeResult {
+  readonly familyId: string;
+  readonly memberId: string;
+  readonly keyEpoch: number;
+  readonly pins: ReadonlyMap<string, Uint8Array>;
+}
+
+/**
+ * Вступление по коду — 5.3, 5.4 и 6.4, целиком, включая **обе** независимые проверки.
+ *
+ * Вынесено из хука не ради стройности, а ради проверяемости: находка была именно «вызова нет», и
+ * утверждение «вызов есть» имеет смысл только тогда, когда его можно предъявить исполнением, а не
+ * поиском строки по файлу. Здесь всё, что происходит между набранным кодом и записью ключа на
+ * диск, — и подставной сервер в тесте отвечает на это ровно так же, как настоящий.
+ *
+ * Порядок проверок:
+ *
+ *  1. `openInvite` вскрывает посылку и **сам** отвергает роль `senderRole ≠ owner` внутри неё.
+ *     Это первая из двух проверок 5.3 и в одиночку она не значит ничего: роль в посылке пишет
+ *     тот, кто посылку собрал;
+ *  2. серверный список участников подтверждает `senderMemberId` ролью `owner`. Пакет прямо
+ *     передал эту проверку вызывающему (`invite.ts`), и до сих пор её никто не подбирал.
+ *
+ * Список выдаётся только участнику, поэтому прочитать его раньше вступления нельзя, и порядок
+ * здесь вынужденный, а не выбранный. Оберегается им то, ради чего он и нужен: **ключ семьи и пин
+ * владельца записываются только после согласия двух источников**, а при расхождении вступление
+ * отменяется обратным вызовом `leaveFamily`, и на устройстве не остаётся ни ключа, ни пина, ни
+ * признака происхождения журнала.
+ */
+export async function joinFamilyByCode(
+  rawCode: string,
+  deps: JoinByCodeDeps,
+): Promise<JoinByCodeResult> {
+  const code = normalizeInviteCode(rawCode);
+  const secrets = await deriveInviteSecrets(code);
+  const authToken = toBase64(secrets.authToken);
+  const claimed = await deps.api.claimInvite(authToken);
+  const opened = await openInvite({
+    code,
+    familyId: claimed.familyId,
+    keyEpoch: claimed.keyEpoch,
+    inviteId: claimed.inviteId,
+    iv: decodeBase64(claimed.iv, "invite iv"),
+    ciphertext: decodeBase64(claimed.inviteBox, "invite box"),
+  });
+  const deviceKey = await deps.store.readSyncState<StoredDeviceKey>(DEVICE_KEY_STATE_KEY);
+  if (deviceKey === undefined) throw new Error("no device key on this device");
+  const spki = decodeBase64(deviceKey.spki, "device key");
+  const bindProof = await computeBindProof(opened.bindKey, {
+    familyId: claimed.familyId,
+    inviteId: claimed.inviteId,
+    deviceId: deps.deviceId,
+    spki,
+  });
+  await deps.api.joinInvite({
+    inviteId: claimed.inviteId,
+    authToken,
+    memberId: deps.memberId,
+    bindProof: toBase64(bindProof),
+  });
+
+  // 5.3, вторая из двух: «вступающее устройство берёт `memberIdA` из посылки и сверяет его с ролью
+  // в серверном списке участников. Совпали — принимаем; разошлись — отказ. Ни один источник по
+  // отдельности доверия не заслуживает.»
+  const roster = await deps.api.members(claimed.familyId);
+  const inviter = roster.find((entry) => entry.memberId === opened.senderMemberId);
+  if (inviter === undefined || inviter.role !== "owner" || inviter.removedAt !== null) {
+    // Ничего локального ещё не записано, и записано не будет. Вступление на сервере откатывается;
+    // неудача отката ничего не меняет в том, что ключ этой семьи на устройстве не появился.
+    await deps.api.leaveFamily(claimed.familyId).catch(() => undefined);
+    throw new FamilyRefusal(
+      "Код выпущен не владельцем семьи: список участников на сервере не подтверждает его роль. Ключ семьи не развёрнут, вступление отменено.",
+    );
+  }
+
+  // 5.4, первая строка таблицы: отпечаток отправителя приехал внутри посылки под `KEK`, поэтому
+  // он закрепляется здесь без отдельной церемонии — церемонией был сам код, и значение никогда не
+  // приходило от сервера.
+  const nextPins = new Map(deps.pins);
+  nextPins.set(opened.senderDeviceId, opened.senderKeyFingerprint);
+  await deps.store.writeSyncState([
+    {
+      key: FAMILY_KEY_STATE_KEY,
+      value: { key: opened.familyKey, keyEpoch: claimed.keyEpoch } satisfies StoredFamilyKey,
+    },
+    { key: PINS_STATE_KEY, value: serializePins(nextPins) },
+    // Бюджет придёт журналом. Посева здесь нет и быть не может: он влил бы личный бюджет
+    // вступающего в семейный, и семья увидела бы чужие счета как свои.
+    { key: JOURNAL_ORIGIN_KEY, value: "family" satisfies JournalOrigin },
+  ]);
+
+  return {
+    familyId: claimed.familyId,
+    memberId: deps.memberId,
+    keyEpoch: claimed.keyEpoch,
+    pins: nextPins,
+  };
+}
+
 export function useFamily(
   repository: Repository,
   serverUrl: string | null,
@@ -411,6 +826,10 @@ export function useFamily(
   const [devices, setDevices] = useState<readonly DeviceRecord[]>([]);
   const [ownFingerprint, setOwnFingerprint] = useState<Uint8Array | null>(null);
   const [pins, setPins] = useState<ReadonlyMap<string, Uint8Array>>(new Map());
+  const [bindVerdicts, setBindVerdicts] = useState<ReadonlyMap<string, BindVerdict>>(new Map());
+  const [rotation, setRotation] = useState<RotationState | null>(null);
+  /** Отказ цепочки подтверждений: устройство осталось на прежней эпохе и говорит об этом. */
+  const [epochAlarm, setEpochAlarm] = useState<string | null>(null);
   const [offered, setOffered] = useState<ReadonlyMap<string, Uint8Array>>(new Map());
   const [invite, setInvite] = useState<ActiveInvite | null>(null);
   const [status, setStatus] = useState<SyncStatusReport | null>(null);
@@ -507,6 +926,17 @@ export function useFamily(
     if (serverUrl === null || current === null || current.familyId === null) return null;
     const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY).catch(() => undefined);
     if (stored === undefined) return null;
+    // Пропуски прошлой эпохи едут в первый чекпойнт этой (5.5 шаг 2). Читаются по номеру эпохи:
+    // запись, оставшаяся от позапрошлой ротации, к этой не относится и молча не переезжает.
+    const gaps = inheritedGapsFor(
+      await store.readSyncState(INHERITED_GAPS_STATE_KEY).catch(() => undefined),
+      stored.keyEpoch,
+    );
+    // Ключ покинутой эпохи — только для собственной очереди (5.5 шаг 8). Чужой конверт им не
+    // открывают никогда: конверт ушедшей эпохи, пришедший от сервера, — это тревога 3.4.
+    const retired = await store
+      .readSyncState<StoredFamilyKey>(RETIRED_KEY_STATE_KEY)
+      .catch(() => undefined);
     return new SyncEngine({
       repository: repository as never,
       transport: transportWithTokenRefresh(
@@ -521,6 +951,11 @@ export function useFamily(
       familyKey: stored.key,
       keyEpoch: stored.keyEpoch,
       keyDigest: toHex(await familyKeyFingerprint(stored.key)),
+      inheritedGaps: gaps,
+      retiredKeys:
+        retired === undefined || retired.keyEpoch >= stored.keyEpoch
+          ? []
+          : [{ keyEpoch: retired.keyEpoch, key: retired.key }],
     });
   }, [refreshAccess, repository, serverUrl, store]);
 
@@ -535,6 +970,8 @@ export function useFamily(
       if (stored === null) return;
       const pinRecord = await store.readSyncState(PINS_STATE_KEY).catch(() => undefined);
       if (!cancelled) setPins(parsePins(pinRecord));
+      const bindRecord = await store.readSyncState(BIND_STATE_KEY).catch(() => undefined);
+      if (!cancelled) setBindVerdicts(parseBindVerdicts(bindRecord));
       const deviceKey = (await store.readSyncState<StoredDeviceKey>(DEVICE_KEY_STATE_KEY).catch(() => undefined));
       if (!cancelled && deviceKey !== undefined) {
         const spki = decodeBase64(deviceKey.spki, "device key");
@@ -556,7 +993,27 @@ export function useFamily(
   const refreshSyncState = useCallback(
     async (engine: SyncEngine, publishDocument: boolean): Promise<void> => {
       try {
-        setStatus(await engine.status());
+        const report = await engine.status();
+        setStatus(report);
+        // Высокая вода поднимается здесь и только здесь: это собственная величина устройства, и
+        // 5.5 шаг 2 меряет ею границу переноса, которую называет сервер.
+        const stored = await store.readSyncState(HIGH_WATER_STATE_KEY).catch(() => undefined);
+        const raised = nextHighWater(stored, report);
+        if (highWaterFor(stored, raised.keyEpoch) !== raised.seq) {
+          await store.writeSyncState([{ key: HIGH_WATER_STATE_KEY, value: raised }]);
+        }
+        // 5.4.1: ключ покинутой эпохи стирается только после доказательства живости новой — то
+        // есть после того, как сервер принял в ней собственный конверт этого устройства и вернул
+        // `seq`. Очередь при этом должна быть пуста: пока в ней что-то лежит, старый ключ — это
+        // то, чем оно перешифровывается (5.5 шаг 8).
+        if (report.epoch.live && report.queued === 0) {
+          const retired = await store
+            .readSyncState<StoredFamilyKey>(RETIRED_KEY_STATE_KEY)
+            .catch(() => undefined);
+          if (retired !== undefined && retired !== null && retired.keyEpoch < report.epoch.keyEpoch) {
+            await store.writeSyncState([{ key: RETIRED_KEY_STATE_KEY, value: null }]);
+          }
+        }
       } catch {
         setStatus(null);
       }
@@ -576,6 +1033,69 @@ export function useFamily(
     },
     [store],
   );
+
+  /**
+   * Приём новой эпохи на устройстве, которое ротацию не вело — 5.4.1, первый из двух путей.
+   *
+   * Вызывается после круга, который сервер отклонил: `409 epoch_mismatch` приходит и на отправке, и
+   * на выборке (3.4), и без этого шага любая ротация превращала бы каждое второе устройство семьи
+   * в вечное «ошибка синхронизации». Успех — не «сервер сказал сменить ключ», а «цепочка
+   * подтверждений сошлась на ключе, который у этого устройства уже был».
+   */
+  const acceptIncomingEpoch = useCallback(async (): Promise<boolean> => {
+    const current = sessionRef.current;
+    if (serverUrl === null || current === null || current.familyId === null) return false;
+    const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY);
+    const deviceKey = await store.readSyncState<StoredDeviceKey>(DEVICE_KEY_STATE_KEY);
+    if (stored === undefined || deviceKey === undefined) return false;
+    const epochRecord = await store.readSyncState<{ readonly keyEpoch?: unknown; readonly live?: unknown }>(
+      SYNC_STATE_KEYS.epoch,
+    );
+    const live =
+      typeof epochRecord === "object" &&
+      epochRecord !== null &&
+      epochRecord.keyEpoch === stored.keyEpoch &&
+      epochRecord.live === true;
+    const outcome = await takeIncomingEpoch({
+      transport: transportWithTokenRefresh(
+        createHttpTransport({
+          baseUrl: serverUrl,
+          accessToken: () => sessionRef.current?.accessToken ?? "",
+        }),
+        refreshAccess,
+      ),
+      familyId: current.familyId,
+      deviceId: current.deviceId,
+      deviceSpki: decodeBase64(deviceKey.spki, "device key"),
+      devicePrivateKey: deviceKey.keyPair.privateKey,
+      familyKey: stored.key,
+      keyEpoch: stored.keyEpoch,
+      live,
+      pins,
+      devices,
+    });
+    if (outcome.kind === "refused") {
+      // 5.5 шаг 8, последний абзац: «Отказ на шаге 8 — не сбой синхронизации, а сигнал тревоги.»
+      // Устройство остаётся на прежней эпохе, продолжает работать локально и говорит об этом.
+      setEpochAlarm(EPOCH_REFUSAL_TEXT[outcome.reason]);
+      return false;
+    }
+    if (outcome.kind === "unchanged") return false;
+    setEpochAlarm(null);
+    // Старый ключ не стирается, а откладывается: пока новая эпоха не доказана живой, он —
+    // единственная дорога назад, и он же переносит очередь под новый ключ (5.5 шаг 8).
+    await store.writeSyncState([
+      {
+        key: RETIRED_KEY_STATE_KEY,
+        value: { key: stored.key, keyEpoch: stored.keyEpoch } satisfies StoredFamilyKey,
+      },
+      {
+        key: FAMILY_KEY_STATE_KEY,
+        value: { key: outcome.key, keyEpoch: outcome.keyEpoch } satisfies StoredFamilyKey,
+      },
+    ]);
+    return true;
+  }, [devices, pins, refreshAccess, serverUrl, store]);
 
   const writeBudget = useMemo(
     () =>
@@ -620,8 +1140,25 @@ export function useFamily(
       try {
         const engine = await engineFor();
         if (engine === null || cancelled) return;
-        const result = await runSyncRound(engine);
+        let result = await runSyncRound(engine);
         if (cancelled) return;
+        if (result.outcome === "refused") {
+          // Сервер отказал — и один из отказов, `409 epoch_mismatch`, лечится не повтором, а
+          // приёмом новой эпохи по 5.4.1. Попытка идёт на любой отказ: она стоит одного запроса и
+          // ничего не решает сама — решает цепочка подтверждений.
+          const moved = await acceptIncomingEpoch().catch(() => false);
+          if (cancelled) return;
+          if (moved) {
+            const next = await engineFor();
+            if (next !== null && !cancelled) {
+              result = await runSyncRound(next);
+              if (cancelled) return;
+              setSyncRound(result.outcome);
+              await refreshSyncState(next, result.applied > 0);
+              return;
+            }
+          }
+        }
         // Исход круга — состояние, а не пустое место: без него шапка говорила бы
         // «синхронизировано» при лежащем сервере, умершем токене и отозванном устройстве, потому
         // что отчёт ниже собирается из записей, которых неудавшийся круг не делает.
@@ -647,7 +1184,16 @@ export function useFamily(
       stopPolling();
     };
     // `session` целиком в зависимостях был бы перезапуском цикла на каждое обновление токена.
-  }, [api, engineFor, refreshSyncState, serverUrl, session?.familyId, session?.deviceId, reload]);
+  }, [
+    acceptIncomingEpoch,
+    api,
+    engineFor,
+    refreshSyncState,
+    serverUrl,
+    session?.familyId,
+    session?.deviceId,
+    reload,
+  ]);
 
   /* ── Список семьи. Ни одного запроса без сессии. ── */
   useEffect(() => {
@@ -684,14 +1230,66 @@ export function useFamily(
           }
         }
         if (!cancelled) setOffered(computed);
-        const storedInvite = await store.readSyncState<StoredInvite>(INVITE_STATE_KEY);
-        if (!cancelled && storedInvite !== undefined) {
-          setInvite({
-            code: storedInvite.code,
-            expiresAt: storedInvite.expiresAt,
-            supersededCount: storedInvite.supersededCount,
-          });
+        const storedInvite = parseStoredInvite(await store.readSyncState(INVITE_STATE_KEY));
+        if (cancelled) return;
+        if (storedInvite === null || storedInvite.expiresAt <= Date.now()) {
+          // Expiry is the other half of 6.3: `bindKey` «удаляется вместе с приглашением, когда оно
+          // использовано и открытый ключ вступившего устройства проверен, либо по истечении TTL».
+          // The same write is what erases a record of the previous shape, code and all.
+          const raw = storedInvite === null ? await store.readSyncState(INVITE_STATE_KEY) : null;
+          if (storedInvite !== null || (raw !== undefined && raw !== null)) {
+            await store.writeSyncState([{ key: INVITE_STATE_KEY, value: null }]);
+          }
+          if (!cancelled) setInvite(null);
+          return;
         }
+        // The code is not on disk, so a session that did not issue this invite has no code to
+        // show — and says so rather than showing nothing. An invite issued in *this* session keeps
+        // the code it is already holding in memory.
+        setInvite((current) =>
+          current !== null && current.expiresAt === storedInvite.expiresAt
+            ? current
+            : {
+                code: null,
+                expiresAt: storedInvite.expiresAt,
+                supersededCount: storedInvite.supersededCount,
+              },
+        );
+        // 6.4: «Устройство владельца при первом же выходе в сеть забирает данные нового устройства
+        // и пересчитывает HMAC» — here, on the round that brought the device list, and therefore
+        // before any wrap of a new family key can be made (5.5 step 5 needs the pin this writes).
+        const outcome = await checkInviteBinding(storedInvite, deviceList);
+        if (cancelled || outcome === null) return;
+        const storedVerdicts = parseBindVerdicts(await store.readSyncState(BIND_STATE_KEY));
+        const nextVerdicts = new Map(storedVerdicts);
+        nextVerdicts.set(outcome.deviceId, outcome.verdict);
+        const writes: { readonly key: string; readonly value: unknown }[] = [
+          { key: BIND_STATE_KEY, value: serializeBindVerdicts(nextVerdicts) },
+          // The verdict is reached, so the key that reached it has no further use. 6.3 removes it
+          // «когда оно использовано и открытый ключ вступившего устройства проверен» — and that is
+          // true of a proof that disagreed just as much as of one that agreed.
+          { key: INVITE_STATE_KEY, value: null },
+        ];
+        let nextPins: ReadonlyMap<string, Uint8Array> | null = null;
+        if (outcome.verdict === "bound" && outcome.fingerprint !== null) {
+          const table = parsePins(await store.readSyncState(PINS_STATE_KEY));
+          if (!table.has(outcome.deviceId)) {
+            const updated = new Map(table);
+            updated.set(outcome.deviceId, outcome.fingerprint);
+            nextPins = updated;
+            writes.push({ key: PINS_STATE_KEY, value: serializePins(updated) });
+          }
+        }
+        await store.writeSyncState(writes);
+        if (cancelled) return;
+        setBindVerdicts(nextVerdicts);
+        if (nextPins !== null) setPins(nextPins);
+        setInvite(null);
+        setMessage(
+          outcome.verdict === "bound"
+            ? "Новое устройство привязано: его открытый ключ сошёлся с кодом приглашения. Сверять отпечатки голосом не нужно."
+            : "Новое устройство вступило по коду, но его открытый ключ не сошёлся с кодом. Обёртку нового ключа семьи оно не получит; сверьте отпечатки голосом или выпустите код заново.",
+        );
       } catch (failure) {
         if (!cancelled) setError(describeFamilyError(failure));
       }
@@ -718,6 +1316,152 @@ export function useFamily(
       })();
     },
     [],
+  );
+
+
+  /**
+   * Смена ключа семьи, целиком, с устройства владельца — 5.5.
+   *
+   * Отдельным колбэком, а не строкой внутри `actions`, потому что путей входа в неё три и они
+   * должны сходиться в одну процедуру: кнопка «сменить ключ», продолжение после остановки на
+   * разрыве и то же самое, предложенное сразу после отзыва устройства. Разными их делает только
+   * `acceptGaps`.
+   */
+  const performRotation = useCallback(
+    async (acceptGaps: boolean): Promise<string | null> => {
+      const current = sessionRef.current;
+      if (api === null || current === null || current.familyId === null || membership === null) {
+        return null;
+      }
+      const familyId = current.familyId;
+      const engine = await engineFor();
+      if (engine === null) {
+        throw new FamilyRefusal("На этом устройстве нет ключа семьи. Смена ключа невозможна.");
+      }
+      setRotation({
+        kind: "running",
+        progress: {
+          phase: "preparing",
+          keyEpoch: null,
+          previousKeyEpoch: membership.keyEpoch,
+          freezeSeq: null,
+          moved: 0,
+          total: null,
+        },
+      });
+      try {
+        // Круг перед объявлением — не украшение: он сливает очередь в действующую эпоху и
+        // догоняет курсор, а курсором меряется `freezeSeq` (5.5 шаг 2). Неудача круга ротацию не
+        // отменяет — переносимый набор всё равно читается с сервера заново.
+        setSyncRound((await runSyncRound(engine)).outcome);
+        await refreshSyncState(engine, true);
+        const report = await engine.status();
+        const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY);
+        if (stored === undefined) {
+          throw new FamilyRefusal("На этом устройстве нет ключа семьи. Смена ключа невозможна.");
+        }
+        const deviceKey = await store.readSyncState<StoredDeviceKey>(DEVICE_KEY_STATE_KEY);
+        if (deviceKey === undefined) throw new Error("no device key on this device");
+        const queued = queuedEnvelopes(await store.listOutbox());
+        const highWater = highWaterFor(
+          await store.readSyncState(HIGH_WATER_STATE_KEY),
+          stored.keyEpoch,
+        );
+        const result = await rotateFamilyKey({
+          api,
+          transport: transportWithTokenRefresh(
+            createHttpTransport({
+              baseUrl: serverUrl ?? "",
+              accessToken: () => sessionRef.current?.accessToken ?? "",
+            }),
+            refreshAccess,
+          ),
+          familyId,
+          deviceId: current.deviceId,
+          deviceSpki: decodeBase64(deviceKey.spki, "device key"),
+          devicePrivateKey: deviceKey.keyPair.privateKey,
+          familyKey: stored.key,
+          keyEpoch: stored.keyEpoch,
+          devices,
+          pin: (deviceId) => pins.get(deviceId),
+          bindVerdict: (deviceId) => bindVerdicts.get(deviceId) ?? null,
+          cursorSeq: report.cursor.keyEpoch === stored.keyEpoch ? report.cursor.seq : 0,
+          highWaterSeq: highWater,
+          queued,
+          rotationId: crypto.randomUUID(),
+          acceptGaps,
+          report: (progress) => setRotation({ kind: "running", progress }),
+        });
+
+        // Только теперь старый ключ можно забыть: сервер подтвердил шаг 7 и подтвердил его вторым,
+        // независимым ответом (5.5, «Когда владелец вправе забыть старый ключ»). Курсор, останов и
+        // якорь переписываются здесь же — ровно то, что делает движок при переходе эпохи, но для
+        // владельца, который `409 epoch_mismatch` не получает и получить не может.
+        await store.confirmOutbox(result.movedQueueOpIds);
+        await store.writeSyncState([
+          {
+            key: FAMILY_KEY_STATE_KEY,
+            value: { key: result.familyKey, keyEpoch: result.keyEpoch } satisfies StoredFamilyKey,
+          },
+          { key: SYNC_STATE_KEYS.cursor, value: { keyEpoch: result.keyEpoch, seq: 0 } },
+          { key: SYNC_STATE_KEYS.stop, value: null },
+          { key: SYNC_STATE_KEYS.anchor, value: null },
+          {
+            key: SYNC_STATE_KEYS.epoch,
+            value: { keyEpoch: result.keyEpoch, keyDigest: result.keyDigest, live: true },
+          },
+          { key: HIGH_WATER_STATE_KEY, value: { keyEpoch: result.keyEpoch, seq: 0 } },
+          {
+            key: INHERITED_GAPS_STATE_KEY,
+            value: { keyEpoch: result.keyEpoch, gaps: result.inheritedGaps },
+          },
+          // Шаг 7 удаляет на сервере все живые приглашения: посылка несёт ключ ушедшей эпохи.
+          // Значит, и `bindKey` этого устройства больше не к чему приложить.
+          { key: INVITE_STATE_KEY, value: null },
+        ]);
+        setInvite(null);
+        setRotation({
+          kind: "done",
+          keyEpoch: result.keyEpoch,
+          previousKeyEpoch: result.previousKeyEpoch,
+          moved: result.moved,
+          wrapped: result.wrapped,
+          skipped: result.skipped,
+          inheritedGaps: result.inheritedGaps,
+        });
+        setReload((value) => value + 1);
+        return `Ключ семьи сменён: эпоха ${result.keyEpoch}. Прежний ключ на отозванных и удалённых устройствах больше не открывает ничего нового.`;
+      } catch (failure) {
+        // Отменяем свою `staging`-попытку: пока она жива, приём конвертов закрыт для **всей** семьи
+        // (5.5 шаг 1), и оставить её висеть, пока человек думает, — значит остановить запись всем.
+        // Завершённой ротации отмена не касается: строки `staging` уже нет, и сервер ответит
+        // `no_rotation`, что здесь и проглатывается.
+        await api.cancelRotation(familyId).catch(() => undefined);
+        if (failure instanceof RotationHalted) {
+          setRotation({
+            kind: "halted",
+            gap: failure.gap,
+            keyEpoch: failure.keyEpoch,
+            freezeSeq: failure.freezeSeq,
+          });
+          return null;
+        }
+        setRotation({ kind: "failed", message: describeFamilyError(failure) });
+        throw failure;
+      }
+    },
+    [
+      api,
+      bindVerdicts,
+      devices,
+      engineFor,
+      membership,
+      pins,
+      refreshAccess,
+      refreshSyncState,
+      serverUrl,
+      store,
+    ],
   );
 
   const actions: FamilyActions = useMemo(
@@ -787,6 +1531,7 @@ export function useFamily(
           setDevices([]);
           setInvite(null);
           setPins(new Map());
+          setBindVerdicts(new Map());
           setStatus(null);
           setOwnFingerprint(null);
           return "Вы вышли из учётной записи. Бюджет на устройстве не изменился.";
@@ -857,75 +1602,51 @@ export function useFamily(
             ciphertext: toBase64(sealed.record.ciphertext),
             authTokenDigest: toBase64(sealed.record.authTokenDigest),
           });
-          const active: StoredInvite = {
-            code,
+          // 6.3, both halves of one sentence. What goes to disk is `bindKey` and the four
+          // identifiers the HMAC of 5.4 is recomputed on; the code goes to the screen and nowhere
+          // else. It is shown once because it is kept nowhere — a reload finds the invite still
+          // live and the code gone, which is what the screen then says.
+          const record: StoredInvite = {
+            inviteId,
+            familyId: membership.familyId,
+            keyEpoch: membership.keyEpoch,
             expiresAt: issued.expiresAt,
             supersededCount: issued.supersededInviteIds.length,
+            bindKey: toHex(sealed.issuerSecrets.bindKey),
           };
-          await store.writeSyncState([{ key: INVITE_STATE_KEY, value: active }]);
-          setInvite(active);
-          return "Код выпущен. Продиктуйте его голосом — в переписке код читает тот, кто её видит.";
+          await store.writeSyncState([{ key: INVITE_STATE_KEY, value: record }]);
+          setInvite({
+            code,
+            expiresAt: record.expiresAt,
+            supersededCount: record.supersededCount,
+          });
+          return "Код выпущен и показан один раз: в базу устройства он не записан. Продиктуйте его голосом — в переписке код читает тот, кто её видит.";
         });
       },
 
       joinByCode(rawCode) {
         if (api === null || session === null) return;
+        const current = session;
         run(async () => {
-          const code = normalizeInviteCode(rawCode);
-          const secrets = await deriveInviteSecrets(code);
-          const authToken = toBase64(secrets.authToken);
-          const claimed = await api.claimInvite(authToken);
-          const opened = await openInvite({
-            code,
-            familyId: claimed.familyId,
-            keyEpoch: claimed.keyEpoch,
-            inviteId: claimed.inviteId,
-            iv: decodeBase64(claimed.iv, "invite iv"),
-            ciphertext: decodeBase64(claimed.inviteBox, "invite box"),
+          const joined = await joinFamilyByCode(rawCode, {
+            api,
+            store,
+            deviceId: current.deviceId,
+            memberId: crypto.randomUUID(),
+            pins,
           });
-          const deviceKey = await store.readSyncState<StoredDeviceKey>(DEVICE_KEY_STATE_KEY);
-          if (deviceKey === undefined) throw new Error("no device key on this device");
-          const spki = decodeBase64(deviceKey.spki, "device key");
-          const memberId = crypto.randomUUID();
-          const bindProof = await computeBindProof(opened.bindKey, {
-            familyId: claimed.familyId,
-            inviteId: claimed.inviteId,
-            deviceId: session.deviceId,
-            spki,
-          });
-          await api.joinInvite({
-            inviteId: claimed.inviteId,
-            authToken,
-            memberId,
-            bindProof: toBase64(bindProof),
-          });
-          // 5.4, first row of the table: the sender's fingerprint travelled inside the invite box
-          // under `KEK`, so it is pinned here without a further ceremony — the code *was* the
-          // ceremony, and the value never came from the server.
-          const nextPins = new Map(pins);
-          nextPins.set(opened.senderDeviceId, opened.senderKeyFingerprint);
-          await store.writeSyncState([
-            {
-              key: FAMILY_KEY_STATE_KEY,
-              value: { key: opened.familyKey, keyEpoch: claimed.keyEpoch } satisfies StoredFamilyKey,
-            },
-            { key: PINS_STATE_KEY, value: serializePins(nextPins) },
-            // Бюджет придёт журналом. Посева здесь нет и быть не может: он влил бы личный бюджет
-            // вступающего в семейный, и семья увидела бы чужие счета как свои.
-            { key: JOURNAL_ORIGIN_KEY, value: "family" satisfies JournalOrigin },
-          ]);
-          setPins(nextPins);
+          setPins(joined.pins);
           const next: FamilySession = {
-            ...session,
-            familyId: claimed.familyId,
-            memberId,
+            ...current,
+            familyId: joined.familyId,
+            memberId: joined.memberId,
             role: "member",
           };
           await persistSession(store, next);
           setSession(next);
           await registerLocalMember({
-            id: memberId,
-            name: memberNameFromEmail(session.email),
+            id: joined.memberId,
+            name: memberNameFromEmail(current.email),
             role: "member",
             active: true,
           });
@@ -944,6 +1665,7 @@ export function useFamily(
           setMembers([]);
           setDevices([]);
           setPins(new Map());
+          setBindVerdicts(new Map());
           setInvite(null);
           setStatus(null);
           return "Вы вышли из семьи. Бюджет на устройстве остался целиком.";
@@ -955,7 +1677,7 @@ export function useFamily(
         run(async () => {
           await api.removeMember(membership.familyId, memberId);
           setReload((value) => value + 1);
-          return "Участник удалён. Ключ семьи у его устройств остался — смените ключ семьи.";
+          return "Участник удалён, его устройства отозваны. Ключ семьи у них остался — смените ключ семьи, это делается кнопкой в разделе «Ключ семьи».";
         });
       },
 
@@ -964,8 +1686,23 @@ export function useFamily(
         run(async () => {
           await api.revokeDevice(deviceId);
           setReload((value) => value + 1);
-          return "Устройство отозвано. Ключ, лежащий на нём, отзывом не стирается.";
+          // Обещание сузилось до правды: отзыв гасит токены, ключ отбирает смена ключа, и она
+          // здесь же предлагается. Прежде эта строка сообщала о неотбираемом ключе и не давала
+          // ничего, чем его отобрать, — а номер эпохи оставался прежним навсегда.
+          return "Устройство отозвано: его токены аннулированы. Ключ семьи, лежащий на нём, отзывом не стирается — смените ключ семьи, это делается кнопкой ниже.";
         });
+      },
+
+      startRotation() {
+        run(() => performRotation(false));
+      },
+
+      continueRotationWithGaps() {
+        run(() => performRotation(true));
+      },
+
+      dismissRotation() {
+        setRotation(null);
       },
 
       /**
@@ -993,7 +1730,18 @@ export function useFamily(
         });
       },
     }),
-    [api, membership, offered, pendingEmail, pins, registerLocalMember, run, session, store],
+    [
+      api,
+      membership,
+      offered,
+      pendingEmail,
+      performRotation,
+      pins,
+      registerLocalMember,
+      run,
+      session,
+      store,
+    ],
   );
 
   const pinOf = useCallback(
@@ -1009,6 +1757,11 @@ export function useFamily(
     [offered],
   );
 
+  const bindVerdictOf = useCallback(
+    (deviceId: string): BindVerdict | null => bindVerdicts.get(deviceId) ?? null,
+    [bindVerdicts],
+  );
+
   return {
     serverUrl,
     session,
@@ -1017,11 +1770,14 @@ export function useFamily(
     devices,
     ownFingerprint,
     pinOf,
+    bindVerdictOf,
     offeredFingerprintOf,
     invite,
     status,
     syncRound,
     integrity,
+    rotation,
+    epochAlarm,
     busy,
     message,
     error,

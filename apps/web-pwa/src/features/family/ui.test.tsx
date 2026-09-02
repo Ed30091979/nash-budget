@@ -30,6 +30,9 @@ function noopActions(): FamilyActions {
     removeMember: vi.fn(),
     revokeDevice: vi.fn(),
     confirmFingerprint: vi.fn(),
+    startRotation: vi.fn(),
+    continueRotationWithGaps: vi.fn(),
+    dismissRotation: vi.fn(),
   };
 }
 
@@ -54,6 +57,7 @@ function props(overrides: Partial<FamilyScreenProps> = {}): FamilyScreenProps {
     devices: [],
     ownFingerprint: null,
     pinOf: () => ({ state: "absent" }),
+    bindVerdictOf: () => null,
     offeredFingerprintOf: () => undefined,
     memberNameOf: () => null,
     localBudget: { transactions: [] },
@@ -63,6 +67,8 @@ function props(overrides: Partial<FamilyScreenProps> = {}): FamilyScreenProps {
     status: null,
     syncRound: "ok",
     integrity: null,
+    rotation: null,
+    epochAlarm: null,
     now: NOW,
     busy: false,
     message: null,
@@ -289,6 +295,8 @@ const signedInOwner = (extra: Partial<FamilyScreenProps> = {}): Partial<FamilySc
       deviceId: OWN_DEVICE,
       memberId: OWNER_MEMBER,
       publicKey: "AAAA",
+      bindProof: null,
+      inviteId: null,
       createdAt: NOW - 86_400_000,
       lastSeenAt: NOW,
       revokedAt: null,
@@ -297,6 +305,8 @@ const signedInOwner = (extra: Partial<FamilyScreenProps> = {}): Partial<FamilySc
       deviceId: PEER_DEVICE,
       memberId: OTHER_MEMBER,
       publicKey: "BBBB",
+      bindProof: null,
+      inviteId: null,
       createdAt: NOW - 3_600_000,
       lastSeenAt: NOW,
       revokedAt: null,
@@ -727,5 +737,106 @@ describe("доступность экрана семьи", () => {
     });
     expect(markup).toContain("Отпечаток закреплён.");
     expect(markup).toContain("Журнал неполон");
+  });
+});
+
+describe("смена ключа семьи на экране", () => {
+  it("владелец видит раздел, участник — не видит: ротацию делает устройство владельца", () => {
+    const owner = render(signedInOwner());
+    expect(owner).toContain("Ключ семьи");
+    expect(owner).toContain("Сменить ключ семьи");
+    expect(owner).toContain("Сейчас действует эпоха 1");
+
+    const base = signedInOwner();
+    const member = render({
+      ...base,
+      membership: { ...base.membership!, role: "member", memberId: OTHER_MEMBER },
+    });
+    expect(member).not.toContain("Сменить ключ семьи");
+  });
+
+  it("отозванное устройство поднимает раздел до «пора сменить», а не до одной справки", () => {
+    const base = signedInOwner();
+    const markup = render({
+      ...base,
+      devices: base.devices!.map((device) =>
+        device.deviceId === PEER_DEVICE ? { ...device, revokedAt: NOW - 60_000 } : device,
+      ),
+    });
+    // Прежде экран говорил «ключ, лежащий на нём, отзывом не стирается» и не давал ничего, чем
+    // его отобрать. Теперь то же предложение кончается кнопкой.
+    expect(markup).toContain("Ключ пора сменить");
+    expect(markup).toContain("открывает всё, что семья запишет дальше");
+    expect(markup).toMatch(/class="primary-button"[^>]*>\s*Сменить ключ семьи/u);
+  });
+
+  it("во время ротации показывает фазу, счёт и то, что будет при обрыве", () => {
+    const markup = render(
+      signedInOwner({
+        rotation: {
+          kind: "running",
+          progress: {
+            phase: "uploading",
+            keyEpoch: 2,
+            previousKeyEpoch: 1,
+            freezeSeq: 40,
+            moved: 200,
+            total: 400,
+          },
+        },
+      }),
+    );
+    expect(markup).toContain("Загружаем новую эпоху: 200 из 400");
+    expect(markup).toContain("остаются оба ключа");
+    expect(markup).toContain("возьмёт следующий номер эпохи");
+    expect(markup).toContain("вся семья не может отправлять новые записи");
+    expect(markup).toContain("Смена ключа идёт…");
+  });
+
+  it("остановка на разрыве называет номера и оставляет решение человеку", () => {
+    const markup = render(
+      signedInOwner({
+        rotation: {
+          kind: "halted",
+          keyEpoch: 2,
+          freezeSeq: 12,
+          gap: { missing: [7, 8], undecryptable: [11] },
+        },
+      }),
+    );
+    expect(markup).toContain("Журнал неполон");
+    expect(markup).toContain("1 … 12");
+    expect(markup).toContain("не отданы сервером: 7, 8");
+    expect(markup).toContain("пришли, но не читаются ключом этой эпохи: 11");
+    // Ровно то, ради чего проверка стоит до переноса: после него разрыв стал бы историей.
+    expect(markup).toContain("станет законной новой историей");
+    expect(markup).toContain("Продолжить без этих записей");
+    expect(markup).toContain("Отложить");
+    // Пока человек решает, запись в семье открыта: попытка на сервере отменена.
+    expect(markup).toContain("Попытка на сервере отменена");
+  });
+
+  it("итог перечисляет, кто получил ключ и кто остался без него и почему", () => {
+    const markup = render(
+      signedInOwner({
+        rotation: {
+          kind: "done",
+          keyEpoch: 2,
+          previousKeyEpoch: 1,
+          moved: 137,
+          wrapped: [PEER_DEVICE],
+          skipped: [
+            { deviceId: OWN_DEVICE, reason: "revoked" },
+            { deviceId: OTHER_MEMBER, reason: "not_pinned" },
+          ],
+          inheritedGaps: [7, 8],
+        },
+      }),
+    );
+    expect(markup).toContain("эпоха 1 → 2");
+    expect(markup).toContain("перенесено записей 137");
+    expect(markup).toContain("отозвано — ради этого смена ключа и делается");
+    expect(markup).toContain("отпечаток не закреплён");
+    expect(markup).toContain("не перенесены записи с номерами 7, 8");
   });
 });

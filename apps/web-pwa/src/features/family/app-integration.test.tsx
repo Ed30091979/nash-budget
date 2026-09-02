@@ -4,8 +4,25 @@ import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import {
+  computeBindProof,
+  deriveInviteSecrets,
+  deviceKeyFingerprint,
+  exportDevicePublicKey,
+  generateDeviceKeyPair,
+  generateInviteCode,
+  toHex,
+} from "@family-budget/sync-crypto";
+import { toBase64 } from "@family-budget/sync-client";
+
 import App from "../../App";
-import { memberNameFromEmail, parsePins, serializePins } from "./controller";
+import {
+  checkInviteBinding,
+  memberNameFromEmail,
+  parsePins,
+  parseStoredInvite,
+  serializePins,
+} from "./controller";
 
 const source = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
 
@@ -156,14 +173,100 @@ describe("таблица закреплённых отпечатков", () => {
     expect(parsePins({ device: "22".repeat(31) }).size).toBe(0);
   });
 
-  it("закрепление создаётся только подтверждением человека", () => {
+  /**
+   * Прежде здесь считались вхождения `key: PINS_STATE_KEY` в файле контроллера, и «ровно два» было
+   * утверждением о форме текста, а не о том, что пин создаёт. Такая проверка не отличила бы третий
+   * законный путь (автоматическая привязка по `bindProof`, 6.4) от лишней записи пина по серверной
+   * подсказке и падала бы на первом, пропуская вторую. Здесь проверяется смысл: что именно
+   * `checkInviteBinding` объявляет привязкой и какое значение отдаёт под пин.
+   */
+  it("автоматическая привязка создаёт пин только на сошедшемся bindProof", async () => {
+    const familyId = "0f000000-0000-4000-8000-00000000fa11";
+    const inviteId = "11111111-1111-4111-8111-111111111111";
+    const joiningDeviceId = "22222222-2222-4222-8222-222222222222";
+    const code = generateInviteCode();
+    const secrets = await deriveInviteSecrets(code);
+    const joining = await generateDeviceKeyPair();
+    const spki = await exportDevicePublicKey(joining.publicKey);
+    const proof = await computeBindProof(secrets.bindKey, {
+      familyId,
+      inviteId,
+      deviceId: joiningDeviceId,
+      spki,
+    });
+    const invite = {
+      inviteId,
+      familyId,
+      keyEpoch: 1,
+      expiresAt: 4_102_444_800_000,
+      supersededCount: 0,
+      bindKey: toHex(secrets.bindKey),
+    };
+    const device = {
+      deviceId: joiningDeviceId,
+      memberId: "33333333-3333-4333-8333-333333333333",
+      publicKey: toBase64(spki),
+      bindProof: toBase64(proof),
+      inviteId,
+      createdAt: 1,
+      lastSeenAt: 1,
+      revokedAt: null,
+    };
+
+    const agreed = await checkInviteBinding(invite, [device]);
+    expect(agreed?.verdict).toBe("bound");
+    // Под пин уходит отпечаток присланного SPKI — та самая величина, на которой потом сходится
+    // обёртка ключа семьи, — а не что-нибудь, что можно взять из ответа сервера отдельно.
+    expect(agreed?.fingerprint).toEqual(await deviceKeyFingerprint(spki));
+
+    // Сервер подменил открытый ключ вступившего, оставив настоящее доказательство: HMAC считается
+    // по SPKI, поэтому расхождение видно, и пина не возникает ни при каком исходе.
+    const substituted = await exportDevicePublicKey((await generateDeviceKeyPair()).publicKey);
+    const forged = await checkInviteBinding(invite, [
+      { ...device, publicKey: toBase64(substituted) },
+    ]);
+    expect(forged).toEqual({ deviceId: joiningDeviceId, verdict: "failed", fingerprint: null });
+
+    // Доказательство, посчитанное на другом коде: тот, кто не знает кода, `bindKey` не выведет.
+    const otherSecrets = await deriveInviteSecrets(generateInviteCode());
+    const otherProof = await computeBindProof(otherSecrets.bindKey, {
+      familyId,
+      inviteId,
+      deviceId: joiningDeviceId,
+      spki,
+    });
+    const mismatched = await checkInviteBinding(invite, [
+      { ...device, bindProof: toBase64(otherProof) },
+    ]);
+    expect(mismatched).toEqual({ deviceId: joiningDeviceId, verdict: "failed", fingerprint: null });
+
+    // Устройство, вступившее не по этому коду, вердикта не получает вовсе: это не «не сошлось»,
+    // а «проверять нечего», и ключ приглашения из-за него не стирается.
+    expect(await checkInviteBinding(invite, [{ ...device, inviteId: null }])).toBeNull();
+    expect(await checkInviteBinding(invite, [{ ...device, bindProof: null }])).toBeNull();
+  });
+
+  it("код приглашения в локальную базу не пишется, а bindKey пишется", () => {
     const controller = readFileSync(new URL("./controller.ts", import.meta.url), "utf8");
-    const writes = controller.match(/key: PINS_STATE_KEY/gu) ?? [];
-    // Ровно два места пишут пин: подтверждение человеком и вступление по коду приглашения,
-    // где церемонией был сам код (5.4, первая строка таблицы).
-    expect(writes).toHaveLength(2);
-    expect(controller).toContain("confirmFingerprint(deviceId)");
-    expect(controller).toContain("opened.senderKeyFingerprint");
+    // 6.3 одной строкой, и реализация делала ровно наоборот по обоим пунктам.
+    expect(parseStoredInvite({ code: "ABCDEFGHJKMN", expiresAt: 1, supersededCount: 0 })).toBeNull();
+    expect(
+      parseStoredInvite({
+        inviteId: "11111111-1111-4111-8111-111111111111",
+        familyId: "0f000000-0000-4000-8000-00000000fa11",
+        keyEpoch: 1,
+        expiresAt: 1,
+        supersededCount: 0,
+        bindKey: "ab".repeat(32),
+      })?.bindKey,
+    ).toBe("ab".repeat(32));
+    // Записываемая структура собирается из `sealed.issuerSecrets`, а поля `code` в ней нет.
+    const record = controller.slice(
+      controller.indexOf("const record: StoredInvite = {"),
+      controller.indexOf("await store.writeSyncState([{ key: INVITE_STATE_KEY, value: record }])"),
+    );
+    expect(record).toContain("bindKey: toHex(sealed.issuerSecrets.bindKey)");
+    expect(record).not.toContain("code");
   });
 
   it("подтверждение создаёт пин и не переписывает уже существующий", () => {
