@@ -27,6 +27,20 @@ export interface AccessTokenClaims {
    * session it was issued for.
    */
   readonly tsn: number;
+  /**
+   * The moment this device last proved control of the account's address — the one-time code of
+   * 6.1 — in milliseconds, or `0` for a device with no such moment on file.
+   *
+   * Signed like the rest, and *not* moved by a refresh: `issueTokenPair` reads it from the device
+   * row, and only `/v1/auth/verify` writes that row. It is the client's copy of a server fact and
+   * is compared against the row again at the door (see `ServerContext.authenticate`), so a token
+   * that names an authentication episode the device has since replaced is not fresh for anything.
+   *
+   * It exists for 6.8. Deleting an account is irreversible and takes the family with it when the
+   * caller was its last live member, and a bearer token that happens still to be valid is not the
+   * evidence such an act deserves.
+   */
+  readonly ath: number;
   readonly iat: number;
   readonly exp: number;
 }
@@ -40,6 +54,7 @@ export function signAccessToken(
   accountId: string,
   deviceId: string,
   tokenSerial: number,
+  authenticatedAt: number,
   now: number,
 ): { token: string; expiresAt: number } {
   const expiresAt = now + ACCESS_TOKEN_TTL_MS;
@@ -47,6 +62,7 @@ export function signAccessToken(
     sub: accountId,
     did: deviceId,
     tsn: tokenSerial,
+    ath: authenticatedAt,
     iat: Math.floor(now / 1000),
     exp: Math.floor(expiresAt / 1000),
   };
@@ -81,15 +97,20 @@ export function verifyAccessToken(
     return null;
   }
   if (typeof claims !== "object" || claims === null) return null;
-  const { sub, did, tsn, iat, exp } = claims as Record<string, unknown>;
+  const { sub, did, tsn, ath, iat, exp } = claims as Record<string, unknown>;
   if (typeof sub !== "string" || typeof did !== "string") return null;
   // A token without a serial is not an older token to be tolerated, it is a token this build did
   // not issue: the field is signed like the rest, so the only way to arrive without one is to have
   // been made elsewhere.
   if (typeof tsn !== "number" || !Number.isSafeInteger(tsn)) return null;
+  // The same argument as for the serial, and it matters more here: `ath` is what a destructive
+  // route measures freshness against (6.8), and a token arriving without it would have to be
+  // treated as either "fresh" or "stale" by a default. Neither is a decision this verifier is
+  // entitled to make — the field is signed, so a token without one was made elsewhere.
+  if (typeof ath !== "number" || !Number.isSafeInteger(ath) || ath < 0) return null;
   if (typeof iat !== "number" || typeof exp !== "number") return null;
   if (exp * 1000 <= now) return null;
-  return { sub, did, tsn, iat, exp };
+  return { sub, did, tsn, ath, iat, exp };
 }
 
 /**

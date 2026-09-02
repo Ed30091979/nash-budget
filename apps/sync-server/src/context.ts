@@ -12,12 +12,22 @@ import { equalBytes, sha256 } from "./bytes.ts";
 import type { SyncServerConfig } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError, forbidden, unauthorized } from "./errors.ts";
-import { ROTATION_HARD_TIMEOUT_MS, ROTATION_IDLE_TIMEOUT_MS } from "./limits.ts";
+import { REAUTH_WINDOW_MS, ROTATION_HARD_TIMEOUT_MS, ROTATION_IDLE_TIMEOUT_MS } from "./limits.ts";
 import { parseRefreshToken, verifyAccessToken } from "./tokens.ts";
 
 export interface AuthContext {
   readonly accountId: string;
   readonly deviceId: string;
+  /**
+   * When this device last proved control of the account's address (6.1), or `null` when the token
+   * belongs to an authentication episode the device has since replaced or never had.
+   *
+   * Not the age of the token. A token is refreshed every fifteen minutes and says nothing about
+   * whether anyone is still at the keyboard; this is the moment a one-time code was entered, and
+   * it is the only thing 6.8 accepts as consent to an irreversible act. See
+   * {@link ServerContext.requireFreshAuth}.
+   */
+  readonly authenticatedAt: number | null;
 }
 
 export type MemberRole = "owner" | "member";
@@ -51,6 +61,7 @@ interface DeviceRow {
   readonly account_id: string;
   readonly revoked_at: number | null;
   readonly token_serial: number;
+  readonly verified_at: number | null;
   readonly refresh_token_hash: Uint8Array | null;
   readonly refresh_expires_at: number | null;
 }
@@ -97,7 +108,10 @@ export class ServerContext {
     const claims = verifyAccessToken(this.config.tokenSecret, header.slice(7), this.now());
     if (claims === null) throw unauthorized("invalid or expired access token");
     const device = this.db
-      .prepare("SELECT device_id, account_id, revoked_at, token_serial FROM device WHERE device_id = ?")
+      .prepare(
+        "SELECT device_id, account_id, revoked_at, token_serial, verified_at FROM device" +
+          " WHERE device_id = ?",
+      )
       .get(claims.did) as DeviceRow | undefined;
     if (device === undefined || device.account_id !== claims.sub) throw unauthorized();
     if (device.revoked_at !== null) {
@@ -110,7 +124,37 @@ export class ServerContext {
     this.db
       .prepare("UPDATE device SET last_seen_at = ? WHERE device_id = ?")
       .run(this.now(), device.device_id);
-    return { accountId: claims.sub, deviceId: device.device_id };
+    // The token carries the episode it was issued in; the row says which episode is current. Equal
+    // and non-zero is the only combination that counts, and it is the row that decides — a claim
+    // compared against itself would be the sender measuring its own limit. A token from a previous
+    // sign-in of the same device therefore authenticates as usual and is simply not *fresh*.
+    const authenticatedAt =
+      device.verified_at !== null && device.verified_at > 0 && claims.ath === device.verified_at
+        ? device.verified_at
+        : null;
+    return { accountId: claims.sub, deviceId: device.device_id, authenticatedAt };
+  }
+
+  /**
+   * 6.8: a fresh sign-in, not merely a valid token.
+   *
+   * Account deletion removes the account, its devices, its memberships and — when it was the last
+   * live member — the family with every envelope and invite in it. Nothing of that comes back, and
+   * an access token is a bearer credential valid for fifteen minutes: it travels in headers, sits
+   * in memory that other code shares, and is exactly what a compromised client hands over first.
+   * So the door for this act is the one credential a thief does not get with the token — control
+   * of the address, proved through the one-time code of 6.1 within {@link REAUTH_WINDOW_MS}.
+   *
+   * `401` with a code of its own rather than `403`: the caller is not "not entitled", the caller
+   * is asked to authenticate again, and the client has to tell that apart from a dead session to
+   * know it should run the code ceremony and retry rather than sign the user out.
+   */
+  requireFreshAuth(auth: AuthContext): number {
+    const at = auth.authenticatedAt;
+    if (at === null || this.now() - at > REAUTH_WINDOW_MS) {
+      throw new ApiError(401, "reauth_required", "this operation requires a fresh sign-in");
+    }
+    return at;
   }
 
   /** Presented refresh token to device, or `null`. Constant-time on the secret half. */

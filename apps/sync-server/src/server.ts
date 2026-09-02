@@ -21,6 +21,7 @@ import { ServerContext } from "./context.ts";
 import { type Db, loadOrCreateTokenSecret, openDatabase } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { MAX_BATCH_BODY_BYTES } from "./limits.ts";
+import { registerAccountRoutes } from "./routes/account.ts";
 import { registerAuthRoutes } from "./routes/auth.ts";
 import { registerDeviceRoutes } from "./routes/devices.ts";
 import { registerFamilyRoutes } from "./routes/families.ts";
@@ -234,6 +235,7 @@ export function buildServer(options: SyncServerOptions): SyncServer {
       );
   });
 
+  registerAccountRoutes(app, context);
   registerAuthRoutes(app, context);
   registerDeviceRoutes(app, context);
   registerFamilyRoutes(app, context);

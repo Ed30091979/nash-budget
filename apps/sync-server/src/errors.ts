@@ -14,6 +14,15 @@ export const API_ERROR_CODES = [
   "unauthorized",
   /** The device presenting the token has been revoked (6.7); it also gets `401`. */
   "device_revoked",
+  /**
+   * 6.8: the token is good and the act is irreversible, so the token alone is not enough.
+   *
+   * `401` and not `403`, because the remedy is an act of the caller's own — request a code, enter
+   * it, try again — and a client that read `forbidden` here would tell the user they are not
+   * allowed to delete their own account. Distinct from `unauthorized` for the same reason: that
+   * one means the session is over.
+   */
+  "reauth_required",
   /** Authenticated, but not entitled: another family, or a member where the owner is required. */
   "forbidden",
   /** 5.3 and 5.5 step 1: only the owner issues invites and declares rotation. */

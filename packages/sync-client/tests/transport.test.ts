@@ -8,7 +8,7 @@ import {
   SyncClientError,
   SyncServerError,
 } from "../src/errors.js";
-import { createHttpTransport } from "../src/transport.js";
+import { createHttpTransport, isReauthRequired } from "../src/transport.js";
 
 interface Recorded {
   readonly url: string;
@@ -223,6 +223,145 @@ describe("перечисление кодов сервера", () => {
 
     expect(codes.length).toBeGreaterThan(10);
     expect([...SYNC_SERVER_ERROR_CODES]).toEqual(codes);
+  });
+});
+
+/**
+ * 6.8 — удаление аккаунта.
+ *
+ * The route is irreversible and the client's part in it is small and exact: address the account
+ * this session belongs to, retry once and only for the refusal that has a remedy, check that the
+ * answer is about the account that was asked about, and touch nothing on this device.
+ */
+describe("удаление аккаунта", () => {
+  const ACCOUNT = "0a000000-0000-4000-8000-0000000000a1";
+  const DELETED_AT = 1_770_000_000_000;
+  const ANSWER = {
+    accountId: ACCOUNT,
+    deletedAt: DELETED_AT,
+    devices: 2,
+    memberships: 1,
+    familyDeleted: false,
+    rotationRequired: true,
+  };
+
+  it("уходит методом DELETE на собственный идентификатор и разбирает ответ по контракту", async () => {
+    const { calls, fetch } = stubFetch(() => ({ body: ANSWER }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test/", accessToken: () => "t", fetch });
+
+    const result = await transport.deleteAccount(ACCOUNT);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(`http://sync.test/v1/accounts/${ACCOUNT}`);
+    expect(calls[0]!.init.method).toBe("DELETE");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer t");
+    expect(result).toEqual({
+      accountId: ACCOUNT,
+      deletedAt: DELETED_AT,
+      devices: 2,
+      memberships: 1,
+      familyDeleted: false,
+      rotationRequired: true,
+    });
+  });
+
+  it("на требование свежего входа подтверждается заново и повторяет запрос ровно один раз", async () => {
+    let attempts = 0;
+    const { calls, fetch } = stubFetch(() => {
+      attempts += 1;
+      return attempts === 1
+        ? { status: 401, body: { error: { code: "reauth_required", message: "..." } } }
+        : { body: { ...ANSWER, familyDeleted: true, rotationRequired: false } };
+    });
+    let reauthentications = 0;
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const result = await transport.deleteAccount(ACCOUNT, {
+      reauthenticate: async () => {
+        reauthentications += 1;
+      },
+    });
+
+    expect(reauthentications).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect(result.familyDeleted).toBe(true);
+    expect(result.rotationRequired).toBe(false);
+  });
+
+  it("второй отказ подряд не превращается в цикл запросов кода", async () => {
+    const { calls, fetch } = stubFetch(() => ({
+      status: 401,
+      body: { error: { code: "reauth_required", message: "..." } },
+    }));
+    let reauthentications = 0;
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport
+      .deleteAccount(ACCOUNT, {
+        reauthenticate: async () => {
+          reauthentications += 1;
+        },
+      })
+      .catch((error: unknown) => error);
+
+    expect(reauthentications).toBe(1);
+    expect(calls).toHaveLength(2);
+    expect(isReauthRequired(failure)).toBe(true);
+    expect((failure as SyncServerError).serverCode).toBe("reauth_required");
+  });
+
+  it("без обработчика повторного входа отказ доходит до вызывающего нетронутым", async () => {
+    const { calls, fetch } = stubFetch(() => ({
+      status: 401,
+      body: { error: { code: "reauth_required", message: "..." } },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport.deleteAccount(ACCOUNT).catch((error: unknown) => error);
+
+    expect(calls).toHaveLength(1);
+    expect(isReauthRequired(failure)).toBe(true);
+  });
+
+  it("повторный вызов после удаления приходит как обычный конец сессии, а не как повторное подтверждение", async () => {
+    const { calls, fetch } = stubFetch(() => ({
+      status: 401,
+      body: { error: { code: "unauthorized", message: "authentication required" } },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport
+      .deleteAccount(ACCOUNT, { reauthenticate: async () => undefined })
+      .catch((error: unknown) => error);
+
+    // The account is already gone, so no code ceremony is offered and no second request is made:
+    // `unauthorized` here means "there is nothing left to delete", not "prove yourself again".
+    expect(calls).toHaveLength(1);
+    expect(isReauthRequired(failure)).toBe(false);
+    expect((failure as SyncServerError).serverCode).toBe("unauthorized");
+  });
+
+  it("ответ о чужом аккаунте не считается ответом об этом", async () => {
+    const { fetch } = stubFetch(() => ({
+      body: { ...ANSWER, accountId: "0b000000-0000-4000-8000-0000000000b2" },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const failure = await transport.deleteAccount(ACCOUNT).catch((error: unknown) => error);
+
+    expect((failure as SyncClientError).code).toBe("malformed_response");
+  });
+
+  it("недостающие поля ответа не становятся истиной по недосмотру", async () => {
+    const { fetch } = stubFetch(() => ({
+      body: { accountId: ACCOUNT, deletedAt: DELETED_AT, devices: 1, memberships: 0 },
+    }));
+    const transport = createHttpTransport({ baseUrl: "http://sync.test", accessToken: () => "t", fetch });
+
+    const result = await transport.deleteAccount(ACCOUNT);
+
+    expect(result.familyDeleted).toBe(false);
+    expect(result.rotationRequired).toBe(false);
   });
 });
 

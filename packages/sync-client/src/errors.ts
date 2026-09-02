@@ -48,6 +48,7 @@ export type SyncClientErrorCode = (typeof SYNC_CLIENT_ERROR_CODES)[number];
 export const SYNC_SERVER_ERROR_CODES = [
   "unauthorized",
   "device_revoked",
+  "reauth_required",
   "forbidden",
   "owner_required",
   "not_found",

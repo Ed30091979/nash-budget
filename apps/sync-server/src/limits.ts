@@ -93,6 +93,25 @@ export const LOGIN_CODE_REQUESTS_PER_SOURCE = 30;
 export const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * How long a sign-in counts as *fresh* for the irreversible act of 6.8.
+ *
+ * The document fixes no figure, so this one is named as a phase-S3 choice rather than a quotation.
+ * It is bounded on both sides by numbers that are fixed: a login code lives `10` minutes (6.1), so
+ * a window longer than that would be a promise the code itself cannot keep, and an access token
+ * lives `15` minutes, so a window as long as the token would make "fresh authentication" mean
+ * nothing more than "a token that has not expired" — which is exactly the credential this check
+ * exists to distrust. `5` minutes leaves a person time to read a confirmation and press a button,
+ * and leaves a stolen access token, in the overwhelming majority of its life, unable to delete
+ * anything.
+ *
+ * Measured from the moment the device passed the one-time code, kept on the device row by the
+ * server, and never extended by a token refresh: a refresh proves possession of a refresh token,
+ * not control of the address, and letting it move the mark would hand a thief a way to keep an
+ * authentication "fresh" for thirty days without ever seeing a code.
+ */
+export const REAUTH_WINDOW_MS = 5 * 60 * 1000;
+
 /** 5.3: invite TTL. The server sets it; a client-supplied expiry would not be a limit at all. */
 export const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 

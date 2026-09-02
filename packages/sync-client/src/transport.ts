@@ -58,6 +58,75 @@ export interface KeysResult {
   readonly wraps: readonly KeyWrapRecord[];
 }
 
+/**
+ * What the server reports about a deletion it has carried out (6.8), parsed rather than trusted.
+ *
+ * Counts, not lists: the numbers are the caller's own — its devices, its memberships — and the
+ * identifiers the answer could otherwise carry are strings written by the other side. `familyId` in
+ * particular is something this device already knows and does not need to be told.
+ */
+export interface AccountDeletionResult {
+  /** Echoed back and checked: an answer about another account is not an answer to this request. */
+  readonly accountId: string;
+  readonly deletedAt: number;
+  /** How many device rows the server removed. At least one — the device that asked. */
+  readonly devices: number;
+  readonly memberships: number;
+  /**
+   * The family went too, because this account was its last live member (6.8).
+   *
+   * `false` means the family stands and the other members keep working — which is the outcome the
+   * confirmation screen has to describe differently, because it is the one where data of other
+   * people survives and this device's departure obliges the owner to rotate the key (6.6).
+   */
+  readonly familyDeleted: boolean;
+  readonly rotationRequired: boolean;
+}
+
+export interface DeleteAccountOptions {
+  /**
+   * Called once, if the server asks for a fresh sign-in, and expected to complete the one-time code
+   * ceremony of 6.1 before it resolves.
+   *
+   * 6.8 is irreversible and the server refuses to act on a live access token alone: a token is a
+   * bearer credential, and this is the one act that takes the family with it. The retry is made
+   * exactly once — a loop here would turn a refusal the user is meant to see into an invisible
+   * cycle of code requests, and the server rate-limits those per address anyway (6.1).
+   *
+   * Omit it, and `reauth_required` simply arrives as a {@link SyncServerError} for the caller to
+   * handle; {@link isReauthRequired} is the predicate for that branch.
+   */
+  readonly reauthenticate?: () => Promise<void>;
+}
+
+/**
+ * The account's own lifecycle, kept apart from {@link SyncTransport} deliberately.
+ *
+ * The engine's transport is the journal contract, and the engine is given fakes of it in tests and
+ * in local mode; deletion is not something a journal fake should have to implement, and not
+ * something the engine may ever call. `createHttpTransport` returns both.
+ */
+export interface AccountTransport {
+  /**
+   * `DELETE /v1/accounts/:accountId` — 6.8.
+   *
+   * Removes the account, its devices, its memberships and, when it was the family's last live
+   * member, the family with every envelope and invite in it. It does **not** touch anything on this
+   * device: 6.8 leaves the local budget alone, and erasing it is a separate command the user gives
+   * separately. A client that cleared its own storage here would be doing on the server's word what
+   * the server itself is forbidden to order.
+   *
+   * After it returns, every token this device holds is refused: the device row it named is gone. A
+   * second call is answered `401 unauthorized`, exactly as an unauthenticated request is.
+   */
+  deleteAccount(accountId: string, options?: DeleteAccountOptions): Promise<AccountDeletionResult>;
+}
+
+/** True for the refusal 6.8 answers a stale sign-in with — the one that is retried, not reported. */
+export function isReauthRequired(error: unknown): boolean {
+  return error instanceof SyncServerError && error.serverCode === "reauth_required";
+}
+
 export interface SyncTransport {
   submit(familyId: string, envelopes: readonly OutgoingEnvelope[]): Promise<SubmitResult>;
   fetch(familyId: string, query: FetchQuery): Promise<FetchResult>;
@@ -116,7 +185,9 @@ function parseDelivered(value: unknown, index: number): DeliveredEnvelope {
   };
 }
 
-export function createHttpTransport(options: HttpTransportOptions): SyncTransport {
+export function createHttpTransport(
+  options: HttpTransportOptions,
+): SyncTransport & AccountTransport {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetch ?? globalThis.fetch;
 
@@ -204,6 +275,43 @@ export function createHttpTransport(options: HttpTransportOptions): SyncTranspor
         keyEpoch: requireNumber(payload.keyEpoch, "keyEpoch"),
         hasMore: payload.hasMore === true,
         envelopes: payload.envelopes.map(parseDelivered),
+      };
+    },
+
+    async deleteAccount(accountId, deletion = {}) {
+      const send = async (): Promise<unknown> =>
+        request(`/v1/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" });
+      let payload: unknown;
+      try {
+        payload = await send();
+      } catch (error) {
+        // One retry, and only for the one refusal that has a remedy the caller can perform. Any
+        // other failure — `not_found` for an identifier that is not this session's, `unauthorized`
+        // for a session that has ended — travels out untouched: retrying those would be asking the
+        // user for a code to fix something a code does not fix.
+        if (!isReauthRequired(error) || deletion.reauthenticate === undefined) throw error;
+        await deletion.reauthenticate();
+        payload = await send();
+      }
+      if (!isRecord(payload)) {
+        throw new SyncClientError("malformed_response", "deletion answer is not an object");
+      }
+      const answered = requireString(payload.accountId, "accountId");
+      if (answered !== accountId) {
+        // The server has just been asked to destroy something irreversibly, and this is the one
+        // field of its answer that can be checked against what was asked. An answer about another
+        // account is not evidence that this one is gone.
+        throw new SyncClientError("malformed_response", "deletion answer names another account");
+      }
+      return {
+        accountId: answered,
+        deletedAt: requireNumber(payload.deletedAt, "deletedAt"),
+        devices: requireNumber(payload.devices, "devices"),
+        memberships: requireNumber(payload.memberships, "memberships"),
+        // Strict booleans: a missing field is `false` and never `undefined` leaking into a screen
+        // that renders "семья удалена" from a truthiness test.
+        familyDeleted: payload.familyDeleted === true,
+        rotationRequired: payload.rotationRequired === true,
       };
     },
 

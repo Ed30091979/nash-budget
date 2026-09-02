@@ -235,6 +235,20 @@ const MIGRATIONS: readonly string[] = [
     created_at INTEGER NOT NULL
   );
   `,
+  // 3 — the freshness of an authentication, as a fact the server keeps rather than a claim it is
+  // handed. 6.8 deletes an account, its devices, its memberships and — when it was the last live
+  // member — the family with every envelope and invite in it, and none of that comes back. A
+  // living access token is not consent to that: it is fifteen minutes of bearer credential that
+  // leaks the way bearer credentials leak. So the destructive route asks for a sign-in that
+  // happened *just now*, and "just now" is measured here, in the row, against the moment the
+  // device last passed the one-time code of 6.1.
+  //
+  // Nullable, and null for every row that existed before this column: the value records an event,
+  // and a default of "now" or of zero would either invent a verification that never happened or
+  // pretend one is on file. A device carried over from an older build simply signs in again.
+  `
+  ALTER TABLE device ADD COLUMN verified_at INTEGER;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -68,14 +68,19 @@ export function issueTokenPair(
   deviceId: string,
 ): Record<string, unknown> {
   const now = context.now();
-  const serial = context.db
-    .prepare("SELECT token_serial FROM device WHERE device_id = ?")
-    .get(deviceId) as { token_serial: number } | undefined;
+  const device = context.db
+    .prepare("SELECT token_serial, verified_at FROM device WHERE device_id = ?")
+    .get(deviceId) as { token_serial: number; verified_at: number | null } | undefined;
   const access = signAccessToken(
     context.config.tokenSecret,
     accountId,
     deviceId,
-    serial?.token_serial ?? 0,
+    device?.token_serial ?? 0,
+    // Read from the row, never from the caller and never from the clock. This function serves the
+    // refresh route as well as the verification route, and a refresh that stamped `now` here would
+    // turn a thirty-day refresh token into a permanently fresh authentication — which is the one
+    // thing the freshness check of 6.8 must not be able to say.
+    device?.verified_at ?? 0,
     now,
   );
   const refresh = issueRefreshToken(deviceId, now);
@@ -213,10 +218,10 @@ export function registerAuthRoutes(app: FastifyInstance, context: ServerContext)
       if (device === undefined) {
         context.db
           .prepare(
-            "INSERT INTO device (device_id, account_id, public_key, created_at, last_seen_at)" +
-              " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO device (device_id, account_id, public_key, created_at, last_seen_at," +
+              " verified_at) VALUES (?, ?, ?, ?, ?, ?)",
           )
-          .run(input.deviceId, accountId, publicKey, now, now);
+          .run(input.deviceId, accountId, publicKey, now, now, now);
       } else {
         if (device.revoked_at !== null) {
           throw new ApiError(401, "device_revoked", "this device has been revoked");
@@ -235,7 +240,13 @@ export function registerAuthRoutes(app: FastifyInstance, context: ServerContext)
             "this device identifier is registered with a different account or key",
           );
         }
-        context.db.prepare("UPDATE device SET last_seen_at = ? WHERE device_id = ?").run(now, input.deviceId);
+        // 6.8 measures the freshness of an authentication from here and from nowhere else: this
+        // is the one route on which a caller proves control of the address rather than possession
+        // of a token. The stamp replaces whatever stood before it, so a token issued in an earlier
+        // episode stops being fresh the moment a new one begins.
+        context.db
+          .prepare("UPDATE device SET last_seen_at = ?, verified_at = ? WHERE device_id = ?")
+          .run(now, now, input.deviceId);
       }
       return issueTokenPair(context, accountId, input.deviceId);
     },

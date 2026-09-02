@@ -29,6 +29,10 @@ export {
 export { applyDelivery, type ApplyDeliveryParams } from "./intake.js";
 export {
   createHttpTransport,
+  isReauthRequired,
+  type AccountDeletionResult,
+  type AccountTransport,
+  type DeleteAccountOptions,
   type FetchQuery,
   type FetchResult,
   type HttpTransportOptions,
