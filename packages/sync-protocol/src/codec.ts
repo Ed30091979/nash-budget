@@ -516,9 +516,32 @@ function parseTransactionFields(value: unknown): TransactionFields {
   };
 
   switch (kind) {
-    case "income":
-      requireFieldNames(record, [...shared, "accountId"], attribution, label);
-      return { ...base, kind, accountId: readId(record, "accountId", "transaction accountId") };
+    case "income": {
+      /**
+       * The category an income is filed under, the second optional label a transaction carries.
+       *
+       * The same omission as the participant's, and the same cost: the domain gained the field,
+       * the field list here did not, and a categorised income was rejected as an unknown field —
+       * so it could be entered on one device and never reach another. Named explicitly for the
+       * same reason the label above is: the strict list is the defence, and it is widened one
+       * field at a time rather than opened up.
+       *
+       * Optional here as it is in the domain: every income written before income had categories
+       * omits it and stays valid for ever. Only an income carries it — the other kinds either
+       * require a category or have none at all, and their lists are unchanged.
+       */
+      requireFieldNames(record, [...shared, "accountId"], [...attribution, "categoryId"], label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", "transaction accountId"),
+        // Absent stays absent, exactly as for the label above: `categoryId: undefined` is a
+        // different value to the domain than no category at all.
+        ...(record.categoryId === undefined
+          ? {}
+          : { categoryId: readId(record, "categoryId", "transaction categoryId") }),
+      };
+    }
     case "expense":
       requireFieldNames(record, [...shared, "accountId", "categoryId"], attribution, label);
       return {

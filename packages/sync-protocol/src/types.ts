@@ -157,7 +157,12 @@ export const JOURNAL_PROBLEM_CODES = [
   "identifier_claimed_twice",
   /** A reference does not resolve: the account, category, budget, goal or expense is gone. */
   "unknown_reference",
-  /** An expense-only reference points at an income category. */
+  /**
+   * A reference points at a category of the other side of the ledger: an expense-only reference
+   * at an income category, or the optional category of an income at an expense one. The first
+   * withholds the entity; the second only clears the label, because a label may not cost the
+   * family the money — see `clearUnresolvedLabels` in journal.ts.
+   */
   "wrong_category_type",
   /** A refund does not match the posted expense it refunds. */
   "invalid_refund",

@@ -58,6 +58,9 @@ import {
 const BUDGET_ID = "74444444-4444-4444-8444-444444444441";
 const AUGUST_BUDGET_ID = "74444444-4444-4444-8444-444444444442";
 const PRODUCTS_CATEGORY_ID = "73333333-3333-4333-8333-333333333335";
+/** An income category the fixture does not have, and the fixture income to file under it. */
+const SALARY_CATEGORY_ID = "73333333-3333-4333-8333-333333333338";
+const SALARY_INCOME_ID = "75555555-5555-4555-8555-555555555551";
 const PRODUCTS_LINE_ID = "74444444-4444-4444-8444-444444444451";
 const PRODUCTS_EXPENSE_ID = "75555555-5555-4555-8555-555555555553";
 const MAIN_ACCOUNT_ID = "22222222-2222-4222-8222-222222222221";
@@ -84,7 +87,14 @@ function transactionFields(transaction: FixtureTransaction): TransactionFields {
   };
   switch (transaction.kind) {
     case "income":
-      return { ...base, kind: "income", accountId: transaction.accountId };
+      return {
+        ...base,
+        kind: "income",
+        accountId: transaction.accountId,
+        // Optional in the fixture as it is in the domain, and carried when it is there: a
+        // helper that dropped it would hide the very loss these tests are here to catch.
+        ...(transaction.categoryId === undefined ? {} : { categoryId: transaction.categoryId }),
+      };
     case "expense":
       return { ...base, kind: "expense", accountId: transaction.accountId, categoryId: transaction.categoryId };
     case "refund":
@@ -1642,6 +1652,124 @@ describe("integrity gate", () => {
     const arrived = applyOperations(early, journal.filter((item) => item.targetId === MEMBER_PETR));
     expect(attributed(arrived)?.memberId).toBe(MEMBER_PETR);
     expect(arrived.integrity.problems).toEqual([]);
+  });
+
+  it("carries the category of an income on a transaction across devices, and never lets the label cost the money", () => {
+    // The same round trip as the participant's, for the second label a transaction carries.
+    // The codec listed the fields of an income exactly and had no place for a category, so a
+    // categorised income was rejected outright: the category lived on the device it was typed
+    // on and no other device in the family ever saw it.
+    const journal = buildFixtureJournal();
+    const income = (snapshot: JournalSnapshot): Transaction | undefined =>
+      snapshot.state.transactions.find((item) => item.id === SALARY_INCOME_ID);
+    const filedUnder = (snapshot: JournalSnapshot): string | undefined => {
+      const found = income(snapshot);
+      return found !== undefined && found.kind === "income" ? found.categoryId : undefined;
+    };
+    const incomeMinor = (snapshot: JournalSnapshot): number => calculateBudget(snapshot.state).incomeMinor;
+    const plain = applyJournal(journal);
+
+    // An income written before income had categories carries none, and no pass over the
+    // journal may hand it one: an absent category and an empty one are different values.
+    expect(income(plain) !== undefined && "categoryId" in income(plain)!).toBe(false);
+    expect(plain.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+
+    const salary = parseOperation({
+      opId: opUuid(991),
+      deviceId: DEVICE_B,
+      lamport: 800,
+      memberId: MEMBER_ANNA,
+      entity: "category",
+      action: "create",
+      targetId: SALARY_CATEGORY_ID,
+      fields: { name: "Зарплата", type: "income", group: "income", active: true, sortOrder: 10 },
+    });
+    const filed = parseOperation({
+      opId: opUuid(992),
+      deviceId: DEVICE_B,
+      lamport: 801,
+      memberId: MEMBER_ANNA,
+      entity: "transaction",
+      action: "update",
+      targetId: SALARY_INCOME_ID,
+      fields: {
+        kind: "income",
+        occurredOn: "2026-07-01",
+        status: "posted",
+        amountMinor: 18_000_000,
+        accountId: MAIN_ACCOUNT_ID,
+        categoryId: SALARY_CATEGORY_ID,
+      },
+    });
+
+    const shown = applyJournal([...journal, salary, filed]);
+    expect(shown.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(filedUnder(shown)).toBe(SALARY_CATEGORY_ID);
+    // A label, and labels do not move money: the family's income is what it was.
+    expect(incomeMinor(shown)).toBe(incomeMinor(plain));
+    // And through storage: a snapshot recomputes its state from the entries it validated, so
+    // a category that did not survive the entry would be lost on the next start of the device.
+    expect(filedUnder(restoreJournal(JSON.parse(JSON.stringify(shown)) as unknown))).toBe(SALARY_CATEGORY_ID);
+
+    // Now the category is deleted while the income is in flight — ordinary concurrency, and
+    // the same case as a deleted participant. The domain refuses an income filed under nothing,
+    // so the state may not keep it; but withholding the income the way an unresolved account is
+    // withheld would take the family's salary out of its own income figure, and one delete
+    // would then quietly move the totals everybody else reads. The label goes, the money stays.
+    const deleted = parseOperation({
+      opId: opUuid(993),
+      deviceId: DEVICE_C,
+      lamport: 802,
+      entity: "category",
+      action: "delete",
+      targetId: SALARY_CATEGORY_ID,
+    });
+    const forgotten = applyJournal([...journal, salary, filed, deleted]);
+    const kept = income(forgotten);
+    expect(kept?.amountMinor).toBe(18_000_000);
+    expect(kept !== undefined && "categoryId" in kept).toBe(false);
+    expect(forgotten.integrity.ready).toBe(true);
+    expect(forgotten.integrity.withheld).toEqual([]);
+    expect(forgotten.integrity.problems).toEqual([
+      { code: "unknown_reference", entity: "transaction", id: SALARY_INCOME_ID },
+    ]);
+    expect(incomeMinor(forgotten)).toBe(incomeMinor(plain));
+
+    // The other half of the same case: the category resolves and it is an expense category,
+    // which one device can produce by retyping a category another device is filing income
+    // under. Reported under the code the gate already uses for a category of the wrong side,
+    // and answered the same way, because it is still a label.
+    const retyped = parseOperation({
+      opId: opUuid(994),
+      deviceId: DEVICE_C,
+      lamport: 803,
+      entity: "category",
+      action: "update",
+      targetId: SALARY_CATEGORY_ID,
+      fields: { name: "Зарплата", type: "expense", group: "everyday", active: true, sortOrder: 10 },
+    });
+    const mistyped = applyJournal([...journal, salary, filed, retyped]);
+    expect(filedUnder(mistyped)).toBeUndefined();
+    expect(income(mistyped)?.amountMinor).toBe(18_000_000);
+    expect(mistyped.integrity.ready).toBe(true);
+    expect(mistyped.integrity.withheld).toEqual([]);
+    expect(mistyped.integrity.problems).toEqual([
+      { code: "wrong_category_type", entity: "transaction", id: SALARY_INCOME_ID },
+    ]);
+    expect(incomeMinor(mistyped)).toBe(incomeMinor(plain));
+    expect(calculateBudget(mistyped.state).expensesMinor).toBe(calculateBudget(plain.state).expensesMinor);
+
+    // A category that has not arrived yet is the last half of it, and the gate keeps nothing
+    // of its own between passes: the label comes back by itself on the pass after the
+    // operation that creates the category is delivered.
+    const early = applyJournal([...journal, filed]);
+    expect(filedUnder(early)).toBeUndefined();
+    expect(early.integrity.problems).toEqual([
+      { code: "unknown_reference", entity: "transaction", id: SALARY_INCOME_ID },
+    ]);
+    const arrivedCategory = applyOperations(early, [salary]);
+    expect(filedUnder(arrivedCategory)).toBe(SALARY_CATEGORY_ID);
+    expect(arrivedCategory.integrity.problems).toEqual([]);
   });
 
   it("settles a category planned twice by the total order, not by the name of the line", () => {

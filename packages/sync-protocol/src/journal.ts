@@ -667,6 +667,9 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
   const missing = withheldFor("transaction", id, "unknown_reference");
   switch (transaction.kind) {
     case "income":
+      // The account decides whether an income can be shown at all; its category never does.
+      // A category on an income is a label, and an unresolved label is cleared rather than
+      // withheld — see clearUnresolvedLabels for why the money may not go down with it.
       return live.accounts.has(transaction.accountId) ? null : missing;
     case "expense":
       if (!live.accounts.has(transaction.accountId)) return missing;
@@ -700,34 +703,69 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
 }
 
 /**
- * Clears an attribution whose participant the journal does not hold, and says so out loud.
+ * Why the category on an income cannot stand, or null while it can.
  *
- * The state has to be one the domain accepts, and `calculateMemberExpenses` refuses a
- * transaction whose `memberId` names nobody. But the answer cannot be the one an unresolved
- * account or category gets: a family deleting a participant is an ordinary thing to do, and
- * doing it while another device labels an expense is ordinary concurrency. If the expense went
- * down with the label, deleting one participant would quietly take every purchase ever
- * attributed to them out of the family's budget, and the totals on the screen would be wrong
- * rather than merely incomplete. It would also be a lever: one delete, and whichever spending
- * the deleter chose to have attributed disappears from the money everybody else is reading.
- * The domain draws the same line from its own side — attribution is a label, and no headline
- * figure may move because a label was added, changed or dropped.
- *
- * So the transaction stays, to the kopeck, and only the label goes. It is reported as an
- * `unknown_reference` about the transaction, because nothing may disappear silently, and
- * nothing is withheld for it: the transaction is on the screen and counted, and it is merely
- * attributed to nobody. If the operation that creates the participant is only late, the label
- * comes back by itself on the pass after it arrives — this reads the converged journal and
- * keeps nothing of its own between passes.
+ * The domain accepts an income with no category and an income filed under a category of type
+ * `income`, and refuses everything between: a category that is not in the state, and a category
+ * of the wrong type. The two answers are told apart here exactly as {@link expenseCategoryProblem}
+ * tells them apart on the expense side, so one wrong reference does not report itself under two
+ * different codes depending on which side of the ledger it is on.
  */
-function clearUnknownAttribution(live: LiveEntities, report: (problem: JournalProblem) => void): void {
+function incomeCategoryCode(live: LiveEntities, categoryId: StableId): JournalProblemCode | null {
+  const category = live.categories.get(categoryId);
+  if (category === undefined) return "unknown_reference";
+  if (category.type !== "income") return "wrong_category_type";
+  return null;
+}
+
+/**
+ * Clears a label whose referent the journal does not hold, and says so out loud.
+ *
+ * Two labels reach a transaction this way — the participant credited with it, and the category
+ * an income is filed under — and both are governed by the one rule written here rather than by a
+ * rule each, because the case is the same case.
+ *
+ * The state has to be one the domain accepts, and it refuses both: `calculateMemberExpenses`
+ * refuses a transaction whose `memberId` names nobody, and `calculateBudget` refuses an income
+ * whose `categoryId` names nothing or names an expense category. But the answer cannot be the one
+ * an unresolved account or an expense category gets: a family deleting a participant, or deleting
+ * a category it no longer uses, is an ordinary thing to do, and doing it while another device
+ * labels a transaction is ordinary concurrency. If the transaction went down with the label,
+ * deleting one participant would quietly take every purchase ever attributed to them out of the
+ * family's budget, and deleting one income category would take the salary filed under it out of
+ * the family's income — the totals on the screen would then be wrong rather than merely
+ * incomplete. It would also be a lever: one delete, and whichever money the deleter chose to have
+ * labelled disappears from the figures everybody else is reading. The domain draws the same line
+ * from its own side — both fields are labels, no figure in `BudgetMetrics` reads either, and no
+ * headline figure may move because a label was added, changed or dropped.
+ *
+ * So the transaction stays, to the kopeck, and only the label goes. It is reported about the
+ * transaction — `unknown_reference` when the referent is not there, `wrong_category_type` when an
+ * income names a category of the wrong side — because nothing may disappear silently; and nothing
+ * is withheld for it, since the transaction is on the screen and counted and is merely labelled
+ * with less. If the operation that creates the participant or the category is only late, the label
+ * comes back by itself on the pass after it arrives — this reads the converged journal and keeps
+ * nothing of its own between passes.
+ */
+function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProblem) => void): void {
   for (const [id, transaction] of live.transactions) {
     // Read first, copied only when there is something to clear: this runs over every
     // transaction of the journal on every materialisation, and almost none of them need it.
-    if (transaction.memberId === undefined || live.members.has(transaction.memberId)) continue;
-    const { memberId: _unknown, ...unlabelled } = transaction;
-    live.transactions.set(id, unlabelled);
-    report(problem("unknown_reference", "transaction", id));
+    let cleared: Transaction = transaction;
+    if (cleared.memberId !== undefined && !live.members.has(cleared.memberId)) {
+      const { memberId: _unknown, ...unlabelled } = cleared;
+      cleared = unlabelled;
+      report(problem("unknown_reference", "transaction", id));
+    }
+    if (cleared.kind === "income" && cleared.categoryId !== undefined) {
+      const code = incomeCategoryCode(live, cleared.categoryId);
+      if (code !== null) {
+        const { categoryId: _unresolved, ...uncategorised } = cleared;
+        cleared = uncategorised;
+        report(problem(code, "transaction", id));
+      }
+    }
+    if (cleared !== transaction) live.transactions.set(id, cleared);
   }
 }
 
@@ -1121,8 +1159,9 @@ function buildView(
   rejectDuplicateBudgetLines(live, owners, report, record);
   dropDanglingEntities(live, report, record);
   // After the sweep, so that a transaction already on its way out is not reported twice over,
-  // and after resolveSharedIdentifiers, which is the one step that can take a participant out.
-  clearUnknownAttribution(live, report);
+  // and after resolveSharedIdentifiers, which is the one step that can take a participant or a
+  // category out without a delete having been written for it.
+  clearUnresolvedLabels(live, report);
   reportAggregateBounds(live, report);
   reportTombstoneBudget(ordered, confirmedDevices(live, owners), report);
   reportImplausibleStamps(ordered, activations.values(), report);
