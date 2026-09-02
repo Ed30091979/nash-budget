@@ -8,6 +8,34 @@ import {
   networkStatusPresentation,
 } from "./App";
 
+interface CssRule {
+  readonly selectors: readonly string[];
+  readonly declarations: readonly string[];
+}
+
+/**
+ * Плоский разбор правил таблицы стилей.
+ *
+ * Внутренние фигурные скобки `@media` не дают прелюдии сойтись за селектор, поэтому вложенные
+ * правила попадают сюда наравне с верхнеуровневыми — и это то, что нужно: утверждение «кольца нет
+ * нигде» обязано видеть и правило, спрятанное под медиазапросом.
+ */
+function cssRules(styles: string): CssRule[] {
+  return [...styles.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map(
+    (rule) => ({
+      selectors: (rule[1] ?? "").split(",").map((selector) => selector.trim()).filter(Boolean),
+      declarations: (rule[2] ?? "").split(";").map((declaration) => declaration.trim()).filter(Boolean),
+    }),
+  );
+}
+
+function outlineOf(rules: readonly CssRule[], selector: string): string[] {
+  return rules
+    .filter((rule) => rule.selectors.includes(selector))
+    .flatMap((rule) => rule.declarations)
+    .filter((declaration) => declaration.startsWith("outline:"));
+}
+
 describe("phase 8 accessibility and responsive contract", () => {
   it("focuses the route heading without requiring a pre-existing tab stop", () => {
     const focus = vi.fn();
@@ -115,5 +143,52 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: "true" } })).toBe(false);
     expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: () => { throw new Error("untrusted bridge"); } } })).toBe(false);
     expect(isCapacitorNativeRuntime({})).toBe(false);
+  });
+
+  it("не рисует рамку вокруг программно сфокусированного заголовка, но рисует её на кнопке", () => {
+    const rules = cssRules(readFileSync(new URL("./styles.css", import.meta.url), "utf8"));
+
+    // Заголовок маршрута: фокус ставится кодом ради объявления смены экрана — кольца там нет.
+    expect(outlineOf(rules, 'h1[tabindex="-1"]:focus')).toEqual(["outline: none"]);
+    expect(outlineOf(rules, 'h1[tabindex="-1"]:focus-visible')).toEqual(["outline: none"]);
+    // Ни одно правило во всей таблице не возвращает заголовку онбординга рамку.
+    expect(
+      rules.filter(
+        (rule) =>
+          rule.selectors.some((selector) => selector.includes("#onboarding-title")) &&
+          rule.declarations.some((declaration) => declaration.startsWith("outline:")),
+      ),
+    ).toEqual([]);
+
+    // Настоящий фокус — на том, что нажимают и заполняют, — остаётся видимым.
+    for (const selector of [
+      "button:focus-visible",
+      "input:focus-visible",
+      "select:focus-visible",
+      "a:focus-visible",
+      "#categories:focus-visible",
+      "#composition:focus-visible",
+      ".composition-options label:has(input:focus-visible)",
+    ]) {
+      expect(outlineOf(rules, selector)).toContain("outline: 3px solid var(--focus)");
+    }
+
+    // Выключено кольцо ровно у заголовка и больше ни у чего: список — часть контракта.
+    expect(
+      rules
+        .filter((rule) => rule.declarations.includes("outline: none"))
+        .flatMap((rule) => rule.selectors),
+    ).toEqual(['h1[tabindex="-1"]:focus', 'h1[tabindex="-1"]:focus-visible']);
+  });
+
+  it("держит шаги онбординга нажимаемыми целями с клавиатурным фокусом", () => {
+    const rules = cssRules(readFileSync(new URL("./styles.css", import.meta.url), "utf8"));
+    const step = rules.find((rule) => rule.selectors.includes(".step-progress-step"));
+
+    // Кнопка, а не span: кольцо ей достаётся общим правилом button:focus-visible.
+    expect(step?.declarations).toContain("min-height: 48px");
+    expect(outlineOf(rules, ".step-progress-step")).toEqual([]);
+    expect(rules.find((rule) => rule.selectors.includes(".step-progress ol"))?.declarations)
+      .toContain("gap: 8px");
   });
 });

@@ -53,6 +53,36 @@ describe("onboarding UI contract", () => {
     expect(app).not.toContain("progress-value");
     expect(styles).toContain(".progress-track::-webkit-progress-value");
     expect(styles).toContain(".progress-track::-moz-progress-bar");
-    expect(component).toContain('4: "Повседневные лимиты"');
+    expect(model).toContain('4: "Повседневные лимиты"');
+  });
+
+  it("даёт индикатору шагов вернуть назад и не пускает вперёд", () => {
+    const html = renderToStaticMarkup(<Onboarding onComplete={async () => undefined} onDemo={async () => undefined} />);
+    const component = readFileSync(new URL("./Onboarding.tsx", import.meta.url), "utf8");
+
+    expect(html).toContain('<nav class="step-progress" aria-label="Шаги настройки">');
+    expect(html.match(/class="step-progress-step /gu)).toHaveLength(4);
+    expect(html).toContain('class="step-progress-step current"');
+    expect(html.match(/class="step-progress-step upcoming"/gu)).toHaveLength(3);
+    expect(html).not.toContain("step-progress-step done");
+    // Первый шаг: возвращаться некуда, поэтому в индикаторе не нажимается ни одна кнопка.
+    expect(html.match(/class="step-progress-step [a-z]+" type="button"[^>]*disabled=""/gu)).toHaveLength(4);
+    expect(html).toContain('aria-current="step" aria-label="Шаг 1: План и счёт. Текущий шаг"');
+    expect(html).toContain('aria-label="Шаг 4: Повседневные лимиты. Ещё не пройден"');
+    expect(html).toContain('<span class="step-progress-number" aria-hidden="true">4</span>');
+    // Нажимается только пройденный шаг, и уводит его туда та же модель, что запрещает шаг вперёд.
+    expect(component).toContain('disabled={state !== "done" || busy}');
+    expect(component).toContain("onClick={() => goToStep(value)}");
+    expect(component).toContain("setNavigation((current) => returnToOnboardingStep(current, target));");
+    expect(component).toContain("onClick={() => goToStep(moveOnboardingStep(step, \"back\"))}");
+    expect(component).not.toMatch(/setStep\(/u);
+  });
+
+  it("называет шаг вместо команды и не показывает старую формулировку", () => {
+    const html = renderToStaticMarkup(<Onboarding onComplete={async () => undefined} onDemo={async () => undefined} />);
+
+    expect(html).toContain('<h1 id="onboarding-title" tabindex="-1">План и счёт</h1>');
+    expect(html).not.toContain("Назовите план");
+    expect(html).toContain("Шаг 1 из 4");
   });
 });

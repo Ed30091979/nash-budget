@@ -1,9 +1,10 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type BudgetState } from "@family-budget/domain";
 import {
+  advanceOnboardingStep,
   buildOnboardingBudgetState,
   createAsyncOperationLock,
-  createInitialOnboardingDraft,
+  createInitialOnboardingNavigation,
   HOUSEHOLD_COMPOSITION_LABELS,
   MAX_ONBOARDING_PERIOD_START,
   type EverydayCategoryDraft,
@@ -12,6 +13,11 @@ import {
   onboardingFailureMessage,
   type OnboardingDraft,
   type OnboardingStep,
+  onboardingStepButtonLabel,
+  onboardingStepState,
+  ONBOARDING_STEP_TITLES,
+  ONBOARDING_STEPS,
+  returnToOnboardingStep,
   validateOnboardingStep,
 } from "./model";
 
@@ -19,13 +25,6 @@ interface OnboardingProps {
   readonly onComplete: (state: BudgetState) => Promise<void>;
   readonly onDemo: () => Promise<void>;
 }
-
-const stepTitles: Record<OnboardingStep, string> = {
-  1: "Назовите план",
-  2: "Выберите период",
-  3: "Доход и обязательное",
-  4: "Повседневные лимиты",
-};
 
 function ErrorText({ id, message }: { id: string; message?: string }) {
   return message ? <span className="field-error" id={`${id}-error`}>{message}</span> : null;
@@ -43,8 +42,8 @@ function firstErrorId(errors: Readonly<Record<string, string>>): string | undefi
 }
 
 export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
-  const [draft, setDraft] = useState<OnboardingDraft>(() => createInitialOnboardingDraft());
-  const [step, setStep] = useState<OnboardingStep>(1);
+  const [navigation, setNavigation] = useState(createInitialOnboardingNavigation);
+  const { draft, step } = navigation;
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -56,7 +55,15 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
   }, [step]);
 
   const patchDraft = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+    setNavigation((current) => ({ ...current, draft: { ...current.draft, [key]: value } }));
+    setErrors({});
+    setSaveError(null);
+  };
+
+  // Возврат по индикатору и кнопка «Назад» — одна и та же дорога: черновик остаётся, ошибки
+  // прошлой проверки снимаются, а вперёд отсюда не уехать — это решает модель, не разметка.
+  const goToStep = (target: OnboardingStep) => {
+    setNavigation((current) => returnToOnboardingStep(current, target));
     setErrors({});
     setSaveError(null);
   };
@@ -81,7 +88,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
       return;
     }
     if (step < 4) {
-      setStep(moveOnboardingStep(step, "forward"));
+      setNavigation(advanceOnboardingStep);
       setErrors({});
       return;
     }
@@ -120,12 +127,29 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
           <span className="brand-mark" aria-hidden="true">₽</span>
           <div>
             <p className="onboarding-kicker">Шаг {step} из 4</p>
-            <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>{stepTitles[step]}</h1>
+            <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>{ONBOARDING_STEP_TITLES[step]}</h1>
           </div>
         </header>
-        <div className="step-progress" aria-label={`Выполнено ${step} из 4 шагов`}>
-          {[1, 2, 3, 4].map((value) => <span className={value <= step ? "active" : ""} key={value} />)}
-        </div>
+        <nav className="step-progress" aria-label="Шаги настройки">
+          <ol>
+            {ONBOARDING_STEPS.map((value) => {
+              const state = onboardingStepState(value, step);
+              return <li key={value}>
+                <button
+                  className={`step-progress-step ${state}`}
+                  type="button"
+                  aria-current={state === "current" ? "step" : undefined}
+                  aria-label={onboardingStepButtonLabel(value, step)}
+                  disabled={state !== "done" || busy}
+                  onClick={() => goToStep(value)}
+                >
+                  <span className="step-progress-bar" aria-hidden="true" />
+                  <span className="step-progress-number" aria-hidden="true">{value}</span>
+                </button>
+              </li>;
+            })}
+          </ol>
+        </nav>
 
         <form className="onboarding-form" aria-busy={busy} onSubmit={(event) => void submit(event)} noValidate>
           <fieldset className="onboarding-fields" disabled={busy}>
@@ -211,7 +235,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
 
           {saveError ? <p className="onboarding-save-error" role="alert">{saveError} Данные не были опубликованы.</p> : null}
           <div className="onboarding-actions">
-            {step > 1 ? <button className="secondary-button" type="button" onClick={() => { setStep(moveOnboardingStep(step, "back")); setErrors({}); setSaveError(null); }}>Назад</button> : <span />}
+            {step > 1 ? <button className="secondary-button" type="button" onClick={() => goToStep(moveOnboardingStep(step, "back"))}>Назад</button> : <span />}
             <button className="primary-button" type="submit">{busy ? "Сохраняем…" : step === 4 ? "Создать бюджет" : "Далее"}</button>
           </div>
           </fieldset>

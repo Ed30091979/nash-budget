@@ -2,15 +2,23 @@ import { calculateAnnualPlan } from "@family-budget/domain";
 import { categoryPickerView } from "../features/operations/category-picker";
 import { describe, expect, it } from "vitest";
 import {
+  advanceOnboardingStep,
   buildOnboardingBudgetState,
+  canReturnToOnboardingStep,
   createAsyncOperationLock,
   createInitialOnboardingDraft,
+  createInitialOnboardingNavigation,
   MAX_ONBOARDING_PERIOD_START,
   moveOnboardingStep,
   normalizeOnboardingLabel,
   onboardingFailureMessage,
   type OnboardingDraft,
   type OnboardingStep,
+  onboardingStepButtonLabel,
+  onboardingStepState,
+  ONBOARDING_STEP_TITLES,
+  ONBOARDING_STEPS,
+  returnToOnboardingStep,
   validateCompleteOnboarding,
   validateOnboardingStep,
 } from "./model";
@@ -307,5 +315,69 @@ describe("onboarding model", () => {
   it("не строит модель при повторе UUID", () => {
     expect(() => buildOnboardingBudgetState(validDraft(), () => "00000000-0000-4000-8000-000000000001"))
       .toThrow(/\u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d/iu);
+  });
+
+  it("возвращает на любой пройденный шаг, не трогая введённое", () => {
+    const draft = validDraft();
+    const atStepFour = { step: 4 as OnboardingStep, draft };
+
+    const first = returnToOnboardingStep(atStepFour, 1);
+    expect(first.step).toBe(1);
+    // Тот же объект, а не копия: возврат физически не может стереть введённое.
+    expect(first.draft).toBe(draft);
+    expect(returnToOnboardingStep(atStepFour, 2).draft).toBe(draft);
+    expect(returnToOnboardingStep(atStepFour, 3).step).toBe(3);
+  });
+
+  it("не пускает вперёд по индикатору — ни на шаг, ни через шаг", () => {
+    const draft = validDraft();
+    const atStepTwo = { step: 2 as OnboardingStep, draft };
+
+    expect(returnToOnboardingStep(atStepTwo, 3)).toBe(atStepTwo);
+    expect(returnToOnboardingStep(atStepTwo, 4)).toBe(atStepTwo);
+    expect(returnToOnboardingStep(atStepTwo, 2)).toBe(atStepTwo);
+    expect(canReturnToOnboardingStep(1, 2)).toBe(true);
+    for (const [target, current] of [[2, 2], [3, 2], [4, 2], [4, 1]] as const) {
+      expect(canReturnToOnboardingStep(target, current)).toBe(false);
+    }
+  });
+
+  it("ведёт вперёд только через шаг за шагом и упирается в четвёртый", () => {
+    const draft = validDraft();
+    const start = createInitialOnboardingNavigation(draft);
+    expect(start).toEqual({ step: 1, draft });
+
+    const second = advanceOnboardingStep(start);
+    expect(second.step).toBe(2);
+    expect(second.draft).toBe(draft);
+    const last = advanceOnboardingStep(advanceOnboardingStep(second));
+    expect(last.step).toBe(4);
+    expect(advanceOnboardingStep(last)).toBe(last);
+  });
+
+  it("размечает индикатор: пройден, текущий, ещё впереди", () => {
+    expect(ONBOARDING_STEPS).toEqual([1, 2, 3, 4]);
+    expect(ONBOARDING_STEPS.map((step) => onboardingStepState(step, 3)))
+      .toEqual(["done", "done", "current", "upcoming"]);
+    expect(onboardingStepButtonLabel(1, 3)).toBe("Шаг 1: План и счёт. Пройден, можно вернуться");
+    expect(onboardingStepButtonLabel(3, 3)).toBe("Шаг 3: Доход и платежи. Текущий шаг");
+    expect(onboardingStepButtonLabel(4, 3)).toBe("Шаг 4: Повседневные лимиты. Ещё не пройден");
+    // Видимая подпись кнопки — одна цифра; §9 требует, чтобы она осталась внутри произносимой.
+    for (const step of ONBOARDING_STEPS) {
+      expect(onboardingStepButtonLabel(step, 3)).toContain(`${step}`);
+    }
+  });
+
+  it("называет шаги тем, что на них происходит, а не командой", () => {
+    expect(ONBOARDING_STEP_TITLES).toEqual({
+      1: "План и счёт",
+      2: "Период и валюта",
+      3: "Доход и платежи",
+      4: "Повседневные лимиты",
+    });
+    for (const title of Object.values(ONBOARDING_STEP_TITLES)) {
+      expect(title).not.toMatch(/^(?:назовите|выберите|введите|укажите|заполните|давайте)\b/iu);
+      expect(title.endsWith("!")).toBe(false);
+    }
   });
 });

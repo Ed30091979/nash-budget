@@ -17,6 +17,23 @@ export const HOUSEHOLD_COMPOSITION_LABELS: Readonly<Record<HouseholdComposition,
   family: "Для семьи",
 };
 
+export const ONBOARDING_STEPS: readonly OnboardingStep[] = [1, 2, 3, 4];
+
+/**
+ * Заголовки шагов называют то, что на шаге происходит.
+ *
+ * Не команда и не приветствие: человек уже открыл настройку и знает, что настраивает бюджет, —
+ * ему нужно понять, о чём именно этот экран. Слова взяты те же, какими остальное приложение зовёт
+ * эти же вещи, чтобы «повседневные лимиты» при настройке и «повседневные лимиты» на главном
+ * экране читались как одно и то же, а не как два разных понятия.
+ */
+export const ONBOARDING_STEP_TITLES: Readonly<Record<OnboardingStep, string>> = {
+  1: "План и счёт",
+  2: "Период и валюта",
+  3: "Доход и платежи",
+  4: "Повседневные лимиты",
+};
+
 export interface EverydayCategoryDraft {
   readonly key: string;
   readonly name: string;
@@ -183,6 +200,84 @@ export function moveOnboardingStep(
 ): OnboardingStep {
   const delta = direction === "forward" ? 1 : -1;
   return Math.min(4, Math.max(1, step + delta)) as OnboardingStep;
+}
+
+export type OnboardingStepState = "done" | "current" | "upcoming";
+
+/**
+ * Состояние шага в индикаторе: пройден, текущий, ещё впереди.
+ */
+export function onboardingStepState(
+  target: OnboardingStep,
+  current: OnboardingStep,
+): OnboardingStepState {
+  if (target === current) return "current";
+  return target < current ? "done" : "upcoming";
+}
+
+/**
+ * Индикатор шагов ведёт назад и только назад.
+ *
+ * Вперёд ведёт «Далее» — и только через проверку текущего шага. Шаг, пройденный раньше, мог стать
+ * неверным после правки соседнего поля, поэтому «я тут уже был» — не основание пропустить проверку.
+ */
+export function canReturnToOnboardingStep(
+  target: OnboardingStep,
+  current: OnboardingStep,
+): boolean {
+  return target < current;
+}
+
+/**
+ * Подпись шага для читающих с экрана: номер, о чём шаг и можно ли туда вернуться.
+ *
+ * Видимая подпись — одна цифра, и без этой строки кнопка звучала бы как «один». Номер в ней
+ * сохранён, чтобы сказанное вслух совпадало с написанным на экране.
+ */
+export function onboardingStepButtonLabel(
+  target: OnboardingStep,
+  current: OnboardingStep,
+): string {
+  const title = ONBOARDING_STEP_TITLES[target];
+  switch (onboardingStepState(target, current)) {
+    case "current":
+      return `Шаг ${target}: ${title}. Текущий шаг`;
+    case "done":
+      return `Шаг ${target}: ${title}. Пройден, можно вернуться`;
+    default:
+      return `Шаг ${target}: ${title}. Ещё не пройден`;
+  }
+}
+
+export interface OnboardingNavigation {
+  readonly step: OnboardingStep;
+  readonly draft: OnboardingDraft;
+}
+
+export function createInitialOnboardingNavigation(
+  draft: OnboardingDraft = createInitialOnboardingDraft(),
+): OnboardingNavigation {
+  return { step: 1, draft };
+}
+
+/**
+ * Возврат на пройденный шаг.
+ *
+ * Черновик переносится тем же объектом, а не собирается заново: возврат существует, чтобы
+ * посмотреть и поправить введённое, и потерять его по дороге он не вправе. Шаг вперёд отсюда
+ * недостижим — состояние возвращается прежним, и экран не меняется.
+ */
+export function returnToOnboardingStep(
+  state: OnboardingNavigation,
+  target: OnboardingStep,
+): OnboardingNavigation {
+  if (!canReturnToOnboardingStep(target, state.step)) return state;
+  return { step: target, draft: state.draft };
+}
+
+export function advanceOnboardingStep(state: OnboardingNavigation): OnboardingNavigation {
+  const next = moveOnboardingStep(state.step, "forward");
+  return next === state.step ? state : { step: next, draft: state.draft };
 }
 
 export function validateCompleteOnboarding(draft: OnboardingDraft): OnboardingStepValidation {

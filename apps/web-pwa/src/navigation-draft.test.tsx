@@ -56,6 +56,35 @@ describe("draft-safe navigation", () => {
     },
   );
 
+  it("оставляет дорогу домой одним нажатием с любого экрана", () => {
+    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    // Ключи проверяются типом: новый экран не пройдёт мимо этого списка.
+    const screens = Object.keys({
+      today: 1, year: 1, planning: 1, operations: 1, more: 1, family: 1,
+    } satisfies Record<Screen, number>) as Screen[];
+
+    for (const screen of screens.filter((value) => value !== "today")) {
+      expect(shouldChangeScreen(screen, "today", false, () => false)).toBe(true);
+    }
+
+    // Панель разделов нарисована один раз на всю оболочку, до переключателя экранов, — поэтому
+    // «Сегодня» доступно и с планирования, и с экрана семьи, куда ведёт только «Назад» внутри них.
+    const shell = source.slice(source.indexOf('<div className="app-shell">'));
+    expect(shell.indexOf('<nav className="bottom-nav"')).toBeGreaterThan(-1);
+    expect(shell.indexOf('<nav className="bottom-nav"')).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));
+    expect(source).toContain('label="Сегодня" onClick={() => navigate("today")}');
+    expect(source).toContain('active={screen === "year" || screen === "planning"}');
+    expect(source).toContain('active={screen === "more" || screen === "family"}');
+
+    // И ничто её не прячет: ни узкий экран, ни альбомная ориентация.
+    const navRules = [...styles.matchAll(/([^{}]*\.bottom-nav[^{}]*)\{([^{}]*)\}/gu)];
+    expect(navRules.length).toBeGreaterThan(0);
+    for (const rule of navRules) {
+      expect(rule[2]).not.toMatch(/display:\s*none|visibility:\s*hidden/u);
+    }
+  });
+
   it("protects browser unload only while a draft is dirty", () => {
     const cleanEvent = {
       preventDefault: vi.fn(),
