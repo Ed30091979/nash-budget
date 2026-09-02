@@ -171,7 +171,5 @@ export const MAX_INVITE_BOX_BYTES = 1024;
 export const MAX_KEY_WRAP_BYTES = 128;
 /** `rotateConfirm` (5.4) is a MAC. */
 export const MAX_EPOCH_CONFIRM_BYTES = 128;
-/** 3.2: identifiers. */
-export const MAX_ID_LENGTH = 128;
 /** Long enough for any address, short enough not to be a storage decision. */
 export const MAX_EMAIL_LENGTH = 254;

@@ -292,6 +292,75 @@ test("a rotation is cancelled after 30 idle minutes and after 6 hours regardless
   expect(afterCeiling.json().rotation).toBeNull();
 });
 
+test("the sender is told the rotationId of the epoch in force, and never states it", async () => {
+  harness = createHarness();
+  const { owner, family, member } = await familyOfTwo(harness);
+
+  // 5.5, last part: both values an out-of-rotation wrap is made with — the epoch in force and the
+  // `rotationId` that produced it — the sender learns from the server. This is the owner after a
+  // reload, holding nothing of the family creation: without an answer here the wrap for a second
+  // phone could only be guessed at, and a guessed `rotationId` gives an AAD that disagrees with
+  // the row the server stamps beside it, so the receiver's unwrap fails every time.
+  const url = `/v1/families/${family.familyId}/keys`;
+  const seen = await call(harness, "GET", url, { token: owner.accessToken });
+  expect(seen.statusCode).toBe(200);
+  expect(seen.json()).toMatchObject({ keyEpoch: 1, rotationId: family.rotationId });
+
+  const wrap = {
+    deviceId: member.deviceId,
+    salt: Buffer.alloc(32, 1).toString("base64"),
+    iv: Buffer.alloc(12, 2).toString("base64"),
+    ciphertext: Buffer.alloc(48, 3).toString("base64"),
+  };
+  // Told, never taken. The body has no room for the value even when the sender knows it, which is
+  // the half of 2.2 that the answer above must not undo.
+  const named = await call(harness, "POST", url, {
+    token: owner.accessToken,
+    payload: { ...wrap, rotationId: family.rotationId },
+  });
+  expect(named.statusCode).toBe(400);
+  expect(named.json().error.code).toBe("invalid_request");
+
+  // The refused request left the slot free, and the wrap made from the served values is recorded
+  // under exactly them.
+  const issued = await call(harness, "POST", url, { token: owner.accessToken, payload: wrap });
+  expect(issued.statusCode).toBe(201);
+  expect(issued.json().rotationId).toBe(family.rotationId);
+  const received = await call(harness, "GET", url, { token: member.accessToken });
+  expect(received.json()).toMatchObject({ keyEpoch: 1, rotationId: family.rotationId });
+  expect(received.json().wraps[0].rotationId).toBe(family.rotationId);
+
+  // The audience is the family and nothing wider: 5.6 makes any member a possible sender, and
+  // nobody outside one. The refusal carries no part of the value it refuses.
+  const stranger = await signIn(harness);
+  await createFamily(harness, stranger);
+  const outside = await call(harness, "GET", url, { token: stranger.accessToken });
+  expect(outside.statusCode).toBe(403);
+  expect(outside.json().error.code).toBe("forbidden");
+  expect(outside.json().rotationId).toBeUndefined();
+  expect(outside.body).not.toContain(family.rotationId);
+
+  // And it is the identifier of the epoch *in force*, so a rotation moves it. The value of the
+  // first epoch is not served once the second one is switched on.
+  const second = uuid();
+  expect(second).not.toBe(family.rotationId);
+  await call(harness, "POST", `/v1/families/${family.familyId}/rotation`, {
+    token: owner.accessToken,
+    payload: { rotationId: second },
+  });
+  await call(harness, "POST", `/v1/families/${family.familyId}/rotation/keys`, {
+    token: owner.accessToken,
+    payload: { rotationId: second, epochConfirm: Buffer.alloc(32, 8).toString("base64"), wraps: [] },
+  });
+  const completed = await call(harness, "POST", `/v1/families/${family.familyId}/rotation/complete`, {
+    token: owner.accessToken,
+    payload: { rotationId: second },
+  });
+  expect(completed.statusCode).toBe(200);
+  const afterwards = await call(harness, "GET", url, { token: owner.accessToken });
+  expect(afterwards.json()).toMatchObject({ keyEpoch: 2, rotationId: second });
+}, 60_000);
+
 test("an out-of-rotation wrap is written once and never replaced", async () => {
   harness = createHarness();
   const { owner, family, member } = await familyOfTwo(harness);

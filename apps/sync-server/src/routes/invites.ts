@@ -34,7 +34,7 @@ import {
   SHA256_BYTES,
 } from "../limits.ts";
 import { decodeBytes } from "./decode.ts";
-import { base64Field, body, epochField, identifierField, uuidField } from "./fields.ts";
+import { base64Field, body, epochField, uuidField } from "./fields.ts";
 
 /**
  * The wire record as it travels in JSON: byte fields base64, everything else unchanged.
@@ -85,6 +85,45 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
    */
   const sweepExpiredInvites = (): void => {
     context.db.prepare("DELETE FROM invite WHERE expires_at <= ?").run(context.now());
+  };
+
+  /**
+   * The failure counters 5.3 puts on the acceptance of an invite: per account and per IP, no more
+   * than `5` failed attempts in `15` minutes and `20` in a day. Stored, not held in memory — a
+   * process bounce would otherwise reset the one counter that stands between a copied invite box
+   * and a `60`-bit code.
+   *
+   * One pair of buckets for both steps of 5.3, not a pair for each. The lookup and the join are
+   * halves of one ceremony and both are guesses at the same secret: counted apart, the second step
+   * would hand back a fresh budget of five to whoever had just spent five on the first. The
+   * document states the limit once, for «приём приглашения», and this is where that "once" lives.
+   *
+   * Both keys are the server's own: the account comes from the token it minted and the address
+   * from the socket — Fastify is built without `trustProxy`, so a header cannot move it. Nothing
+   * from the body is in them, and that is the point of the choice. `inviteId` is named by the
+   * caller, and a bucket the limited party writes is a bucket the limited party leaves by writing
+   * another one.
+   */
+  const inviteAttemptBuckets = (accountId: string, ip: string): readonly string[] => [
+    `invite-claim:account:${accountId}`,
+    `invite-claim:ip:${ip}`,
+  ];
+
+  /** Refuses before any work is done when either counter of {@link inviteAttemptBuckets} is full. */
+  const requireInviteAttempt = (buckets: readonly string[]): void => {
+    context.throttleSweep("invite-claim:", INVITE_CLAIM_DAY_MS);
+    for (const bucket of buckets) {
+      if (
+        context.throttleCount(bucket, INVITE_CLAIM_WINDOW_MS) >= INVITE_CLAIM_FAILURES_PER_WINDOW ||
+        context.throttleCount(bucket, INVITE_CLAIM_DAY_MS) >= INVITE_CLAIM_FAILURES_PER_DAY
+      ) {
+        throw new ApiError(429, "rate_limited", "too many invite lookups");
+      }
+    }
+  };
+
+  const recordInviteFailure = (buckets: readonly string[]): void => {
+    for (const bucket of buckets) context.throttleRecord(bucket);
   };
 
   app.post(
@@ -206,20 +245,9 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
     async (request) => {
       const auth = context.authenticate(request);
       const { authToken } = request.body as { authToken: string };
-      const accountBucket = `invite-claim:account:${auth.accountId}`;
-      const ipBucket = `invite-claim:ip:${request.ip}`;
-      context.throttleSweep("invite-claim:", INVITE_CLAIM_DAY_MS);
-      // 5.3: no more than `5` failed lookups in `15` minutes and `20` in a day, per account and
-      // per IP. This is the counter that stands between a copied invite box and a `60`-bit code,
-      // so it is stored, not held in memory, and both dimensions are checked.
-      for (const bucket of [accountBucket, ipBucket]) {
-        if (
-          context.throttleCount(bucket, INVITE_CLAIM_WINDOW_MS) >= INVITE_CLAIM_FAILURES_PER_WINDOW ||
-          context.throttleCount(bucket, INVITE_CLAIM_DAY_MS) >= INVITE_CLAIM_FAILURES_PER_DAY
-        ) {
-          throw new ApiError(429, "rate_limited", "too many invite lookups");
-        }
-      }
+      // 5.3, step one of two: a failed lookup is a guess at the code and is counted as one.
+      const buckets = inviteAttemptBuckets(auth.accountId, request.ip);
+      requireInviteAttempt(buckets);
       const digest = sha256(decodeBytes(authToken, "authToken", { exact: SHA256_BYTES }));
       sweepExpiredInvites();
       // What used to stand here was a walk over every live invite in the database, comparing each
@@ -246,8 +274,7 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         )
         .get(digest, context.now()) as InviteRow | undefined;
       if (matched === undefined || matched.ciphertext === null) {
-        context.throttleRecord(accountBucket);
-        context.throttleRecord(ipBucket);
+        recordInviteFailure(buckets);
         throw notFound("no invite matches this token");
       }
       return {
@@ -268,7 +295,9 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
           {
             inviteId: uuidField,
             authToken: base64Field(SHA256_BYTES, SHA256_BYTES),
-            memberId: identifierField,
+            // A UUID by 2.1, and refused here as one: the identifier the joining device chooses
+            // is stored, listed by `GET /members` and displayed. See {@link uuidField}.
+            memberId: uuidField,
             bindProof: base64Field(SHA256_BYTES, SHA256_BYTES),
           },
           ["inviteId", "authToken", "memberId", "bindProof"],
@@ -283,6 +312,13 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         memberId: string;
         bindProof: string;
       };
+      // 5.3, step two of two, and it is rate limited for the same reason the lookup is. The secret
+      // is not reachable by search — `authToken` is `256` bits — so what an unlimited join offered
+      // was not a path to the key but an oracle answering "does this token belong to this invite?"
+      // once per request, and an unmetered write path for anyone with a token. The counters are
+      // the claim's own: see {@link inviteAttemptBuckets}.
+      const buckets = inviteAttemptBuckets(auth.accountId, request.ip);
+      requireInviteAttempt(buckets);
       const existing = context.db
         .prepare("SELECT member_id FROM member WHERE account_id = ? AND removed_at IS NULL")
         .get(auth.accountId);
@@ -304,6 +340,12 @@ export function registerInviteRoutes(app: FastifyInstance, context: ServerContex
         invite.expires_at <= context.now() ||
         !equalBytes(digest, new Uint8Array(invite.auth_token_digest))
       ) {
+        // Counted, and only here. This is the branch a guess ends in; the two refusals that
+        // surround it — an account already in a family, an identifier taken inside the family the
+        // caller has just proved an invite to — are answers to a caller who held the right token,
+        // and charging them to the same counter would let an honest retry spend the budget that
+        // guards the code.
+        recordInviteFailure(buckets);
         throw new ApiError(404, "invite_invalid", "the invite is unknown, used or expired");
       }
       // The joining device chooses its own `memberId`, and since migration 2 that identifier is

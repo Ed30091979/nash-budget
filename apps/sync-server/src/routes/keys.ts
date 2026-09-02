@@ -32,6 +32,12 @@
  * device, and a server that were told it would be able to act on it — offer a chain that starts
  * where the device is weakest, or notice which devices are behind. So the answer is everything
  * addressed to this device, in epoch order, and the device picks its own path through it.
+ *
+ * The same answer carries the pair a *sender* needs before it can make a wrap at all: the epoch in
+ * force and the `rotationId` that produced it. That is the other half of the rule, not an
+ * exception to it — 5.5 says both values travel from the server and are not named in the request,
+ * and until this route stated the second one the upload path was writable only by a device that
+ * happened to still hold a value nothing ever gave it back.
  */
 import type { FastifyInstance } from "fastify";
 
@@ -215,6 +221,27 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
       const auth = context.authenticate(request);
       const { familyId } = request.params as { familyId: string };
       const membership = context.requireFamily(auth, familyId);
+      // 5.5 names two values the *sender* of an out-of-band wrap needs and may not invent: the
+      // number of the epoch in force and the `rotationId` that produced it. Both are put into the
+      // wrap's HKDF info and its AAD, and the upload route stamps the `rotationId` from this same
+      // row — so a sender that guessed it wrote a wrap whose AAD disagreed with the row recorded
+      // beside it, and the receiver's unwrap failed every time. Until now no route stated it: the
+      // creation response did not echo it, `/families/me` carries only the `rotationId` of a
+      // *staging* attempt, and the wraps below carry only the ones already addressed to this
+      // device. So the owner who created the family and then reloaded the page could not hand a
+      // wrap to a member's second phone — the case 5.5 ends on, and the one it exists for.
+      //
+      // It travels here and only here, in the answer to a route that is scoped to a family the
+      // caller has been found a live member of. That is the audience: 5.6 makes the owner (path
+      // «б») and, after a two-way comparison, any member (path «в») a possible sender, and nobody
+      // outside the family is one. It is not a value to volunteer to a stranger holding an invite:
+      // `POST /v1/invites/claim` answers before there is a membership to check, and says nothing
+      // of it.
+      //
+      // And it still never travels the other way. The POST above accepts no epoch and no rotation
+      // identifier in its body; this is the server telling the sender what it will record, not the
+      // sender telling the server what to record.
+      const epoch = context.activeEpoch(membership.familyId, membership.keyEpoch);
       const rows = context.db
         .prepare(
           "SELECT w.key_epoch, w.device_id, w.sender_device_id, w.rotation_id, w.salt, w.iv," +
@@ -229,6 +256,11 @@ export function registerKeyRoutes(app: FastifyInstance, context: ServerContext):
       return {
         // The epoch in force travels server to client and never the other way (2.2).
         keyEpoch: membership.keyEpoch,
+        // `null` only for a state no route can produce — an epoch row missing, or one written
+        // without an identifier. Not a `500`: this is the route every device fetches its keys
+        // from, and refusing all of them would be a worse answer than saying that no wrap can be
+        // made right now, which is what the POST above already says with `epoch_not_wrappable`.
+        rotationId: epoch?.rotation_id ?? null,
         wraps: rows.map((row) => ({
           keyEpoch: row.key_epoch,
           deviceId: row.device_id,

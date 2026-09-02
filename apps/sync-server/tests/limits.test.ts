@@ -14,6 +14,7 @@ import {
   FAMILY_ENVELOPE_QUOTA,
   FAMILY_EPOCH_CIPHERTEXT_BYTES,
   INVITE_CLAIM_FAILURES_PER_WINDOW,
+  INVITE_CLAIM_WINDOW_MS,
   MAX_CHECKPOINT_CIPHERTEXT_BYTES,
   MAX_ENVELOPES_PER_BATCH,
   MAX_OPERATION_CIPHERTEXT_BYTES,
@@ -257,6 +258,84 @@ test("five failed invite lookups in a quarter of an hour and no more", async () 
   expect(throttled.json().error.code).toBe("rate_limited");
 });
 
+test("both steps of accepting an invite spend one counter, and joining cannot outrun it", async () => {
+  harness = createHarness();
+  const joiner = await signIn(harness);
+  const guess = Buffer.alloc(32, 3).toString("base64");
+  const join = (inviteId: string) =>
+    call(harness as Harness, "POST", "/v1/invites/join", {
+      token: joiner.accessToken,
+      payload: {
+        inviteId,
+        authToken: guess,
+        memberId: uuid(),
+        bindProof: Buffer.alloc(32, 4).toString("base64"),
+      },
+    });
+
+  // 5.3 states the limit once, for the acceptance of an invite, and the acceptance is two steps.
+  // Three failed lookups and two failed joins are five failures, not three and two.
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const lookup = await call(harness, "POST", "/v1/invites/claim", {
+      token: joiner.accessToken,
+      payload: { authToken: guess },
+    });
+    expect(lookup.statusCode, `lookup ${attempt}`).toBe(404);
+  }
+  // A fresh `inviteId` each time: the bucket is keyed by the account and the address of the
+  // socket, never by a value out of the body, so changing the one field the caller chooses does
+  // not buy another budget.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const refused = await join(uuid());
+    expect(refused.statusCode, `join ${attempt}`).toBe(404);
+    expect(refused.json().error.code).toBe("invite_invalid");
+  }
+
+  const sixthJoin = await join(uuid());
+  expect(sixthJoin.statusCode).toBe(429);
+  expect(sixthJoin.json().error.code).toBe("rate_limited");
+  const sixthLookup = await call(harness, "POST", "/v1/invites/claim", {
+    token: joiner.accessToken,
+    payload: { authToken: guess },
+  });
+  expect(sixthLookup.statusCode).toBe(429);
+
+  // The window is fifteen minutes wide and not a day: past it, the same request is answered again.
+  harness.advance(INVITE_CLAIM_WINDOW_MS + 1);
+  await refreshSession(harness, joiner);
+  const later = await join(uuid());
+  expect(later.statusCode).toBe(404);
+  expect(later.json().error.code).toBe("invite_invalid");
+});
+
+test("a join that fails on anything but the token spends nothing", async () => {
+  harness = createHarness();
+  const owner = await signIn(harness);
+  await createFamily(harness, owner);
+  // The owner is in a family already, so this join is refused before it is ever a guess. Charging
+  // it to the counter of 5.3 would let an honest mistake spend the budget that guards the code.
+  for (let attempt = 1; attempt <= INVITE_CLAIM_FAILURES_PER_WINDOW + 1; attempt += 1) {
+    const refused = await call(harness, "POST", "/v1/invites/join", {
+      token: owner.accessToken,
+      payload: {
+        inviteId: uuid(),
+        authToken: Buffer.alloc(32, 5).toString("base64"),
+        memberId: uuid(),
+        bindProof: Buffer.alloc(32, 6).toString("base64"),
+      },
+    });
+    expect(refused.statusCode, `attempt ${attempt}`).toBe(409);
+    expect(refused.json().error.code).toBe("already_in_family");
+  }
+  expect(
+    (
+      harness.server.db
+        .prepare("SELECT COUNT(*) AS n FROM throttle WHERE bucket LIKE 'invite-claim:%'")
+        .get() as { n: number }
+    ).n,
+  ).toBe(0);
+});
+
 test("an account belongs to at most one family", async () => {
   harness = createHarness();
   const owner = await signIn(harness);
@@ -300,6 +379,68 @@ test("two families may use the same member identifier, and neither is told of th
       role: "owner",
     });
   }
+});
+
+test("a memberId that is not a UUID is refused, and refused before anything is written", async () => {
+  harness = createHarness();
+  const owner = await signIn(harness);
+
+  // 2.1 calls `memberId` a UUID and 3.2 refuses control characters in any string; the codec of
+  // `sync-protocol` refuses the bidirectional overrides with them. This value passed the server's
+  // own schema, reached the database, and came back out of `GET /members` to reverse the text it
+  // was displayed beside — checked in one layer, used in another.
+  const reversing = "\u202eabcdefgh";
+  const refused = await call(harness, "POST", "/v1/families", {
+    token: owner.accessToken,
+    payload: { familyId: uuid(), memberId: reversing, rotationId: uuid() },
+  });
+  expect(refused.statusCode).toBe(400);
+  expect(refused.json().error.code).toBe("invalid_request");
+  // Nothing was created on the way to the refusal: the account is still in no family.
+  const me = await call(harness, "GET", "/v1/families/me", { token: owner.accessToken });
+  expect(me.statusCode).toBe(403);
+  expect(me.json().error.code).toBe("no_family");
+
+  // Length was the whole of the old rule, so a hundred and twenty-eight plain characters passed.
+  const bounded = "m".repeat(128);
+  const long = await call(harness, "POST", "/v1/families", {
+    token: owner.accessToken,
+    payload: { familyId: uuid(), memberId: bounded, rotationId: uuid() },
+  });
+  expect(long.statusCode).toBe(400);
+  expect(long.json().error.code).toBe("invalid_request");
+
+  // The same identifier, on the other two routes that take one. The joining device chooses its
+  // own, and the owner names one to remove it.
+  const joining = await call(harness, "POST", "/v1/invites/join", {
+    token: owner.accessToken,
+    payload: {
+      inviteId: uuid(),
+      authToken: Buffer.alloc(32, 1).toString("base64"),
+      memberId: reversing,
+      bindProof: Buffer.alloc(32, 2).toString("base64"),
+    },
+  });
+  expect(joining.statusCode).toBe(400);
+  expect(joining.json().error.code).toBe("invalid_request");
+
+  const family = await createFamily(harness, owner);
+  const removing = await call(
+    harness,
+    "DELETE",
+    `/v1/families/${family.familyId}/members/${encodeURIComponent(reversing)}`,
+    { token: owner.accessToken },
+  );
+  expect(removing.statusCode).toBe(400);
+  expect(removing.json().error.code).toBe("invalid_request");
+
+  // And the shape the document names is still accepted, so this is a narrowing and not a wall.
+  const listed = await call(harness, "GET", `/v1/families/${family.familyId}/members`, {
+    token: owner.accessToken,
+  });
+  expect(listed.json().members).toEqual([
+    { memberId: family.memberId, role: "owner", joinedAt: harness.now, removedAt: null },
+  ]);
 });
 
 test("one rate limit never sweeps another's counter away", async () => {
