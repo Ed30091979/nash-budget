@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { designTouchTargetMinimum } from "../design-contract";
 import { Onboarding } from "./Onboarding";
 
 describe("onboarding UI contract", () => {
@@ -20,15 +21,20 @@ describe("onboarding UI contract", () => {
     expect(html).not.toContain("Доход в месяц");
   });
 
-  it("фиксирует 44px touch targets и не использует URL, localStorage и logs в onboarding path", () => {
+  it("держит цели нажатия по нормативу и не использует URL, localStorage и logs в onboarding path", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const operations = readFileSync(new URL("../features/operations/OperationsScreen.tsx", import.meta.url), "utf8");
     const component = readFileSync(new URL("./Onboarding.tsx", import.meta.url), "utf8");
     const model = readFileSync(new URL("./model.ts", import.meta.url), "utf8");
-    expect(styles).toMatch(/\.primary-button, \.secondary-button \{[^}]*min-height: 44px/s);
-    expect(styles).toMatch(/\.text-button \{[^}]*min-height: 44px/s);
-    expect(styles).toMatch(/\.composition-options label \{[^}]*min-height: 44px/s);
+    // Порог берётся из §9 `DESIGN.md`, а не переписывается сюда числом: переписанное число и
+    // позволило коду годами держать 44 при нормативе 48.
+    const minimum = designTouchTargetMinimum();
+    for (const selector of [".primary-button, .secondary-button", ".text-button", ".composition-options label"]) {
+      const declared = new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} \\{[^}]*min-height: (\\d+)px`, "su").exec(styles);
+      expect(declared, `${selector} должен объявлять цель нажатия`).not.toBeNull();
+      expect(Number(declared?.[1]), selector).toBeGreaterThanOrEqual(minimum);
+    }
     expect(component).toContain('className="onboarding-fields" disabled={busy}');
     expect(component.match(/operationLock\.current\.run/g)).toHaveLength(2);
     expect(component).toContain('<div id="categories" tabIndex={-1}>');
@@ -49,10 +55,12 @@ describe("onboarding UI contract", () => {
     expect(app.match(/result\.status === "existing"/g)).toHaveLength(2);
     expect(operations).toContain('id="operation-amount" inputMode="decimal" maxLength={24}');
     expect(app).not.toMatch(/\sstyle\s*=/);
-    expect(app).toContain('<progress className={`progress-track ${metric.status}`} max={100} value={progress}');
-    expect(app).not.toContain("progress-value");
-    expect(styles).toContain(".progress-track::-webkit-progress-value");
-    expect(styles).toContain(".progress-track::-moz-progress-bar");
+    // Полоса лимита раньше была `<progress>` с двумя наборами браузерных псевдоэлементов, и тест
+    // сторожил именно их написание. Сторожить надо не написание, а смысл: полоса объявляет себя
+    // читающему с экрана и получает долю атрибутом, потому что инлайновых стилей у нас нет (CSP).
+    expect(app).toContain('role="img" aria-label={bar.label}');
+    expect(app).toContain("data-spent={bar.spent}");
+    expect(styles).toMatch(/\.limit-bar \{[^}]*linear-gradient/su);
     expect(model).toContain('4: "Повседневные лимиты"');
   });
 

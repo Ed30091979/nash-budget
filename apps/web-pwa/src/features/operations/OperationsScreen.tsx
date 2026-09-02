@@ -38,6 +38,20 @@ type Confirmation =
 
 const PAGE_SIZE = 25;
 
+/**
+ * Образец суммы в поле высотой 68 (§6).
+ *
+ * Поле уже подписано «Сумма, ₽», поэтому подсказка не повторяет имя поля, а показывает число:
+ * пустая коробка в кегль `display` читалась провалом в вёрстке, а не местом для суммы. Образец
+ * набран ровно так, как поле принимает и хранит введённое, — без отбивки разрядов (её в поле
+ * никто не расставит) и с запятой перед копейками (§7: десятичный разделитель — запятая).
+ * Показывает и то, что копейки допустимы, и что их можно не писать.
+ *
+ * Чтобы образец нельзя было принять за уже введённую сумму, он набран начертанием 400 против 700
+ * у значения: эмфаза весом на одном кегле (§2 исследования).
+ */
+const AMOUNT_PLACEHOLDER = "1200,50";
+
 const kindLabels: Record<TransactionKind, string> = {
   income: "Доход",
   expense: "Расход",
@@ -509,7 +523,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
       <form onSubmit={submit} noValidate aria-busy={busy} inert={sheet !== null}>
         <fieldset disabled={busy}>
           <legend>Данные операции</legend>
-          <div className="field amount-field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
+          <div className="field amount-field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} placeholder={AMOUNT_PLACEHOLDER} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
           <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as TransactionKind)}>{Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
           <TransactionFields budget={budget} draft={draft} patch={patch} categoryQuery={categoryQuery} onCategoryQuery={setCategoryQuery} onCustomCategory={openCategorySheet} />
           <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>

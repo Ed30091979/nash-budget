@@ -3,6 +3,7 @@ import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { calculateAnnualPlan, type BudgetState } from "@family-budget/domain";
 import { afterEach, describe, expect, it } from "vitest";
+import { designTargetGap, designTouchTargetMinimum } from "./design-contract";
 import { editFlexibleLine } from "./features/planning";
 import { makeCanonicalPlanningState, makePlanningTestState, TEST_IDS } from "./features/planning/test-fixture";
 import { createBudgetRepository } from "./storage-repository";
@@ -107,7 +108,11 @@ describe("planning app integration", () => {
     expect(source).not.toMatch(/location\.|URLSearchParams|localStorage|sessionStorage/);
     expect(source.match(/makePlanningSeed\(\)/g)).toHaveLength(1);
     expect(styles).toMatch(/\.planning-entry \{[^}]*white-space: nowrap/s);
-    expect(styles).toMatch(/\.month-checkboxes label \{[^}]*min-height: 44px/s);
+    // §9: плотная сетка месяцев держит и цель нажатия, и зазор между целями — числа из DESIGN.md.
+    const monthTarget = /\.month-checkboxes label \{[^}]*min-height: (\d+)px/su.exec(styles);
+    const monthGap = /\.month-checkboxes \{[^}]*gap: (\d+)px/su.exec(styles);
+    expect(Number(monthTarget?.[1])).toBeGreaterThanOrEqual(designTouchTargetMinimum());
+    expect(Number(monthGap?.[1])).toBeGreaterThanOrEqual(designTargetGap());
     expect(styles).not.toMatch(/\sstyle\s*=/);
     expect(html).toContain("connect-src 'self'");
     expect(html).not.toMatch(/connect-src[^;]*(?:https?:|wss?:|\*)/u);

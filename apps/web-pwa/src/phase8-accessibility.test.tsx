@@ -7,6 +7,7 @@ import {
   MAIN_CONTENT_ID,
   networkStatusPresentation,
 } from "./App";
+import { addressesTouchTarget, designTouchTargetMinimum } from "./design-contract";
 
 interface CssRule {
   readonly selectors: readonly string[];
@@ -71,14 +72,24 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(source).not.toMatch(/focusRouteHeading[\s\S]{0,100}\[(?:budget|message|loadState)\]/);
   });
 
-  it("keeps every visible control at least 44px with keyboard-visible focus", () => {
+  it("не объявляет ни одной цели нажатия ниже норматива §9 и оставляет всем видимый фокус", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const minimum = designTouchTargetMinimum();
 
-    expect(styles).toMatch(
-      /button, select, input:not\(\[type="radio"\]\):not\(\[type="checkbox"\]\):not\(\[type="file"\]\), \.file-button \{ min-height: 44px; \}/,
-    );
-    expect(styles).toMatch(/\.horizon-toggle button \{ min-height: 44px;/);
-    expect(styles).toMatch(/\.segmented label \{[^}]*min-height: 44px;/);
+    // Проверяется не конкретное число в конкретной строке, а само правило: ни одно правило,
+    // адресующее нажимаемый элемент, не смеет объявить цель мельче норматива. Раньше здесь
+    // стояло «44px» тремя точными строками — и документ говорил 48, пока код говорил 44.
+    const declaredTargets = cssRules(styles)
+      .flatMap((rule) => rule.selectors.map((selector) => ({ selector, declarations: rule.declarations })))
+      .filter(({ selector }) => addressesTouchTarget(selector))
+      .flatMap(({ selector, declarations }) => declarations
+        .map((declaration) => /^min-height:\s*([\d.]+)px$/u.exec(declaration))
+        .filter((declared): declared is RegExpExecArray => declared !== null)
+        .map((declared) => ({ selector, px: Number(declared[1]) })));
+
+    expect(declaredTargets.length).toBeGreaterThan(10);
+    expect(declaredTargets.filter(({ px }) => px < minimum)).toEqual([]);
+
     expect(styles).toContain(".segmented label:has(input:focus-visible)");
     expect(styles).toContain(".composition-options label:has(input:focus-visible)");
     expect(styles).toContain(".month-checkboxes label:has(input:focus-visible)");

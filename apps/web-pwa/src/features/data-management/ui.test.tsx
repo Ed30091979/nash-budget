@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { designTouchTargetMinimum } from "../../design-contract";
 import { makeG000State } from "../operations/test-fixture";
 import { DataManagementScreen } from "./DataManagementScreen";
 
@@ -96,6 +97,7 @@ describe("data-management UI", () => {
     );
 
     expect(styles).toMatch(/\.file-button:focus-within\s*\{[\s\S]*outline:\s*3px\s+solid\s+var\(--focus\);/);
-    expect(styles).toMatch(/\.file-button\s*\{[^}]*min-height:\s*44px;/);
+    const declared = /\.file-button\s*\{[^}]*min-height:\s*(\d+)px;/su.exec(styles);
+    expect(Number(declared?.[1])).toBeGreaterThanOrEqual(designTouchTargetMinimum());
   });
 });

@@ -40,6 +40,7 @@ import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, moneyScale } from "./money";
+import { limitBar, localToday, percentStep, periodProgress } from "./limit-pace";
 import { createBudgetRepository } from "./storage-repository";
 
 export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family";
@@ -482,6 +483,9 @@ export default function App() {
     .filter((row) => row.metric);
   const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   const safeToSpendMinor = plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor;
+  // §4 исследования: маркер темпа месяца. Доля периода общая для всех строк лимитов — период
+  // задан самим бюджетом, а «сегодня» берётся по календарю семьи, а не по UTC.
+  const monthPace = periodProgress(activeBudget.startDate, activeBudget.endDate, localToday(new Date()));
   const postedTransactions = [...budget.transactions]
     .filter((transaction) => transaction.status === "posted")
     .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
@@ -540,7 +544,7 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} monthPace={monthPace} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /> : null}
@@ -628,7 +632,7 @@ type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
 type BudgetMetrics = ReturnType<typeof calculateBudget>;
 type CategoryRow = { category: BudgetState["categories"][number]; metric: BudgetMetrics["categoryMetrics"][string] | undefined };
 
-function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, onAdd, onYear }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; onAdd: () => void; onYear: () => void }) {
+function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, monthPace, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, onAdd, onYear }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; monthPace: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; onAdd: () => void; onYear: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -640,17 +644,17 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
     <section className={`hero-card${safeToSpendMinor < 0 ? " danger" : ""}`}>
       <span>Можно на повседневные расходы</span>
       <strong data-money-scale={moneyScale(safeToSpend)}><Money value={safeToSpendMinor} /></strong>
-      <p>Остаток лимитов после уже записанных покупок. Обязательные платежи и накопления учтены отдельно.</p>
+      <p>Платежи и накопления учтены отдельно.</p>
       <button className="hero-button" type="button" onClick={onAdd}><Icon name="plus" size={20} />Записать покупку</button>
     </section>
 
     {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row, index) => <span key={row.category.id}>{index > 0 ? " · " : ""}{row.category.name}: <Money value={row.metric?.overMinor ?? 0} sign="+" /></span>)}</span></div> : null}
 
-    <div className="quick-grid">
-      <QuickCard icon="repeat" label="Платежи месяца" value={plan.currentMonth.scheduledExpenseMinor} />
-      <QuickCard icon="calendar-clock" label="Отложить к срокам" value={plan.currentMonth.annualReserveMinor} />
-      <QuickCard icon="wallet" label="Не распределено" value={plan.currentMonth.spendableAfterPlanMinor} />
-    </div>
+    <dl className="month-split">
+      <SplitRow icon="repeat" label="Платежи месяца" value={plan.currentMonth.scheduledExpenseMinor} />
+      <SplitRow icon="calendar-clock" label="Отложить к срокам" value={plan.currentMonth.annualReserveMinor} />
+      <SplitRow icon="wallet" label="Не распределено" value={plan.currentMonth.spendableAfterPlanMinor} />
+    </dl>
 
     {next ? <section className="next-card">
       <div><span className="card-kicker">Ближайший крупный платёж</span><h2>{next.name}</h2><p>{formatDate(next.dueDate)} · <Money value={next.amountMinor} /></p></div>
@@ -659,7 +663,7 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
 
     <section className="section-card">
       <SectionTitle title="Повседневные лимиты" note="Мелкие покупки этого месяца" />
-      <CategoryList rows={flexibleRows} />
+      <CategoryList rows={flexibleRows} pace={monthPace} />
     </section>
 
     <button className="year-preview" type="button" onClick={onYear}><span className="row-mark"><Icon name="calendar" size={24} /></span><span className="row-copy"><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
@@ -677,8 +681,14 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
   </>;
 }
 
-function QuickCard({ icon, label, value }: { icon: IconName; label: string; value: number }) {
-  return <article className="quick-card"><span className="quick-icon"><Icon name={icon} size={20} /></span><span className="quick-label">{label}</span><strong><Money value={value} /></strong></article>;
+/**
+ * Строка разбора месяца: подпись слева, сумма справа столбцом (§7.4).
+ *
+ * Числа здесь поддерживают герой-число, а не спорят с ним: тот же кегль, что у обычного текста,
+ * начертание 600 против 700 у героя и приглушённая подпись (§1 и §2 исследования).
+ */
+function SplitRow({ icon, label, value }: { icon: IconName; label: string; value: number }) {
+  return <div><dt><Icon name={icon} size={20} />{label}</dt><dd><Money value={value} /></dd></div>;
 }
 
 function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
@@ -705,18 +715,25 @@ function SectionTitle({ title, note, icon }: { title: string; note: string; icon
   return <div className="section-title"><div><h2>{icon ? <Icon name={icon} size={20} /> : null}{title}</h2><p>{note}</p></div></div>;
 }
 
-function CategoryList({ rows }: { rows: CategoryRow[] }) {
-  return <ul className="category-list">{rows.map(({ category, metric }) => {
+/**
+ * Список лимитов месяца.
+ *
+ * Полоса каждой строки несёт две величины сразу: сколько лимита потрачено и сколько месяца
+ * прошло (§4 исследования). Темп у всех строк один — он объявлен на самом списке, и переменная
+ * достаётся полосам по наследству.
+ */
+function CategoryList({ rows, pace }: { rows: CategoryRow[]; pace: number }) {
+  return <ul className="category-list" data-pace={percentStep(pace)}>{rows.map(({ category, metric }) => {
     if (!metric) return null;
-    const percent = (metric.execution ?? 0) * 100;
-    const progress = Math.min(Math.max(percent, 0), 100);
     const visual = categoryVisual(category);
+    const bar = limitBar({ name: category.name, execution: metric.execution, overLimit: metric.status === "over_limit", pace });
     return <li key={category.id}>
       <span className={`category-tile tone-${visual.tone}`}><Icon name={visual.icon} size={24} /></span>
       <div className="category-body">
         <div className="category-head"><strong>{category.name}</strong><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div>
-        <progress className={`progress-track ${metric.status}`} max={100} value={progress} aria-label={`${category.name}: ${Math.round(progress)}% лимита`} />
+        <span className={bar.className} data-spent={bar.spent} role="img" aria-label={bar.label} />
         <div className="category-values"><span>Потрачено <b><Money value={metric.actualMinor} /></b></span><span>Осталось <b><Money value={metric.remainingMinor} /></b></span></div>
+        {bar.note ? <p className="limit-pace">{bar.note}</p> : null}
       </div>
     </li>;
   })}</ul>;

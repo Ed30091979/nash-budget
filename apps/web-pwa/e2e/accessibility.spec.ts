@@ -1,10 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+import { designTouchTargetMinimum } from "../src/design-contract";
 
 interface ViewportContract {
   readonly name: string;
   readonly width: number;
   readonly height: number;
 }
+
+/** Порог из §9 `DESIGN.md`: проверка меряет то, что требует норматив, а не переписанное сюда число. */
+const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 
 const VIEWPORTS: readonly ViewportContract[] = [
   { name: "phone-320", width: 320, height: 568 },
@@ -35,7 +39,7 @@ async function expectFocusedRouteHeading(page: Page, navigationName: string) {
 }
 
 async function expectGeometryContract(page: Page, viewport: ViewportContract) {
-  const geometry = await page.evaluate(() => {
+  const geometry = await page.evaluate((minimum) => {
     const interactiveSelector = [
       "button:not(:disabled)",
       "select:not(:disabled)",
@@ -65,14 +69,14 @@ async function expectGeometryContract(page: Page, viewport: ViewportContract) {
           height: rect.height,
         };
       })
-      .filter(({ width, height }) => width < 43.9 || height < 43.9);
+      .filter(({ width, height }) => width < minimum - 0.1 || height < minimum - 0.1);
 
     return {
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
       undersized,
     };
-  });
+  }, TOUCH_TARGET_MINIMUM);
 
   expect(
     geometry.scrollWidth,
@@ -80,7 +84,7 @@ async function expectGeometryContract(page: Page, viewport: ViewportContract) {
   ).toBeLessThanOrEqual(geometry.clientWidth);
   expect(
     geometry.undersized,
-    `${viewport.name} must keep every visible interactive target at least 44 CSS px`,
+    `${viewport.name} must keep every visible interactive target at least ${TOUCH_TARGET_MINIMUM} CSS px`,
   ).toEqual([]);
 }
 

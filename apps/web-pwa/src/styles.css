@@ -49,7 +49,6 @@
   --scrim: rgb(15 34 29 / 55%);
   --on-hero: #ffffff;
   --on-hero-label: rgb(255 255 255 / 78%);
-  --on-hero-quiet: rgb(255 255 255 / 72%);
   --on-hero-veil: rgb(255 255 255 / 7%);
   --on-hero-line: rgb(255 255 255 / 22%);
 
@@ -93,7 +92,7 @@ html { min-width: 320px; background: var(--canvas); -webkit-text-size-adjust: 10
 body { max-width: 100%; margin: 0; min-width: 320px; min-height: 100vh; min-height: 100dvh; overflow-x: clip; overscroll-behavior-y: contain; color: var(--ink); background: var(--canvas); font-size: var(--size-body); line-height: var(--lh-body); -webkit-tap-highlight-color: transparent; }
 button, input, select { font: inherit; color: inherit; font-variant-numeric: lining-nums tabular-nums; }
 button, select, label[for="backup-file"] { cursor: pointer; }
-button, select, input:not([type="radio"]):not([type="checkbox"]):not([type="file"]), .file-button { min-height: 44px; }
+button, select, input:not([type="radio"]):not([type="checkbox"]):not([type="file"]), .file-button { min-height: 48px; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -176,9 +175,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .hero-card::after { position: absolute; top: -48px; right: -40px; width: 168px; height: 168px; content: ""; background: var(--on-hero-veil); border-radius: 50%; }
 .hero-card.danger { background: var(--hero-gradient-danger); box-shadow: var(--shadow-hero-danger); }
 .hero-card > span, .hero-card > strong { position: relative; z-index: 1; display: block; }
-.hero-card > span { color: var(--on-hero-label); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
+/* Подпись героя набрана полным белым: `--on-hero-label` — 3.72:1 к светлому концу градиента,
+   чего хватает крупному тексту (знак ₽ в 40 px) и не хватает подписи в 13 px (нужно 4.5:1). */
+.hero-card > span { color: var(--on-hero); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
 .hero-card > strong { margin-top: 12px; color: var(--on-hero); font-size: var(--size-display); line-height: var(--lh-display); font-weight: 700; letter-spacing: -0.02em; overflow-wrap: normal; }
-.hero-card p { position: relative; z-index: 1; max-width: 610px; margin: 12px 0 20px; color: var(--on-hero-quiet); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.hero-card p { position: relative; z-index: 1; max-width: 610px; margin: 12px 0 20px; color: var(--on-hero); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .hero-button { position: relative; z-index: 1; display: inline-flex; gap: 8px; min-height: 48px; align-items: center; justify-content: center; padding: 13px 24px; color: var(--green-deep); font-size: var(--size-body); font-weight: 600; background: var(--surface); border: 0; border-radius: var(--radius-pill); }
 
 /* §7.2 Денежная лестница: сумма понижает ступень (не более двух раз) и никогда не обрезается. */
@@ -191,12 +192,23 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* §6 Плитка-статистика. */
 .quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
 .quick-card { display: flex; min-width: 0; flex-direction: column; container-type: inline-size; padding: 16px; background: var(--surface); border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
-.quick-icon { display: grid; width: 32px; height: 32px; place-items: center; margin-bottom: 12px; color: var(--green-ink); background: var(--mint-soft); border-radius: var(--radius-field); }
 .quick-card .quick-label, .quick-card strong { display: block; }
 .quick-card .quick-label { min-height: 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: break-word; }
 .quick-card strong { margin-top: auto; padding-top: 8px; color: var(--ink); font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 700; overflow-wrap: normal; }
 @container (max-width: 108px) { .quick-card strong { font-size: var(--size-body); line-height: var(--lh-body); } }
 @container (max-width: 84px) { .quick-card strong { font-size: var(--size-caption); line-height: var(--lh-caption); } }
+
+/* §1 исследования: одно доминирующее число, остальное сгруппировано и приглушено, и приоритетная
+   одна колонка вместо сетки равнозначных плиток. Три числа месяца стояли тремя плитками в кегле
+   `h3` начертанием 700 и спорили с герой-числом; теперь это один блок в одну колонку, а
+   приглушение сделано весом и ролью, а не размером (§2). Побочный выигрыш — узкий экран: сетка
+   из трёх плиток на 320 pt разворачивалась в три полноразмерные карточки. */
+.month-split { display: grid; margin-top: 24px; padding: 4px 16px; background: var(--surface); border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
+.month-split > div { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.month-split > div:last-child { border-bottom: 0; }
+.month-split dt { display: flex; gap: 8px; min-width: 0; align-items: center; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.month-split dt .icon { flex: none; color: var(--green-deep); }
+.month-split dd { flex: none; margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; overflow-wrap: normal; }
 
 /* §6 Плашка внимания. */
 .limit-alert { display: grid; gap: 4px; margin-top: 24px; padding: 16px; color: var(--amber-ink); background: var(--amber-soft); border-radius: var(--radius-card-sm); }
@@ -247,17 +259,33 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .status-chip.no_plan { color: var(--ink-muted); background: var(--surface-sunken); }
 /* Глиф состояния стоит в чипе рядом со словом: плитка строки занята тоном категории (§3). */
 .status-chip .icon { flex: none; }
-.progress-track { display: block; width: 100%; height: 8px; margin: 12px 0 8px; overflow: hidden; appearance: none; -webkit-appearance: none; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
-.progress-track::-webkit-progress-bar { background: var(--surface-sunken); border-radius: var(--radius-pill); }
-.progress-track::-webkit-progress-value { background: var(--green); border-radius: var(--radius-pill); }
-.progress-track::-moz-progress-bar { background: var(--green); border-radius: var(--radius-pill); }
-.progress-track.near_limit::-webkit-progress-value, .progress-track.exhausted::-webkit-progress-value { background: var(--orange); }
-.progress-track.near_limit::-moz-progress-bar, .progress-track.exhausted::-moz-progress-bar { background: var(--orange); }
-.progress-track.over_limit::-webkit-progress-value { background: var(--red-ink); }
-.progress-track.over_limit::-moz-progress-bar { background: var(--red-ink); }
-.progress-track.no_plan::-webkit-progress-value { background: var(--border); }
-.progress-track.no_plan::-moz-progress-bar { background: var(--border); }
+/* §4 исследования: полоса «потрачено из лимита» с маркером темпа месяца — один градиент на фоне
+   самой строки, без единого лишнего узла разметки. Заливка идёт до `--limit-fill`, дальше трек;
+   поверх — вертикальная метка «столько месяца прошло» на `--limit-pace`.
+
+   Цвет заливки (§10, пункт K): красный — только факт превышения лимита, янтарный — опережение
+   темпа, иначе зелёный. Заливка обязана отличаться от трека `--surface-sunken` не хуже 3:1, и
+   мягкие тона этого не дают: `--green-deep` 4.29:1, `--amber-ink` 5.09:1, `--red-ink` 5.87:1.
+
+   Маркер меняет цвет по тому, на какую подложку он попал: на светлом треке — `--ink` (13.9:1),
+   на тёмной заливке — `--surface` (5.0:1 к зелёной, 5.9:1 к янтарной, 6.9:1 к красной). Одним
+   цветом обе подложки не покрыть: то, что даёт 3:1 к треку, темнее любой заливки. */
+.limit-bar { --limit-ink: var(--green-deep); --limit-marker: var(--ink); --fill: var(--limit-fill, 0%); --pace: var(--limit-pace, 0%); display: block; width: 100%; height: 10px; margin: 12px 0 8px; border-radius: var(--radius-pill); background-image: linear-gradient(to right, transparent calc(var(--pace) - 1px), var(--limit-marker) calc(var(--pace) - 1px), var(--limit-marker) calc(var(--pace) + 1px), transparent calc(var(--pace) + 1px)), linear-gradient(to right, var(--limit-ink) var(--fill), var(--surface-sunken) var(--fill)); }
+.limit-bar.ahead { --limit-ink: var(--amber-ink); }
+.limit-bar.over { --limit-ink: var(--red-ink); }
+.limit-bar.marker-on-fill { --limit-marker: var(--surface); }
+/* Шкала процентов шагом 5 %: инлайновых стилей нет (CSP `style-src 'self'`), поэтому долю несёт
+   атрибут, а не `style`. Темп у всех строк экрана один — он объявлен на списке. */
+.limit-bar[data-spent="0"] { --limit-fill: 0%; } .limit-bar[data-spent="5"] { --limit-fill: 5%; } .limit-bar[data-spent="10"] { --limit-fill: 10%; } .limit-bar[data-spent="15"] { --limit-fill: 15%; } .limit-bar[data-spent="20"] { --limit-fill: 20%; } .limit-bar[data-spent="25"] { --limit-fill: 25%; } .limit-bar[data-spent="30"] { --limit-fill: 30%; }
+.limit-bar[data-spent="35"] { --limit-fill: 35%; } .limit-bar[data-spent="40"] { --limit-fill: 40%; } .limit-bar[data-spent="45"] { --limit-fill: 45%; } .limit-bar[data-spent="50"] { --limit-fill: 50%; } .limit-bar[data-spent="55"] { --limit-fill: 55%; } .limit-bar[data-spent="60"] { --limit-fill: 60%; } .limit-bar[data-spent="65"] { --limit-fill: 65%; }
+.limit-bar[data-spent="70"] { --limit-fill: 70%; } .limit-bar[data-spent="75"] { --limit-fill: 75%; } .limit-bar[data-spent="80"] { --limit-fill: 80%; } .limit-bar[data-spent="85"] { --limit-fill: 85%; } .limit-bar[data-spent="90"] { --limit-fill: 90%; } .limit-bar[data-spent="95"] { --limit-fill: 95%; } .limit-bar[data-spent="100"] { --limit-fill: 100%; }
+.category-list[data-pace="0"] { --limit-pace: 0%; } .category-list[data-pace="5"] { --limit-pace: 5%; } .category-list[data-pace="10"] { --limit-pace: 10%; } .category-list[data-pace="15"] { --limit-pace: 15%; } .category-list[data-pace="20"] { --limit-pace: 20%; } .category-list[data-pace="25"] { --limit-pace: 25%; } .category-list[data-pace="30"] { --limit-pace: 30%; }
+.category-list[data-pace="35"] { --limit-pace: 35%; } .category-list[data-pace="40"] { --limit-pace: 40%; } .category-list[data-pace="45"] { --limit-pace: 45%; } .category-list[data-pace="50"] { --limit-pace: 50%; } .category-list[data-pace="55"] { --limit-pace: 55%; } .category-list[data-pace="60"] { --limit-pace: 60%; } .category-list[data-pace="65"] { --limit-pace: 65%; }
+.category-list[data-pace="70"] { --limit-pace: 70%; } .category-list[data-pace="75"] { --limit-pace: 75%; } .category-list[data-pace="80"] { --limit-pace: 80%; } .category-list[data-pace="85"] { --limit-pace: 85%; } .category-list[data-pace="90"] { --limit-pace: 90%; } .category-list[data-pace="95"] { --limit-pace: 95%; } .category-list[data-pace="100"] { --limit-pace: 100%; }
 .category-values { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+/* §10, пункт K: опережение темпа названо словами, а не только цветом заливки. Строка появляется
+   только там, где есть что сказать, — уплотнение, а не прятание (§1). */
+.limit-pace { margin: 4px 0 0; color: var(--amber-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
 .category-values b { color: var(--ink); font-weight: 600; }
 
 .year-preview { display: flex; width: 100%; gap: 12px; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px; color: var(--green-ink); text-align: left; background: var(--mint-soft); border: 0; border-radius: var(--radius-card); }
@@ -271,8 +299,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .row-chevron { flex: none; color: var(--green-deep); }
 
 /* §6 Сегмент-переключатель. */
-.horizon-toggle { display: grid; grid-template-columns: 1fr 1fr; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
-.horizon-toggle button { min-height: 44px; padding: 8px 12px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-pill); }
+.horizon-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
+.horizon-toggle button { min-height: 48px; padding: 8px 12px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-pill); }
 .horizon-toggle button.active { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
 .month-strip { display: grid; grid-auto-columns: minmax(224px, 250px); grid-auto-flow: column; gap: 12px; overflow-x: auto; padding: 2px 1px 16px; scroll-snap-type: x mandatory; }
 .month-card { overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card); scroll-snap-align: start; }
@@ -323,11 +351,14 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .field input, .field select, .amount-field input { width: 100%; min-height: 52px; padding: 14px 16px; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
 .field input::placeholder, .amount-field input::placeholder { color: var(--ink-muted); }
 .amount-field input { min-height: 68px; padding: 14px 16px; font-size: var(--size-display); line-height: var(--lh-display); font-weight: 700; letter-spacing: -0.02em; text-align: left; }
-.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
-.segmented label { position: relative; display: grid; min-height: 44px; place-items: center; padding: 8px 12px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; text-align: center; border-radius: var(--radius-pill); }
+/* Образец суммы отличается от введённой суммы начертанием, а не кеглем (§2 исследования):
+   в 40 px разница 400 против 700 читается сразу, и подсказку нельзя принять за значение. */
+.amount-field input::placeholder { font-weight: 400; }
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
+.segmented label { position: relative; display: grid; min-height: 48px; place-items: center; padding: 8px 12px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; text-align: center; border-radius: var(--radius-pill); }
 .segmented input { position: absolute; opacity: 0; }
 .segmented label:has(input:checked) { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
-.primary-button, .secondary-button { display: inline-grid; min-height: 44px; padding: 13px 24px; place-items: center; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; border-radius: var(--radius-control); }
+.primary-button, .secondary-button { display: inline-grid; min-height: 48px; padding: 13px 24px; place-items: center; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; border-radius: var(--radius-control); }
 .back-button, .icon-label { display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
 .primary-button { color: var(--on-hero); background: var(--green-deep); border: 1px solid var(--green-deep); }
 .secondary-button { color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
@@ -364,7 +395,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .install-note p { margin: 8px 0 0; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
 /* §6 Нижняя навигация. */
-.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
+.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 .nav-button { position: relative; display: grid; min-height: 48px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-field); }
 .nav-icon { position: relative; display: grid; place-items: center; height: 24px; }
 .nav-icon svg { width: 24px; height: 24px; }
@@ -376,7 +407,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .update-toast p, .message-toast p { margin: 0 0 12px; color: var(--on-hero); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .update-toast .primary-button, .message-toast .primary-button { color: var(--green-deep); background: var(--surface); border-color: var(--surface); }
 .update-toast .quiet-button, .message-toast .quiet-button { color: var(--on-hero); }
-.quiet-button { display: inline-grid; min-height: 44px; padding: 13px 16px; place-items: center; color: var(--green-deep); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-control); }
+.quiet-button { display: inline-grid; min-height: 48px; padding: 13px 16px; place-items: center; color: var(--green-deep); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-control); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .loading-state { display: grid; min-height: 100dvh; padding: 24px; place-items: center; color: var(--ink-muted); font-weight: 400; text-align: center; background: var(--canvas); }
@@ -407,7 +438,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .onboarding-help { margin: 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .composition-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 12px; margin: 0; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-card-sm); }
 .composition-options legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
-.composition-options label { display: flex; min-height: 44px; gap: 8px; align-items: center; justify-content: center; padding: 13px 8px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-field); }
+.composition-options label { display: flex; min-height: 48px; gap: 8px; align-items: center; justify-content: center; padding: 13px 8px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-field); }
 .composition-options label:has(input:checked) { color: var(--green-ink); background: var(--mint-soft); border-color: var(--mint); }
 .composition-options .field-error { grid-column: 1 / -1; }
 .onboarding-form .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -420,7 +451,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .demo-option { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .demo-option p strong { color: var(--ink); }
-.text-button { min-height: 44px; padding: 13px 0; color: var(--green-deep); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
+.text-button { min-height: 48px; padding: 13px 0; color: var(--green-deep); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
 .category-edit-list { display: grid; gap: 12px; }
 .category-edit-row { display: grid; gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-card-sm); }
 .category-edit-row legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
@@ -446,7 +477,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .planning-screen #schedule-months { grid-column: 1 / -1; min-width: 0; padding: 12px; margin: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-field); }
 .planning-screen #schedule-months > legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); font-weight: 500; }
 .month-checkboxes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-.month-checkboxes label { display: flex; min-height: 44px; gap: 4px; align-items: center; justify-content: center; padding: 14px 4px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-field); }
+.month-checkboxes label { display: flex; min-height: 48px; gap: 4px; align-items: center; justify-content: center; padding: 14px 4px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-field); }
 .month-checkboxes label:has(input:checked) { color: var(--green-ink); background: var(--mint-soft); border-color: var(--mint); }
 .planning-edit-list { display: grid; gap: 8px; padding: 0; margin: 16px 0 0; list-style: none; }
 .planning-edit-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; min-width: 0; padding: 12px; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-card-sm); }
@@ -489,9 +520,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dashboard-screen > header { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: end; justify-content: space-between; }
 .dashboard-screen > header h1, .dashboard-screen > header p { margin: 0; }
 .dashboard-screen > header h1 { max-width: 700px; margin-top: 4px; font-size: var(--size-h1); line-height: var(--lh-h1); letter-spacing: -0.02em; }
-.dashboard-screen > header [role="group"] { display: grid; grid-template-columns: 1fr 1fr; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
+.dashboard-screen > header [role="group"] { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
 .dashboard-screen > header button, .search-controls button, .search-controls input, .search-controls select,
-.data-management button, .file-button { min-height: 44px; }
+.data-management button, .file-button { min-height: 48px; }
 .dashboard-screen > header button { padding: 8px 16px; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: transparent; border: 0; border-radius: var(--radius-pill); }
 .dashboard-screen > header button[aria-pressed="true"] { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
 .dashboard-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
@@ -686,7 +717,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .segmented, .amount-field, .wide { grid-column: 1 / -1; }
   .bottom-nav { position: sticky; top: calc(70px + env(safe-area-inset-top)); bottom: auto; width: min(680px, calc(100% - 32px)); margin: 12px auto 0; padding: 4px; border-radius: var(--radius-pill); box-shadow: var(--shadow-card); }
-  .nav-button { grid-template-columns: auto auto; min-height: 44px; place-content: center; }
+  .nav-button { grid-template-columns: auto auto; min-height: 48px; place-content: center; }
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
   .update-toast, .message-toast { right: 24px; bottom: 24px; left: auto; margin: 0; }
@@ -739,7 +770,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 
 @media (max-width: 360px) {
   .quick-grid, .dashboard-totals { grid-template-columns: 1fr; }
-  .bottom-nav { gap: 2px; padding-right: max(4px, env(safe-area-inset-right)); padding-left: max(4px, env(safe-area-inset-left)); }
+  .bottom-nav { gap: 8px; padding-right: max(4px, env(safe-area-inset-right)); padding-left: max(4px, env(safe-area-inset-left)); }
   .nav-button { min-width: 0; }
 }
 
