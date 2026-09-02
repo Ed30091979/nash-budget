@@ -168,10 +168,11 @@ describe("re-encrypting the journal — step 4 of 5.5", () => {
     expect([...(await openEnvelope(nextFamilyKey, after))]).toEqual([...plaintext]);
   });
 
-  it("moves a whole journal, checkpoints and other devices' envelopes included", async () => {
+  it("moves every operation of a whole journal, other devices' envelopes included", async () => {
     const previousFamilyKey = await generateFamilyKey();
     const nextFamilyKey = await generateFamilyKey();
     const before = await journal(previousFamilyKey);
+    const operations = before.filter((envelope) => envelope.kind === "operation");
     const after = await reencryptJournal({
       envelopes: before,
       previousFamilyKey,
@@ -180,20 +181,41 @@ describe("re-encrypting the journal — step 4 of 5.5", () => {
       nextKeyEpoch: 2,
     });
 
-    expect(after).toHaveLength(before.length);
-    expect(after.map((envelope) => envelope.opId)).toEqual(before.map((envelope) => envelope.opId));
+    expect(after).toHaveLength(operations.length);
+    expect(after.map((envelope) => envelope.opId)).toEqual(operations.map((e) => e.opId));
     // The owner uploads envelopes authored by every device in the family; that is why 3.3 forbids
     // the server to require that the header deviceId match the uploading device.
     expect(after.map((envelope) => envelope.deviceId)).toEqual(
-      before.map((envelope) => envelope.deviceId),
+      operations.map((envelope) => envelope.deviceId),
     );
-    expect(after.map((envelope) => envelope.kind)).toEqual(before.map((envelope) => envelope.kind));
     for (const [index, envelope] of after.entries()) {
       expect(envelope.keyEpoch).toBe(2);
       expect([...(await openEnvelope(nextFamilyKey, envelope))]).toEqual([
-        ...(await openEnvelope(previousFamilyKey, before[index]!)),
+        ...(await openEnvelope(previousFamilyKey, operations[index]!)),
       ]);
     }
+  });
+
+  it("leaves the epoch's checkpoints behind: a chain of 3.6 belongs to one epoch", async () => {
+    // 5.5 step 4 moves every *operation*. A checkpoint carried across would arrive with the chain
+    // seed and the digest of the epoch that has just been retired — values no device can
+    // recompute under the new number — and the first pull after every rotation would read them as
+    // a broken chain. The new epoch opens its own chains at `1`, which is where 5.5 step 2 sends
+    // what the crossing lost, in `inheritedGaps` of the first checkpoint of the new epoch.
+    const previousFamilyKey = await generateFamilyKey();
+    const nextFamilyKey = await generateFamilyKey();
+    const before = await journal(previousFamilyKey);
+    expect(before.some((envelope) => envelope.kind === "checkpoint")).toBe(true);
+
+    const after = await reencryptJournal({
+      envelopes: before,
+      previousFamilyKey,
+      previousKeyEpoch: 1,
+      nextFamilyKey,
+      nextKeyEpoch: 2,
+    });
+
+    expect(after.every((envelope) => envelope.kind === "operation")).toBe(true);
   });
 
   it("refuses an envelope of another epoch instead of quietly carrying it over", async () => {

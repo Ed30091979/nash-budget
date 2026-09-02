@@ -1,5 +1,7 @@
 import type { JournalSnapshot, OpId } from "@family-budget/sync-protocol";
 
+import type { CheckpointAlarm, CheckpointLink } from "./checkpoint.js";
+
 /**
  * An envelope as it travels: the header in the clear, the IV and the ciphertext in base64.
  *
@@ -110,9 +112,29 @@ export interface IntakeResult {
   readonly cursor: SyncCursor;
   /** Operations folded into {@link snapshot} by this delivery. */
   readonly applied: number;
-  /** Checkpoint envelopes read and passed over; comparison (3.6) belongs to a later phase. */
+  /** Checkpoint envelopes read, this device's own included. */
   readonly checkpoints: number;
+  /**
+   * Of those, the ones actually measured against this device's set — somebody else's (3.6).
+   *
+   * Kept apart from {@link checkpoints} because it is what clears a warning: a peer's checkpoint
+   * that agreed is evidence the journals agree *now*, while this device's own checkpoint is only
+   * evidence that it agrees with itself.
+   */
+  readonly compared: number;
   readonly notices: readonly LamportNotice[];
+  /** `M` of 3.6 after this delivery: the operations of the epoch read out of the journal. */
+  readonly journalOpIds: readonly string[];
+  /** The chain `(deviceId, index)` after this delivery — one link per device. */
+  readonly chain: readonly CheckpointLink[];
+  /**
+   * Checkpoints that did not agree — «журнал расходится» (3.6).
+   *
+   * Not a stop. A divergence neither blocks work nor rewinds state: it is a signal to a person
+   * and a reason to rebuild by hand. The cursor moves past a checkpoint that disagreed exactly as
+   * it moves past one that agreed, and the alarm travels beside it.
+   */
+  readonly alarms: readonly CheckpointAlarm[];
   /** `null` when the whole delivery was consumed. */
   readonly stop: SyncStop | null;
 }
@@ -133,7 +155,8 @@ export interface PushResult {
   readonly stranded: number;
 }
 
-export interface PullResult extends Omit<IntakeResult, "snapshot"> {
+export interface PullResult
+  extends Omit<IntakeResult, "snapshot" | "journalOpIds" | "chain"> {
   /** Requests actually made. Zero means the cursor was already at the end of the journal. */
   readonly requests: number;
   /**

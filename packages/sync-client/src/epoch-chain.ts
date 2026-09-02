@@ -32,6 +32,7 @@
  */
 import {
   deviceKeyFingerprint,
+  equalBytes,
   familyKeyFingerprint,
   toHex,
   unwrapFamilyKey,
@@ -213,8 +214,15 @@ export async function resolveEpochChain(params: EpochChainParams): Promise<Epoch
     // The order 5.4 prescribes: hash the delivered SPKI, compare with the pin, and only then
     // derive. `unwrapFamilyKey` performs the comparison itself; the explicit check here is what
     // turns its refusal into the two different verdicts a person is shown.
+    //
+    // `equalBytes` and not two hex strings, because 5.4 asks for this comparison by name to be
+    // made **in constant time** and a JavaScript string comparison returns at the first differing
+    // character. What leaks here is small — a prefix of the hash of a public key the server
+    // already holds — and it is still the wrong instrument: the package has one comparison for
+    // values an attacker controls an end of, and the way a build ends up using the early-exit one
+    // where it matters is by keeping it around for the cases where it does not.
     const delivered = await deviceKeyFingerprint(spki);
-    if (toHex(delivered) !== toHex(pin.fingerprint)) {
+    if (!equalBytes(delivered, pin.fingerprint)) {
       return halt("sender_key_changed", record.keyEpoch);
     }
 
@@ -236,9 +244,12 @@ export async function resolveEpochChain(params: EpochChainParams): Promise<Epoch
       // it. Different key — this is the substitution the whole section exists to catch, because a
       // wrap of the current epoch changes the key without changing the number, and nothing would
       // have to be confirmed.
-      const held = toHex(await familyKeyFingerprint(currentKey!));
-      const offered = toHex(await familyKeyFingerprint(unwrapped));
-      if (held === offered) {
+      // The same rule, and here the value is the family key's own fingerprint rather than a
+      // public key's: an early exit would leak its prefix a character at a time to a server that
+      // can offer as many wraps as it likes.
+      const held = await familyKeyFingerprint(currentKey!);
+      const offered = await familyKeyFingerprint(unwrapped);
+      if (equalBytes(held, offered)) {
         ignored += 1;
         continue;
       }

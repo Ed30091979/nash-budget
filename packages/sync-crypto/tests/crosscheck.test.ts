@@ -24,6 +24,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  CHECKPOINT_DIGEST_LABEL,
+  CHECKPOINT_PREV_LABEL,
+  checkpointDigest,
+  checkpointSeedDigest,
   computeBindProof,
   computeEpochConfirm,
   deriveInviteSecrets,
@@ -38,7 +42,17 @@ import {
   wrapFamilyKey,
   type EnvelopeHeader,
 } from "../src/index.js";
-import { DEVICE_A, DEVICE_B, FAMILY_ID, INVITE_ID, OP_ID, ROTATION_ID, makeDevice } from "./support.js";
+import {
+  DEVICE_A,
+  DEVICE_B,
+  FAMILY_ID,
+  INVITE_ID,
+  OP_ID,
+  OP_ID_2,
+  OP_ID_3,
+  ROTATION_ID,
+  makeDevice,
+} from "./support.js";
 
 /** `enc` of 5.2, written out the long way with Node buffers. */
 function encByHand(...values: ReadonlyArray<string | number | Uint8Array>): Buffer {
@@ -120,6 +134,29 @@ describe("the derived values agree with node:crypto", () => {
     const code = "ABCDEFGHJKMN";
     expect(toHex(await inviteSalt(code))).toBe(
       createHash("sha256").update(encByHand("nash-budget/invite/v1", code)).digest("hex"),
+    );
+  });
+
+  it("computes the checkpoint digest as SHA-256 over the labelled enc list (3.6)", async () => {
+    // The identifiers go in sorted, and `opCount` goes in ahead of them — both spelled out here
+    // rather than taken from the implementation, so the vector says what the document says.
+    const sorted = [OP_ID, OP_ID_2, OP_ID_3].sort();
+    expect(
+      toHex(await checkpointDigest({ familyId: FAMILY_ID, keyEpoch: 7, opIds: [OP_ID_3, OP_ID, OP_ID_2] })),
+    ).toBe(
+      createHash("sha256")
+        .update(encByHand(CHECKPOINT_DIGEST_LABEL, FAMILY_ID, 7, 3, ...sorted))
+        .digest("hex"),
+    );
+  });
+
+  it("computes the first prevDigest of a chain over family, epoch and device (3.6)", async () => {
+    expect(
+      toHex(await checkpointSeedDigest({ familyId: FAMILY_ID, keyEpoch: 4, deviceId: DEVICE_A })),
+    ).toBe(
+      createHash("sha256")
+        .update(encByHand(CHECKPOINT_PREV_LABEL, FAMILY_ID, 4, DEVICE_A))
+        .digest("hex"),
     );
   });
 

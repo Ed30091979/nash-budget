@@ -1,4 +1,12 @@
 export {
+  CHECKPOINT_DIGEST_LABEL,
+  CHECKPOINT_PREV_LABEL,
+  checkpointDigest,
+  checkpointSeedDigest,
+  type CheckpointDigestParams,
+  type CheckpointSeedParams,
+} from "./checkpoint.js";
+export {
   CROCKFORD_ALPHABET,
   encodeCrockfordBits,
   normalizeCrockford,

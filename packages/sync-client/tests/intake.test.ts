@@ -8,6 +8,7 @@ import {
 } from "@family-budget/sync-protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { CheckpointLink } from "../src/checkpoint.js";
 import { applyDelivery } from "../src/intake.js";
 import type { DeliveredEnvelope, OutgoingEnvelope, SyncCursor, SyncStop } from "../src/types.js";
 import {
@@ -17,6 +18,7 @@ import {
   DEVICE_B,
   FAMILY_ID,
   FIRST_EPOCH,
+  checkpointRecord,
   sealCheckpoint,
   sealOperation,
   sealRaw,
@@ -53,21 +55,32 @@ function expense(index: number, deviceId = DEVICE_B) {
   ])[0]!;
 }
 
+interface AnchorState {
+  readonly journalOpIds: readonly string[];
+  readonly chain: readonly CheckpointLink[];
+}
+
+const NO_ANCHOR: AnchorState = { journalOpIds: [], chain: [] };
+
 async function apply(
   familyKey: CryptoKey,
   envelopes: readonly DeliveredEnvelope[],
   cursor: SyncCursor = START,
   snapshot: JournalSnapshot = createEmptyJournal(),
   priorStop: SyncStop | null = null,
+  anchor: AnchorState = NO_ANCHOR,
 ) {
   return applyDelivery({
     envelopes,
     cursor,
     acceptedEpoch: FIRST_EPOCH,
     familyKey,
+    familyId: FAMILY_ID,
     deviceId: DEVICE_A,
     snapshot,
     priorStop,
+    journalOpIds: anchor.journalOpIds,
+    chain: anchor.chain,
   });
 }
 
@@ -280,16 +293,15 @@ describe("приём чужих операций (3.4)", () => {
 
   it("чекпойнт двигает курсор и не считается операцией", async () => {
     const family = await createFamilyKey();
+    const first = expense(1);
     const envelopes = numbered([
-      await sealOperation(family.key, expense(1)),
-      await sealCheckpoint(family.key, "0000000c-0000-4000-8000-000000000003", DEVICE_B, {
-        index: 1,
-        opCount: 1,
-        skipped: [],
-        inheritedGaps: [],
-        prevDigest: "00",
-        digest: "11",
-      }),
+      await sealOperation(family.key, first),
+      await sealCheckpoint(
+        family.key,
+        "0000000c-0000-4000-8000-000000000003",
+        DEVICE_B,
+        await checkpointRecord({ opIds: [first.opId] }),
+      ),
       await sealOperation(family.key, expense(2)),
     ]);
 
@@ -298,6 +310,7 @@ describe("приём чужих операций (3.4)", () => {
     expect(result.stop).toBeNull();
     expect(result.applied).toBe(2);
     expect(result.checkpoints).toBe(1);
+    expect(result.alarms).toEqual([]);
     expect(result.cursor).toEqual({ keyEpoch: FIRST_EPOCH, seq: 3 });
   });
 

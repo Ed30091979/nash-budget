@@ -143,6 +143,16 @@ export interface ReencryptJournalParams {
  * by hand: the undecryptable envelope is not carried over and its `seq` goes into `inheritedGaps`
  * of the first checkpoint of the new epoch, so the family sees exactly what was lost. There is no
  * automatic path, and this function offers none.
+ *
+ * **Checkpoints do not travel, and that is not an omission.** 5.5 step 4 moves every *operation*;
+ * 3.6 numbers checkpoint chains per device **per epoch**, and both of its digests are computed
+ * over the epoch number. A checkpoint carried into the next epoch is therefore a record no device
+ * can recompute: its `prevDigest` is the chain seed of the epoch that has just been retired, its
+ * `digest` was taken over that epoch's number, and the first pull after every rotation would read
+ * the whole set of them as a broken chain and raise the one warning the anchor has, for nothing.
+ * The new epoch starts its chains at `1` — which is the same sentence 5.5 step 2 writes from the
+ * other side when it sends what the crossing lost into `inheritedGaps` of the **first checkpoint
+ * of the new epoch**. Nothing of the budget is lost with them: a checkpoint holds no state.
  */
 export async function reencryptJournal(
   params: ReencryptJournalParams,
@@ -155,6 +165,10 @@ export async function reencryptJournal(
   const moved: SealedEnvelope[] = [];
   for (const envelope of params.envelopes) {
     if (envelope.keyEpoch !== params.previousKeyEpoch) fail("epoch_mismatch");
+    // The epoch is still checked first: a stray envelope of another epoch is refused whatever its
+    // kind, so this is a decision about what a *well-formed* set carries and never a way past the
+    // refusal above.
+    if (envelope.kind === "checkpoint") continue;
     moved.push(
       await reencryptEnvelope({
         envelope,

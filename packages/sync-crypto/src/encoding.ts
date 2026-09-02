@@ -53,6 +53,21 @@ function encodeValue(value: EncodableValue): Uint8Array {
 
 /** The canonical binding encoding of 5.2. An empty argument list gives an empty result. */
 export function enc(...values: readonly EncodableValue[]): Uint8Array {
+  return encList(values);
+}
+
+/**
+ * {@link enc} over a list that is already in hand, without spreading it into an argument list.
+ *
+ * The two are the same encoding and this one is not a convenience: the checkpoint digest of 3.6
+ * encodes one value per operation the device has applied, and a family with tens of thousands of
+ * them would spread tens of thousands of arguments into a call. Engines differ on where that
+ * stops working and none of them are generous about saying so — the failure is a stack overflow
+ * on a large family, in the one construction whose whole job is to notice that a large family's
+ * journal is intact. Not exported from the package index: `enc` is the name the scheme uses, and
+ * a second public spelling of one encoding is how two constructions end up disagreeing.
+ */
+export function encList(values: readonly EncodableValue[]): Uint8Array {
   const parts = values.map(encodeValue);
   let total = 0;
   for (const part of parts) {

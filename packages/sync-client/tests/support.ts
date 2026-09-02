@@ -2,6 +2,8 @@ import "fake-indexeddb/auto";
 
 import { IndexedDbBudgetRepository } from "@family-budget/storage";
 import {
+  checkpointDigest,
+  checkpointSeedDigest,
   ENVELOPE_VERSION,
   familyKeyFingerprint,
   generateFamilyKey,
@@ -21,6 +23,7 @@ import {
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
 
 import { toBase64 } from "../src/base64.js";
+import type { CheckpointRecord } from "../src/checkpoint.js";
 import { SyncClientError, SyncServerError } from "../src/errors.js";
 import type { FetchQuery, FetchResult, KeysResult, SubmitResult, SyncTransport } from "../src/transport.js";
 import type { DeliveredEnvelope, OutgoingEnvelope } from "../src/types.js";
@@ -121,6 +124,43 @@ export async function sealRaw(
   };
   const sealed = await sealEnvelope(familyKey, full, utf8(plaintext));
   return { ...full, iv: toBase64(sealed.iv), ciphertext: toBase64(sealed.ciphertext) };
+}
+
+/**
+ * A well-formed checkpoint record of 3.6, computed the way the writing device computes it.
+ *
+ * The set goes in as the author's own applied set; the digest and the chain seed are the real
+ * ones, so a test that wants a divergence has to produce it by changing what the author applied
+ * rather than by writing a digest nobody could have computed.
+ */
+export async function checkpointRecord(options: {
+  readonly opIds: readonly string[];
+  readonly deviceId?: string;
+  readonly index?: number;
+  readonly keyEpoch?: number;
+  readonly skipped?: readonly string[];
+  readonly inheritedGaps?: readonly number[];
+  readonly prevDigest?: string;
+}): Promise<CheckpointRecord> {
+  const keyEpoch = options.keyEpoch ?? FIRST_EPOCH;
+  const index = options.index ?? 1;
+  const prevDigest =
+    options.prevDigest ??
+    toHex(
+      await checkpointSeedDigest({
+        familyId: FAMILY_ID,
+        keyEpoch,
+        deviceId: options.deviceId ?? DEVICE_B,
+      }),
+    );
+  return {
+    index,
+    opCount: options.opIds.length,
+    skipped: [...(options.skipped ?? [])].sort(),
+    inheritedGaps: [...(options.inheritedGaps ?? [])].sort((a, b) => a - b),
+    prevDigest,
+    digest: toHex(await checkpointDigest({ familyId: FAMILY_ID, keyEpoch, opIds: options.opIds })),
+  };
 }
 
 export async function sealCheckpoint(

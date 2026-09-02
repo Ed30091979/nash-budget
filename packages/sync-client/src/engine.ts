@@ -35,7 +35,15 @@ import {
   type OutboxRecord,
   type SaveIfRevisionResult,
 } from "@family-budget/storage";
-import { ENVELOPE_VERSION, openEnvelope, sealEnvelope, utf8 } from "@family-budget/sync-crypto";
+import {
+  checkpointDigest,
+  checkpointSeedDigest,
+  ENVELOPE_VERSION,
+  openEnvelope,
+  sealEnvelope,
+  toHex,
+  utf8,
+} from "@family-budget/sync-crypto";
 import {
   applyOperations,
   createClock,
@@ -50,6 +58,12 @@ import {
 } from "@family-budget/sync-protocol";
 
 import { fromBase64, toBase64 } from "./base64.js";
+import {
+  CHECKPOINT_ALARM_REASONS,
+  encodeCheckpointRecord,
+  type CheckpointAlarm,
+  type CheckpointLink,
+} from "./checkpoint.js";
 import { SyncClientError } from "./errors.js";
 import { applyDelivery } from "./intake.js";
 import type { SyncTransport } from "./transport.js";
@@ -82,6 +96,17 @@ export const SYNC_STATE_KEYS = {
    * anything else touches the queue.
    */
   rekey: "rekey",
+  /**
+   * The journal integrity anchor of 3.6: the set `M`, the chain read from it, the last alarm and
+   * this device's own place in its own chain.
+   *
+   * One record and not four, because all four belong to one epoch and are reset together the
+   * moment a rotation moves the cursor. A record naming another epoch is not migrated: the digest
+   * and the chain seed are both bound to the epoch number, so nothing in it can be recomputed
+   * into the new one, and the new epoch starts its chains at `1` (5.5 step 2 has what the old one
+   * lost travel in `inheritedGaps` of the first checkpoint of the new epoch instead).
+   */
+  anchor: "anchor",
 } as const;
 
 /**
@@ -92,6 +117,27 @@ export const SYNC_STATE_KEYS = {
  */
 export const FETCH_LIMIT = 200;
 export const SUBMIT_BATCH_SIZE = 200;
+
+/**
+ * When a checkpoint is written — 3.6, the rules of the anchor, as constants of this build.
+ *
+ * «Чекпойнт пишет любое устройство после каждых `200` применённых операций и при каждом переходе
+ * в фон; чаще одного раза в `10` минут — не пишет.» The count is of operations folded out of the
+ * journal, because those are the ones that change the set the digest is taken over; the floor is
+ * read off this device's own clock. Neither number comes from a response, and neither could: the
+ * anchor exists to measure the server, and a rate the server sets is a rate at which the server
+ * decides how often it is measured.
+ */
+export const CHECKPOINT_EVERY_OPERATIONS = 200;
+export const CHECKPOINT_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * How long a set this build will read back out of its own anchor record.
+ *
+ * Far above the server's envelope quota of `100 000` (5.5), so it bounds a corrupted record and
+ * never an honest family.
+ */
+const MAX_JOURNAL_OP_IDS = 1_000_000;
 
 /** How many pages one `pull()` will walk before returning. Bounds one call, not the journal. */
 const MAX_PAGES_PER_PULL = 64;
@@ -129,6 +175,24 @@ export interface SyncEngineOptions {
   readonly retiredKeys?: readonly RetiredEpochKey[];
   readonly fetchLimit?: number;
   readonly batchSize?: number;
+  /**
+   * `S_M` of 3.6: identifiers this device passed over through quarantine (3.4).
+   *
+   * Empty in this phase — nothing skips an envelope yet — and threaded all the same, because the
+   * formula of 3.6 is symmetric in the two skip lists and a build that hard-coded one of them to
+   * empty would have the other half of the symmetry written nowhere.
+   */
+  readonly skipped?: readonly string[];
+  /**
+   * `seq` numbers of the previous epoch still missing when it was carried across (5.5 step 2).
+   *
+   * They travel in the **first** checkpoint of this epoch and nowhere else: they are a fact about
+   * the crossing, not about this device's set, and repeating them in every checkpoint would make
+   * one loss look like a recurring one.
+   */
+  readonly inheritedGaps?: readonly number[];
+  /** This device's clock, for the once-in-ten-minutes floor of 3.6. Injected so tests can move it. */
+  readonly now?: () => number;
 }
 
 /** What one pass over the queue moved to the epoch in hand, and what it could not move. */
@@ -146,10 +210,142 @@ interface OutboxRekey {
   readonly envelopes: readonly OutgoingEnvelope[];
 }
 
+/** What this device knows about the integrity of its own journal — 3.6, for a screen to render. */
+export interface CheckpointReport {
+  /** The last divergence seen in the epoch this device holds, or `null` when the journals agree. */
+  readonly alarm: CheckpointAlarm | null;
+  /** Operations of this epoch read out of the journal — the number «у себя» a report shows. */
+  readonly journalOpCount: number;
+  /** How many checkpoints this device has written in this epoch. `0` before the first. */
+  readonly ownIndex: number;
+}
+
 export interface EnqueueResult {
   readonly snapshot: JournalSnapshot;
   readonly revision: string;
   readonly queued: number;
+}
+
+/**
+ * The anchor of 3.6 as it is stored: the set, the chain, the last alarm, and this device's own
+ * position in its own chain.
+ */
+interface StoredAnchor {
+  readonly keyEpoch: number;
+  /** `M`, in journal order — see `ApplyDeliveryParams.journalOpIds` for why the order matters. */
+  readonly opIds: readonly string[];
+  readonly chain: readonly CheckpointLink[];
+  readonly alarm: CheckpointAlarm | null;
+  /** The last link this device wrote itself, or `null` before it has written any. */
+  readonly own: OwnCheckpointChain | null;
+  /** Operations folded out of the journal since the last checkpoint — the `200` of 3.6. */
+  readonly sinceLast: number;
+  /** This device's own clock when it last wrote one — the ten-minute floor of 3.6. */
+  readonly writtenAt: number;
+}
+
+/** What this device needs to write the *next* link of its own chain. */
+interface OwnCheckpointChain {
+  /** The `index` of the last checkpoint written. The next one is this plus one. */
+  readonly index: number;
+  /** Its `digest`, which becomes the next one's `prevDigest`. */
+  readonly digest: string;
+}
+
+const IDENTIFIER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+const DIGEST = /^[0-9a-f]{64}$/u;
+
+function anchorRefusal(): never {
+  throw new SyncClientError("corrupt_sync_state", "the stored anchor is not an anchor");
+}
+
+function readAnchorOpIds(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > MAX_JOURNAL_OP_IDS) anchorRefusal();
+  for (const item of value) {
+    if (typeof item !== "string" || !IDENTIFIER.test(item)) anchorRefusal();
+  }
+  return value as readonly string[];
+}
+
+function readAnchorChain(value: unknown): readonly CheckpointLink[] {
+  if (!Array.isArray(value)) anchorRefusal();
+  const links: CheckpointLink[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) anchorRefusal();
+    const link = item as Partial<CheckpointLink>;
+    if (
+      typeof link.deviceId !== "string" ||
+      link.deviceId.length === 0 ||
+      !Number.isSafeInteger(link.index) ||
+      (link.index as number) < 1 ||
+      typeof link.digest !== "string" ||
+      !DIGEST.test(link.digest)
+    ) {
+      anchorRefusal();
+    }
+    links.push({ deviceId: link.deviceId, index: link.index as number, digest: link.digest });
+  }
+  return links;
+}
+
+function readAnchorAlarm(value: unknown): CheckpointAlarm | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") anchorRefusal();
+  const alarm = value as Partial<CheckpointAlarm>;
+  const counts = [
+    alarm.seq,
+    alarm.index,
+    alarm.ownCount,
+    alarm.checkpointCount,
+    alarm.missingHere,
+    alarm.missingThere,
+  ];
+  if (
+    typeof alarm.reason !== "string" ||
+    !(CHECKPOINT_ALARM_REASONS as readonly string[]).includes(alarm.reason) ||
+    typeof alarm.deviceId !== "string" ||
+    alarm.deviceId.length === 0 ||
+    counts.some((count) => !Number.isSafeInteger(count) || (count as number) < 0) ||
+    !Array.isArray(alarm.examples) ||
+    alarm.examples.some((example) => typeof example !== "string")
+  ) {
+    anchorRefusal();
+  }
+  return alarm as CheckpointAlarm;
+}
+
+function readAnchorOwn(value: unknown): OwnCheckpointChain | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") anchorRefusal();
+  const own = value as Partial<OwnCheckpointChain>;
+  if (
+    !Number.isSafeInteger(own.index) ||
+    (own.index as number) < 1 ||
+    typeof own.digest !== "string" ||
+    !DIGEST.test(own.digest)
+  ) {
+    anchorRefusal();
+  }
+  return { index: own.index as number, digest: own.digest };
+}
+
+function readAnchorCount(value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) anchorRefusal();
+  return value as number;
+}
+
+/** The anchor as it is written down: plain data, copied out of whatever built it. */
+function serializeAnchor(anchor: StoredAnchor): unknown {
+  return {
+    keyEpoch: anchor.keyEpoch,
+    opIds: [...anchor.opIds],
+    chain: anchor.chain.map((link) => ({ ...link })),
+    alarm: anchor.alarm === null ? null : { ...anchor.alarm, examples: [...anchor.alarm.examples] },
+    own: anchor.own === null ? null : { ...anchor.own },
+    sinceLast: anchor.sinceLast,
+    writtenAt: anchor.writtenAt,
+  };
 }
 
 interface StoredJournal {
@@ -186,6 +382,9 @@ export class SyncEngine {
   private readonly retiredKeys: ReadonlyMap<number, CryptoKey>;
   private readonly fetchLimit: number;
   private readonly batchSize: number;
+  private readonly skipped: readonly string[];
+  private readonly inheritedGaps: readonly number[];
+  private readonly now: () => number;
 
   constructor(options: SyncEngineOptions) {
     this.repository = options.repository;
@@ -202,6 +401,11 @@ export class SyncEngine {
     );
     this.fetchLimit = options.fetchLimit ?? FETCH_LIMIT;
     this.batchSize = options.batchSize ?? SUBMIT_BATCH_SIZE;
+    // Sorted here rather than trusted sorted: both lists go into a checkpoint record, and the
+    // record's contract is that they arrive sorted and without repetition.
+    this.skipped = [...new Set(options.skipped ?? [])].sort();
+    this.inheritedGaps = [...new Set(options.inheritedGaps ?? [])].sort((a, b) => a - b);
+    this.now = options.now ?? (() => Date.now());
   }
 
   private async readJournal(): Promise<JournalSnapshot> {
@@ -336,6 +540,61 @@ export class SyncEngine {
       );
     }
     return { keyEpoch, keyDigest: record.keyDigest, live: record.live };
+  }
+
+  /**
+   * The anchor record of 3.6, read back with the same suspicion as the cursor.
+   *
+   * A record of another epoch is not an error and is not migrated: both digests of 3.6 are bound
+   * to the epoch number, so nothing in it survives a rotation, and the fresh value returned here
+   * is what makes the new epoch's chains start at `1`.
+   */
+  private async readAnchor(): Promise<StoredAnchor> {
+    const fresh: StoredAnchor = {
+      keyEpoch: this.keyEpoch,
+      opIds: [],
+      chain: [],
+      alarm: null,
+      own: null,
+      sinceLast: 0,
+      writtenAt: 0,
+    };
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.anchor);
+    if (stored === undefined || stored === null) return fresh;
+    const record = stored as Partial<StoredAnchor>;
+    if (!Number.isSafeInteger(record.keyEpoch) || (record.keyEpoch as number) < 1) {
+      throw new SyncClientError("corrupt_sync_state", "the stored anchor is not an anchor");
+    }
+    if (record.keyEpoch !== this.keyEpoch) return fresh;
+    const opIds = readAnchorOpIds(record.opIds);
+    const chain = readAnchorChain(record.chain);
+    return {
+      keyEpoch: this.keyEpoch,
+      opIds,
+      chain,
+      alarm: readAnchorAlarm(record.alarm),
+      own: readAnchorOwn(record.own),
+      sinceLast: readAnchorCount(record.sinceLast),
+      writtenAt: readAnchorCount(record.writtenAt),
+    };
+  }
+
+  /**
+   * What the anchor of 3.6 has to say, for the «Семья» screen.
+   *
+   * Separate from {@link status} rather than folded into it: the alarm belongs to one screen and
+   * one section, and a caller that only wants to know whether the queue is draining should not
+   * have to read a set of a hundred thousand identifiers to find out.
+   */
+  async readCheckpointReport(): Promise<CheckpointReport> {
+    // A record of a retired epoch comes back empty from `readAnchor`, because a checkpoint of an
+    // epoch that no longer exists is about a set that no longer exists.
+    const anchor = await this.readAnchor();
+    return {
+      alarm: anchor.alarm,
+      journalOpCount: anchor.opIds.length,
+      ownIndex: anchor.own === null ? 0 : anchor.own.index,
+    };
   }
 
   async status(): Promise<SyncStatusReport> {
@@ -710,6 +969,9 @@ export class SyncEngine {
       { key: SYNC_STATE_KEYS.cursor, value: { ...cursor } },
       { key: SYNC_STATE_KEYS.stop, value: null },
       { key: SYNC_STATE_KEYS.epoch, value: { ...epoch } },
+      // The anchor goes with them. Its set, its chains and its alarm were all about the epoch
+      // that has just been left, and 3.6 binds every one of those values to the epoch number.
+      { key: SYNC_STATE_KEYS.anchor, value: null },
     ]);
     return { cursor, stop: null };
   }
@@ -726,12 +988,16 @@ export class SyncEngine {
     let requests = 0;
     let applied = 0;
     let checkpoints = 0;
+    let compared = 0;
     const opened = await this.openEpoch();
     let cursor = opened.cursor;
     let stop: SyncStop | null = null;
     let pageLimitReached = false;
     const notices: PullResult["notices"][number][] = [];
     let priorStop = opened.stop;
+    // Read after `openEpoch`, which is where a rotation clears it.
+    let anchor = await this.readAnchor();
+    const alarms: CheckpointAlarm[] = [];
 
     for (let page = 0; page < MAX_PAGES_PER_PULL; page += 1) {
       const answer = await this.transport.fetch(this.familyId, {
@@ -753,10 +1019,37 @@ export class SyncEngine {
           cursor,
           acceptedEpoch: this.keyEpoch,
           familyKey: this.familyKey,
+          familyId: this.familyId,
           deviceId: this.deviceId,
           snapshot: journal,
           priorStop,
+          journalOpIds: anchor.opIds,
+          chain: anchor.chain,
+          skipped: this.skipped,
         });
+        // What the delivery made of the anchor, kept in one place so that both branches of the
+        // write below and the accounting after it name the same value.
+        const folded: StoredAnchor = {
+          keyEpoch: this.keyEpoch,
+          opIds: result.journalOpIds,
+          chain: result.chain,
+          // The latest verdict and not a sticky flag: 3.6 has the warning describe the state of
+          // the journals now. A device that diverged, was rebuilt by hand and then received a
+          // checkpoint that agrees is a device whose journals agree, and a flag that could only
+          // ever be set would tell it otherwise for ever. A delivery that measured nothing —
+          // operations only, or none but this device's own checkpoints — decides nothing either
+          // way and leaves the previous verdict standing.
+          alarm:
+            result.alarms.length > 0
+              ? result.alarms[result.alarms.length - 1]!
+              : result.compared > 0
+                ? null
+                : anchor.alarm,
+          own: anchor.own,
+          sinceLast: anchor.sinceLast + result.applied,
+          writtenAt: anchor.writtenAt,
+        };
+        const anchorEntry = { key: SYNC_STATE_KEYS.anchor, value: serializeAnchor(folded) };
 
         if (result.applied === 0 && result.checkpoints === 0) {
           // Nothing was folded, so neither the journal nor the cursor moved and the document
@@ -770,6 +1063,7 @@ export class SyncEngine {
           await this.repository.writeSyncState([
             { key: SYNC_STATE_KEYS.cursor, value: { ...result.cursor } },
             { key: SYNC_STATE_KEYS.stop, value: result.stop === null ? null : { ...result.stop } },
+            anchorEntry,
           ]);
         } else {
           const commit = await this.commit(
@@ -780,6 +1074,7 @@ export class SyncEngine {
               { key: SYNC_STATE_KEYS.journal, value: serializeJournal(result.snapshot) },
               { key: SYNC_STATE_KEYS.cursor, value: { ...result.cursor } },
               { key: SYNC_STATE_KEYS.stop, value: result.stop === null ? null : { ...result.stop } },
+              anchorEntry,
             ],
           );
           if (commit.status !== "saved") continue;
@@ -789,7 +1084,10 @@ export class SyncEngine {
         cursor = result.cursor;
         applied += result.applied;
         checkpoints += result.checkpoints;
+        compared += result.compared;
         notices.push(...result.notices);
+        alarms.push(...result.alarms);
+        anchor = folded;
         stop = result.stop;
         priorStop = result.stop;
       }
@@ -804,13 +1102,126 @@ export class SyncEngine {
       pageLimitReached = page === MAX_PAGES_PER_PULL - 1;
     }
 
-    return { cursor, applied, checkpoints, notices, stop, requests, pageLimitReached };
+    return {
+      cursor,
+      applied,
+      checkpoints,
+      compared,
+      notices,
+      alarms,
+      stop,
+      requests,
+      pageLimitReached,
+    };
   }
 
-  /** 3.4: the poll follows a successful submission, so this device sees its own `seq` at once. */
+  /**
+   * Writes this device's own checkpoint — the anchor of 3.6, from the writing side.
+   *
+   * Returns whether one was written. The two rules of 3.6 are both here and neither of them is a
+   * number anybody else supplies: `200` operations folded out of the journal, or a caller saying
+   * "now" (the transition to the background, which only the application can see), and never more
+   * often than once in ten minutes.
+   *
+   * `force` lifts the count and not the floor. It is the background transition of 3.6, and a
+   * checkpoint written on every such transition without a floor would be a device that leaves and
+   * returns to the foreground writing an envelope a second.
+   *
+   * The set is `M` — the operations of this epoch this device has read out of the journal, and
+   * only those. 3.6 is explicit that envelopes still sitting in the outgoing queue stay out: a
+   * device that spent an evening offline would otherwise announce a checkpoint over operations
+   * the rest of the family does not physically have, and raise a divergence about itself.
+   */
+  async writeCheckpoint(options: { readonly force?: boolean } = {}): Promise<boolean> {
+    const anchor = await this.readAnchor();
+    const now = this.now();
+    // Nothing new to anchor. A second checkpoint over the same set would spend an envelope and a
+    // chain index to repeat a value the family already has.
+    if (anchor.sinceLast === 0) return false;
+    if (!(options.force ?? false) && anchor.sinceLast < CHECKPOINT_EVERY_OPERATIONS) return false;
+    if (anchor.own !== null && now - anchor.writtenAt < CHECKPOINT_MIN_INTERVAL_MS) return false;
+
+    const skipped = new Set(this.skipped);
+    const mine = anchor.opIds.filter((opId) => !skipped.has(opId));
+    const index = anchor.own === null ? 1 : anchor.own.index + 1;
+    const prevDigest =
+      anchor.own === null
+        ? toHex(
+            await checkpointSeedDigest({
+              familyId: this.familyId,
+              keyEpoch: this.keyEpoch,
+              deviceId: this.deviceId,
+            }),
+          )
+        : anchor.own.digest;
+    const digest = toHex(
+      await checkpointDigest({ familyId: this.familyId, keyEpoch: this.keyEpoch, opIds: mine }),
+    );
+    const record = encodeCheckpointRecord({
+      index,
+      opCount: mine.length,
+      skipped: this.skipped,
+      // 5.5 step 2 puts what the crossing lost into the **first** checkpoint of the new epoch.
+      inheritedGaps: index === 1 ? this.inheritedGaps : [],
+      prevDigest,
+      digest,
+    });
+
+    const opId = crypto.randomUUID();
+    const header = {
+      envelopeVersion: ENVELOPE_VERSION,
+      kind: "checkpoint" as const,
+      familyId: this.familyId,
+      opId,
+      deviceId: this.deviceId,
+      keyEpoch: this.keyEpoch,
+    };
+    const sealed = await sealEnvelope(this.familyKey, header, utf8(record));
+    const append: OutboxAppend = {
+      opId,
+      envelope: { ...header, iv: toBase64(sealed.iv), ciphertext: toBase64(sealed.ciphertext) },
+    };
+
+    // The queue entry and this device's new place in its own chain go into one transaction. Split
+    // apart, a crash between them would either spend an index on an envelope that was never
+    // queued — leaving a permanent gap in this device's own chain, which every other device reads
+    // as the server having deleted a checkpoint — or queue a checkpoint whose index the next one
+    // would claim again.
+    for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+      const document = await this.repository.loadVersioned();
+      const commit = await this.repository.commitWithSync({
+        expectedRevision: document?.revision ?? null,
+        // A checkpoint changes nothing in the budget, so the document is written back as found.
+        value: document?.value ?? (await this.readJournal()).state,
+        outbox: [append],
+        syncState: [
+          {
+            key: SYNC_STATE_KEYS.anchor,
+            value: serializeAnchor({
+              ...anchor,
+              own: { index, digest },
+              sinceLast: 0,
+              writtenAt: now,
+            }),
+          },
+        ],
+      });
+      if (commit.status === "saved") return true;
+    }
+    throw new SyncClientError("write_conflict", "the checkpoint lost its revision check");
+  }
+
+  /**
+   * 3.4: the poll follows a successful submission, so this device sees its own `seq` at once.
+   *
+   * The anchor is written at the end, when the delivery has been folded and the count of 3.6 is
+   * up to date. It leaves with the next push: a checkpoint is an ordinary envelope and waits in
+   * the queue like any other.
+   */
   async sync(): Promise<{ readonly push: PushResult; readonly pull: PullResult }> {
     const pushed = await this.push();
     const pulled = await this.pull();
+    await this.writeCheckpoint();
     return { push: pushed, pull: pulled };
   }
 }

@@ -19,7 +19,14 @@
  * AAD does not cover and the server can therefore write freely — is checked for continuity
  * against the cursor rather than trusted.
  */
-import { openEnvelope, ENVELOPE_KINDS, ENVELOPE_VERSION, fromUtf8 } from "@family-budget/sync-crypto";
+import {
+  checkpointSeedDigest,
+  openEnvelope,
+  toHex,
+  ENVELOPE_KINDS,
+  ENVELOPE_VERSION,
+  fromUtf8,
+} from "@family-budget/sync-crypto";
 import {
   applyOperations,
   createClock,
@@ -31,6 +38,14 @@ import {
 } from "@family-budget/sync-protocol";
 
 import { fromBase64 } from "./base64.js";
+import {
+  chainBreak,
+  compareCheckpoint,
+  parseCheckpointRecord,
+  type CheckpointAlarm,
+  type CheckpointLink,
+  type CheckpointRecord,
+} from "./checkpoint.js";
 import type {
   DeliveredEnvelope,
   IntakeResult,
@@ -46,8 +61,25 @@ export interface ApplyDeliveryParams {
   /** The epoch this device has accepted. Local state; it never travelled to the server. */
   readonly acceptedEpoch: number;
   readonly familyKey: CryptoKey;
+  /** This family, as this device knows it — never the `familyId` an envelope header spells. */
+  readonly familyId: string;
   readonly deviceId: string;
   readonly snapshot: JournalSnapshot;
+  /**
+   * Every operation of this epoch already read out of the journal, in the order it arrived — the
+   * set `M` of 3.6, and the order the author's prefix is rebuilt from.
+   *
+   * It is kept beside the journal rather than taken from `snapshot.appliedOpIds`, and the two are
+   * different sets on purpose. The snapshot's list is sorted, holds this device's own operations
+   * from the moment they were written, and is trimmed at a ceiling; 3.6 needs journal order, and
+   * needs envelopes still sitting in the outgoing queue left out — otherwise a device that worked
+   * offline for an evening would raise a divergence over its own unsent work.
+   */
+  readonly journalOpIds: readonly string[];
+  /** The last checkpoint read from each device in this epoch — the chain `(deviceId, index)`. */
+  readonly chain: readonly CheckpointLink[];
+  /** `S_M`: identifiers this device passed over through quarantine (3.4). Empty in this phase. */
+  readonly skipped?: readonly string[];
   /**
    * The stop this delivery is retrying, as it was written down.
    *
@@ -110,7 +142,18 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
   let cursor = params.cursor;
   let applied = 0;
   let checkpoints = 0;
+  let compared = 0;
   const notices: LamportNotice[] = [];
+  const alarms: CheckpointAlarm[] = [];
+  // `M` as it grows: the array keeps the journal order the author's prefix is rebuilt from, the
+  // set keeps it a set. An identifier cannot arrive twice inside one epoch — the cursor only
+  // accepts `seq + 1` — but the two are held together rather than assumed apart, because a
+  // duplicate would move every later element of the prefix by one and turn an intact journal
+  // into an alarm.
+  const journalOpIds = [...params.journalOpIds];
+  const journalOpIdSet = new Set(journalOpIds);
+  const chain = new Map(params.chain.map((link) => [link.deviceId, link] as const));
+  const skipped = params.skipped ?? [];
 
   /**
    * Everything the caller is owed when a delivery stops, in one place.
@@ -128,7 +171,11 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
       cursor,
       applied,
       checkpoints,
+      compared,
       notices,
+      journalOpIds,
+      chain: [...chain.values()],
+      alarms,
       stop: { reason, seq: envelope.seq, opId: envelope.opId, attempts },
     };
   };
@@ -183,18 +230,67 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     }
 
     if (envelope.kind === "checkpoint") {
-      // 3.6 belongs to a later phase: the anchor is read far enough to know it is well-formed,
-      // the cursor moves past it, and no comparison is claimed. Passing over an unreadable one in
-      // silence is not allowed, so a checkpoint that will not parse stops the delivery like any
-      // other plaintext this build cannot read.
+      // 3.6, the anchor. Passing over an unreadable checkpoint in silence is not allowed, so one
+      // that will not parse stops the delivery like any other plaintext this build cannot read.
+      let record: CheckpointRecord;
       try {
-        const record: unknown = JSON.parse(plaintext);
-        if (typeof record !== "object" || record === null || Array.isArray(record)) {
-          throw new Error("not a checkpoint");
-        }
+        record = parseCheckpointRecord(JSON.parse(plaintext));
       } catch {
         return halt("update_required", envelope);
       }
+
+      // The chain `(deviceId, index)` first, for every device including this one: a device reads
+      // its own checkpoints back out of the journal, and a gap there is the server having deleted
+      // one. 3.6 treats a gap exactly as a divergence of `digest`, so it is the same alarm.
+      const link = chain.get(envelope.deviceId);
+      const expectedIndex = link === undefined ? 1 : link.index + 1;
+      const expectedPrev =
+        link === undefined
+          ? toHex(
+              await checkpointSeedDigest({
+                familyId: params.familyId,
+                keyEpoch: params.acceptedEpoch,
+                deviceId: envelope.deviceId,
+              }),
+            )
+          : link.digest;
+      const broken = record.index !== expectedIndex || record.prevDigest !== expectedPrev;
+      // Adopted whatever the verdict. The chain continues from what was actually delivered, so a
+      // single deletion is reported once instead of turning every later checkpoint of that device
+      // into a repetition of the same alarm.
+      chain.set(envelope.deviceId, {
+        deviceId: envelope.deviceId,
+        index: record.index,
+        digest: record.digest,
+      });
+
+      if (broken) {
+        alarms.push(
+          chainBreak(
+            envelope.deviceId,
+            envelope.seq,
+            record.index,
+            journalOpIds.length,
+            record.opCount,
+          ),
+        );
+      } else if (envelope.deviceId !== params.deviceId) {
+        // 3.6: «получив **чужой** чекпойнт». Its own is the set it just hashed itself, so
+        // comparing with it would only ask whether this device agrees with itself; the chain
+        // check above is the part of its own checkpoint that carries information.
+        const alarm = await compareCheckpoint({
+          record,
+          familyId: params.familyId,
+          keyEpoch: params.acceptedEpoch,
+          deviceId: envelope.deviceId,
+          seq: envelope.seq,
+          journalOpIds,
+          skipped,
+        });
+        compared += 1;
+        if (alarm !== null) alarms.push(alarm);
+      }
+
       checkpoints += 1;
       cursor = { keyEpoch: params.acceptedEpoch, seq: envelope.seq };
       continue;
@@ -229,6 +325,12 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     // 3.4 step 9.
     snapshot = applyOperations(snapshot, [operation]);
     applied += 1;
+    // And into `M` (3.6). Here rather than at the top of the loop: the set is «операции эпохи,
+    // применённые устройством», so an envelope that stopped the delivery never joins it.
+    if (!journalOpIdSet.has(operation.opId)) {
+      journalOpIdSet.add(operation.opId);
+      journalOpIds.push(operation.opId);
+    }
     // 3.4 step 10 — the caller performs the single transaction; this function decides what goes
     // into it. The epoch of the cursor is the epoch of the key that opened the envelope, which
     // step 1 has already established the header agrees with; taking it from the header instead
@@ -236,5 +338,16 @@ export async function applyDelivery(params: ApplyDeliveryParams): Promise<Intake
     cursor = { keyEpoch: params.acceptedEpoch, seq: envelope.seq };
   }
 
-  return { snapshot, cursor, applied, checkpoints, notices, stop: null };
+  return {
+    snapshot,
+    cursor,
+    applied,
+    checkpoints,
+    compared,
+    notices,
+    journalOpIds,
+    chain: [...chain.values()],
+    alarms,
+    stop: null,
+  };
 }

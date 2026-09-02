@@ -1,5 +1,17 @@
 export { fromBase64, toBase64 } from "./base64.js";
 export {
+  CHECKPOINT_ALARM_REASONS,
+  compareCheckpoint,
+  encodeCheckpointRecord,
+  MAX_CHECKPOINT_LIST,
+  parseCheckpointRecord,
+  type CheckpointAlarm,
+  type CheckpointAlarmReason,
+  type CheckpointLink,
+  type CheckpointRecord,
+  type CompareCheckpointParams,
+} from "./checkpoint.js";
+export {
   SYNC_CLIENT_ERROR_CODES,
   SYNC_SERVER_ERROR_CODES,
   SYNC_SERVER_ERROR_DETAILS,
@@ -11,10 +23,13 @@ export {
   type SyncServerErrorCode,
 } from "./errors.js";
 export {
+  CHECKPOINT_EVERY_OPERATIONS,
+  CHECKPOINT_MIN_INTERVAL_MS,
   FETCH_LIMIT,
   SUBMIT_BATCH_SIZE,
   SYNC_STATE_KEYS,
   SyncEngine,
+  type CheckpointReport,
   type EnqueueResult,
   type RetiredEpochKey,
   type SyncEngineOptions,
