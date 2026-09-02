@@ -90,7 +90,7 @@ describe("planning app integration", () => {
 
     expect(source).toContain('type Screen = "today" | "year" | "planning"');
     expect(source).toContain("Настроить план");
-    expect(source).toContain("← К горизонту");
+    expect(source).toContain("<BackButton label=\"К горизонту\" onClick={() => navigate(\"year\")} />");
     expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
     expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />");
     expect(source).toContain('active={screen === "year" || screen === "planning"}');

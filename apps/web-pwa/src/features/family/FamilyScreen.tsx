@@ -16,6 +16,8 @@ import { createPortal } from "react-dom";
 import type { SyncStatusReport } from "@family-budget/sync-client";
 import type { JournalIntegrity } from "@family-budget/sync-protocol";
 
+import { BackButton } from "../../components/BackButton";
+import { Icon } from "../../components/Icon";
 import { activateDialogEnvironment, handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import type { DeviceRecord, MemberRecord, MembershipSnapshot } from "./api";
 import { formatLastBackupDate } from "../data-management/model";
@@ -230,9 +232,7 @@ export function FamilyScreen(props: FamilyScreenProps) {
   return (
     <section className="family-screen" aria-busy={props.busy}>
       <div className="planning-toolbar">
-        <button className="secondary-button" type="button" onClick={props.onBack}>
-          ← К разделу «Ещё»
-        </button>
+        <BackButton label="К разделу «Ещё»" onClick={props.onBack} />
       </div>
 
       <div className="screen-heading">
@@ -461,8 +461,8 @@ export function FamilyScreen(props: FamilyScreenProps) {
             <div className="plan-list">
               {props.members.map((member) => (
                 <article className="plan-row" key={member.memberId}>
-                  <span className="plan-icon" aria-hidden="true">
-                    ◍
+                  <span className="plan-icon">
+                    <Icon name="users" size={24} />
                   </span>
                   <div>
                     <strong>{props.memberNameOf(member.memberId) ?? `Участник ${shortId(member.memberId)}`}</strong>

@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type BudgetState } from "@family-budget/domain";
+import { Icon } from "../components/Icon";
 import {
   advanceOnboardingStep,
   buildOnboardingBudgetState,
@@ -124,7 +125,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
     <main className="onboarding-shell">
       <section className="onboarding-card" aria-labelledby="onboarding-title">
         <header className="onboarding-heading">
-          <span className="brand-mark" aria-hidden="true">₽</span>
+          <span className="brand-mark"><Icon name="piggy-bank" size={24} /></span>
           <div>
             <p className="onboarding-kicker">Шаг {step} из 4</p>
             <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>{ONBOARDING_STEP_TITLES[step]}</h1>
@@ -230,7 +231,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
                 </fieldset>;
               })}
             </div>
-            {draft.categories.length < 5 ? <button className="secondary-button wide" type="button" onClick={() => patchDraft("categories", [...draft.categories, { key: crypto.randomUUID(), name: "", limit: "" }])}>+ Добавить категорию</button> : null}
+            {draft.categories.length < 5 ? <button className="secondary-button wide icon-label" type="button" onClick={() => patchDraft("categories", [...draft.categories, { key: crypto.randomUUID(), name: "", limit: "" }])}><Icon name="plus" size={20} />Добавить категорию</button> : null}
           </> : null}
 
           {saveError ? <p className="onboarding-save-error" role="alert">{saveError} Данные не были опубликованы.</p> : null}

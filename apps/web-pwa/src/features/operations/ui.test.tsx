@@ -100,7 +100,11 @@ describe("operations UI", () => {
     expect(html).toContain("150%");
     expect(html).toContain("нет плана");
     expect(html).toMatch(/role="status" aria-label="Точный перелимит: Перелимит,[^"]*150%"/);
-    expect(html).toMatch(/<span class="plan-icon signal-icon over_limit" aria-hidden="true">!<\/span>/);
+    // §6: состояние лимита рисует векторный глиф, а не текстовый символ. Смысл при этом несёт
+    // не иконка: строка объявлена через `aria-label`, а рядом стоит статус-чип словами.
+    expect(html).toMatch(/<span class="plan-icon signal-icon over_limit"><svg[^>]*aria-hidden="true"[^>]*>/);
+    expect(html).toContain("#glyph-circle-alert");
+    expect(html).not.toMatch(/signal-icon [a-z_]+"[^>]*>[!○✓]/u);
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });

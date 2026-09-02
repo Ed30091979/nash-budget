@@ -7,6 +7,7 @@ import {
   type Transaction,
   type TransactionKind,
 } from "@family-budget/domain";
+import { Icon, type IconName } from "../../components/Icon";
 import { formatMoney } from "../../money";
 import {
   archiveCategory,
@@ -50,12 +51,14 @@ const statusLabels: Record<CategoryBudgetStatus, string> = {
   over_limit: "Перелимит",
 };
 
-const statusIcons: Record<CategoryBudgetStatus, string> = {
-  no_plan: "○",
-  normal: "✓",
-  near_limit: "!",
-  exhausted: "!",
-  over_limit: "!",
+// §6: состояние лимита рисует глиф из спрайта. Цвет плитки не единственный носитель смысла —
+// рядом стоит статус-чип словами, а вся строка объявлена через `aria-label`.
+const statusIcons: Record<CategoryBudgetStatus, IconName> = {
+  no_plan: "circle-dashed",
+  normal: "circle-check",
+  near_limit: "triangle-alert",
+  exhausted: "triangle-alert",
+  over_limit: "circle-alert",
 };
 
 function rubles(minor: number): string {
@@ -414,9 +417,9 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
     <header className="screen-heading"><div><span className="card-kicker">Фактические деньги</span><h1>Операции</h1><p>Доходы, покупки, возвраты, переводы и накопления хранятся одной полной историей.</p></div></header>
 
     <div className="quick-grid" aria-label="Итоги бюджета">
-      <article className="quick-card"><span>Доход</span><strong>{rubles(metrics.incomeMinor)}</strong></article>
-      <article className="quick-card"><span>Расходы с учётом возвратов</span><strong>{rubles(metrics.expensesMinor)}</strong></article>
-      <article className="quick-card"><span>Капитал</span><strong>{rubles(metrics.capitalMinor)}</strong></article>
+      <article className="quick-card"><span className="quick-label">Доход</span><strong>{rubles(metrics.incomeMinor)}</strong></article>
+      <article className="quick-card"><span className="quick-label">Расходы с учётом возвратов</span><strong>{rubles(metrics.expensesMinor)}</strong></article>
+      <article className="quick-card"><span className="quick-label">Капитал</span><strong>{rubles(metrics.capitalMinor)}</strong></article>
     </div>
     <section className="section-card" aria-labelledby="account-balances-title"><h2 id="account-balances-title">Остатки на счетах</h2><dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd>{rubles(metrics.accountBalancesMinor[account.id] ?? 0)}</dd></div>)}</dl></section>
 
@@ -459,7 +462,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
     <section className="section-card" aria-labelledby="limit-signals-title"><h2 id="limit-signals-title">Сигналы лимитов</h2><div className="plan-list">{categorySignals.map((category) => {
       const metric = metrics.categoryMetrics[category.id];
       if (!metric) return null;
-      return <article className="plan-row signal-row" role="status" aria-label={`${category.name}: ${statusLabels[metric.status]}, использовано ${rubles(metric.actualMinor)} из ${rubles(metric.availableMinor)}, ${percentage(metric.execution)}`} key={category.id}><span className={`plan-icon signal-icon ${metric.status}`} aria-hidden="true">{statusIcons[metric.status]}</span><div><strong>{category.name}{category.active ? "" : " (в архиве)"}</strong><small>Использовано {rubles(metric.actualMinor)} из {rubles(metric.availableMinor)} · {percentage(metric.execution)}</small><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><p><b>{metric.status === "over_limit" ? `+${rubles(metric.overMinor)}` : rubles(metric.remainingMinor)}</b><span>{metric.status === "over_limit" ? "сверх лимита" : "осталось"}</span></p></article>;
+      return <article className="plan-row signal-row" role="status" aria-label={`${category.name}: ${statusLabels[metric.status]}, использовано ${rubles(metric.actualMinor)} из ${rubles(metric.availableMinor)}, ${percentage(metric.execution)}`} key={category.id}><span className={`plan-icon signal-icon ${metric.status}`}><Icon name={statusIcons[metric.status]} size={24} /></span><div><strong>{category.name}{category.active ? "" : " (в архиве)"}</strong><small>Использовано {rubles(metric.actualMinor)} из {rubles(metric.availableMinor)} · {percentage(metric.execution)}</small><span className={`status-chip ${metric.status}`}>{statusLabels[metric.status]}</span></div><p><b>{metric.status === "over_limit" ? `+${rubles(metric.overMinor)}` : rubles(metric.remainingMinor)}</b><span>{metric.status === "over_limit" ? "сверх лимита" : "осталось"}</span></p></article>;
     })}</div></section>
 
     {usedActiveCategories.length ? <section className="section-card" aria-labelledby="used-categories-title"><h2 id="used-categories-title">Использованные категории</h2><p>Архив скрывает категорию из новых операций, но сохраняет её в истории и расчётах.</p><ul className="planning-edit-list">{usedActiveCategories.map((category) => <li key={category.id}><strong>{category.name}</strong><button className="text-button" type="button" disabled={busy} aria-label={`Архивировать использованную категорию «${category.name}»`} onClick={() => void runChange((state) => archiveCategory(state, category.id), () => undefined)}>В архив</button></li>)}</ul></section> : null}

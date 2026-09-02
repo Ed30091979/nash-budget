@@ -667,7 +667,7 @@ describe("доступность экрана семьи", () => {
   it("исходник экрана не изобретает новой навигации: возврат тем же приёмом, что и планирование", () => {
     const source = readFileSync(new URL("./FamilyScreen.tsx", import.meta.url), "utf8");
     expect(source).toContain('className="planning-toolbar"');
-    expect(source).toContain("← К разделу «Ещё»");
+    expect(source).toContain("<BackButton label=\"К разделу «Ещё»\" onClick={props.onBack} />");
     expect(source).toContain('className="screen-heading"');
     expect(source).toContain('className="section-card"');
     // Ни одного перехода по адресу с решёткой: он пишет в историю браузера, а фокус за ним

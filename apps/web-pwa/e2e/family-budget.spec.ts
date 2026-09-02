@@ -20,7 +20,7 @@ async function expectBudgetSnapshot(
   remaining: RegExp,
   operationCount: number,
 ) {
-  await page.getByRole("button", { name: "Сегодня" }).click();
+  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
   await expect(
     page.getByText("Можно на повседневные расходы").locator("..").getByRole("strong"),
   ).toHaveText(remaining);
@@ -60,7 +60,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   ).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
 
-  await page.getByRole("button", { name: "Ещё" }).click();
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await page.locator("#backup-file").setInputFiles({
     name: "family-budget-g002.json",
     mimeType: "application/json",
@@ -81,7 +81,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   ).toBeVisible();
   await expectAddedExpense(page);
 
-  await page.getByRole("button", { name: "Сегодня" }).click();
+  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
   await expect(
     page.getByText("Можно на повседневные расходы").locator("..").getByRole("strong"),
   ).toHaveText(UPDATED_FLEXIBLE_REMAINING);

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { type BudgetState } from "@family-budget/domain";
+import { Icon } from "../../components/Icon";
 import {
   activateDialogEnvironment,
   handleDialogKeyboard,
@@ -205,7 +206,7 @@ export function DataManagementScreen({
 
       <div className="data-management-grid">
         <article className="data-management-card">
-          <h3>Резервная копия JSON</h3>
+          <h3><Icon name="download" size={20} />Резервная копия JSON</h3>
           <p>Последняя успешная копия: <strong>{formatLastBackupDate(lastBackupAt)}</strong>.</p>
           <p id="json-backup-notice" role="note">JSON не зашифрован и читается как обычный текст. Храните файл в безопасном месте.</p>
           <button type="button" disabled={busy} aria-describedby="json-backup-notice" onClick={runBackup}>
@@ -214,7 +215,7 @@ export function DataManagementScreen({
         </article>
 
         <article className="data-management-card">
-          <h3>Таблица операций CSV</h3>
+          <h3><Icon name="table" size={20} />Таблица операций CSV</h3>
           <p>В выгрузке: <strong>{budget.transactions.length}</strong> операций.</p>
           <p id="csv-export-notice" role="note">CSV не зашифрован и читается как обычный текст. Это таблица для Excel, а не резервная копия: импорт CSV не поддерживается.</p>
           <span className="visually-hidden">{HUMAN_READABLE_CSV_NOTICE}</span>
@@ -224,7 +225,7 @@ export function DataManagementScreen({
         </article>
 
         <article className="data-management-card">
-          <h3>Восстановить из JSON</h3>
+          <h3><Icon name="upload" size={20} />Восстановить из JSON</h3>
           <p id="json-restore-notice" role="note">Выбирайте только свою доверенную JSON-копию размером не больше 5 МБ. Восстановление заменит текущие локальные данные.</p>
           <label className="file-button" htmlFor="backup-file">
             <span>{state.activity === "restore" ? "Проверяем копию…" : "Выбрать резервную копию JSON"}</span>
@@ -240,7 +241,7 @@ export function DataManagementScreen({
         </article>
 
         <article className="data-management-card danger-zone">
-          <h3>Удалить локальные данные</h3>
+          <h3><Icon name="trash-2" size={20} />Удалить локальные данные</h3>
           <p>После удаления откроется первый запуск. Перед этим скачайте резервную копию.</p>
           <button
             ref={clearTriggerRef}

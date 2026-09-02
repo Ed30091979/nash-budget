@@ -13,6 +13,8 @@ import {
   requestStorageHealth,
   type StorageHealth,
 } from "@family-budget/storage";
+import { BackButton } from "./components/BackButton";
+import { Icon, IconSprite, type IconName } from "./components/Icon";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { DashboardScreen, OperationsSearch } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
@@ -244,11 +246,15 @@ function transactionCategoryId(transaction: Transaction): string | null {
   return transaction.kind === "expense" || transaction.kind === "refund" ? transaction.categoryId : null;
 }
 
-function transactionSign(transaction: Transaction): string {
-  if (transaction.kind === "income" || transaction.kind === "refund") return "+";
-  if (transaction.kind === "transfer" || transaction.kind === "goal_contribution") return "↔";
-  return "−";
-}
+// §6: вид операции показывает глиф из спрайта, а не знак «+/−» текстом. Смысл дублирован
+// подписью строки и суммой со знаком, поэтому сама иконка декоративная.
+const transactionIcons: Record<Transaction["kind"], IconName> = {
+  income: "arrow-down-left",
+  expense: "arrow-up-right",
+  refund: "rotate-ccw",
+  transfer: "arrow-left-right",
+  goal_contribution: "target",
+};
 
 function storageText(health: StorageHealth | null): string {
   if (!health) return "Проверяем локальное хранилище…";
@@ -460,7 +466,7 @@ export default function App() {
 
   if (loadState === "loading") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true"><p>Открываем семейный план…</p></main><UpdatePrompt /></>;
   if (loadState === "error") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main><UpdatePrompt /></>;
-  if (loadState === "empty") return <div className="onboarding-route"><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div><UpdatePrompt /></div>;
+  if (loadState === "empty") return <div className="onboarding-route"><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div><UpdatePrompt /></div>;
   if (!budget || !metrics || !plan) return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main><UpdatePrompt /></>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
@@ -498,9 +504,10 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <IconSprite />
       <SkipLink />
       <header className="app-header">
-        <div className="brand"><span className="brand-mark">₽</span><div><strong>Наш бюджет</strong><small>видим месяц и будущее</small></div></div>
+        <div className="brand"><span className="brand-mark"><Icon name="piggy-bank" size={24} /></span><div><strong>Наш бюджет</strong><small>видим месяц и будущее</small></div></div>
         <div className="header-badges">
           <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
           {/* Без входа шапка остаётся ровно такой, какой была: «локально» живёт на экране «Семья»
@@ -521,7 +528,7 @@ export default function App() {
         <div className="route-screen" data-screen={screen}>
           {keyAlarm && screen !== "family" ? (
             <section className="key-alarm" role="alert" aria-labelledby="app-key-alarm-title">
-              <span className="key-alarm-mark" aria-hidden="true">!</span>
+              <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
               <div>
                 <h2 id="app-key-alarm-title">{keyAlarm.title}</h2>
                 <p>{keyAlarm.body}</p>
@@ -531,7 +538,7 @@ export default function App() {
           ) : null}
           {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
-          {screen === "planning" ? <><div className="planning-toolbar"><button className="secondary-button" type="button" onClick={() => navigate("year")}>← К горизонту</button></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
+          {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <><OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /><div className="section-card operations-search"><OperationsSearch budget={budget} /></div></> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
@@ -600,15 +607,17 @@ export default function App() {
   );
 }
 
+// Нижняя навигация берёт глифы из того же спрайта, что и остальной интерфейс: один набор,
+// одна толщина штриха, одна канва. Подпись под иконкой несёт смысл, иконка — декоративная.
 const navIcons = {
-  today: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3.5 10.5 12 3.5l8.5 7" /><path d="M5.5 9.5V20h13V9.5" /><path d="M9.8 20v-5.5h4.4V20" /></svg>,
-  year: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17" /><path d="M8 2.8v4M16 2.8v4" /></svg>,
-  operations: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="8.8" /><path d="M12 8.2v7.6M8.2 12h7.6" /></svg>,
-  more: <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5.2" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="18.8" cy="12" r="2" /></svg>,
-} as const;
+  today: "house",
+  year: "calendar",
+  operations: "circle-plus",
+  more: "ellipsis",
+} as const satisfies Record<string, IconName>;
 
 function NavButton({ active, icon, label, onClick }: { active: boolean; icon: keyof typeof navIcons; label: string; onClick: () => void }) {
-  return <button className={`nav-button${active ? " active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}><span className="nav-icon" aria-hidden="true">{navIcons[icon]}</span><span>{label}</span></button>;
+  return <button className={`nav-button${active ? " active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}><span className="nav-icon"><Icon name={navIcons[icon]} size={24} /></span><span>{label}</span></button>;
 }
 
 type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
@@ -628,15 +637,15 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
       <span>Можно на повседневные расходы</span>
       <strong data-money-scale={moneyScale(safeToSpend)}>{safeToSpend}</strong>
       <p>Остаток лимитов после уже записанных покупок. Обязательные платежи и накопления учтены отдельно.</p>
-      <button className="hero-button" type="button" onClick={onAdd}>+ Записать покупку</button>
+      <button className="hero-button" type="button" onClick={onAdd}><Icon name="plus" size={20} />Записать покупку</button>
     </section>
 
     {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row) => `${row.category.name}: +${formatMoney(row.metric?.overMinor ?? 0)}`).join(" · ")}</span></div> : null}
 
     <div className="quick-grid">
-      <QuickCard icon="↻" label="Платежи месяца" value={formatMoney(plan.currentMonth.scheduledExpenseMinor)} />
-      <QuickCard icon="◎" label="Отложить к срокам" value={formatMoney(plan.currentMonth.annualReserveMinor)} />
-      <QuickCard icon="◌" label="Не распределено" value={formatMoney(plan.currentMonth.spendableAfterPlanMinor)} />
+      <QuickCard icon="repeat" label="Платежи месяца" value={formatMoney(plan.currentMonth.scheduledExpenseMinor)} />
+      <QuickCard icon="calendar-clock" label="Отложить к срокам" value={formatMoney(plan.currentMonth.annualReserveMinor)} />
+      <QuickCard icon="wallet" label="Не распределено" value={formatMoney(plan.currentMonth.spendableAfterPlanMinor)} />
     </div>
 
     {next ? <section className="next-card">
@@ -649,7 +658,7 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
       <CategoryList rows={flexibleRows} />
     </section>
 
-    <button className="year-preview" type="button" onClick={onYear}><span><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><strong>→</strong></button>
+    <button className="year-preview" type="button" onClick={onYear}><span className="row-mark"><Icon name="calendar" size={24} /></span><span className="row-copy"><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
 
     <section className="section-card">
       <SectionTitle title="Последние записи" note="Фактические операции" />
@@ -664,8 +673,8 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, recentTrans
   </>;
 }
 
-function QuickCard({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return <article className="quick-card"><i aria-hidden="true">{icon}</i><span>{label}</span><strong>{value}</strong></article>;
+function QuickCard({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+  return <article className="quick-card"><span className="quick-icon"><Icon name={icon} size={20} /></span><span className="quick-label">{label}</span><strong>{value}</strong></article>;
 }
 
 function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
@@ -680,16 +689,16 @@ function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: Budget
 }
 
 function CommitmentRow({ item, metrics, category }: { item: AnnualCommitment; metrics: AnnualPlan["commitments"][string] | undefined; category?: string }) {
-  return <article className="plan-row"><span className="plan-icon">◎</span><div><strong>{item.name}</strong><small>{category} · {item.recurrence === "annual" ? "каждый год" : "один раз"} · {formatDate(item.dueDate)}</small><span className={`status-chip ${metrics?.status}`}>{statusLabels[metrics?.status ?? ""] ?? ""}</span></div><p><b>{formatMoney(item.amountMinor)}</b><span>{formatMoney(metrics?.monthlyReserveMinor ?? 0)}/мес</span></p></article>;
+  return <article className="plan-row"><span className="plan-icon"><Icon name="calendar-clock" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {item.recurrence === "annual" ? "каждый год" : "один раз"} · {formatDate(item.dueDate)}</small><span className={`status-chip ${metrics?.status}`}>{statusLabels[metrics?.status ?? ""] ?? ""}</span></div><p><b>{formatMoney(item.amountMinor)}</b><span>{formatMoney(metrics?.monthlyReserveMinor ?? 0)}/мес</span></p></article>;
 }
 
 function ScheduleRow({ item, category }: { item: ScheduledExpense; category?: string }) {
   const schedule = item.mode === "monthly" ? "каждый месяц" : item.months?.map((month) => calendarMonths[month - 1]).join(", ");
-  return <article className="plan-row"><span className="plan-icon">↻</span><div><strong>{item.name}</strong><small>{category} · {schedule} · до {item.dueDay}-го</small></div><p><b>{formatMoney(item.amountMinor)}</b><span>за месяц</span></p></article>;
+  return <article className="plan-row"><span className="plan-icon"><Icon name="repeat" size={24} /></span><div><strong>{item.name}</strong><small>{category} · {schedule} · до {item.dueDay}-го</small></div><p><b>{formatMoney(item.amountMinor)}</b><span>за месяц</span></p></article>;
 }
 
-function SectionTitle({ title, note }: { title: string; note: string }) {
-  return <div className="section-title"><div><h2>{title}</h2><p>{note}</p></div></div>;
+function SectionTitle({ title, note, icon }: { title: string; note: string; icon?: IconName }) {
+  return <div className="section-title"><div><h2>{icon ? <Icon name={icon} size={20} /> : null}{title}</h2><p>{note}</p></div></div>;
 }
 
 function CategoryList({ rows }: { rows: CategoryRow[] }) {
@@ -702,8 +711,8 @@ function CategoryList({ rows }: { rows: CategoryRow[] }) {
 }
 
 function TransactionList({ transactions, categoryById, memberById, showAuthor }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean }) {
-  if (!transactions.length) return <p className="empty-state">Здесь появятся операции.</p>;
-  return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon">{transactionSign(transaction)}</span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}{showAuthor ? ` · ${transactionAuthorLabel(memberById, transaction.memberId)}` : ""}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
+  if (!transactions.length) return <p className="empty-state"><span className="empty-state-mark"><Icon name="inbox" size={32} /></span>Здесь появятся операции.</p>;
+  return <ul className="transaction-list">{transactions.map((transaction) => { const categoryId = transactionCategoryId(transaction); return <li className={`transaction-row ${transaction.kind}`} key={transaction.id}><span className="transaction-icon"><Icon name={transactionIcons[transaction.kind]} size={24} /></span><span className="transaction-copy"><strong>{categoryId ? categoryById.get(categoryId)?.name : transactionLabels[transaction.kind]}</strong><small>{formatDate(transaction.occurredOn)} · {transactionLabels[transaction.kind]}{showAuthor ? ` · ${transactionAuthorLabel(memberById, transaction.memberId)}` : ""}</small></span><b>{transaction.kind === "income" || transaction.kind === "refund" ? "+" : transaction.kind === "expense" ? "−" : ""}{formatMoney(transaction.amountMinor)}</b></li>; })}</ul>;
 }
 
 function MoreScreen(props: {
@@ -721,8 +730,8 @@ function MoreScreen(props: {
 }) {
   return <>
     <div className="screen-heading"><div><span className="card-kicker">Приложение</span><h1>Данные и установка</h1><p>Бюджет работает локально и без регистрации.</p></div></div>
-    {props.showIosInstall ? <div className="install-note"><strong>Установите на iPhone</strong><p>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</p></div> : null}
-    <div className="storage-context" role="status"><strong>Локальное хранилище</strong><span>{storageText(props.storageHealth)}</span></div>
+    {props.showIosInstall ? <div className="install-note"><strong><Icon name="smartphone" size={20} />Установите на iPhone</strong><p>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</p></div> : null}
+    <div className="storage-context" role="status"><strong><Icon name="hard-drive" size={20} />Локальное хранилище</strong><span>{storageText(props.storageHealth)}</span></div>
     <DataManagementScreen
       budget={props.budget}
       lastSuccessfulBackup={props.lastSuccessfulBackup}
@@ -732,7 +741,7 @@ function MoreScreen(props: {
       onPersistClear={props.onPersistClear}
       onPublishEmpty={props.onPublishEmpty}
     />
-    <button className="year-preview" type="button" onClick={props.onFamily}><span><b>Семья и синхронизация</b><small>Участники, приглашение, отпечатки ключей. Без входа приложение работает как сейчас.</small></span><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></button>
-    <section className="section-card"><SectionTitle title="Конфиденциальность" note="Данные остаются в этом браузере, пока вы не вошли" /><p className="body-copy">Нет рекламы и аналитики. Семейная синхронизация необязательна: пока вы не вошли, приложение не обращается к сети и ничего не отправляет.</p></section>
+    <button className="year-preview" type="button" onClick={props.onFamily}><span className="row-mark"><Icon name="users" size={24} /></span><span className="row-copy"><b>Семья и синхронизация</b><small>Участники, приглашение, отпечатки ключей. Без входа приложение работает как сейчас.</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
+    <section className="section-card"><SectionTitle title="Конфиденциальность" note="Данные остаются в этом браузере, пока вы не вошли" icon="shield" /><p className="body-copy">Нет рекламы и аналитики. Семейная синхронизация необязательна: пока вы не вошли, приложение не обращается к сети и ничего не отправляет.</p></section>
   </>;
 }

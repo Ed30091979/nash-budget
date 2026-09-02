@@ -43,7 +43,7 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain('label="Ещё"');
     // Вход на экран — из «Ещё», тем же приёмом, что и переход в горизонт.
     expect(source).toContain('className="year-preview" type="button" onClick={props.onFamily}');
-    expect(source).toContain('<button className="secondary-button" type="button" onClick={props.onBack}'.slice(0, 20));
+    expect(source).toContain("<BackButton label=");
   });
 
   it("индикатор синхронизации стоит в шапке рядом с прежним сетевым, а не вместо него", () => {

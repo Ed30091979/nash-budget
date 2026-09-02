@@ -106,6 +106,12 @@ h3 { font-size: var(--size-h3); line-height: var(--lh-h3); }
 strong, b { font-weight: 600; }
 p { line-height: var(--lh-body); }
 
+/* §6 Иконки. Спрайт живёт в разметке маршрута и ничего не рисует сам: нулевой размер и
+   `aria-hidden` держат его вне потока. Глиф наследует цвет, толщину и скругления от
+   `<svg class="icon">`, поэтому в спрайте нет ни одного цвета. */
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { display: block; flex: none; }
+
 /* §10 Движение: только три перехода. */
 button:active, .file-button:active { transform: scale(0.98); transition: transform 120ms ease-out; }
 .route-screen { animation: route-fade 180ms ease-out; }
@@ -118,7 +124,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .app-shell { min-height: 100dvh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); background: var(--canvas); }
 .app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 70px; padding: calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); color: var(--ink); background: var(--surface); border-bottom: 1px solid var(--border); }
 .brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
-.brand-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--green-ink); font-size: var(--size-h3); font-weight: 600; background: var(--mint-soft); border-radius: var(--radius-field); }
+.brand-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--green-ink); background: var(--mint-soft); border-radius: var(--radius-field); }
 .brand strong, .brand small { display: block; }
 .brand strong { font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 600; }
 .brand small { margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -148,7 +154,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .hero-card > span { color: var(--on-hero-label); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 500; }
 .hero-card > strong { margin-top: 12px; color: var(--on-hero); font-size: var(--size-display); line-height: var(--lh-display); font-weight: 700; letter-spacing: -0.02em; overflow-wrap: normal; }
 .hero-card p { position: relative; z-index: 1; max-width: 610px; margin: 12px 0 20px; color: var(--on-hero-quiet); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.hero-button { position: relative; z-index: 1; min-height: 48px; padding: 13px 24px; color: var(--green-deep); font-size: var(--size-body); font-weight: 600; background: var(--surface); border: 0; border-radius: var(--radius-pill); }
+.hero-button { position: relative; z-index: 1; display: inline-flex; gap: 8px; min-height: 48px; align-items: center; justify-content: center; padding: 13px 24px; color: var(--green-deep); font-size: var(--size-body); font-weight: 600; background: var(--surface); border: 0; border-radius: var(--radius-pill); }
 
 /* §7.2 Денежная лестница: сумма понижает ступень (не более двух раз) и никогда не обрезается. */
 @container hero (max-width: 316px) { .hero-card > strong[data-money-scale="l"] { font-size: var(--size-h1); line-height: var(--lh-h1); } }
@@ -160,9 +166,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* §6 Плитка-статистика. */
 .quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
 .quick-card { display: flex; min-width: 0; flex-direction: column; container-type: inline-size; padding: 16px; background: var(--surface); border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
-.quick-card i { display: grid; width: 32px; height: 32px; place-items: center; margin-bottom: 12px; color: var(--green-ink); font-size: var(--size-h3); font-style: normal; font-weight: 600; background: var(--mint-soft); border-radius: var(--radius-field); }
-.quick-card span, .quick-card strong { display: block; }
-.quick-card span { min-height: 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: break-word; }
+.quick-icon { display: grid; width: 32px; height: 32px; place-items: center; margin-bottom: 12px; color: var(--green-ink); background: var(--mint-soft); border-radius: var(--radius-field); }
+.quick-card .quick-label, .quick-card strong { display: block; }
+.quick-card .quick-label { min-height: 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: break-word; }
 .quick-card strong { margin-top: auto; padding-top: 8px; color: var(--ink); font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 700; overflow-wrap: normal; }
 @container (max-width: 108px) { .quick-card strong { font-size: var(--size-body); line-height: var(--lh-body); } }
 @container (max-width: 84px) { .quick-card strong { font-size: var(--size-caption); line-height: var(--lh-caption); } }
@@ -186,7 +192,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .section-card, .entry-card { margin-top: 24px; padding: 20px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
 .section-title { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .section-title h2, .section-title p { margin: 0; }
-.section-title h2 { font-size: var(--size-h2); line-height: var(--lh-h2); letter-spacing: -0.01em; }
+.section-title h2 { display: flex; gap: 8px; align-items: center; font-size: var(--size-h2); line-height: var(--lh-h2); letter-spacing: -0.01em; }
 .section-title p { margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
 /* §6 Строка лимита категории. */
@@ -216,11 +222,15 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .category-values { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .category-values b { color: var(--ink); font-weight: 600; }
 
-.year-preview { display: flex; width: 100%; gap: 16px; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px; color: var(--green-ink); text-align: left; background: var(--mint-soft); border: 0; border-radius: var(--radius-card); }
+.year-preview { display: flex; width: 100%; gap: 12px; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px; color: var(--green-ink); text-align: left; background: var(--mint-soft); border: 0; border-radius: var(--radius-card); }
 .year-preview span, .year-preview b, .year-preview small { display: block; }
 .year-preview b { font-size: var(--size-h3); line-height: var(--lh-h3); font-weight: 600; }
 .year-preview small { margin-top: 4px; color: var(--green-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; opacity: .82; }
-.year-preview > strong { flex: none; color: var(--green-deep); font-size: var(--size-h2); font-weight: 600; }
+/* §8 «Ещё»: строка настроек — иконка, название, шеврон. Шеврон только показывает переход,
+   имя кнопке даёт её текст. */
+.year-preview > .row-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--green-ink); background: var(--surface); border-radius: var(--radius-field); }
+.year-preview > .row-copy { flex: 1; min-width: 0; }
+.row-chevron { flex: none; color: var(--green-deep); }
 
 /* §6 Сегмент-переключатель. */
 .horizon-toggle { display: grid; grid-template-columns: 1fr 1fr; flex: none; padding: 4px; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
@@ -247,7 +257,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .plan-list { display: grid; gap: 0; }
 .plan-row { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .plan-row:last-child { border-bottom: 0; }
-.plan-icon { display: grid; width: 40px; height: 40px; place-items: center; color: var(--green-ink); font-size: var(--size-body); font-weight: 600; background: var(--mint-soft); border: 1px solid transparent; border-radius: var(--radius-pill); }
+.plan-icon { display: grid; width: 40px; height: 40px; place-items: center; color: var(--green-ink); background: var(--mint-soft); border: 1px solid transparent; border-radius: var(--radius-field); }
 .plan-row div > strong, .plan-row div > small { display: block; }
 .plan-row div > strong { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; }
 .plan-row div > small { margin: 4px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -271,6 +281,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .segmented input { position: absolute; opacity: 0; }
 .segmented label:has(input:checked) { color: var(--green-deep); background: var(--surface); box-shadow: var(--shadow-pill); }
 .primary-button, .secondary-button { display: inline-grid; min-height: 44px; padding: 13px 24px; place-items: center; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; border-radius: var(--radius-control); }
+.back-button, .icon-label { display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
 .primary-button { color: var(--on-hero); background: var(--green-deep); border: 1px solid var(--green-deep); }
 .secondary-button { color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
 .wide { width: 100%; }
@@ -278,7 +289,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .transaction-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .transaction-row { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .transaction-row:last-child { border-bottom: 0; }
-.transaction-icon { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink-muted); font-size: var(--size-body); font-weight: 600; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
+/* §6: плитка 40×40 с глифом 24. Кружок со знаком «−» был текстовым глифом в роли иконки. */
+.transaction-icon { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface-sunken); border: 0; border-radius: var(--radius-field); }
 .transaction-row.income .transaction-icon, .transaction-row.refund .transaction-icon { color: var(--green-ink); background: var(--mint-soft); }
 .transaction-copy strong, .transaction-copy small { display: block; }
 .transaction-copy strong { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; }
@@ -286,12 +298,14 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .transaction-row > b { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 .transaction-row.income > b, .transaction-row.refund > b { color: var(--green-deep); }
 .empty-state { display: grid; justify-items: center; padding: 24px 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; text-align: center; }
-.empty-state::before { display: block; width: 64px; height: 64px; margin-bottom: 12px; content: ""; background: var(--mint-soft); border-radius: 50%; }
+/* §6 Пустое состояние: мятный круг 64 px с иконкой. Пустой круг читался как картинка,
+   которая не загрузилась. */
+.empty-state-mark { display: grid; width: 64px; height: 64px; place-items: center; margin-bottom: 12px; color: var(--green-ink); background: var(--mint-soft); border-radius: 50%; }
 
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .storage-meter, .body-copy { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .install-note { margin-top: 24px; padding: 16px; color: var(--green-ink); background: var(--mint-soft); border: 0; border-radius: var(--radius-section); }
-.install-note strong { font-size: var(--size-body); font-weight: 600; }
+.install-note strong { display: flex; gap: 8px; align-items: center; font-size: var(--size-body); font-weight: 600; }
 .install-note p { margin: 8px 0 0; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
 /* §6 Нижняя навигация. */
@@ -474,7 +488,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dashboard-operation-results span { color: var(--ink-muted); font-weight: 400; text-align: right; overflow-wrap: normal; }
 
 .storage-context { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 16px; margin-top: 24px; color: var(--green-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--mint-soft); border: 0; border-radius: var(--radius-card-sm); }
-.storage-context strong { font-weight: 600; }
+.storage-context strong { display: flex; gap: 8px; align-items: center; font-weight: 600; }
 .storage-context span { color: var(--green-ink); text-align: right; opacity: .82; }
 .data-management { min-width: 0; margin-top: 24px; }
 .data-management > header { padding: 20px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
@@ -483,7 +497,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .data-management > header > p:last-child { margin-top: 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .data-management-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
 .data-management-card { display: flex; min-width: 0; min-height: 220px; flex-direction: column; align-items: flex-start; padding: 20px; background: var(--surface); border: 0; border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
-.data-management-card h3 { margin: 0; font-size: var(--size-h3); line-height: var(--lh-h3); }
+.data-management-card h3 { display: flex; gap: 8px; align-items: center; margin: 0; font-size: var(--size-h3); line-height: var(--lh-h3); }
 .data-management-card p { margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: anywhere; }
 .data-management-card button, .file-button { display: inline-grid; padding: 13px 20px; margin-top: auto; place-items: center; color: var(--on-hero); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; text-align: center; background: var(--green-deep); border: 1px solid var(--green-deep); border-radius: var(--radius-control); }
 .data-management-card button:disabled, .file-button:has(input:disabled) { cursor: wait; opacity: .62; }
@@ -541,8 +555,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .sync-badge.error::before { background: var(--red-ink); }
 
 .header-badges { display: flex; gap: 8px; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
-/* Бейдж внутри карточки-перехода: `.year-preview span` иначе делает его блоком и рвёт пилюлю. */
-.year-preview > .sync-badge { display: inline-flex; flex: none; }
+/* Бейдж внутри карточки-перехода: `.year-preview span` иначе делает его блоком и рвёт пилюлю.
+   Место бейджа — под описанием строки: в самой строке уже стоят иконка и шеврон, и втроём
+   они не оставляют названию ширины. */
+.year-preview .sync-badge { display: inline-flex; flex: none; margin-top: 8px; }
 .member-filter { margin-bottom: 16px; }
 
 .family-screen { min-width: 0; }
@@ -562,7 +578,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .key-alarm { display: grid; grid-template-columns: 44px 1fr; gap: 16px; padding: 20px; margin-top: 24px; color: var(--red-ink); background: var(--red-soft); border: 2px solid var(--red-ink); border-radius: var(--radius-section); }
 .key-alarm h2 { color: var(--red-ink); font-size: var(--size-h2); line-height: var(--lh-h2); }
 .key-alarm p { margin: 8px 0 0; color: var(--red-ink); font-size: var(--size-body); line-height: var(--lh-body); }
-.key-alarm-mark { display: grid; width: 44px; height: 44px; place-items: center; color: var(--surface); font-size: var(--size-h2); font-weight: 700; background: var(--red-ink); border-radius: 50%; }
+.key-alarm-mark { display: grid; width: 44px; height: 44px; place-items: center; color: var(--surface); background: var(--red-ink); border-radius: 50%; }
 /* Без прозрачности: подпись живёт на `--red-soft`, и пара `--red-soft`/`--red-ink` из §3 — 6.0:1. */
 .key-alarm-data { font-size: var(--size-caption); line-height: var(--lh-caption); overflow-wrap: anywhere; }
 .key-alarm-data code { font-family: var(--font-code); }
