@@ -190,3 +190,59 @@ describe("production release scanner", () => {
     );
   });
 });
+
+/**
+ * Запрет строкового исполнения — то, что политике позволено ослабить, и то, что нет.
+ *
+ * `script-src` теперь несёт `'wasm-unsafe-eval'`: без него Argon2id приглашений (`hash-wasm`,
+ * WebAssembly) не компилируется в браузере. Это ключевое слово разрешает только модули
+ * WebAssembly, а `eval`, `new Function` и строковые таймеры остаются запрещёнными — и запрещены
+ * они не одним лишь заголовком, а сканом готовой сборки, который смотрит на сам код. Тесты ниже
+ * держат оба запрета на месте: и в бандлах, и в самой политике.
+ */
+describe("release scanner keeps dynamic string execution out", () => {
+  it.each([
+    ["eval", "eval(receivedFromServer);"],
+    ["new Function", 'const run = new Function("payload", receivedFromServer);'],
+    ["setTimeout with a string body", 'setTimeout("drainBudget()", 0);'],
+    ["setInterval with a string body", "setInterval('drainBudget()', 1000);"],
+  ])("rejects %s in an application chunk", (_label, contents) => {
+    const fixture = createScanFixture();
+    write(join(fixture.dist, "assets/dynamic-abc123.js"), contents);
+
+    const result = runScan(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "dynamic string execution found in assets/dynamic-abc123.js",
+    );
+  });
+
+  it("accepts the shipped policy, which allows WebAssembly and nothing else", () => {
+    expect(securityHeaders["Content-Security-Policy"]).toContain(
+      "script-src 'self' 'wasm-unsafe-eval'",
+    );
+
+    const result = runScan(createScanFixture());
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
+  it("rejects a deployed policy that widens the WebAssembly allowance into 'unsafe-eval'", () => {
+    const fixture = createScanFixture();
+    const widened = Object.entries(securityHeaders).map(([name, value]) =>
+      name === "Content-Security-Policy"
+        ? `  ${name}: ${value.replace(
+            "script-src 'self' 'wasm-unsafe-eval'",
+            "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'",
+          )}`
+        : `  ${name}: ${value}`,
+    );
+    write(join(fixture.dist, "_headers"), `/*\n${widened.join("\n")}\n`);
+
+    const result = runScan(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("alters the \"script-src 'self' 'wasm-unsafe-eval'\" directive");
+  });
+});

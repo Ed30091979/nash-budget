@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import {
   createReadStream,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -357,11 +356,6 @@ async function start() {
       syncServer.url,
     ),
   };
-
-  // Обход дефекта сборки: с непустым `VITE_SYNC_SERVER_URL` плагин политики пишет `_headers`
-  // в жёстко заданный `apps/web-pwa/dist`, а не в тот каталог, куда собирают. На чистой копии
-  // репозитория, где `dist` ещё нет, сборка от этого падает с `ENOENT`.
-  mkdirSync(join(appDirectory, "dist"), { recursive: true });
 
   await runBuild("A");
   await runBuild("B");

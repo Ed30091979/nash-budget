@@ -281,7 +281,6 @@ test("при недоступном сервере приложение оста
  * строке — это и есть сигнал снять пометку.
  */
 test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL }) => {
-  test.fail();
   if (!baseURL) throw new Error("Playwright baseURL is required.");
 
   const annaContext = await browser.newContext();

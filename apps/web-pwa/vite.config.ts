@@ -7,8 +7,33 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA, type ManifestOptions } from "vite-plugin-pwa";
 
+/**
+ * Политика страницы — и единственное послабление в ней, названное поимённо.
+ *
+ * `'wasm-unsafe-eval'` в `script-src` разрешает ровно одно: компиляцию и создание модулей
+ * WebAssembly (`WebAssembly.compile`/`instantiate`, включая потоковые). Он **не** включает `eval`,
+ * `new Function` и строковые `setTimeout`/`setInterval` — это отдельное ключевое слово
+ * `'unsafe-eval'`, которого здесь нет и быть не должно (CSP3, «wasm-unsafe-eval»; MDN,
+ * `script-src`). Разница не косметическая: модуль WebAssembly не видит ни DOM, ни `document.cookie`,
+ * ни переменных страницы — только те импорты, которые ему передали явно, — тогда как `eval`
+ * исполняет произвольный JavaScript прямо в области видимости страницы. Поэтому послабление
+ * добавляет к поверхности атаки байткод, который всё равно ехал бы в бандле, и не добавляет
+ * способа превратить чужую строку в исполняемый код.
+ *
+ * Нужно оно приглашениям, а не удобству. Argon2id взят из `hash-wasm`
+ * (`packages/sync-crypto/src/invite.ts`), то есть это WebAssembly; на нём стоит
+ * `deriveInviteMaster`, а через него — `sealInvite` и `deriveInviteSecrets`, то есть и выпуск, и
+ * приём приглашения. Без ключевого слова браузер отказывает на `WebAssembly.instantiate` ещё до
+ * первого запроса к серверу, и экран говорит «Не удалось выполнить действие». `SYNC_ARCHITECTURE.md`
+ * 5.3 закрепляет именно эту реализацию и требует, чтобы одна и та же работала в браузере, в
+ * Capacitor-оболочке и в Node, — политика, запрещающая WebAssembly, противоречит этому требованию.
+ *
+ * Запрет на строковое исполнение JavaScript при этом никуда не делся и проверяется отдельно, по
+ * готовой сборке: `scripts/release-scan.mjs` отвергает `eval(`, `new Function(` и строковые
+ * таймеры в любом бандле приложения.
+ */
 export const META_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
+  "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
 
 export const HTTP_CSP = `${META_CSP}; frame-ancestors 'none'`;
 
@@ -80,6 +105,34 @@ export function securityHeadersFor(origin: string | null): Record<string, string
 
 export const SECURITY_HEADERS = securityHeadersFor(null) as Readonly<Record<string, string>>;
 
+/**
+ * Пояснение к послаблению — в самом разворачиваемом файле, а не только в этой конфигурации.
+ *
+ * `_headers` читают в отрыве от репозитория: в панели хостинга, в развёрнутом пакете, в чужой
+ * копии. `'wasm-unsafe-eval'` посреди строгой политики без пояснения выглядит как недосмотр,
+ * который следующий читатель «почистит», и приглашения снова перестанут работать.
+ */
+export const DEPLOY_HEADERS_NOTE =
+  "# script-src 'wasm-unsafe-eval': Argon2id приглашений — это WebAssembly (hash-wasm).\n" +
+  "# Разрешает только компиляцию модулей WebAssembly; eval и new Function остаются запрещены.\n" +
+  "# Обоснование целиком — vite.config.ts, META_CSP.";
+
+/**
+ * Тело `_headers` — один источник и для статической копии, и для сборки с адресом сервера.
+ *
+ * `public/_headers` обязан быть ровно `deployHeadersBody(null)`: сборка без адреса ничего не
+ * переписывает и просто копирует этот файл, поэтому расхождение между функцией и файлом было бы
+ * расхождением между тем, что проверяют тесты, и тем, что уезжает на хостинг.
+ */
+export function deployHeadersBody(origin: string | null): string {
+  return [
+    DEPLOY_HEADERS_NOTE,
+    "/*",
+    ...Object.entries(securityHeadersFor(origin)).map(([name, value]) => `  ${name}: ${value}`),
+    "",
+  ].join("\n");
+}
+
 export function resolvePwaBuildId(value: string | undefined): string {
   const buildId = value ?? "local";
 
@@ -136,9 +189,25 @@ export const PWA_MANIFEST = {
  * видно в приложении. С отсутствующим адресом плагин не делает ничего, и вывод сборки по
  * умолчанию не отличается от прежнего ни одним байтом.
  */
-function syncServerCspPlugin(origin: string | null, outDir: string): Plugin {
+export function syncServerCspPlugin(origin: string | null): Plugin {
+  /**
+   * Каталог сборки — из разрешённой конфигурации Vite, а не из константы.
+   *
+   * Здесь стояло жёстко заданное `apps/web-pwa/dist`, и любая сборка в другой каталог
+   * (`--outDir`, `build.outDir`, вызов из другого корня) расходилась сама с собой: страница
+   * получала расширенный `connect-src`, лежащий рядом `_headers` — нет, а исправленный файл
+   * уезжал в чужой `dist`. Политики пересекаются, поэтому разрешение в `<meta>` такую сборку не
+   * спасает: заголовок запрещает обращаться к серверу семьи. На копии без `dist` запись падала с
+   * `ENOENT`.
+   */
+  let outDir: string | null = null;
   return {
     name: "family-budget-sync-csp",
+    configResolved(config) {
+      // `build.outDir` разрешается относительно корня проекта; `resolve` оставляет абсолютный
+      // путь как есть, поэтому одинаково верно и для `--outDir /tmp/x`, и для `dist`.
+      outDir = resolve(config.root, config.build.outDir);
+    },
     transformIndexHtml: {
       order: "post",
       handler(html) {
@@ -151,16 +220,13 @@ function syncServerCspPlugin(origin: string | null, outDir: string): Plugin {
     },
     async closeBundle() {
       if (origin === null) return;
+      if (outDir === null) {
+        throw new Error("family-budget-sync-csp: build output directory was never resolved.");
+      }
       // `_headers` кладётся в сборку из `public/` уже после генерации ассетов, поэтому он
       // переписывается здесь, а не эмитируется: иначе развёрнутое приложение получило бы
       // заголовок со старой политикой поверх исправленной разметки.
-      const headers = securityHeadersFor(origin);
-      const body = [
-        "/*",
-        ...Object.entries(headers).map(([name, value]) => `  ${name}: ${value}`),
-        "",
-      ].join("\n");
-      await writeFile(resolve(outDir, "_headers"), body, "utf8");
+      await writeFile(resolve(outDir, "_headers"), deployHeadersBody(origin), "utf8");
     },
   };
 }
@@ -179,7 +245,6 @@ function buildMetadataPlugin(): Plugin {
 }
 
 const APP_ROOT = fileURLToPath(new URL(".", import.meta.url));
-const OUT_DIR = resolve(APP_ROOT, "dist");
 
 export default defineConfig(({ mode }) => {
   // Ровно тот же ключ и тот же приоритет, что у приложения: `loadEnv` читает `.env`-файлы
@@ -192,7 +257,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       buildMetadataPlugin(),
-      syncServerCspPlugin(syncServerOrigin, OUT_DIR),
+      syncServerCspPlugin(syncServerOrigin),
       VitePWA({
         registerType: "prompt",
         injectRegister: null,

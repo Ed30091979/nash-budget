@@ -18,9 +18,12 @@ const securityHeaders = JSON.parse(
   readFileSync(new URL("../security-headers.json", import.meta.url), "utf8"),
 ) as Record<string, string>;
 
-const metaCsp =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'";
-const httpCsp = `${metaCsp}; frame-ancestors 'none'`;
+// Политика берётся из места, где она объявлена, а не переписывается сюда второй копией.
+// Переписанное число уже стоило проекту одного дефекта: цели нажатия годами держались на 44 при
+// нормативе 48, потому что тест утверждал строку `44px`, а не читал документ (решение 48).
+// Перечень директив ниже — наоборот, намеренный шлагбаум: он обязан требовать ручного решения,
+// когда политику расширяют, иначе расширение проходит незамеченным.
+const httpCsp = HTTP_CSP;
 
 function readCspDirectives(): Map<string, string[]> {
   const meta = indexHtml.match(
@@ -51,7 +54,11 @@ describe("web content security policy", () => {
 
     expect(Object.fromEntries(directives)).toEqual({
       "default-src": ["'none'"],
-      "script-src": ["'self'"],
+      // 5.3 закрепляет Argon2id пакетом на WebAssembly, и норматив требует, чтобы одна и та же
+      // реализация работала в браузере, в оболочке и в тестах. Без этого разрешения выпуск и приём
+      // приглашения падают в браузере до первого запроса. Разрешена ровно компиляция WebAssembly:
+      // `eval` и `new Function` остаются запрещены — это отдельный токен `'unsafe-eval'`, и его тут нет.
+      "script-src": ["'self'", "'wasm-unsafe-eval'"],
       "style-src": ["'self'"],
       "img-src": ["'self'", "data:"],
       "font-src": ["'self'"],
