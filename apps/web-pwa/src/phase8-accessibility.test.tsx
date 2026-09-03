@@ -139,9 +139,26 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(source).toContain('ariaLabel: "Состояние сети: локально на устройстве"');
     expect(source).toContain('text: "локально на устройстве"');
     expect(source).toContain('ariaLabel: `Состояние сети: ${text}`');
-    expect(source).toContain("<span className={networkStatus.className} role=\"status\" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>");
+    // Состояние сети остаётся живой областью с доступным именем и словом внутри — оно не
+    // становится цветной точкой и не пропадает совсем. Рисуется оно только там, где сеть есть:
+    // без синхронизации приложение к ней не обращается, и пилюля «в сети» была бы неправдой о
+    // том, чем продукт занят. Проверяется здесь именно это: имя, слово и живая область.
+    expect(source).toMatch(/role="status" aria-label=\{networkStatus\.ariaLabel\}>\{networkStatus\.text\}<\/span>/u);
+    expect(source).toMatch(/networkStatus\.className\}\$\{syncIndicator\.state === "local" \? " unheard" : ""\}/u);
     expect(source).toContain('over_limit: "Перелимит"');
     expect(source).toContain('near_limit: "Почти лимит"');
+  });
+
+  it("не оставляет невидимую область без слова: спрятана она стилем, а не пустотой", () => {
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const hidden = styles.match(/\.network-badge\.unheard \{([^}]*)\}/u)?.[1] ?? "";
+
+    // Приём тот же, что у `.sr-only`: область остаётся в дереве доступности, но не занимает
+    // места на экране. `display: none` и `visibility: hidden` вынули бы её и оттуда тоже.
+    expect(hidden).toContain("position: absolute");
+    expect(hidden).toContain("clip-path: inset(50%)");
+    expect(hidden).not.toContain("display: none");
+    expect(hidden).not.toContain("visibility: hidden");
   });
 
   it.each([true, false])("shows a neutral local-device status in native runtime when navigator online is %s", (online) => {

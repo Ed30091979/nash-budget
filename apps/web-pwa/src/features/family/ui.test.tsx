@@ -578,7 +578,7 @@ describe("типографика: «код и отпечаток» — роль 
   });
 
   it("трекинг — только значения из таблицы §4", () => {
-    const approved = new Set(["-0.02em", "-0.01em", "0", "0.08em", "var(--tracking-code)"]);
+    const approved = new Set(["-0.03em", "-0.02em", "0", "0.08em", "var(--tracking-code)"]);
     const tracking = (styles.match(/letter-spacing: ([^;]+);/gu) ?? []).map((declaration) =>
       declaration.slice("letter-spacing: ".length, -1),
     );

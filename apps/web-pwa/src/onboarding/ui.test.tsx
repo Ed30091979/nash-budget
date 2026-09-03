@@ -60,8 +60,8 @@ describe("onboarding UI contract", () => {
     // Полоса лимита раньше была `<progress>` с двумя наборами браузерных псевдоэлементов, и тест
     // сторожил именно их написание. Сторожить надо не написание, а смысл: полоса объявляет себя
     // читающему с экрана и получает долю атрибутом, потому что инлайновых стилей у нас нет (CSP).
-    expect(app).toContain('role="img" aria-label={bar.label}');
-    expect(app).toContain("data-spent={bar.spent}");
+    expect(app).toMatch(/role="img" aria-label=\{`\$\{category\.name\}: \$\{reachAnnouncement\(/u);
+    expect(app).toContain("data-spent={line.fill}");
     expect(styles).toMatch(/\.limit-bar \{[^}]*linear-gradient/su);
     expect(model).toContain('4: "Повседневные лимиты"');
   });

@@ -37,7 +37,7 @@ export function designTargetGap(): number {
  * цель нажатия, хотя «label» в нём и есть.
  */
 const TOUCH_TARGET_ELEMENTS = /(?:^|[\s>+~(])(?:button|select|input|textarea|summary|label)(?![\w-])/u;
-const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|step-progress-step|row-open|remove-category|hero-button|danger-button|primary-button|secondary-button|quiet-button|text-button)(?![\w-])/u;
+const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|step-progress-step|row-open|remove-category|skip-link|danger-button|primary-button|secondary-button|quiet-button|text-button)(?![\w-])/u;
 const TOUCH_TARGET_ATTRIBUTES = /\[(?:tabindex|role="button")/u;
 
 export function addressesTouchTarget(selector: string): boolean {

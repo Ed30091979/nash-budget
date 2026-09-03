@@ -75,7 +75,7 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain("syncIndicatorPresentation(family.status, family.syncRound)");
     expect(source).toContain("syncRound={family.syncRound}");
     expect(source).toMatch(
-      /<span className=\{networkStatus\.className\}[\s\S]{0,600}<span className=\{syncIndicator\.className\}/u,
+      /className=\{`\$\{networkStatus\.className\}[\s\S]{0,600}<span className=\{syncIndicator\.className\}/u,
     );
     // Без входа шапка не меняется вовсе: второй пилюли у локального пользователя нет.
     expect(source).toContain('syncIndicator.state === "local" ? null :');

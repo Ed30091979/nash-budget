@@ -21,14 +21,38 @@ export interface MoneyProps {
    * отрицательной суммы приходит из неё самой и здесь не дублируется.
    */
   readonly sign?: "+" | "−";
+  /**
+   * Разрешить перенос между группами разрядов.
+   *
+   * По умолчанию сумма не переносится нигде: §7.3 запрещает разрыв внутри числа, и в строке
+   * списка он читался бы ошибкой набора. Исключение ровно одно — герой-число: при системном
+   * увеличении шрифта втрое оно перестаёт помещаться в любую ширину, и выбор там не между
+   * «переносить и не переносить», а между переносом и обрезкой, которую запрещает §1.
+   *
+   * Разрыв ставится только между группами: внутри группы разрядов его нет, поэтому «128 450»
+   * разойдётся как «128» и «450», а «12» и «8450» не получится никогда.
+   */
+  readonly breakDigits?: boolean;
   readonly className?: string;
 }
 
-export function Money({ value, sign, className }: MoneyProps) {
+/** Пробелы, которыми `Intl` отбивает разряды: обычный неразрывный и узкий неразрывный. */
+const GROUP_SEPARATOR = /[    ]/u;
+
+export function Money({ value, sign, breakDigits, className }: MoneyProps) {
   const parts = moneyParts(value);
+  const separator = parts.value.match(GROUP_SEPARATOR)?.[0] ?? "";
+  const groups = breakDigits && separator ? parts.value.split(GROUP_SEPARATOR) : [parts.value];
   return (
     <span className={className ? `money ${className}` : "money"}>
-      {sign}{parts.sign}{parts.value}
+      {sign}{parts.sign}
+      {/* Без разрешённых разрывов сумма остаётся одним текстовым узлом: лишняя обёртка не меняет
+          строку, но меняет разметку, а разметку читают и проверки, и чужой код. */}
+      {groups.length < 2 ? parts.value : groups.map((group, index) => (
+        // Точка разрыва — пустой элемент: к строке она не добавляет ни знака, и `textContent`
+        // остаётся ровно тем, что вернул бы `formatMoney`.
+        <span key={index}>{index > 0 ? <><wbr />{separator}</> : null}{group}</span>
+      ))}
       <span className="money-currency">{parts.currency}</span>
     </span>
   );

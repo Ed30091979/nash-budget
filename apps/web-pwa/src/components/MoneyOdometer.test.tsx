@@ -81,7 +81,11 @@ describe("одометр на денежной величине", () => {
       expect(styles, `положение цифры ${digit} не объявлено`)
         .toContain(`.odometer-slot[data-digit="${digit}"] .odometer-reel`);
     }
-    expect(styles).toMatch(/\.odometer \{[^}]*font-variant-numeric: lining-nums tabular-nums/u);
+    // Цифры табличные — иначе слоты разной ширины и число дрожит на ходу. `lining-nums` здесь
+    // не объявляется: у системного SF нет фичи `lnum`, и объявление было бы пустым словом,
+    // выданным за работающее правило.
+    expect(styles).toMatch(/\.odometer \{[^}]*font-variant-numeric: tabular-nums/u);
+    expect(styles).not.toMatch(/font-variant-numeric:[^;]*lining-nums/u);
     expect(styles).toMatch(/\.odometer-slot \{[^}]*width: 1ch[^}]*overflow: hidden/u);
     expect(styles).toMatch(/\.odometer-reel \{[^}]*transition: transform var\(--motion-number\) var\(--ease-enter\)/u);
   });
