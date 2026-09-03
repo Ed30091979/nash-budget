@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import {
   createReadStream,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -11,6 +12,8 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { LocalSyncServer, reserveEphemeralPort } from "./sync-server.mjs";
 
 const appDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.E2E_PORT);
@@ -40,7 +43,29 @@ let cleanupPromise = null;
 let requestedSignal = null;
 let securityHeaders = null;
 let server = null;
+let syncServer = null;
 let tempDirectory = null;
+
+/** Единственная директива, которую адрес сервера семьи вправе изменить (см. `vite.config.ts`). */
+const CONNECT_SRC_SELF = "connect-src 'self'";
+
+/**
+ * Та же подстановка, что делает сборка, — и такая же точная.
+ *
+ * Заголовок и разметка должны разрешать один и тот же источник: политики пересекаются, и
+ * заголовок с `connect-src 'self'` отменил бы разрешение, выданное в `<meta>`. Совпадение
+ * директивы требуется буквальное — молчаливое несовпадение оставило бы прогон с адресом сервера
+ * и без права к нему обращаться, а отказ политики в браузере ничем не похож на отказ сервера.
+ */
+function withSyncServerOrigin(csp, origin) {
+  const directives = csp.split(";").map((directive) => directive.trim());
+  const index = directives.indexOf(CONNECT_SRC_SELF);
+  if (index < 0) {
+    throw new Error(`security-headers.json has no exact "${CONNECT_SRC_SELF}" directive.`);
+  }
+  directives[index] = `${CONNECT_SRC_SELF} ${origin}`;
+  return directives.join("; ");
+}
 
 async function stopActiveBuild() {
   const child = activeBuildProcess;
@@ -75,6 +100,10 @@ async function cleanup(exitCode = 0) {
   if (!cleanupPromise) {
     cleanupPromise = (async () => {
       await stopActiveBuild();
+      if (syncServer !== null) {
+        await syncServer.stop();
+        syncServer = null;
+      }
       if (server?.listening) {
         await new Promise((resolveClose) => server.close(resolveClose));
       }
@@ -108,6 +137,10 @@ function runBuild(label) {
         env: {
           ...process.env,
           PWA_BUILD_ID: buildIds[label],
+          // Тот же ключ, что читает приложение и что читает политика сборки. Без него экран
+          // «Семья» показывает «синхронизация в этой сборке выключена», и проверять на стыке
+          // было бы нечего.
+          VITE_SYNC_SERVER_URL: syncServer.url,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -184,15 +217,18 @@ function handleRequest(request, response) {
       ready: true,
       activeBuild,
       buildId: buildIds[activeBuild],
+      syncServerUrl: syncServer?.url ?? null,
+      syncServerRunning: syncServer?.running ?? false,
     });
     return;
   }
 
+  const fromThisRun =
+    request.method === "POST" &&
+    request.headers.origin === `http://127.0.0.1:${port}`;
+
   if (requestUrl.pathname === "/__e2e__/switch-build") {
-    if (
-      request.method !== "POST" ||
-      request.headers.origin !== `http://127.0.0.1:${port}`
-    ) {
+    if (!fromThisRun) {
       sendJson(response, 403, { switched: false });
       return;
     }
@@ -202,6 +238,43 @@ function handleRequest(request, response) {
       activeBuild,
       buildId: buildIds.B,
     });
+    return;
+  }
+
+  // Одноразовый код входа — оттуда же, откуда его взял бы человек: из вывода сервера, который
+  // печатает его вместо письма. Ни одного тестового маршрута на самом сервере ради этого нет.
+  if (requestUrl.pathname === "/__e2e__/sync/login-code") {
+    if (!fromThisRun) {
+      sendJson(response, 403, { code: null });
+      return;
+    }
+    const email = requestUrl.searchParams.get("email") ?? "";
+    sendJson(response, 200, { code: syncServer?.loginCodeFor(email) ?? null });
+    return;
+  }
+
+  // «Сервер недоступен» — это остановленный процесс, а не подменённый ответ: браузер получает
+  // отказ соединения, ровно как при выключенном сервере.
+  if (requestUrl.pathname === "/__e2e__/sync/stop") {
+    if (!fromThisRun) {
+      sendJson(response, 403, { running: null });
+      return;
+    }
+    void syncServer?.stop().then(() => {
+      sendJson(response, 200, { running: syncServer?.running ?? false });
+    });
+    return;
+  }
+
+  if (requestUrl.pathname === "/__e2e__/sync/start") {
+    if (!fromThisRun) {
+      sendJson(response, 403, { running: null });
+      return;
+    }
+    void syncServer?.start().then(
+      () => sendJson(response, 200, { running: syncServer?.running ?? false }),
+      (error) => sendJson(response, 500, { running: false, message: String(error) }),
+    );
     return;
   }
 
@@ -264,15 +337,38 @@ async function start() {
     A: join(tempDirectory, "build-a"),
     B: join(tempDirectory, "build-b"),
   };
-  securityHeaders = JSON.parse(
+
+  // Сервер семьи поднимается до сборок: его адрес попадает и в код, и в политику, и обе величины
+  // должны получиться из одного значения, а не из двух похожих.
+  syncServer = new LocalSyncServer({
+    port: await reserveEphemeralPort(),
+    databasePath: join(tempDirectory, "sync-server.sqlite"),
+    allowedOrigin: `http://127.0.0.1:${port}`,
+  });
+  await syncServer.start();
+
+  const headers = JSON.parse(
     readFileSync(join(appDirectory, "security-headers.json"), "utf8"),
   );
+  securityHeaders = {
+    ...headers,
+    "Content-Security-Policy": withSyncServerOrigin(
+      headers["Content-Security-Policy"],
+      syncServer.url,
+    ),
+  };
+
+  // Обход дефекта сборки: с непустым `VITE_SYNC_SERVER_URL` плагин политики пишет `_headers`
+  // в жёстко заданный `apps/web-pwa/dist`, а не в тот каталог, куда собирают. На чистой копии
+  // репозитория, где `dist` ещё нет, сборка от этого падает с `ENOENT`.
+  mkdirSync(join(appDirectory, "dist"), { recursive: true });
 
   await runBuild("A");
   await runBuild("B");
   await listen();
   process.stdout.write(
-    `Phase 8 E2E server ready on http://127.0.0.1:${port} with ${buildIds.A} and ${buildIds.B}.\n`,
+    `Phase 8 E2E server ready on http://127.0.0.1:${port} with ${buildIds.A} and ${buildIds.B}; ` +
+      `family sync server on ${syncServer.url}.\n`,
   );
 }
 
