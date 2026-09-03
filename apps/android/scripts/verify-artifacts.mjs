@@ -14,6 +14,10 @@ import {
   collectArtifactInputs,
 } from "./artifact-staleness.mjs";
 import { verifyDebugApkSigner } from "./apk-signer-policy.mjs";
+import {
+  expectedManifestPermissions,
+  resolveConfiguredSyncOrigin,
+} from "./sync-network-policy.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const androidRoot = join(packageRoot, "android");
@@ -283,6 +287,7 @@ assertLocalConfig(
   "release AAB config",
 );
 
+const packagedSyncOrigins = new Map();
 for (const [artifact, entries, indexEntry] of [
   ["debug APK", apkEntries, "assets/public/index.html"],
   ["release AAB", aabEntries, "base/assets/public/index.html"],
@@ -295,6 +300,14 @@ for (const [artifact, entries, indexEntry] of [
     !/(?:src|href)\s*=\s*["']https?:\/\//iu.test(index),
     `${artifact}: index.html references a remote UI asset`,
   );
+  // Откуда грузится приложение и куда оно ходит — разные вопросы, и проверка выше отвечает
+  // только на первый: ни один исполняемый ресурс страницы не берётся из сети. Адрес сервера
+  // семьи ниже — это второй вопрос, и он читается из политики той же страницы.
+  try {
+    packagedSyncOrigins.set(artifact, resolveConfiguredSyncOrigin(index));
+  } catch (error) {
+    fail(`${artifact}: ${error instanceof Error ? error.message : "unreadable content policy"}`);
+  }
   const forbiddenFiles = entries.filter((entry) =>
     /(?:^|\/)(?:google-services\.json|[^/]*\.(?:jks|keystore|p12|pfx))$/iu.test(
       entry,
@@ -305,6 +318,14 @@ for (const [artifact, entries, indexEntry] of [
     `${artifact}: signing/remote-service material packaged: ${forbiddenFiles.join(", ")}`,
   );
 }
+
+const [syncServerOrigin, ...otherSyncServerOrigins] = new Set(packagedSyncOrigins.values());
+assert(
+  otherSyncServerOrigins.length === 0,
+  `packaged artifacts disagree about the sync server: ${[...packagedSyncOrigins]
+    .map(([artifact, origin]) => `${artifact} ${origin ?? "none"}`)
+    .join(", ")}`,
+);
 
 const releaseSignatures = aabEntries.filter((entry) =>
   /^META-INF\/.+\.(?:RSA|DSA|EC|SF)$/iu.test(entry),
@@ -330,10 +351,24 @@ const requestedPermissions = [
     /<uses-permission\b[^>]*android:name="([^"]+)"[^>]*\/?>/gu,
   ),
 ].map((match) => match[1]);
+// Ровно те разрешения, которые следуют из упакованной страницы, и ни одного сверх.
+//
+// Список не константа, потому что и не должен ею быть: сборка по умолчанию не знает адреса
+// сервера и не просит ничего, кроме внутреннего разрешения AndroidX; сборка с адресом просит
+// `INTERNET`, без которого WebView не открывает сокета и синхронизация не работает вовсе.
+// Проверяются оба направления: лишнее разрешение в локальной сборке — обещание магазину,
+// которое приложение не выполняет, а недостающее в настроенной — сборка, которая ставится и
+// молча не синхронизируется.
+const expectedPermissions = expectedManifestPermissions(
+  internalReceiverPermission,
+  syncServerOrigin,
+);
 assert(
-  requestedPermissions.length === 1 &&
-    requestedPermissions[0] === internalReceiverPermission,
-  `release manifest requests unexpected permissions: ${requestedPermissions.join(", ") || "none"}`,
+  requestedPermissions.length === expectedPermissions.length &&
+    [...requestedPermissions].sort().join(" ") === [...expectedPermissions].sort().join(" "),
+  `release manifest permissions do not match the packaged content policy ` +
+    `(sync server ${syncServerOrigin ?? "not configured"}): requested ` +
+    `${requestedPermissions.join(", ") || "none"}, expected ${expectedPermissions.join(", ")}`,
 );
 assert(
   new RegExp(
@@ -397,6 +432,12 @@ const variablesBuild = read(join(androidRoot, "variables.gradle"));
 assert(
   !/\bsigningConfig\b/u.test(appBuild),
   "release Gradle config must not reference a signing configuration",
+);
+// Файл сборки читает конфигурацию, но не является ею: адрес сервера живёт в веб-сборке (§9), и
+// зашитый здесь строковый адрес был бы вторым источником правды, который нечем перекрыть.
+assert(
+  !/["']https?:\/\//iu.test(appBuild),
+  "the Android build file must not hardcode an absolute remote address",
 );
 assert(
   !/google-services|com\.google\.gms/iu.test(`${rootBuild}\n${appBuild}`),
@@ -556,8 +597,13 @@ console.log(
       appId: "com.edfurman.nashbudget",
       versionCode: 1,
       versionName: "1.0.0",
-      systemPermissions: [],
-      internalSignaturePermissions: requestedPermissions,
+      syncServer: syncServerOrigin,
+      systemPermissions: expectedPermissions.filter(
+        (permission) => permission !== internalReceiverPermission,
+      ),
+      internalSignaturePermissions: requestedPermissions.filter(
+        (permission) => permission === internalReceiverPermission,
+      ),
       exportedComponents: exportedTrueComponents,
       syncedProductionFiles: productionFiles.length,
       debugApk: {

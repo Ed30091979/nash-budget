@@ -253,18 +253,110 @@ if (
   fail("manifest icons are incomplete");
 }
 
+const CONNECT_SRC_DIRECTIVE = "connect-src";
+
+/**
+ * Единственный источник, который сборке позволено добавить в политику: адрес сервера семьи.
+ *
+ * Только `https`, только схема-хост-порт и ничего больше. `http` отвергается здесь, а не только
+ * в Android-обёртке: страница приложения отдаётся по `https` на обеих поверхностях, поэтому
+ * незащищённый адрес — это не «менее строгая настройка», а адрес, по которому браузер не пойдёт.
+ */
+const SYNC_SERVER_ORIGIN = /^https:\/\/(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(?::\d{1,5})?$/iu;
+
+function policyDirectives(policy) {
+  return policy
+    .split(";")
+    .map((directive) => directive.trim())
+    .filter((directive) => directive.length > 0);
+}
+
+/**
+ * Сверяет политику с эталоном по директивам и возвращает адрес сервера, если он в ней есть.
+ *
+ * Сравнение по подстроке отвергало любую настроенную сборку целиком: расширенный `connect-src`
+ * не совпадал с эталонной строкой, и релизный скан запрещал не адрес, а саму возможность
+ * синхронизации. Обратное послабление — «политика содержит connect-src» — разрешило бы `*`.
+ * Поэтому здесь: список директив совпадает по составу и порядку, каждая совпадает точно, и ровно
+ * одной, `connect-src`, разрешено нести один дополнительный источник поверх `'self'`.
+ */
+function assertPolicyMatchesBaseline(policy, baseline, label) {
+  const actual = policyDirectives(policy);
+  const expected = policyDirectives(baseline);
+  if (actual.length !== expected.length) {
+    fail(`${label} does not carry the baseline security policy`);
+  }
+  let syncServerOrigin = null;
+  for (const [index, directive] of expected.entries()) {
+    const found = actual[index];
+    if (found === directive) continue;
+    if (!directive.startsWith(`${CONNECT_SRC_DIRECTIVE} `)) {
+      fail(`${label} alters the "${directive}" directive`);
+    }
+    const added = found.startsWith(`${directive} `) ? found.slice(directive.length + 1) : null;
+    if (added === null || !SYNC_SERVER_ORIGIN.test(added)) {
+      fail(`${label} widens ${CONNECT_SRC_DIRECTIVE} beyond one https sync-server origin`);
+    }
+    syncServerOrigin = added;
+  }
+  return syncServerOrigin;
+}
+
 const deployHeaders = readFileSync(join(distDirectory, "_headers"), "utf8");
+const baselineCsp = expectedHeaders["Content-Security-Policy"];
 for (const [name, value] of Object.entries(expectedHeaders)) {
+  if (name === "Content-Security-Policy") continue;
   if (!deployHeaders.includes(`${name}: ${value}`)) {
     fail(`deploy headers omit ${name}`);
   }
 }
 
+const deployedCsp = deployHeaders.match(/^\s*Content-Security-Policy:[ \t]*(.+)$/mu)?.[1]?.trim();
+if (deployedCsp === undefined) {
+  fail("deploy headers omit Content-Security-Policy");
+}
+const metaCsp = indexHtml
+  .match(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/iu)?.[1]
+  ?.replace(/\s+/gu, " ")
+  .trim();
+
+// `frame-ancestors` признаётся только в заголовке, поэтому разметка сверяется с эталоном без него.
+const baselineMetaCsp = policyDirectives(baselineCsp)
+  .filter((directive) => !directive.startsWith("frame-ancestors"))
+  .join("; ");
+// Разметка без политики не называет никакого сервера — и обязана сойтись с заголовком, который
+// тоже не должен его называть. Это не пропуск проверки: сравнение ниже всё равно состоится, и
+// сборка, где адрес есть в заголовке и отсутствует в странице, провалится именно на нём.
+const metaSyncServer =
+  metaCsp === undefined
+    ? null
+    : assertPolicyMatchesBaseline(metaCsp, baselineMetaCsp, "index.html meta CSP");
+const deployedSyncServer = assertPolicyMatchesBaseline(deployedCsp, baselineCsp, "deploy headers CSP");
+if (metaSyncServer !== deployedSyncServer) {
+  // Разметка едет в APK, заголовок — только на хостинг. Разойдясь, они дали бы приложение,
+  // которое ходит на сервер в браузере и молча не ходит в Android-обёртке, или наоборот.
+  fail("index.html and deploy headers name different sync-server origins");
+}
+
 const capacitorSource = readFileSync(androidConfig, "utf8");
+// Два разных запрета, которые легко перепутать.
+//
+// Первый — про то, откуда грузится САМО приложение: `server`/`server.url` в конфигурации
+// Capacitor заставляет обёртку открывать страницу с удалённого адреса, и тогда весь
+// проверенный локальный пакет перестаёт быть тем, что исполняется. Это запрещено всегда.
+//
+// Второй — про то, куда приложение ХОДИТ: адрес API семьи. Он тоже не может быть здесь, но по
+// другой причине — он вообще не принадлежит этому файлу: §9 задаёт его конфигурацией веб-сборки
+// (`VITE_SYNC_SERVER_URL`), откуда он попадает в бандл и в `connect-src` выше. Зашитый сюда
+// адрес был бы вторым источником правды, который никакая сборка не перекрывает.
 if (/\bserver\s*:/u.test(capacitorSource) || /\burl\s*:\s*["']https?:\/\//iu.test(capacitorSource)) {
   fail("Capacitor contains server.url or another remote app endpoint");
 }
+if (/["'`]https?:\/\//iu.test(capacitorSource)) {
+  fail("Capacitor config hardcodes an absolute remote address");
+}
 
 process.stdout.write(
-  `Release scan passed: ${artifactFiles.length} artifacts, ${precacheUrls.length} unique precache URLs, build ${buildMetadata.buildId}.\n`,
+  `Release scan passed: ${artifactFiles.length} artifacts, ${precacheUrls.length} unique precache URLs, ` +
+    `build ${buildMetadata.buildId}, sync server ${deployedSyncServer ?? "not configured (local-only build)"}.\n`,
 );

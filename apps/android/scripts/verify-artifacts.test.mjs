@@ -22,6 +22,11 @@ import {
   resolveApkSigner,
   verifyDebugApkSigner,
 } from "./apk-signer-policy.mjs";
+import {
+  INTERNET_PERMISSION,
+  expectedManifestPermissions,
+  resolveConfiguredSyncOrigin,
+} from "./sync-network-policy.mjs";
 
 const validSignerOutput = `Verifies
 Verified using v1 scheme (JAR signing): false
@@ -231,5 +236,116 @@ test("rejects artifacts older than authored and generated native build inputs", 
     inputs.map((path) => readFileSync(path)),
     originalContents,
     "staleness validation must not modify build inputs",
+  );
+});
+
+const BASE_POLICY =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+  "font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; " +
+  "object-src 'none'; base-uri 'none'; form-action 'none'";
+
+function pageWithPolicy(policy) {
+  return [
+    "<!doctype html>",
+    "<html lang=\"ru\">",
+    "  <head>",
+    "    <meta",
+    "      http-equiv=\"Content-Security-Policy\"",
+    `      content="${policy}"`,
+    "    />",
+    "  </head>",
+    "  <body></body>",
+    "</html>",
+  ].join("\n");
+}
+
+const RECEIVER_PERMISSION =
+  "com.edfurman.nashbudget.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION";
+
+test("a page whose policy names no server is the default local-only build", () => {
+  assert.equal(resolveConfiguredSyncOrigin(pageWithPolicy(BASE_POLICY)), null);
+  assert.deepEqual(expectedManifestPermissions(RECEIVER_PERMISSION, null), [
+    RECEIVER_PERMISSION,
+  ]);
+});
+
+test("a page whose policy names one https origin is a configured build", () => {
+  for (const origin of [
+    "https://sync.example.org",
+    "https://sync.example.org:8443",
+    "https://[2001:db8::1]:8443",
+  ]) {
+    const page = pageWithPolicy(
+      BASE_POLICY.replace("connect-src 'self'", `connect-src 'self' ${origin}`),
+    );
+    assert.equal(resolveConfiguredSyncOrigin(page), origin);
+    assert.deepEqual(expectedManifestPermissions(RECEIVER_PERMISSION, origin), [
+      RECEIVER_PERMISSION,
+      INTERNET_PERMISSION,
+    ]);
+  }
+});
+
+test("an address this shell cannot reach is a build failure, not a local build", () => {
+  // http is refused twice on the device — by the mixed-content rule of a page served over
+  // https://localhost and by cleartextTrafficPermitted=false — so a build carrying one would
+  // install and silently never sync. The scan has to say so before the artifact exists.
+  for (const source of [
+    "http://sync.example.org",
+    "http://10.0.2.2:8787",
+    "*",
+    "https://*.example.org",
+    "https://sync.example.org/v1",
+    "ws://sync.example.org",
+  ]) {
+    const page = pageWithPolicy(
+      BASE_POLICY.replace("connect-src 'self'", `connect-src 'self' ${source}`),
+    );
+    assert.throws(() => resolveConfiguredSyncOrigin(page), /cannot reach/u, source);
+  }
+});
+
+test("more than one remote source is refused rather than reduced to the first", () => {
+  const page = pageWithPolicy(
+    BASE_POLICY.replace(
+      "connect-src 'self'",
+      "connect-src 'self' https://sync.example.org https://other.example.org",
+    ),
+  );
+  assert.throws(() => resolveConfiguredSyncOrigin(page), /more than one source/u);
+});
+
+test("a page without a policy or without connect-src is refused", () => {
+  assert.throws(
+    () => resolveConfiguredSyncOrigin("<!doctype html><html><head></head></html>"),
+    /no Content-Security-Policy meta tag/u,
+  );
+  assert.throws(
+    () => resolveConfiguredSyncOrigin(pageWithPolicy("default-src 'none'; script-src 'self'")),
+    /no connect-src directive/u,
+  );
+});
+
+test("the packaged production page and the Gradle rule agree on both build modes", () => {
+  // The two implementations that must not drift: this one, and the connect-src match in
+  // apps/android/android/app/build.gradle that decides whether INTERNET is merged in.
+  const gradle = readFileSync(
+    join(import.meta.dirname, "../android/app/build.gradle"),
+    "utf8",
+  );
+  const rule = gradle.match(/packagedConnectSrc = packagedIndexHtml =~ \/(.+?)\/\n/u)?.[1];
+  assert.ok(rule, "the Gradle build no longer derives the network permission from connect-src");
+  const gradleSaysConfigured = (page) => {
+    const match = page.match(new RegExp(rule, "u"));
+    return match !== null && /https?:\/\//u.test(match[1]);
+  };
+  const localPage = pageWithPolicy(BASE_POLICY);
+  const configuredPage = pageWithPolicy(
+    BASE_POLICY.replace("connect-src 'self'", "connect-src 'self' https://sync.example.org"),
+  );
+  assert.equal(gradleSaysConfigured(localPage), resolveConfiguredSyncOrigin(localPage) !== null);
+  assert.equal(
+    gradleSaysConfigured(configuredPage),
+    resolveConfiguredSyncOrigin(configuredPage) !== null,
   );
 });

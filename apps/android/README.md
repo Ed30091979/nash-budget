@@ -35,13 +35,71 @@ unsigned local release AAB build, and the Android artifact/security scanner.
 Generated assets, build outputs, local SDK paths, and signing material are
 ignored by Git.
 
+## Family sync: configuring the server address
+
+The address of the family sync server is configuration of the **web** build and
+lives nowhere else. It is read from `VITE_SYNC_SERVER_URL` at Vite build time
+and reaches the APK inside the packaged page: the address is inlined into the
+bundle and added to the `connect-src` directive of the page content policy.
+There is no production URL anywhere in this repository, and a build that is not
+given one is the default.
+
+```sh
+# Default: a fully local application. No address, no network permission, no sync.
+pnpm --filter @family-budget/android verify:android
+
+# Configured: working sync against one named https server.
+VITE_SYNC_SERVER_URL=https://sync.example.org \
+  pnpm --filter @family-budget/android verify:android
+```
+
+`app/build.gradle` derives one thing from that page — whether the app needs
+`android.permission.INTERNET` — by looking at the `connect-src` of the
+`index.html` it is about to package, and merges `src/sync/AndroidManifest.xml`
+when it does. Reading the packaged bytes rather than the environment variable is
+deliberate: the permission and the address cannot then disagree, which is the
+one failure that is invisible until the app is on a device.
+`scripts/verify-artifacts.mjs` re-derives the same fact from the built artifact
+with its own implementation and fails if the merged manifest does not match.
+
+The address must be `https`. This is not strictness, it is arithmetic: the
+Capacitor WebView runs the page at `https://localhost` (`androidScheme`
+defaults to `https`), so an `http://` address is refused as mixed content
+before the socket is opened, and the app's network security config refuses
+cleartext besides. A build configured with an `http` address installs and can
+never sync, so both `release:scan` and the Android artifact scan reject it.
+
+Verified in the emulator (Android 15, WebView 124) with a debug build pointed at
+a local https server:
+
+- the page origin is `https://localhost` and `isSecureContext` is `true`, so
+  `crypto.subtle` is present — an AES-GCM round trip with additional data, an
+  ECDH P-256 key pair and an HMAC-SHA-256 signature all succeed;
+- IndexedDB reads and writes normally;
+- `fetch` is the platform's own (the `CapacitorHttp` plugin is off, so nothing
+  patches it) and reaches the configured https origin, preflight included;
+- a request to an origin the policy does not name is refused by CSP; a request
+  to an `http://` origin the policy *does* name is refused as mixed content;
+- with the same page and the same policy but no `INTERNET` permission, every
+  request fails as `net::ERR_CACHE_MISS` — which is why the permission is not
+  optional and why the scan checks it.
+
+Because the WebView is a browser, its requests carry `Origin: https://localhost`
+and CORS applies in full: a preflight `OPTIONS` precedes every call, since the
+transport sends `authorization` and `content-type`. The sync server must
+therefore name `https://localhost` in its CORS allowlist (`SYNC_ALLOWED_ORIGINS`)
+in addition to the origin the PWA is served from.
+
 ## Security and publication boundary
 
-The app requests no Android system or runtime permissions. AndroidX contributes
-one app-scoped, signature-protected permission used to keep dynamic receivers
-non-exported; it cannot be granted to an unrelated app. All UI assets are
-packaged locally; the Capacitor configuration contains no `server` block,
-live-reload host, or remote navigation allowlist. Mixed content, cleartext
+Apart from `INTERNET` in a build that was given a server address, the app
+requests no Android system or runtime permissions, and the default build
+requests none at all. AndroidX contributes one app-scoped,
+signature-protected permission used to keep dynamic receivers non-exported; it
+cannot be granted to an unrelated app. All UI assets are packaged locally; the
+Capacitor configuration contains no `server` block, live-reload host, or remote
+navigation allowlist — where the application is loaded from and which API it
+calls are separate questions, and only the first one is settled in that file. Mixed content, cleartext
 traffic, WebView debugging, native logging, Android backup, and device-transfer
 extraction are disabled. Google Services, analytics, push notifications, and
 their Gradle plugin are deliberately absent.
@@ -54,3 +112,10 @@ The release build has no signing configuration. Do not add a keystore to this
 repository. Final package naming, production signing-key creation and backup,
 real-device verification, RuStore upload, and every rollout action are manual
 owner gates.
+
+Sync adds three more owner gates, none of which can be automated here: a domain
+for the sync server, a TLS certificate for it from a publicly trusted authority
+(the app trusts system anchors only, so a self-signed or privately issued
+certificate is refused on device), and hosting to run it on. Until those exist
+there is no address to configure, and the default local build is the only one
+that can be produced.

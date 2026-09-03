@@ -1,5 +1,30 @@
 apply plugin: 'com.android.application'
 
+/*
+ * Нужно ли этой сборке разрешение на сеть — решается здесь, и только здесь.
+ *
+ * Адрес сервера семьи — конфигурация ВЕБ-сборки (`VITE_SYNC_SERVER_URL`, §9), и в APK он приезжает
+ * уже внутри страницы: Vite вписывает источник сервера в `connect-src` политики `index.html` и в
+ * бандл. Поэтому здесь читается не переменная окружения, а те самые байты, которые будут
+ * упакованы. Переменная окружения дала бы второй источник правды и два способа разойтись: сборка
+ * с адресом, но без сети (синхронизация молча не работает и выглядит как отказ сервера), и сборка
+ * с сетью, но без адреса (лишнее разрешение в карточке магазина, которым никто не пользуется).
+ *
+ * Отсутствие файла — это состояние до `cap sync`. Оно трактуется как локальная сборка: значение
+ * по умолчанию у этого приложения — «никакой сети», и ошибка в сторону меньших прав безопасна.
+ *
+ * Правило намеренно грубее, чем разбор адреса: «в `connect-src` назван хоть один удалённый
+ * источник». Точность здесь не нужна и вредна — разбирать адрес во второй раз значило бы
+ * повторить чужое правило и получить право разойтись с ним. `scripts/verify-artifacts.mjs`
+ * сверяет получившийся манифест с той же страницей своей, независимой реализацией.
+ */
+def packagedIndexHtml = providers
+    .fileContents(layout.projectDirectory.file('src/main/assets/public/index.html'))
+    .asText
+    .getOrElse('')
+def packagedConnectSrc = packagedIndexHtml =~ /connect-src\s+'self'([^;"]*)/
+def syncServerConfigured = packagedConnectSrc.find() && (packagedConnectSrc.group(1) =~ /https?:\/\//).find()
+
 android {
     namespace = "com.edfurman.nashbudget"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -25,6 +50,16 @@ android {
     lint {
         abortOnError = true
         checkReleaseBuilds = true
+    }
+}
+
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        if (syncServerConfigured) {
+            // Штатный способ AGP 8 доложить манифест поверх главного: главный остаётся один и
+            // не дублируется, оверлей несёт единственную строку, которой сборка отличается.
+            variant.sources.manifests.addStaticManifestFile('src/sync/AndroidManifest.xml')
+        }
     }
 }
 
