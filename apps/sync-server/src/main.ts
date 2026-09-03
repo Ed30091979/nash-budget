@@ -3,8 +3,11 @@
  *
  * It is deliberately thin, and two of its lines are requirements rather than convenience. The CORS
  * allowlist comes from `SYNC_ALLOWED_ORIGINS` and is empty when unset: 1.1 wants the browser
- * origins named, and an empty list is a legitimate answer ("no browser may call it") while a
- * wildcard is not one at all — `resolveConfig` refuses `"*"` outright. And the login code is
+ * origins named, and an empty list is a legitimate answer ("no client may call it") while a
+ * wildcard is not one at all — `resolveConfig` refuses `"*"` outright. Empty means *no* client,
+ * the Android app included: its WebView is a browser and calls from `https://localhost`, so a
+ * deployment that serves the app names that origin here beside the one the PWA is delivered from
+ * — `SYNC_ALLOWED_ORIGINS=https://app.example.org,https://localhost`. And the login code is
  * printed to the console because phase S3 ships no mail transport; that is the one place a code
  * leaves the process, and it is visible in the source rather than hidden behind a default.
  */

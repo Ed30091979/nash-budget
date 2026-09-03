@@ -58,6 +58,45 @@ export interface SyncServer {
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 
+/**
+ * How many distinct unlisted origins one process will name in its log. See `noteUnlistedOrigin`.
+ */
+const UNLISTED_ORIGIN_LOG_LIMIT = 16;
+
+/**
+ * Say in the log that an origin asked and was not on the list.
+ *
+ * A CORS refusal is enforced by the browser, not by the server: the answer to an unlisted origin
+ * is a perfectly ordinary success that the caller is then forbidden to read. From the server's
+ * side the misconfiguration is invisible, and on the Android shell there is no console to read
+ * the browser's side in — so "we named the wrong origins in `SYNC_ALLOWED_ORIGINS`" would show up
+ * as an app that fails every request against a server whose log says everything went fine. One
+ * line naming the origin turns that into a five-second diagnosis.
+ *
+ * Two limits on it, both deliberate. Nothing is added to the response — the reply is byte for byte
+ * what it was, so this tells the caller nothing it did not already know; the only new reader is
+ * whoever runs the server. And the header is attacker-controlled on an unauthenticated route, so
+ * the line is written once per distinct origin and at most {@link UNLISTED_ORIGIN_LOG_LIMIT}
+ * times per process: a configuration hint, deliberately not an audit trail, and not a way to
+ * write to someone's disk by rotating a header.
+ */
+function makeUnlistedOriginNotice(
+  allowed: readonly string[],
+): (request: FastifyRequest, origin: string) => void {
+  const seen = new Set<string>();
+  const message =
+    allowed.length === 0
+      ? "origin is not allowed: SYNC_ALLOWED_ORIGINS is empty, so every browser client is " +
+        "blocked — the Android shell, which calls from https://localhost, included"
+      : "origin is not in SYNC_ALLOWED_ORIGINS: the browser will block this response";
+  return (request, origin) => {
+    if (seen.has(origin) || seen.size >= UNLISTED_ORIGIN_LOG_LIMIT) return;
+    seen.add(origin);
+    // The origin is truncated because it is a header: whoever sent it chose its length too.
+    request.log.warn({ origin: origin.slice(0, 128), allowedOrigins: allowed }, message);
+  };
+}
+
 export function buildServer(options: SyncServerOptions): SyncServer {
   const resolved = resolveConfig(options);
   const db = openDatabase(resolved.databasePath);
@@ -69,6 +108,7 @@ export function buildServer(options: SyncServerOptions): SyncServer {
     tokenSecret: resolved.tokenSecret ?? loadOrCreateTokenSecret(db, resolved.now()),
   };
   const context = new ServerContext(db, config);
+  const noteUnlistedOrigin = makeUnlistedOriginNotice(config.allowedOrigins);
 
   const app = Fastify({
     bodyLimit: MAX_BATCH_BODY_BYTES,
@@ -139,12 +179,18 @@ export function buildServer(options: SyncServerOptions): SyncServer {
   app.addHook("onRequest", async (request, reply) => {
     // CORS by explicit allowlist (1.1), never `*`; `resolveConfig` refuses a wildcard outright.
     // An origin that is not on the list simply gets no CORS headers and the browser stops there;
-    // the request itself is not refused, because non-browser clients send no `Origin` at all.
+    // the request itself is not refused, because a client that is not a browser — a script, a
+    // health check — sends no `Origin` at all and CORS has nothing to say about it. The Android
+    // shell is *not* such a client: its WebView is a browser and sends `Origin: https://localhost`
+    // (see `allowedOrigins` in `config.ts`), so it is allowed here or it is blocked like any other.
     const origin = request.headers.origin;
-    if (typeof origin === "string" && config.allowedOrigins.includes(origin)) {
+    if (typeof origin !== "string") return;
+    if (config.allowedOrigins.includes(origin)) {
       reply.header("access-control-allow-origin", origin);
       reply.header("vary", "Origin");
+      return;
     }
+    noteUnlistedOrigin(request, origin);
   });
 
   // Preflight, answered with no body and therefore with no content type of any kind.

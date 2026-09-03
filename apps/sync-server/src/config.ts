@@ -13,8 +13,16 @@ export interface SyncServerConfig {
   /** `":memory:"` in tests, a file path in `dev`. */
   readonly databasePath: string;
   /**
-   * Browser origins allowed to call this server (1.1). Empty means "no browser may call it", and
-   * that is a legitimate configuration — the Android shell has no origin. `"*"` is not accepted.
+   * Browser origins allowed to call this server (1.1). `"*"` is not accepted.
+   *
+   * An empty list is still a legitimate configuration, but it means "no client may call it at
+   * all" — not "browsers may not, the app may". The Android shell has an origin like any other
+   * browser: Capacitor serves the page over `https` (`androidScheme` defaults to it), so the
+   * WebView runs at `https://localhost` and sends `Origin: https://localhost` on every call,
+   * preceded by a preflight because the transport carries `authorization` and `content-type`.
+   * Measured on the emulator in phase S9; see `apps/android/README.md`. A deployment that serves
+   * the Android app must therefore name `https://localhost` here, beside the origin the PWA is
+   * delivered from, or every request from the app is blocked by the WebView.
    */
   readonly allowedOrigins: readonly string[];
   /** Secret behind the access-token MAC and the login-code MAC. */
