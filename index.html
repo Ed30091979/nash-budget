@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!--
+      script-src 'wasm-unsafe-eval': Argon2id приглашений — это WebAssembly (пакет hash-wasm).
+      Ключевое слово разрешает только компиляцию и создание модулей WebAssembly. eval, new Function
+      и строковые таймеры остаются запрещёнными: их открывает другое, более широкое ключевое слово,
+      которого в этой политике нет и быть не должно.
+      Обоснование целиком — в vite.config.ts, рядом с META_CSP; эта строка обязана совпадать с ним.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <!-- frame-ancestors is intentionally enforced by the HTTP CSP header, not by meta CSP. -->
     <meta name="theme-color" content="#F2F6F3" />
@@ -16,8 +23,8 @@
     <link rel="icon" type="image/svg+xml" href="/nash-budget/app-icon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/nash-budget/apple-touch-icon.png" />
     <title>Наш бюджет</title>
-    <script type="module" crossorigin src="/nash-budget/assets/index-B8yu_xgv.js"></script>
-    <link rel="stylesheet" crossorigin href="/nash-budget/assets/index-INOLIn46.css">
+    <script type="module" crossorigin src="/nash-budget/assets/index-B6WdlnY5.js"></script>
+    <link rel="stylesheet" crossorigin href="/nash-budget/assets/index-NYDrgVde.css">
   <link rel="manifest" href="/nash-budget/manifest.webmanifest"></head>
   <body>
     <div id="root"></div>
