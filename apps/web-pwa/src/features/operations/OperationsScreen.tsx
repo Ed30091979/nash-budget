@@ -9,9 +9,11 @@ import {
 } from "@family-budget/domain";
 import { Icon, type IconName } from "../../components/Icon";
 import { Money } from "../../components/Money";
+import { MoneyOdometer } from "../../components/MoneyOdometer";
 import { categoryVisual } from "../../category-visual";
 import { searchOperations } from "../dashboard";
-import { formatMoney } from "../../money";
+import { formatMoney, parseMoney } from "../../money";
+import { effectLabel, effectTarget, effectValueMinor, type EffectTarget } from "./save-receipt";
 import {
   archiveCategory,
   createOperationCategory,
@@ -30,6 +32,31 @@ interface OperationsScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
   readonly onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Прямой путь из пустого состояния «Категории месяца»: лимиты задают в плане.
+   *
+   * Необязателен: экран, вставленный без навигации, посылать человека некуда, и мёртвая кнопка
+   * была бы хуже её отсутствия. Приложение его передаёт всегда.
+   */
+  readonly onPlanning?: () => void;
+}
+
+/**
+ * Отклик на запись (§5 исследования, пункты 27–28).
+ *
+ * Самое частое действие приложения проходило молча: форма очищалась, и всё. Человек не узнавал ни
+ * того, записалось ли, ни того, что от этого изменилось. Квитанция отвечает на оба вопроса сразу:
+ * называет записанное и показывает число, которое от записи поехало, — одометром, чтобы движение
+ * объяснило, что оно изменилось, и на сколько.
+ */
+interface SaveReceipt {
+  readonly verb: "Записано" | "Изменено" | "Удалено";
+  readonly kind: TransactionKind;
+  readonly amountMinor: number;
+  /** Чьё число объявляем; `null` — объявлять нечего, и тогда квитанция называет только запись. */
+  readonly target: EffectTarget | null;
+  /** Значение до изменения: одометр едет от него, а подпись называет разницу. */
+  readonly beforeMinor: number;
 }
 
 type Confirmation =
@@ -51,6 +78,25 @@ const PAGE_SIZE = 25;
  * у значения: эмфаза весом на одном кегле (§2 исследования).
  */
 const AMOUNT_PLACEHOLDER = "1200,50";
+
+/** Квитанция записи: её же подводят под глаз после сохранения. */
+export const SAVE_RECEIPT_ID = "operation-save-receipt";
+
+/**
+ * «1 операция», «2 операции», «5 операций».
+ *
+ * Число в русской строке склоняет за собой существительное, и «Всего в истории 4» без него
+ * читается обрывком. Правило то же, что у любого счётного слова: одиннадцать–четырнадцать —
+ * исключение из хвоста.
+ */
+export function operationsCount(count: number): string {
+  const tail = count % 100;
+  const last = count % 10;
+  if (tail >= 11 && tail <= 14) return `${count} операций`;
+  if (last === 1) return `${count} операция`;
+  if (last >= 2 && last <= 4) return `${count} операции`;
+  return `${count} операций`;
+}
 
 const kindLabels: Record<TransactionKind, string> = {
   income: "Доход",
@@ -224,6 +270,40 @@ function FieldError({ message }: { readonly message: string | null }) {
   return message ? <p className="field-error" id="operation-form-error" role="alert" tabIndex={-1}>{message}</p> : null;
 }
 
+/**
+ * Квитанция записи: что записано и что от этого изменилось.
+ *
+ * Живая область здесь одна на всю карточку и объявляет итог, а не промежуточные цифры одометра
+ * (§5 исследования, пункт 27): сам одометр `aria-hidden`, а произносимая строка собрана рядом
+ * целиком и меняется один раз — вместе с квитанцией.
+ *
+ * Стоит над кнопкой сохранения, а не поверх экрана: плавающая плашка накрывает то, что под ней,
+ * и ровно этим уже провинился тост «готово к работе офлайн». Квитанция занимает своё место в
+ * потоке и ничего не закрывает.
+ */
+function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceipt; readonly afterMinor: number | null }) {
+  const label = receipt.target ? effectLabel(receipt.target) : null;
+  const changeMinor = afterMinor === null ? 0 : afterMinor - receipt.beforeMinor;
+  const spokenValue = afterMinor === null
+    ? ""
+    : `${rubles(afterMinor)}${changeMinor === 0 ? "" : `, ${changeMinor < 0 ? "меньше" : "больше"} на ${rubles(Math.abs(changeMinor))}`}`;
+  return <div className="save-receipt" id={SAVE_RECEIPT_ID} role="status" aria-live="polite" aria-atomic="true">
+    <span className="save-receipt-mark" aria-hidden="true"><Icon name="circle-check" size={24} /></span>
+    <div className="save-receipt-copy">
+      <strong>{receipt.verb}: {kindLabels[receipt.kind].toLowerCase()} <Money value={receipt.amountMinor} /></strong>
+      {label !== null && afterMinor !== null ? <>
+        <small>{label}</small>
+        <span className="save-receipt-value">
+          <MoneyOdometer from={receipt.beforeMinor} to={afterMinor} />
+          {changeMinor === 0 ? null : <span className="save-receipt-change" aria-hidden="true"><Money value={Math.abs(changeMinor)} sign={changeMinor < 0 ? "−" : "+"} /></span>}
+          {/* Цифры одометра скрыты от чтения вслух, поэтому итог и разницу произносит эта строка. */}
+          <span className="sr-only">{spokenValue}</span>
+        </span>
+      </> : null}
+    </div>
+  </div>;
+}
+
 function AccountSelect({ id, label, value, budget, onValue }: { id: string; label: string; value: string; budget: BudgetState; onValue: (value: string) => void }) {
   return <div className="field"><label htmlFor={id}>{label}</label><select id={id} value={value} onChange={(event) => onValue(event.target.value)}><option value="">Выберите счёт</option>{budget.accounts.filter((item) => item.active || item.id === value).map((item) => <option value={item.id} key={item.id}>{item.name}{item.active ? "" : " (в архиве)"}</option>)}</select></div>;
 }
@@ -315,12 +395,13 @@ function TransactionFields({ budget, draft, patch, categoryQuery, onCategoryQuer
   </>;
 }
 
-export function OperationsScreen({ budget, onChange, onDirtyChange }: OperationsScreenProps) {
+export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning }: OperationsScreenProps) {
   const [draft, setDraft] = useState<TransactionDraft>(() => defaultDraft("expense", budget));
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<SaveReceipt | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // Фильтр истории — тоже не часть черновика: он ничего не записывает.
   const [historyQuery, setHistoryQuery] = useState("");
@@ -410,11 +491,41 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
       } catch (cause) {
         const view = toOperationsErrorView(cause);
         setError(view.message);
+        // Квитанция утверждает, что запись прошла. Рядом с сообщением об ошибке это ложь.
+        setReceipt(null);
         window.setTimeout(() => document.getElementById("operation-form-error")?.focus(), 0);
       } finally {
         setBusy(false);
       }
     });
+  };
+  /**
+   * Собирает квитанцию по черновику и расчёту, снятому до изменения.
+   *
+   * Число «до» берётся из этого же рендера — то есть из состояния бюджета, каким оно было в момент
+   * нажатия. Число «после» квитанция не хранит вовсе: его каждый раз читает разметка из свежего
+   * расчёта, поэтому чужая запись, пришедшая из журнала семьи, подвинет и его.
+   */
+  const recordReceipt = (verb: SaveReceipt["verb"], pending: TransactionDraft) => {
+    let amountMinor = 0;
+    try {
+      amountMinor = parseMoney(pending.amount);
+    } catch {
+      // Сумму уже принял домен: сюда попадает только то, что разобралось. Ноль — на всякий случай.
+    }
+    const target = effectTarget(budget, metrics, pending);
+    setReceipt({
+      verb,
+      kind: pending.kind,
+      amountMinor,
+      target,
+      beforeMinor: target === null ? 0 : effectValueMinor(metrics, target),
+    });
+    // Кнопку сохранения нажимают у нижнего края экрана, и появившаяся над ней квитанция уезжает
+    // под навигацию вместе с самой кнопкой. Отклик, которого не видно, — это тот же молчащий
+    // экран, поэтому квитанцию подводят под глаз: она встаёт посреди экрана, а кнопка остаётся
+    // под ней. Прокрутка мгновенная и уважает `prefers-reduced-motion` по умолчанию платформы.
+    window.setTimeout(() => document.getElementById(SAVE_RECEIPT_ID)?.scrollIntoView({ block: "center" }), 0);
   };
   const reset = (kind: TransactionKind = draft.kind) => {
     setDraft(defaultDraft(kind, budget));
@@ -489,21 +600,29 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
       setConfirmation({ type: "edit", id: editingId, draft });
       return;
     }
-    void runChange((state) => createTransaction(state, draft), () => reset(draft.kind));
+    const pending = draft;
+    void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); });
   };
   const confirm = () => {
     if (!confirmation || busy) return;
     if (confirmation.type === "edit") {
       const pending = confirmation;
-      void runChange((state) => editTransaction(state, pending.id, pending.draft), () => reset(pending.draft.kind));
+      void runChange((state) => editTransaction(state, pending.id, pending.draft), () => { recordReceipt("Изменено", pending.draft); reset(pending.draft.kind); });
     } else {
       const pending = confirmation;
-      void runChange((state) => deleteTransaction(state, pending.id), () => { setConfirmation(null); if (editingId === pending.id) reset(); });
+      const removed = budget.transactions.find((item) => item.id === pending.id);
+      void runChange((state) => deleteTransaction(state, pending.id), () => {
+        if (removed) recordReceipt("Удалено", draftFromTransaction(removed));
+        setConfirmation(null);
+        if (editingId === pending.id) reset();
+      });
     }
   };
   const beginEdit = (transaction: Transaction) => {
     setDraft(draftFromTransaction(transaction));
     setEditingId(transaction.id);
+    // Квитанция отвечала на прошлую запись; над формой, открывшей чужую операцию, она врёт.
+    setReceipt(null);
     clearTransient();
     window.setTimeout(() => document.getElementById("operation-amount")?.focus(), 0);
   };
@@ -528,6 +647,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
           <TransactionFields budget={budget} draft={draft} patch={patch} categoryQuery={categoryQuery} onCategoryQuery={setCategoryQuery} onCustomCategory={openCategorySheet} />
           <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
           <FieldError message={error} />
+          {receipt ? <SaveReceiptView receipt={receipt} afterMinor={receipt.target === null ? null : effectValueMinor(metrics, receipt.target)} /> : null}
           <button className="primary-button" type="submit" disabled={busy} aria-busy={busy} aria-label={editingId ? "Проверить изменения операции" : `Сохранить операцию «${kindLabels[draft.kind]}»`}>{editingId ? "Проверить изменения" : "Сохранить"}</button>
           {editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button> : null}
           {/* Удаление живёт здесь, а не в каждой строке списка: разрушающее действие не должно
@@ -571,7 +691,12 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
             : <small>Без лимита в этом месяце · только история операций</small>}
         </div>
       </article>;
-    })}{categoryRows.length === 0 ? <p className="field-hint">Лимиты этого месяца ещё не заданы, а операций по категориям пока нет.</p> : null}</div>
+    })}{categoryRows.length === 0 ? <div className="empty-state">
+      <span className="empty-state-mark"><Icon name="target" size={32} /></span>
+      <h3>Лимитов на этот месяц нет</h3>
+      <p>Лимит — сумма на месяц по одной статье: продукты, транспорт, развлечения. С ним строка показывает, сколько от неё осталось и обгоняете ли вы календарь.</p>
+      {onPlanning ? <button className="primary-button" type="button" onClick={onPlanning}>Задать лимиты в плане</button> : null}
+    </div> : null}</div>
       {archivable.length ? <details className="row-disclosure">
         <summary>Убрать категорию из списка</summary>
         <p className="field-hint">Архив прячет категорию из новых операций и сохраняет её в истории и расчётах.</p>
@@ -616,7 +741,25 @@ export function OperationsScreen({ budget, onChange, onDirtyChange }: Operations
             <b><Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} /></b>
           </button>
         </li>;
-      })}</ul> : <p className="empty-state"><span className="empty-state-mark"><Icon name="inbox" size={32} /></span>{filtering ? "По этому запросу операций нет." : "Операций пока нет."}</p>}
+      })}</ul> : <div className="empty-state">
+        <span className="empty-state-mark"><Icon name="inbox" size={32} /></span>
+        {/* §6 исследования, пункт 29: сообщить состояние, не соврав про него; объяснить, что сюда
+            попадает; дать прямой путь к задаче. Фильтр и пустая история — разные состояния, и
+            называть их одними словами значит соврать про одно из них. */}
+        {filtering ? <>
+          <h3>По этому запросу ничего не нашлось</h3>
+          <p>В истории всё ещё {operationsCount(budget.transactions.length)}. Поиск идёт по названию категории, названию счёта и по сумме.</p>
+          <button className="primary-button" type="button" onClick={() => { setHistoryQuery(""); setHistoryKind("all"); setVisibleCount(PAGE_SIZE); }}>Показать все операции</button>
+        </> : <>
+          <h3>Записей пока нет</h3>
+          <p>Сюда попадает каждая покупка, доход и перевод — сразу после того, как их записали в форме наверху.</p>
+          <button className="primary-button" type="button" onClick={() => {
+            const amount = document.getElementById("operation-amount");
+            amount?.scrollIntoView({ block: "center" });
+            amount?.focus();
+          }}>Записать первую операцию</button>
+        </>}
+      </div>}
       {visibleCount < filtered.length ? <button className="secondary-button" type="button" disabled={busy} aria-label={`Показать ещё операции, осталось ${filtered.length - visibleCount}`} onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>Показать ещё ({filtered.length - visibleCount})</button> : null}
       <p role="status">{filtering ? `Найдено ${filtered.length} из ${budget.transactions.length}. ` : ""}Показано {Math.min(visibleCount, filtered.length)} из {filtered.length}</p>
     </section>

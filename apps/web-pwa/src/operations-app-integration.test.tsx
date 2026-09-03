@@ -102,9 +102,23 @@ describe("operations app integration", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
     expect(source).toContain('import { OperationsScreen } from "./features/operations"');
-    expect(source).toContain('<OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} />');
+    // Смысл, а не буква разметки. Прежде здесь стояли две строки с полным перечнем свойств: они
+    // ломались от любого нового свойства и при этом ничего не утверждали о том, куда идёт запись.
+    // Утверждение одно: экран, меняющий бюджет, пишет через общий долговечный координатор и
+    // сообщает о несохранённом черновике — а собственного пути в хранилище у него нет.
+    for (const [screen, dirtyFlag] of [
+      ["OperationsScreen", "setOperationDraftDirty"],
+      ["PlanningScreen", "setPlanningDraftDirty"],
+    ] as const) {
+      const start = source.indexOf(`<${screen} `);
+      expect(start, `${screen} нет в разметке приложения`).toBeGreaterThan(-1);
+      const element = source.slice(start, source.indexOf("/>", start));
+      expect(element, `${screen} обязан писать через общий координатор`)
+        .toContain("onChange={(change) => budgetSave.apply(change)}");
+      expect(element, `${screen} обязан сообщать о несохранённом черновике`)
+        .toContain(`onDirtyChange={${dirtyFlag}}`);
+    }
     expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />");
-    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
     expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);

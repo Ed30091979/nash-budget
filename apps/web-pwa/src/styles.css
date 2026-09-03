@@ -81,10 +81,37 @@
   --radius-section: 24px;
   --radius-hero: 28px;
   --radius-pill: 999px;
-  --shadow-card: 0 1px 2px rgb(16 40 30 / 5%), 0 8px 24px rgb(16 40 30 / 6%);
-  --shadow-hero: 0 14px 32px rgb(46 125 91 / 20%);
-  --shadow-hero-danger: 0 14px 32px rgb(163 52 31 / 20%);
-  --shadow-pill: 0 1px 2px rgb(16 40 30 / 8%), 0 2px 6px rgb(16 40 30 / 6%);
+  /* §5 Концентричные углы: радиус внутреннего = радиус внешнего минус отступ. Карточка секции —
+     24 при отступе 16, значит вложенная в неё поверхность получает 8. Чистая арифметика, и она
+     же единственный источник этого числа: менять его в отрыве от пары «радиус, отступ» нельзя. */
+  --radius-nested: 8px;
+
+  /* §3 Глубина. Тень — накопительный стек полупрозрачных слоёв: каждая ступень добавляет слой, а
+     не заменяет его, поэтому тень остаётся мягкой и не грязнит светлый мятный фон. Ступеней ровно
+     две: возвышение карточки — 1, всплывающего слоя (лист, диалог, тост) — 3, больше не бывает. */
+  --shadow-layer-hairline: 0 0 1px rgb(16 40 30 / 6%);
+  --shadow-layer-near: 0 4px 8px rgb(16 40 30 / 5%);
+  --shadow-layer-far: 0 12px 16px rgb(16 40 30 / 5%);
+  --elevation-1: var(--shadow-layer-near), var(--shadow-layer-hairline);
+  --elevation-3: var(--shadow-layer-far), var(--shadow-layer-near), var(--shadow-layer-hairline);
+  --shadow-card: var(--elevation-1);
+  --shadow-sheet: var(--elevation-3);
+  /* Герой — тоже карточка, то есть возвышение 1. Своё у него только одно: тон. Серая тень под
+     зелёной плоскостью на мятном канвасе читается грязью, поэтому слои те же, а цвет — зелёный. */
+  --shadow-hero: 0 4px 8px rgb(46 125 91 / 22%), 0 0 1px rgb(46 125 91 / 26%);
+  --shadow-hero-danger: 0 4px 8px rgb(163 52 31 / 22%), 0 0 1px rgb(163 52 31 / 26%);
+  --shadow-pill: 0 1px 2px rgb(16 40 30 / 8%), var(--shadow-layer-hairline);
+
+  /* §10 Движение. Длительности и кривые — Material 3, взятые как есть (§5 исследования).
+     Пружины берутся standard (демпфирование 0.9), а не expressive: наш тон спокойный, не
+     трейдинговый. Цвет и прозрачность не пружинят никогда — у них демпфирование 1.0. */
+  --motion-press: 100ms;    /* short3: нажатие */
+  --motion-screen: 200ms;   /* short4: смена вкладки */
+  --motion-number: 250ms;   /* medium1: одометр на числе */
+  --motion-surface: 300ms;  /* medium2: появление листа и плашки */
+  --ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);  /* decelerate: появление */
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);   /* accelerate: уход */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);    /* общая */
 }
 
 * { box-sizing: border-box; }
@@ -135,17 +162,56 @@ p { line-height: var(--lh-body); }
 .icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .icon { display: block; flex: none; }
 
-/* §10 Движение: только три перехода. */
-button:active, .file-button:active { transform: scale(0.98); transition: transform 120ms ease-out; }
-.route-screen { animation: route-fade 180ms ease-out; }
+/* §10 Движение. Длительности и кривые берутся токенами; чисел по месту здесь нет. */
+button:active, .file-button:active { transform: scale(0.98); transition: transform var(--motion-press) var(--ease-standard); }
+.route-screen { animation: route-fade var(--motion-screen) var(--ease-enter); }
 @keyframes route-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes toast-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* §6 Одометр на числе (§5 исследования, пункт 27).
+   Цифра — катушка в слоте шириной `1ch` с `overflow: hidden`; цифры табличные, иначе слоты разной
+   ширины и число дрожит на ходу. Смещение катушки задаёт `data-digit`, а не инлайновый стиль: CSP
+   запрещает `style` (§11), поэтому десять положений объявлены здесь, в таблице стилей. */
+.odometer { display: inline-flex; align-items: baseline; font-variant-numeric: lining-nums tabular-nums; }
+.odometer-slot { display: inline-block; width: 1ch; height: var(--odometer-line, var(--lh-h2)); overflow: hidden; }
+.odometer-fixed { display: inline-block; }
+.odometer-reel { display: block; transition: transform var(--motion-number) var(--ease-enter); }
+.odometer-reel > span { display: block; height: var(--odometer-line, var(--lh-h2)); text-align: center; }
+.odometer-slot[data-digit="0"] .odometer-reel { transform: translateY(0); }
+.odometer-slot[data-digit="1"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -1)); }
+.odometer-slot[data-digit="2"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -2)); }
+.odometer-slot[data-digit="3"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -3)); }
+.odometer-slot[data-digit="4"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -4)); }
+.odometer-slot[data-digit="5"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -5)); }
+.odometer-slot[data-digit="6"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -6)); }
+.odometer-slot[data-digit="7"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -7)); }
+.odometer-slot[data-digit="8"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -8)); }
+.odometer-slot[data-digit="9"] .odometer-reel { transform: translateY(calc(var(--odometer-line, var(--lh-h2)) * -9)); }
+
+/* §6 Квитанция записи. Вложена в карточку секции: радиус 24 минус отступ 16 — это `--radius-nested`.
+   Живёт в потоке над кнопкой сохранения и ничего собой не закрывает. */
+.save-receipt { display: grid; grid-column: 1 / -1; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; padding: 16px; color: var(--green-ink); background: var(--mint-soft); border-radius: var(--radius-nested); animation: receipt-in var(--motion-surface) var(--ease-enter); }
+.save-receipt .money-currency { color: currentColor; }
+.save-receipt-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--green-ink); background: var(--surface); border-radius: var(--radius-field); }
+.save-receipt-copy { min-width: 0; }
+.save-receipt-copy > strong { display: block; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 600; overflow-wrap: normal; }
+.save-receipt-copy > small { display: block; margin-top: 8px; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.save-receipt-value { --odometer-line: var(--lh-h2); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin-top: 2px; font-size: var(--size-h2); line-height: var(--lh-h2); font-weight: 700; letter-spacing: -0.01em; }
+.save-receipt-change { flex: none; padding: 2px 8px; color: var(--green-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 600; background: var(--surface); border-radius: var(--radius-pill); }
+@keyframes receipt-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .skip-link { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 16px; z-index: 100; display: inline-grid; min-height: 48px; padding: 13px 20px; place-items: center; color: var(--green-deep); font-size: var(--size-body); font-weight: 600; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--shadow-card); transform: translateY(calc(-100% - 20px)); }
 .skip-link:focus, .skip-link:focus-visible { transform: translateY(0); }
 
 .app-shell { min-height: 100dvh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); background: var(--canvas); }
-.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 70px; padding: calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); color: var(--ink); background: var(--surface); border-bottom: 1px solid var(--border); }
+/* §3 Scroll edge, упрощённый: шапка прозрачна в нуле прокрутки и получает фон с границей, как
+   только под неё что-то поехало. Цвет и прозрачность не пружинят никогда — в самой спецификации
+   у слоя эффектов демпфирование 1.0 (§5 исследования), поэтому здесь обычный переход.
+   Появление и уход идут разной парой (§5: появление — decelerate, уход — accelerate), и фон
+   приходит быстрее, чем уходит: пока он полупрозрачен, под шапкой просвечивает содержимое, и
+   каждая лишняя сотня миллисекунд — это сотня миллисекунд нечитаемой шапки. */
+.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 70px; padding: calc(12px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left)); color: var(--ink); background: transparent; border-bottom: 1px solid transparent; transition: background-color var(--motion-screen) var(--ease-exit), border-bottom-color var(--motion-screen) var(--ease-exit); }
+.app-header[data-scrolled] { background: var(--surface); border-bottom-color: var(--border); transition-duration: var(--motion-press); transition-timing-function: var(--ease-enter); }
 .brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .brand-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--green-ink); background: var(--mint-soft); border-radius: var(--radius-field); }
 .brand strong, .brand small { display: block; }
@@ -225,7 +291,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .reserve-pill > span { font-size: var(--size-label); line-height: var(--lh-label); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .reserve-pill b { margin-top: 4px; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
 
-.section-card, .entry-card { margin-top: 24px; padding: 20px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+.section-card, .entry-card { margin-top: 24px; padding: 16px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+/* §5 Концентричные углы: вложенная поверхность получает радиус внешнего минус отступ — 24 − 16.
+   Правило про поверхности, а не про элементы управления: у кнопок и полей свой радиус. */
+.section-card .limit-alert, .section-card .planning-edit-list > li, .collapsible-card > .dashboard-table-scroll { border-radius: var(--radius-nested); }
 .section-title { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .section-title h2, .section-title p { margin: 0; }
 .section-title h2 { display: flex; gap: 8px; align-items: center; font-size: var(--size-h2); line-height: var(--lh-h2); letter-spacing: -0.01em; }
@@ -301,11 +370,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 
 /* §1 Уплотнение, а не прятание: справочная секция сворачивается, а не переезжает во вкладку.
    Сводка — цель нажатия не меньше 48 pt, с собственным шевроном вместо системного треугольника. */
-.collapsible-card { padding: 8px 20px; }
+.collapsible-card { padding: 8px 16px; }
 .collapsible-card > summary { display: flex; min-height: 48px; gap: 12px; align-items: center; justify-content: space-between; padding: 4px 0; font-size: var(--size-h2); line-height: var(--lh-h2); font-weight: 600; letter-spacing: -0.01em; list-style: none; }
 .collapsible-card > summary::-webkit-details-marker { display: none; }
 .collapsible-card > :not(summary) { margin-top: 8px; }
-.collapsible-card[open] { padding-bottom: 20px; }
+.collapsible-card[open] { padding-bottom: 16px; }
 .collapsible-card[open] > summary .row-chevron { transform: rotate(90deg); }
 
 /* §6 Строка расписания. */
@@ -363,7 +432,12 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .transaction-copy small { margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .transaction-row > b { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: right; overflow-wrap: normal; }
 .transaction-row.income > b, .transaction-row.refund > b { color: var(--green-deep); }
+/* §6 Пустое состояние (§6 исследования, пункт 29): называет состояние, объясняет, что сюда
+   попадает, и даёт прямой путь к задаче. Одна основная кнопка, не две. */
 .empty-state { display: grid; justify-items: center; padding: 24px 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; text-align: center; }
+.empty-state h3 { margin: 0; color: var(--ink); }
+.empty-state p { max-width: 38ch; margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.empty-state .primary-button { margin-top: 16px; }
 /* §6 Пустое состояние: мятный круг 64 px с иконкой. Пустой круг читался как картинка,
    которая не загрузилась. */
 .empty-state-mark { display: grid; width: 64px; height: 64px; place-items: center; margin-bottom: 12px; color: var(--green-ink); background: var(--mint-soft); border-radius: 50%; }
@@ -383,7 +457,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--orange); border-radius: 50%; }
 
 /* §6 Тост. */
-.update-toast, .message-toast { position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); left: 16px; z-index: 40; width: min(520px, calc(100% - 32px)); margin: 0 auto; padding: 16px; color: var(--on-hero); background: var(--green-deep); border-radius: var(--radius-toast); box-shadow: var(--shadow-hero); animation: toast-rise 220ms ease-out; }
+/* Сообщение занимает своё место в разметке и липнет к низу экрана, а не висит над ним.
+   Фиксированное положение накрывало кнопку сохранения и поле даты, стоило форме прокрутиться:
+   у плашки не было собственной высоты, и домотать содержимое из-под неё было нельзя. Теперь
+   высота есть, и на самом низу страницы плашка садится над навигацией, ничего не закрывая. */
+.update-toast, .message-toast { position: sticky; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 40; width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-hero); background: var(--green-deep); border-radius: var(--radius-toast); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
 .update-toast p, .message-toast p { margin: 0 0 12px; color: var(--on-hero); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .update-toast .primary-button, .message-toast .primary-button { color: var(--green-deep); background: var(--surface); border-color: var(--surface); }
 .update-toast .quiet-button, .message-toast .quiet-button { color: var(--on-hero); }
@@ -445,7 +523,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .planning-screen .section-card > h2, .planning-screen .section-card > p { margin: 0; }
 .planning-screen .section-card > p { margin-top: 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .planning-screen .section-card > form { margin-top: 16px; }
-.planning-screen .section-card > form > fieldset { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; margin: 0; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-card-sm); }
+.planning-screen .section-card > form > fieldset { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 16px; margin: 0; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-nested); }
 .planning-screen .section-card > form > fieldset > legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); font-weight: 500; }
 .planning-screen .section-card > form > fieldset > .field-error { grid-column: 1 / -1; margin: 0; }
 .planning-screen .section-card > form > fieldset > .primary-button, .planning-screen .section-card > form > fieldset > .secondary-button { width: 100%; }
@@ -563,8 +641,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .data-management > p[role="status"], .data-management > p[role="alert"] { padding: 12px 16px; margin: 12px 0 0; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; border-radius: var(--radius-field); }
 .data-management > p[role="status"] { color: var(--green-ink); background: var(--mint-soft); border: 0; }
 .data-management > p[role="alert"] { color: var(--red-ink); background: var(--red-soft); border: 0; }
-.confirmation-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; padding: 16px; place-items: center; background: var(--scrim); }
-.confirmation-dialog { width: min(520px, 100%); padding: 24px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+.confirmation-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; padding: 16px; place-items: center; background: var(--scrim); animation: scrim-in var(--motion-surface) var(--ease-enter); }
+.confirmation-dialog { width: min(520px, 100%); padding: 24px; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-sheet); animation: dialog-in var(--motion-surface) var(--ease-enter); }
 .confirmation-dialog h3 { margin: 0; }
 .confirmation-dialog p { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .dialog-actions { display: flex; gap: 12px; justify-content: flex-end; }
@@ -587,8 +665,13 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .field-hint { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
 /* Лист поверх формы: форма под ним остаётся на месте, поэтому он и лист, а не отдельный экран. */
-.sheet-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; align-items: end; justify-items: center; padding: 16px 16px max(16px, env(safe-area-inset-bottom)); background: var(--scrim); }
-.sheet-card { display: grid; width: min(520px, 100%); max-height: min(88dvh, 720px); gap: 16px; overflow-y: auto; padding: 24px; text-align: left; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-card); }
+.sheet-backdrop { position: fixed; inset: 0; z-index: 90; display: grid; align-items: end; justify-items: center; padding: 16px 16px max(16px, env(safe-area-inset-bottom)); background: var(--scrim); animation: scrim-in var(--motion-surface) var(--ease-enter); }
+.sheet-card { display: grid; width: min(520px, 100%); max-height: min(88dvh, 720px); gap: 16px; overflow-y: auto; padding: 24px; text-align: left; background: var(--surface); border: 0; border-radius: var(--radius-section); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
+/* §10: появление листа — 300 мс по decelerate. Лист приезжает снизу, диалог проявляется на месте:
+   у листа есть край, от которого он едет, у диалога такого края нет. */
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
 .sheet-card > h3 { margin: 0; font-size: var(--size-h2); line-height: var(--lh-h2); letter-spacing: -0.01em; }
 .sheet-card > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .sheet-card .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -694,7 +777,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .nav-button { grid-template-columns: auto auto; min-height: 48px; place-content: center; }
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
-  .update-toast, .message-toast { right: 24px; bottom: 24px; left: auto; margin: 0; }
+  .update-toast, .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
   .onboarding-card { padding: 32px; }
   .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
   .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
@@ -754,6 +837,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .bottom-nav { top: 0; }
 }
 
+/* §10: просьба «поменьше движения» выключает движение полностью, а не ослабляет его. Ослабленная
+   до сотых долей миллисекунды анимация — всё ещё анимация: она планируется, считается и в редких
+   случаях успевает мигнуть. Здесь её просто нет. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }

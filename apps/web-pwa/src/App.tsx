@@ -98,6 +98,12 @@ interface AppBudgetSaveOptions {
 
 export const BUDGET_WRITE_CONFLICT_MESSAGE = "Бюджет уже изменён в другой вкладке. Показана сохранённая версия; повторите изменение.";
 export const MAIN_CONTENT_ID = "main-content";
+/**
+ * Порог индикатора загрузки, §6 исследования, пункт 30 (NN/g): меньше секунды — индикатор не нужен
+ * вообще. Офлайн-первое приложение читает бюджет из локального хранилища и почти всегда
+ * укладывается в первый кадр; плашка «открываем» в этом случае успевала только мигнуть.
+ */
+export const SLOW_LOAD_THRESHOLD_MS = 1000;
 
 interface CapacitorRuntimeContract {
   readonly isNativePlatform?: () => boolean;
@@ -280,7 +286,9 @@ export default function App() {
   const budgetRef = useRef<BudgetState | null>(null);
   const revisionRef = useRef<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [slowLoad, setSlowLoad] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [headerScrolled, setHeaderScrolled] = useState(false);
   const [screen, setScreen] = useState<Screen>("today");
   const [online, setOnline] = useState(navigator.onLine);
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
@@ -418,6 +426,27 @@ export default function App() {
     focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
   }, [screen]);
 
+  // §6 исследования, пункт 30: порог индикатора — секунда. Локальное чтение в неё укладывается,
+  // и слово «открываем» появляется только тогда, когда чтение в неё не уложилось.
+  useEffect(() => {
+    if (loadState !== "loading") {
+      setSlowLoad(false);
+      return;
+    }
+    const timeout = window.setTimeout(() => setSlowLoad(true), SLOW_LOAD_THRESHOLD_MS);
+    return () => window.clearTimeout(timeout);
+  }, [loadState, loadAttempt]);
+
+  // §3 исследования, упрощённый scroll edge: шапка прозрачна в нуле прокрутки и получает фон с
+  // границей, как только под неё что-то поехало. Состояние переключается один раз на переходе
+  // через ноль, а не на каждом пикселе: пересчитывать разметку на каждый кадр прокрутки незачем.
+  useEffect(() => {
+    const update = () => setHeaderScrolled(window.scrollY > 0);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
+
   const metrics = useMemo(() => budget ? calculateBudget(budget) : null, [budget]);
   const plan = useMemo(() => {
     if (!budget) return null;
@@ -467,7 +496,12 @@ export default function App() {
     }
   };
 
-  if (loadState === "loading") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true"><p>Открываем семейный план…</p></main><UpdatePrompt /></>;
+  // §6 исследования, пункт 30: до секунды индикатор не нужен вообще, а пульсирующие скелетоны
+  // «отвлекают, раздражают и создают проблемы доступности». Приложение офлайн-первое, и чтение
+  // локального хранилища укладывается в первый кадр: пока порог не перейдён, экран молчит, но
+  // `aria-busy` уже говорит читающему с экрана, что здесь ещё не готово. Слово появляется только
+  // тогда, когда ждать действительно пришлось, — и тогда оно уже не мельтешение, а объяснение.
+  if (loadState === "loading") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main><UpdatePrompt /></>;
   if (loadState === "error") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main><UpdatePrompt /></>;
   if (loadState === "empty") return <div className="onboarding-route"><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div><UpdatePrompt /></div>;
   if (!budget || !metrics || !plan) return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main><UpdatePrompt /></>;
@@ -512,7 +546,7 @@ export default function App() {
     <div className="app-shell">
       <IconSprite />
       <SkipLink />
-      <header className="app-header">
+      <header className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
         <div className="brand"><span className="brand-mark"><Icon name="piggy-bank" size={24} /></span><div><strong>Наш бюджет</strong><small>видим месяц и будущее</small></div></div>
         <div className="header-badges">
           <span className={networkStatus.className} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
@@ -542,10 +576,10 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} monthPace={monthPace} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} onAdd={() => navigate("operations")} onYear={() => navigate("year")} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} monthPace={monthPace} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
-          {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} /> : null}
+          {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
             storageHealth={storageHealth}
@@ -633,7 +667,7 @@ type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
 type BudgetMetrics = ReturnType<typeof calculateBudget>;
 type CategoryRow = { category: BudgetState["categories"][number]; metric: BudgetMetrics["categoryMetrics"][string] | undefined };
 
-function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, monthPace, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, onAdd, onYear }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; monthPace: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; onAdd: () => void; onYear: () => void }) {
+function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, monthPace, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; monthPace: number; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -664,7 +698,7 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, monthPace, 
 
     <section className="section-card">
       <SectionTitle title="Повседневные лимиты" note="Мелкие покупки этого месяца" />
-      <CategoryList rows={flexibleRows} pace={monthPace} />
+      <CategoryList rows={flexibleRows} pace={monthPace} onPlanning={onPlanning} />
     </section>
 
     <button className="year-preview" type="button" onClick={onYear}><span className="row-mark"><Icon name="calendar" size={24} /></span><span className="row-copy"><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
@@ -677,7 +711,7 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, monthPace, 
           {memberOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </div> : null}
-      <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} />
+      <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
     </section>
   </>;
 }
@@ -707,7 +741,12 @@ function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: Budget
 
     <section className="section-card">
       <SectionTitle title="Платежи и крупные траты" note="Регулярные платим каждый месяц, крупные копим заранее" />
-      <div className="plan-list">{payments.map((row) => <PlanRow key={row.key} row={row} />)}</div>
+      {payments.length ? <div className="plan-list">{payments.map((row) => <PlanRow key={row.key} row={row} />)}</div> : <div className="empty-state">
+        <span className="empty-state-mark"><Icon name="calendar-clock" size={32} /></span>
+        <h3>Платежей в плане нет</h3>
+        <p>Сюда попадает всё, что платят по расписанию или копят заранее: аренда, страховка, обучение, шины, отпуск. Горизонт держится на них — без них он равен доходу.</p>
+        <button className="primary-button" type="button" onClick={onPlanning}>Добавить платёж в план</button>
+      </div>}
     </section>
 
     {/* Правило резерва объясняется один раз и по требованию: это справка, а не содержимое экрана. */}
@@ -815,7 +854,15 @@ function SectionTitle({ title, note, icon }: { title: string; note: string; icon
  * прошло (§4 исследования). Темп у всех строк один — он объявлен на самом списке, и переменная
  * достаётся полосам по наследству.
  */
-function CategoryList({ rows, pace }: { rows: CategoryRow[]; pace: number }) {
+function CategoryList({ rows, pace, onPlanning }: { rows: CategoryRow[]; pace: number; onPlanning: () => void }) {
+  // Пустой список — не пустая разметка: §6 исследования требует назвать состояние, объяснить его
+  // и дать дорогу дальше. Раньше здесь оставалась пустая карточка без единого слова.
+  if (!rows.length) return <div className="empty-state">
+    <span className="empty-state-mark"><Icon name="target" size={32} /></span>
+    <h3>Лимитов на этот месяц нет</h3>
+    <p>Лимит — сумма на месяц по одной статье: продукты, транспорт, развлечения. Пока его нет, приложение не может сказать, сколько по ней осталось.</p>
+    <button className="primary-button" type="button" onClick={onPlanning}>Задать лимиты в плане</button>
+  </div>;
   return <ul className="category-list" data-pace={percentStep(pace)}>{rows.map(({ category, metric }) => {
     if (!metric) return null;
     const visual = categoryVisual(category);
@@ -832,8 +879,26 @@ function CategoryList({ rows, pace }: { rows: CategoryRow[]; pace: number }) {
   })}</ul>;
 }
 
-function TransactionList({ transactions, categoryById, memberById, showAuthor }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean }) {
-  if (!transactions.length) return <p className="empty-state"><span className="empty-state-mark"><Icon name="inbox" size={32} /></span>Здесь появятся операции.</p>;
+function TransactionList({ transactions, categoryById, memberById, showAuthor, onAdd, hiddenByMemberFilter = false, onShowEveryone }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean; onAdd?: () => void; hiddenByMemberFilter?: boolean; onShowEveryone?: () => void }) {
+  // §6 исследования, пункт 29: пустое состояние обязано сообщить состояние системы, объяснить,
+  // что сюда попадает, и дать прямой путь к задаче. «Здесь появятся операции» отвечало только на
+  // первый вопрос, и человек, только что создавший бюджет, оставался с ним один на один.
+  //
+  // И оно же врало: список фильтруется по участнику, и у участника без записей эта строка
+  // утверждала, что операций не появилось вовсе, — при полном бюджете рядом. Пустой список и
+  // список, опустевший от фильтра, — разные состояния системы, и называются они по-разному.
+  if (!transactions.length) return <div className="empty-state">
+    <span className="empty-state-mark"><Icon name="inbox" size={32} /></span>
+    {hiddenByMemberFilter ? <>
+      <h3>У выбранного участника записей нет</h3>
+      <p>Фильтр показывает операции одного человека. Записи остальных на месте — они вернутся, как только фильтр снят.</p>
+      {onShowEveryone ? <button className="primary-button" type="button" onClick={onShowEveryone}>Показать записи всех</button> : null}
+    </> : <>
+      <h3>Записей пока нет</h3>
+      <p>Здесь будут пять последних покупок, доходов и переводов — в том порядке, в каком они случились.</p>
+      {onAdd ? <button className="primary-button" type="button" onClick={onAdd}>Записать первую операцию</button> : null}
+    </>}
+  </div>;
   return <ul className="transaction-list">{transactions.map((transaction) => {
     const categoryId = transactionCategoryId(transaction);
     const category = categoryId === null ? undefined : categoryById.get(categoryId);
