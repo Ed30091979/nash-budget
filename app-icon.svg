@@ -1,18 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Наш бюджет">
+  <!-- Значок из мира приложения (DESIGN.md 3.0, §6 «Значок приложения»): насечка. На тёплом холсте —
+       чернильная полоса линейки до выплаты, разрыв на 75 % и оранжевая вертикаль дня выплаты сквозь
+       разрыв; заливка переваливает за насечку — «дотягивает». Ни рамки, ни карточки: полоса в
+       рамке читалась как батарея. Строй, а не картинка: на 48 px остаются чернильная полоса и
+       оранжевая вертикаль. Цвета — значения `:root` из styles.css: canvas, ink, orange; проверка
+       сверяет их с таблицей стилей. Края полосы и вертикали стоят на пиксельной сетке 48 и 192.
+       Всё значимое лежит в безопасном круге маски (диаметр 80 % полотна). icon-512 (maskable) и
+       apple-touch-icon рисуются из этого файла без скругления, во весь холст; icon-192 (any) и
+       фавикон — со скруглением clip-path. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2E7D5B"/>
-      <stop offset="1" stop-color="#245F47"/>
-    </linearGradient>
     <clipPath id="shape">
       <rect width="512" height="512" rx="112"/>
     </clipPath>
   </defs>
   <g clip-path="url(#shape)">
-    <rect width="512" height="512" fill="url(#bg)"/>
-    <rect x="136" y="158" width="240" height="196" rx="42" fill="#FFFFFF"/>
-    <rect x="136" y="214" width="240" height="52" fill="#63C795"/>
-    <circle cx="338" cy="240" r="16" fill="#0F3325"/>
-    <path d="M176 314h124" stroke="#E85D22" stroke-width="20" stroke-linecap="round"/>
+    <rect width="512" height="512" fill="#F0ECE3"/>
+    <rect x="96" y="213" width="213" height="86" fill="#171410"/>
+    <rect x="352" y="213" width="64" height="86" fill="#171410"/>
+    <rect x="320" y="107" width="21" height="298" fill="#B8471A"/>
   </g>
 </svg>
