@@ -18,6 +18,7 @@ import {
   securityHeadersFor,
   withSyncServerOrigin,
 } from "../vite.config";
+import { SPLASH_DEVICES, SPLASH_DIRECTORY, SPLASH_ORIENTATIONS } from "./splash";
 
 const configSource = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
@@ -82,7 +83,7 @@ describe("PWA production configuration", () => {
   it("uses one icon discovery path and keeps development service workers disabled", () => {
     expect(configSource).not.toContain("includeAssets:");
     expect(configSource).toContain(
-      'globIgnores: ["**/icon-192.png", "**/icon-512.png"]',
+      'globIgnores: ["**/icon-192.png", "**/icon-512.png", "**/splash/**"]',
     );
     expect(configSource).toContain("enabled: false");
     expect(configSource).toContain("sourcemap: false");
@@ -258,7 +259,22 @@ describe("сборка в каталог, отличный от dist", () => {
     const result = build(outDir, null);
     expect(result.status, result.stderr).toBe(0);
 
-    expect(metaPolicyOf(readFileSync(join(outDir, "index.html"), "utf8"))).toBe(META_CSP);
+    const builtIndex = readFileSync(join(outDir, "index.html"), "utf8");
+    expect(metaPolicyOf(builtIndex)).toBe(META_CSP);
     expect(readFileSync(join(outDir, "_headers"), "utf8")).toBe(publicHeadersSource);
+
+    // Картинки запуска iOS: ссылки доехали до сборки, ведут на файлы рядом и не легли в
+    // предзагрузку сервис-воркера — их читает система, а не приложение (см. `src/splash.ts`).
+    const startupHrefs = [
+      ...builtIndex.matchAll(/<link rel="apple-touch-startup-image"[^>]*href="([^"]+)"/gu),
+    ].map((match) => match[1] ?? "");
+    expect(startupHrefs).toHaveLength(SPLASH_DEVICES.length * SPLASH_ORIENTATIONS.length);
+    for (const href of startupHrefs) {
+      expect(href.startsWith(`/${SPLASH_DIRECTORY}/`)).toBe(true);
+      expect(existsSync(join(outDir, href)), `${href} отсутствует в сборке`).toBe(true);
+    }
+    expect(readFileSync(join(outDir, "sw.js"), "utf8")).not.toMatch(
+      new RegExp(`url:"${SPLASH_DIRECTORY}/`, "u"),
+    );
   });
 });

@@ -268,7 +268,11 @@ export default defineConfig(({ mode }) => {
           skipWaiting: false,
           navigateFallback: "index.html",
           globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
-          globIgnores: ["**/icon-192.png", "**/icon-512.png"],
+          // Каталог сборки обходится целиком, и всё из `public/`, что подошло под образец, попало
+          // бы в предзагрузку. Картинки запуска iOS (`splash/`, см. `src/splash.ts`) читает
+          // система при добавлении на экран «Домой», а не приложение: устройство получает одну
+          // подходящую ему картинку, и класть весь набор в кеш каждой установки незачем.
+          globIgnores: ["**/icon-192.png", "**/icon-512.png", "**/splash/**"],
           additionalManifestEntries: [
             {
               url: "build-meta.json",
