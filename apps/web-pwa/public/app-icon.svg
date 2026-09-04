@@ -1,18 +1,28 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Наш бюджет">
+  <!-- Значок из мира приложения (DESIGN.md 3.0, §6 «Значок приложения»): тёплый холст, белая
+       карточка с прямыми углами и линейка до выплаты на ней — чернильная заливка, насечка-разрыв
+       со стойками на 75 % и трек за ней. Оранжевая стойка слева — «сегодня»: у оранжевого одна
+       роль, «вы здесь». Цвета — значения `:root` из styles.css: canvas, surface, surface-sunken,
+       ink, orange; проверка сверяет их с таблицей стилей.
+       Всё значимое лежит в безопасном круге маски (диаметр 80 % полотна). icon-512 (maskable) и
+       apple-touch-icon рисуются из этого файла без скругления, во весь холст; icon-192 (any) и
+       фавикон — со скруглением clip-path. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2E7D5B"/>
-      <stop offset="1" stop-color="#245F47"/>
-    </linearGradient>
     <clipPath id="shape">
       <rect width="512" height="512" rx="112"/>
     </clipPath>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#171410" flood-opacity="0.08"/>
+    </filter>
   </defs>
   <g clip-path="url(#shape)">
-    <rect width="512" height="512" fill="url(#bg)"/>
-    <rect x="136" y="158" width="240" height="196" rx="42" fill="#FFFFFF"/>
-    <rect x="136" y="214" width="240" height="52" fill="#63C795"/>
-    <circle cx="338" cy="240" r="16" fill="#0F3325"/>
-    <path d="M176 314h124" stroke="#E85D22" stroke-width="20" stroke-linecap="round"/>
+    <rect width="512" height="512" fill="#F0ECE3"/>
+    <rect x="104" y="152" width="304" height="208" fill="#FFFFFF" filter="url(#card-shadow)"/>
+    <rect x="330" y="224" width="46" height="64" fill="#E6E1D6"/>
+    <rect x="150" y="224" width="162" height="64" fill="#171410"/>
+    <rect x="330" y="224" width="22" height="64" fill="#171410"/>
+    <rect x="315" y="212" width="12" height="12" fill="#171410"/>
+    <rect x="315" y="288" width="12" height="12" fill="#171410"/>
+    <rect x="136" y="212" width="14" height="88" fill="#B8471A"/>
   </g>
 </svg>

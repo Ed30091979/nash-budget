@@ -91,6 +91,11 @@
      поэтому доля объявлена здесь одним числом: сквозь экран проходит одна вертикаль. */
   --reach-mark: 75%;
 
+  /* §6 Нижняя навигация: 4 + 48 + 4. От этой высоты считаются отступ оболочки и полоса записи.
+     Полоса стояла на воображаемой навигации в 80 px, а настоящая — 56, и в зазоре между ними
+     просвечивала карточка. */
+  --nav-height: 56px;
+
   /* §10 Движение. Длительности и кривые — Material 3, взятые как есть (§5 исследования).
      Пружины берутся standard (демпфирование 0.9), а не expressive: наш тон спокойный, не
      трейдинговый. Цвет и прозрачность не пружинят никогда — у них демпфирование 1.0. */
@@ -197,7 +202,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .skip-link { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 16px; z-index: 100; display: inline-grid; max-width: calc(100% - 32px); min-height: 48px; padding: 13px 20px; place-items: center; overflow-wrap: anywhere; hyphens: auto; color: var(--ink); font-size: var(--size-body); font-weight: 700; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--shadow-card); transform: translateY(calc(-100% - 20px)); }
 .skip-link:focus, .skip-link:focus-visible { transform: translateY(0); }
 
-.app-shell { min-height: 100dvh; padding-bottom: calc(80px + env(safe-area-inset-bottom)); background: var(--canvas); }
+.app-shell { min-height: 100dvh; padding-bottom: calc(var(--nav-height) + 24px + env(safe-area-inset-bottom)); background: var(--canvas); }
 /* §3 Scroll edge, упрощённый: шапка прозрачна в нуле прокрутки и получает фон с границей, как
    только под неё что-то поехало. Цвет и прозрачность не пружинят никогда — в самой спецификации
    у слоя эффектов демпфирование 1.0 (§5 исследования), поэтому здесь обычный переход.
@@ -478,7 +483,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .storage-meter, .body-copy { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
 /* §6 Нижняя навигация. */
-.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
+.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
    «Записать» шире четверти экрана, и без переноса навигация выезжала бы за его край. */
 .nav-button { position: relative; display: grid; min-width: 0; min-height: 48px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
@@ -639,8 +644,12 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .outside-card > .chip-list { margin-top: 12px; }
 .chip-list .secondary-button[aria-pressed="true"] { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
 /* Кнопка записи липнет к низу экрана над навигацией, пока табло в поле зрения: она называет
-   выбранное словами, и ей место под большим пальцем, а не за десятью конвертами. */
-.record-action { position: sticky; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 10; display: grid; gap: 8px; padding: 8px 0; background: var(--canvas); }
+   выбранное словами, и ей место под большим пальцем, а не за десятью конвертами.
+   Полоса цвета холста едет поверх белых конвертов, и встречать их она обязана намеренно, а не
+   срезом: верхние 16 px — переход от прозрачного к холсту, и конверт уходит под полосу, как под
+   край листа, а не обрывается белой кромкой. Снизу полоса стоит вплотную на навигации — между
+   ними нечему просвечивать. Она остаётся в потоке: fixed прятал бы конверты насовсем. */
+.record-action { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 10; display: grid; gap: 8px; padding: 24px 0 8px; background: linear-gradient(to bottom, transparent, var(--canvas) 16px); }
 .record-form > .limit-alert { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 12px; color: var(--amber-ink); background: var(--amber-soft); }
 .record-form > .limit-alert > b, .record-form > .limit-alert > span { grid-column: 1; }
 .record-form > .limit-alert > button { grid-row: 1 / span 2; }
@@ -683,8 +692,12 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .month-shape figcaption p, .ladder-block > p { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 /* Строй месяца: ось 1…31, положение числа — атрибут `data-day`, объявленный шкалой ниже (CSP
    запрещает инлайновые стили). Подписи платежей — обычный поток в колонке сетки: длинное
-   название переносится и растит строку, а не вылезает за карточку. */
-.shape-plot { margin-top: 12px; }
+   название переносится и растит строку, а не вылезает за карточку.
+   У оси есть поле: число центрируется на своей доле ширины, и «31» на 98,4 % правой половиной
+   выходило за ось на всех ширинах — этот вылет и поднимался до всего блока. Поле лежит на
+   `.shape-plot`, а не на оси: строки под осью считают долю от той же ширины, и насечки остаются
+   на одной вертикали с числами. */
+.shape-plot { margin-top: 12px; padding: 0 8px; }
 /* Доля ширины считается на самом элементе, а не на оси: пользовательское свойство наследуется
    уже вычисленным, и `--day-x`, объявленный на оси, ставил бы все числа на первое. */
 .shape-tick, .shape-pay, .shape-rule, .shape-row { --day: 1; --day-x: calc((var(--day) - 0.5) / 31 * 100%); }
@@ -692,6 +705,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .shape-tick { position: absolute; bottom: 22px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); white-space: nowrap; transform: translateX(-50%); }
 .shape-tick.pay { bottom: 18px; color: var(--ink); font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 700; letter-spacing: -0.02em; }
 .shape-pay { position: absolute; bottom: 2px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; white-space: nowrap; transform: translateX(-50%); }
+/* Крайние подписи шире поля: слово «выплата» и число ступени `hero-step` на 1–2 и 30–31 не
+   центрируются на насечке, а прижимаются к ней изнутри — как подписи на концах любой шкалы.
+   Так они помещаются и при системном увеличении шрифта, когда поле в пикселях не растёт. */
+.shape-axis > .shape-tick[data-day="1"], .shape-axis > .shape-tick[data-day="2"], .shape-axis > .shape-pay[data-day="1"], .shape-axis > .shape-pay[data-day="2"] { transform: translateX(2px); }
+.shape-axis > .shape-tick[data-day="30"], .shape-axis > .shape-tick[data-day="31"], .shape-axis > .shape-pay[data-day="30"], .shape-axis > .shape-pay[data-day="31"] { transform: translateX(calc(-100% - 2px)); }
 .shape-axis > .shape-rule { top: auto; bottom: -1px; height: 8px; }
 .shape-rule { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--line); }
 .shape-tick, .shape-pay, .shape-rule, .shape-row { left: var(--day-x); }
@@ -946,7 +964,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .onboarding-card { padding: 32px; }
   .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
   .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
-  .record-action { bottom: 16px; }
+  .record-action { bottom: 0; padding-bottom: 16px; }
 }
 
 @media (max-width: 520px) {
