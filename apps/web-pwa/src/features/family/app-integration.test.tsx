@@ -63,23 +63,21 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain('label="Год"');
     expect(source).toContain('label="Записать"');
     expect(source).toContain('label="Ещё"');
-    // Вход на экран — из «Ещё», тем же приёмом, что и переход в горизонт.
-    expect(source).toContain('className="year-preview" type="button" onClick={props.onFamily}');
+    // Вход на экран — строкой списка «Ещё», названной словами.
+    expect(source).toMatch(/onClick=\{props\.onFamily\}>[\s\S]{0,200}Семья и синхронизация/u);
     expect(source).toContain("<BackButton label=");
   });
 
-  it("индикатор синхронизации стоит в шапке рядом с прежним сетевым, а не вместо него", () => {
-    expect(source).toContain("networkStatusPresentation(nativeRuntime, online)");
+  it("индикатор синхронизации — единственное слово шапки о сети, и только после входа", () => {
     // Исход последнего круга — второй аргумент, а не догадка: без него шапка говорила бы
     // «синхронизировано» при лежащем сервере.
     expect(source).toContain("syncIndicatorPresentation(family.status, family.syncRound)");
     expect(source).toContain("syncRound={family.syncRound}");
-    expect(source).toMatch(
-      /className=\{`\$\{networkStatus\.className\}[\s\S]{0,600}<span className=\{syncIndicator\.className\}/u,
-    );
-    // Без входа шапка не меняется вовсе: второй пилюли у локального пользователя нет.
+    // Без входа шапка молчит вовсе: сетевой пилюли рядом больше нет — без синхронизации
+    // приложение к сети не обращается, и слово «в сети» было бы сведением ни о чём.
     expect(source).toContain('syncIndicator.state === "local" ? null :');
-    // Само состояние «локально» при этом видно — на карточке перехода и на экране «Семья».
+    expect(source).not.toMatch(/Состояние сети|network-badge/u);
+    // Само состояние «локально» при этом видно — на строке «Ещё» и на экране «Семья».
     expect(source).toContain("syncIndicator={syncIndicator}");
   });
 

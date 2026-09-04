@@ -29,7 +29,7 @@ describe("data-management UI", () => {
     );
 
     expect(html).toContain("Последняя успешная копия:");
-    expect(html).toContain("<strong>6</strong> операций");
+    expect(html).toContain("6 операций");
     expect(html).toContain(
       "Приложение само не загружает файлы ни на свой сервер, ни на сторонние серверы.",
     );
@@ -50,7 +50,9 @@ describe("data-management UI", () => {
     expect(html).toContain('aria-describedby="json-backup-notice"');
     expect(html).toContain('aria-describedby="csv-export-notice"');
     expect(html).toContain('aria-busy="false"');
-    expect(html).toContain("Перейти к удалению");
+    // Копия — первая строка списка, удаление — последняя, и оба названы словами.
+    expect(html.indexOf("Сделать резервную копию")).toBeLessThan(html.indexOf("Удалить данные с этого устройства"));
+    expect(html).toContain("Удалить данные с этого устройства");
     expect(html).not.toContain('type="file" name=');
   });
 

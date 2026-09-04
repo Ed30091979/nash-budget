@@ -45,7 +45,7 @@ describe("пустые состояния", () => {
       <OperationsScreen budget={budgetWithoutOperations()} onChange={vi.fn()} />,
     );
 
-    assertThreeRules(markup.slice(markup.indexOf("Полная история")), "полная история");
+    assertThreeRules(markup.slice(markup.indexOf("Вся история")), "вся история");
     expect(markup).toContain("Записей пока нет");
     expect(markup).toContain("Записать первую операцию");
   });
@@ -59,7 +59,7 @@ describe("пустые состояния", () => {
     // В бюджете операции есть, поэтому «Записей пока нет» тут звучать не должно ни при каких
     // фильтрах: это разные состояния системы, и разными словами они и названы.
     expect(markup).not.toContain("Записей пока нет");
-    expect(markup).toContain("Полная история");
+    expect(markup).toContain("Вся история");
   });
 
   it("на «Записать» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
@@ -67,7 +67,7 @@ describe("пустые состояния", () => {
       <OperationsScreen budget={budgetWithoutLimits()} onChange={vi.fn()} onPlanning={vi.fn()} />,
     );
 
-    assertThreeRules(markup.slice(markup.indexOf("Категории месяца")), "категории месяца");
+    assertThreeRules(markup.slice(markup.indexOf('id="envelopes-title"')), "конверты");
     expect(markup).toContain("Лимитов на этот месяц нет");
     expect(markup).toContain("Задать лимиты в плане");
   });

@@ -1,14 +1,17 @@
 import { type BudgetState } from "@family-budget/domain";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
-import { formatMoney, moneyScale } from "../../money";
 import {
   createDashboardModel,
-  monthNameIn,
+  ladderModel,
+  MONTH_SHORT,
+  monthName,
+  monthShape,
+  shapeAnnouncement,
   type DashboardHorizon,
   type DashboardMonth,
-  type DashboardTightestMonth,
+  type ShapeRow,
 } from "./model";
 
 export interface DashboardScreenProps {
@@ -16,113 +19,84 @@ export interface DashboardScreenProps {
   readonly startMonth?: string;
   /** Единственное действие экрана: горизонт читают, а меняют его в плане. */
   readonly onPlanning?: () => void;
-}
-
-/** Три буквы для подписи под колонкой; год в подпись не помещается и живёт в таблице. */
-const MONTH_TICKS: readonly string[] = [
-  "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек",
-];
-
-function monthTick(month: string): string {
-  return MONTH_TICKS[Number(month.slice(5, 7)) - 1] ?? month;
+  /** Числа месяца, на которые приходят деньги, — выведены из доходов на «Сегодня» и переданы сюда. */
+  readonly paydays?: readonly number[];
 }
 
 /** «июл 2026» — колонка «Месяц» в таблице точных значений. */
 function monthCell(month: string): string {
-  return `${monthTick(month)} ${month.slice(0, 4)}`;
+  return `${MONTH_SHORT[Number(month.slice(5, 7)) - 1] ?? month} ${month.slice(0, 4)}`;
+}
+
+/** Опорные числа оси месяца. Выплата, стоящая рядом с опорой, вытесняет её: два числа впритык не читаются. */
+const AXIS_TICKS: readonly number[] = [1, 5, 10, 15, 20, 25, 31];
+
+/**
+ * Строй месяца: ось 1…31, на ней выплаты и регулярные платежи.
+ *
+ * Положение каждого числа едет атрибутом `data-day`, а не инлайновым стилем: CSP запрещает
+ * `style`, и тридцать одно положение объявлено в таблице стилей. Подписи — обычный поток в
+ * колонке сетки, а не абсолютные слои: длинное название переносится и растит строку, вместо
+ * того чтобы вылезти за карточку (§1: ничего не обрезается).
+ */
+function MonthShape({ rows, paydays }: { readonly rows: readonly ShapeRow[]; readonly paydays: readonly number[] }) {
+  if (rows.length === 0 && paydays.length === 0) return null;
+  const ticks = AXIS_TICKS.filter((tick) => !paydays.some((day) => day !== tick && Math.abs(day - tick) <= 2));
+  const axis = [...new Set([...ticks, ...paydays])].sort((left, right) => left - right);
+  return (
+    <figure className="month-shape">
+      <figcaption>
+        <h2>Строй месяца</h2>
+        <p>Так устроен каждый месяц: выплаты и платежи на своих числах.</p>
+      </figcaption>
+      <div className="shape-plot" role="img" aria-label={shapeAnnouncement(rows, paydays)}>
+        <div className="shape-axis">
+          {axis.map((day) => <span key={day} className={`shape-tick${paydays.includes(day) ? " pay" : ""}`} data-day={day}>{day}</span>)}
+          {paydays.map((day) => <span key={`pay-${day}`} className="shape-pay" data-day={day}>выплата</span>)}
+          {paydays.map((day) => <i key={`rule-${day}`} className="shape-rule" data-day={day} />)}
+        </div>
+        {rows.map((row) => (
+          <div key={row.key} className="shape-row" data-day={row.day} data-side={row.side}>
+            {paydays.map((day) => <i key={day} className="shape-rule" data-day={day} />)}
+            <span className="shape-label">
+              <span className="shape-day">{row.day}-го · </span>
+              {row.name} <b><Money value={row.amountMinor} /></b>{row.note ? ` · ${row.note}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </figure>
+  );
 }
 
 /**
- * График горизонта: один ряд колонок «свободно после плана».
+ * Лестница месяцев: строка на месяц, длина полосы — деньги, насечка — конверты.
  *
- * Почему один ряд, а не пара «доход и расходы». §4 исследования, пункт 22: один график на экран, а
- * аналитика — уровнем ниже. Прежняя пара рисовала рядом с планом плановый доход, одинаковый во все
- * месяцы: ровный ряд одинаковых колонок не сообщал ничего, зато вдвое сокращал ширину, отведённую
- * месяцу. Остаётся величина, ради которой на горизонт и смотрят.
- *
- * Почему без `viewBox`. С ним единица системы координат — не пиксель: график шириной 480 единиц,
- * ужатый до 326 pt экрана, набирал подписи девятью пикселями, а рисовал их шестью. Здесь координата
- * по горизонтали — процент от собственной ширины, по вертикали — пиксель, поэтому подпись имеет
- * ровно тот кегль, который назначен ей в таблице стилей, а график занимает ширину экрана без
- * горизонтальной прокрутки.
+ * Магнитуда передана длиной, а не углом и не площадью: упорядоченные бары читаются точнее всего
+ * остального, и это добыто измерением. Одна насечка на всю лестницу даёт одну вертикаль сквозь
+ * год — видно, какой месяц до неё не дотягивает. Цвет не единственный носитель: самый тесный
+ * месяц назван в выводе, а нехватка — ещё и положением полосы перед насечкой.
  */
-const PLOT_TOP = 8;
-const PLOT_HEIGHT = 132;
-const TICK_BASELINE = 164;
-const CHART_HEIGHT = 176;
-
-function HorizonChart({
-  months,
-  summary,
-  floorMinor,
-}: {
-  readonly months: readonly DashboardMonth[];
-  readonly summary: string;
-  /** Дно горизонта: его метят все месяцы, которые на нём стоят, а не первый из них. */
-  readonly floorMinor: number;
-}) {
-  const values = months.map((month) => month.spendableAfterPlanMinor);
-  const maximum = Math.max(0, ...values);
-  const minimum = Math.min(0, ...values);
-  const span = maximum - minimum || 1;
-  const zero = PLOT_TOP + (maximum / span) * PLOT_HEIGHT;
-  const slot = 100 / months.length;
-  const barWidth = slot * 0.56;
-  // Двадцать четыре подписи в ряд не помещаются ни на одном телефоне: подписывается каждый второй
-  // месяц, а не уменьшается кегль — ступеней ниже одиннадцати у нашей шкалы нет (§4).
-  const tickStep = months.length > 12 ? 2 : 1;
-
+function MonthLadder({ months, floorMinor }: { readonly months: readonly DashboardMonth[]; readonly floorMinor: number }) {
+  const ladder = ladderModel(months, floorMinor);
   return (
-    <figure className="horizon-chart">
-      <h2 id="horizon-chart-title">{summary}</h2>
-      <svg
-        width="100%"
-        height={CHART_HEIGHT}
-        role="img"
-        aria-labelledby="horizon-chart-title"
-        aria-describedby="horizon-chart-description"
-      >
-        <rect className={`horizon-chart__base${minimum < 0 ? " axis" : ""}`} x="0" y={zero} width="100%" height="1" />
-        {months.map((month, index) => {
-          const value = month.spendableAfterPlanMinor;
-          const height = Math.max(2, (Math.abs(value) / span) * PLOT_HEIGHT);
-          const tone = value < 0 ? "short" : value === floorMinor ? "tightest" : "normal";
-          return (
-            <rect
-              key={month.month}
-              className={`horizon-chart__bar ${tone}`}
-              x={`${(slot * index + (slot - barWidth) / 2).toFixed(3)}%`}
-              width={`${barWidth.toFixed(3)}%`}
-              y={value < 0 ? zero : zero - height}
-              height={height}
-            />
-          );
-        })}
-        {months.map((month, index) => {
-          if (index % tickStep !== 0) return null;
-          const classes = [
-            month.spendableAfterPlanMinor === floorMinor ? "tightest" : "",
-            // Каждая вторая подпись — «запасная»: на узком экране их прячет контейнерный запрос,
-            // а не уменьшенный кегль (§4: ступеней ниже одиннадцати у шкалы нет).
-            (index / tickStep) % 2 === 1 ? "secondary" : "",
-          ].filter(Boolean).join(" ");
-          return (
-            <text
-              key={month.month}
-              className={classes || undefined}
-              x={`${(slot * index + slot / 2).toFixed(3)}%`}
-              y={TICK_BASELINE}
-              textAnchor="middle"
-            >
-              {monthTick(month.month)}
-            </text>
-          );
-        })}
-      </svg>
-      <figcaption id="horizon-chart-description">
-        Столбец на месяц — сколько остаётся после всех планов. Точные значения — в «Месяцах по числам» ниже.
-      </figcaption>
-    </figure>
+    <div className="ladder-block">
+      <h2>{months.length > 12 ? "Двадцать четыре месяца" : "Двенадцать месяцев"}</h2>
+      <p>Полоса — что остаётся от дохода после платежей и резервов. Насечка — конверты, <Money value={ladder.envelopesMinor} /> в месяц: дотянула — конверты полны, дальше — запас.</p>
+      <ul className="ladder" data-mark={ladder.markPercent} aria-label="Свободно после всех планов по месяцам">
+        <li className="ladder-legend" aria-hidden="true"><span /><span className="ladder-legend-mid"><span className="ladder-at">конверты</span><span className="ladder-rest">запас</span></span><span /></li>
+        {ladder.rows.map((row) => (
+          <Fragment key={row.month}>
+            {row.yearBreak ? <li className="ladder-year" aria-hidden="true"><span>{row.month.slice(0, 4)}</span><i /></li> : null}
+            <li className={`ladder-row ${row.state}`}>
+              <span className="ladder-month">{row.label}</span>
+              <span className={`limit-bar${row.state === "short" ? " short" : row.state === "out" ? " out" : ""}`} data-spent={row.fill} aria-hidden="true" />
+              <span className="ladder-value"><Money value={row.spendableMinor} /></span>
+            </li>
+          </Fragment>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -130,7 +104,7 @@ function HorizonTable({ months }: { readonly months: readonly DashboardMonth[] }
   return (
     <div className="dashboard-table-scroll" tabIndex={0} aria-label="Прокручиваемая таблица месяцев горизонта">
       <table>
-        <caption className="visually-hidden">Точные значения графика: доход, план, резерв и свободный остаток по каждому месяцу горизонта</caption>
+        <caption className="visually-hidden">Точные значения лестницы: доход, план, резерв и свободный остаток по каждому месяцу горизонта</caption>
         <thead><tr>
           <th scope="col">Месяц</th><th scope="col">Доход</th><th scope="col">По плану</th>
           <th scope="col">В резерв</th><th scope="col">Из резерва</th><th scope="col">Свободно</th>
@@ -149,46 +123,39 @@ function HorizonTable({ months }: { readonly months: readonly DashboardMonth[] }
 }
 
 /**
- * Подпись героя: где это дно и одно ли оно.
+ * «Год»: вывод, строй месяца, лестница месяцев.
  *
- * Считать вслух — единственный честный способ: «самый тесный месяц — сентябрь» рядом с пятью
- * одинаковыми колонками на графике читалось бы как ошибка расчёта.
+ * Заголовок экрана — вывод («Плана хватает во все 12 месяцев»), а не подпись осей: это жанр, и
+ * любой график в приложении обязан начинаться с него. Крупного числа отдельной карточкой здесь
+ * больше нет: самое тесное место горизонта стоит в лестнице, названо в выводе и выделено
+ * весом, — второй раз тем же числом экран не занят.
  */
-function tightestWords(tightest: DashboardTightestMonth): string {
-  const where = monthNameIn(tightest.month);
-  const others = tightest.count > 1 ? ` и ещё в ${tightest.count - 1} месяцах горизонта` : "";
-  return tightest.shortfall
-    ? `Плана больше, чем дохода, в ${where}${others}.`
-    : `Столько остаётся после всех планов в ${where}${others}.`;
-}
-
-export function DashboardScreen({ budget, startMonth, onPlanning }: DashboardScreenProps) {
+export function DashboardScreen({ budget, startMonth, onPlanning, paydays = [] }: DashboardScreenProps) {
   const [horizon, setHorizon] = useState<DashboardHorizon>(12);
   const active = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   const resolvedStart = startMonth ?? active?.startDate.slice(0, 7) ?? "";
   const model = useMemo(() => createDashboardModel(budget, resolvedStart, horizon), [budget, resolvedStart, horizon]);
-  const tightest = model.tightest;
-  const tightestMoney = formatMoney(tightest.freeMinor);
+  const shape = useMemo(() => monthShape(budget), [budget]);
+  const first = model.months[0]?.month ?? resolvedStart;
+  const last = model.months[model.months.length - 1]?.month ?? resolvedStart;
 
   return (
     <section className="dashboard-screen" aria-labelledby="dashboard-title">
       <header>
-        <h1 id="dashboard-title">Финансовый горизонт семьи</h1>
+        <p className="eyebrow">Горизонт · {monthName(first)} — {monthName(last)}</p>
         <div role="group" aria-label="Горизонт планирования">
           <button type="button" aria-pressed={horizon === 12} onClick={() => setHorizon(12)}>12 месяцев</button>
           <button type="button" aria-pressed={horizon === 24} onClick={() => setHorizon(24)}>24 месяца</button>
         </div>
       </header>
 
-      {/* §1: на экране ровно одно крупное число, и это ответ на вопрос «как мы пройдём горизонт». */}
-      <section className={`hero-card${tightest.shortfall ? " danger" : ""}`}>
-        <span>Меньше всего свободно</span>
-        <strong data-money-scale={moneyScale(tightestMoney)}><Money value={tightest.freeMinor} /></strong>
-        <p>{tightestWords(tightest)}</p>
-        {onPlanning ? <button className="hero-button" type="button" onClick={onPlanning}>Настроить план</button> : null}
+      <section className={`section-card horizon-card${model.tightest.shortfall ? " danger" : ""}`}>
+        <h1 id="dashboard-title">{model.verdict.title}</h1>
+        <p className="horizon-detail">{model.verdict.detail}</p>
+        <MonthShape rows={shape} paydays={paydays} />
+        <MonthLadder months={model.months} floorMinor={model.tightest.freeMinor} />
+        {onPlanning ? <button className="primary-button wide" type="button" onClick={onPlanning}>Настроить план</button> : null}
       </section>
-
-      <HorizonChart months={model.months} summary={model.summary} floorMinor={tightest.freeMinor} />
 
       {/* Точные значения — аналитика уровнем ниже (§4, пункт 22): на своём месте и свёрнуты. */}
       <details className="section-card collapsible-card">

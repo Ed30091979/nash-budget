@@ -46,46 +46,51 @@ function screenMarkup(state: BudgetState = fullCatalogue()): string {
 }
 
 describe("выбор категории на экране операций", () => {
-  it("печатает заголовки групп над категориями", () => {
+  it("категория без конверта достижима: «Вне конвертов» перечисляет остальные по группам", () => {
+    // Пятнадцать расходных категорий — стена, из-за которой «приходится всё время мотать».
+    // Поиск и системный список ушли с экрана; вместо них конверты с лимитом стоят табло, а
+    // всё, у чего лимита нет, лежит за одной свёрнутой строкой — пилюлями, сгруппированными
+    // по смыслу, чтобы «Кредиты» искали среди обязательных, а «Подарки» — среди личного.
     const markup = screenMarkup();
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
 
     for (const title of ["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]) {
-      expect(markup).toContain(`<optgroup label="${title}">`);
+      expect(outside).toContain(`<p class="field-hint">${title}</p>`);
     }
-    // Доходная группа в расходной форме не показывается.
-    expect(markup).not.toContain('<optgroup label="Доходы">');
+    // Доходная группа в расходном табло не показывается.
+    expect(outside).not.toContain("Доходы");
     for (const name of ["Кредиты и рассрочки", "Здоровье и аптека", "Подарки и праздники"]) {
-      expect(markup).toContain(name);
+      expect(outside).toMatch(new RegExp(`<button class="secondary-button" type="button" aria-pressed="false">${name}</button>`, "u"));
     }
   });
 
-  it("ставит поле поиска над списком и объявляет число найденного", () => {
-    const markup = screenMarkup();
+  it("не показывает конверт второй раз среди категорий без лимита", () => {
+    const state = fullCatalogue();
+    const envelope = state.categories.find((item) => item.type === "expense")!;
+    const markup = screenMarkup(state);
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
 
-    expect(markup).toContain('<label for="operation-category-search">Поиск по категориям</label>');
-    expect(markup).toContain('id="operation-category-search" type="search"');
-    expect(markup).toContain('aria-describedby="operation-category-status"');
-    expect(markup).toContain('<p class="field-hint" id="operation-category-status" role="status">Найдено 15 категорий</p>');
-    // Поиск стоит перед списком, а не после него.
-    expect(markup.indexOf("operation-category-search")).toBeLessThan(markup.indexOf('id="operation-categoryId"'));
+    expect(markup).toMatch(new RegExp(`<button class="envelope" type="button" aria-pressed="false" aria-label="${envelope.name}:`, "u"));
+    expect(outside).not.toContain(`>${envelope.name}</button>`);
   });
 
-  it("держит «Свою категорию» последним элементом списка", () => {
+  it("держит «Свою категорию» последней пилюлей списка", () => {
     const markup = screenMarkup();
-    const select = markup.slice(markup.indexOf('id="operation-categoryId"'));
-    const options = [...select.slice(0, select.indexOf("</select>")).matchAll(/<option[^>]*>([^<]*)</gu)]
-      .map((match) => match[1]);
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
+    const chips = outside.slice(0, outside.indexOf('class="row-disclosure"')).match(/<button class="secondary-button"[^>]*>([^<]*)<\/button>/gu) ?? [];
 
-    expect(options.at(-1)).toBe("Своя категория");
-    expect(options[0]).toBe("Выберите категорию");
-    expect(select).toContain(`<option value="#custom">Своя категория</option>`);
+    expect(chips.length).toBeGreaterThan(10);
+    expect(chips.at(-1)).toContain("Своя категория");
   });
 
   it("оставляет архивную выбранную категорию видимой и подписанной", () => {
     const archived: Category = { id: archivedId, name: "Дача", type: "expense", group: "personal", active: false, sortOrder: 900 };
     const markup = screenMarkup(fullCatalogue([archived]));
 
-    expect(markup).not.toContain("Дача (в архиве)");
+    // Невыбранная архивная категория новых операций не получает и в списке не стоит.
+    expect(markup).not.toContain("Дача");
+    // Выбранная — остаётся в списке даже из архива и подписана: список, из которого исчезло
+    // собственное значение, врал бы о том, что выбрано.
     expect(screenSource).toContain('{option.archived ? " (в архиве)" : ""}');
   });
 
@@ -100,9 +105,8 @@ describe("выбор категории на экране операций", () 
   });
 
   it("даёт доходу необязательную категорию", () => {
-    expect(screenSource).toContain('label="Категория дохода — не обязательно"');
-    expect(screenSource).toContain('type="income"');
-    expect(screenSource).toContain('optional onQuery');
+    expect(screenSource).toContain("Категория дохода — не обязательно");
+    expect(screenSource).toContain('groupedCategoryOptions(budget, "income"');
     expect(screenSource).toContain('{optional ? "Без категории" : "Выберите категорию"}');
   });
 });

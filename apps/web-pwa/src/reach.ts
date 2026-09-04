@@ -136,6 +136,44 @@ function nextOccurrence(dayOfMonth: number, today: string): string | null {
 }
 
 /**
+ * Числа месяца, на которые семье приходят деньги, — из дат уже записанных доходов.
+ *
+ * Числа собираются в грозди: у семьи бывает и одна выплата в месяц, и аванс с зарплатой. Гроздь
+ * считается расписанием, только если повторилась в разные месяцы: две выплаты одного месяца —
+ * это ещё не «двадцатого числа каждого месяца». Пустой список — истории нет или даты
+ * нерегулярны, и тогда экран говорит про календарный месяц и ни слова про аванс.
+ *
+ * Тем же списком пользуются «Год» (ось чисел месяца) и «Ещё» (строка «Наш месяц»): даты выплат
+ * выведены один раз и одинаково везде.
+ */
+export function paydayDays(incomeDates: readonly string[], today: string): readonly number[] {
+  const history = [...new Set(incomeDates)]
+    .filter((date) => Number.isFinite(utcDay(date)) && utcDay(date) <= utcDay(today))
+    .sort()
+    .slice(-HISTORY_DEPTH);
+  if (history.length < CONFIDENT_REPEATS) return [];
+
+  const clusters: { days: number[]; months: Set<string> }[] = [];
+  for (const date of history) {
+    const dayOfMonth = Number(date.slice(8, 10));
+    const month = date.slice(0, 7);
+    const cluster = clusters.find((item) => item.days.some((day) => Math.abs(day - dayOfMonth) <= DAY_SPREAD));
+    if (cluster) {
+      cluster.days.push(dayOfMonth);
+      cluster.months.add(month);
+    } else {
+      clusters.push({ days: [dayOfMonth], months: new Set([month]) });
+    }
+  }
+
+  return clusters
+    .filter((cluster) => cluster.months.size >= CONFIDENT_REPEATS)
+    .map((cluster) => [...cluster.days].sort((left, right) => left - right)[Math.floor(cluster.days.length / 2)])
+    .filter((day): day is number => day !== undefined)
+    .sort((left, right) => left - right);
+}
+
+/**
  * Выводит дату следующей выплаты из дат доходов, а при неуверенности — из конца месяца.
  *
  * `incomeDates` — даты доходных операций в любом порядке; `periodEnd` — последний день периода
@@ -160,32 +198,7 @@ export function nextPayday(
     return { date: edge, source: "month", daysAhead: Math.max(1, daysBetween(today, edge)) };
   };
 
-  const history = [...new Set(incomeDates)]
-    .filter((date) => Number.isFinite(utcDay(date)) && utcDay(date) <= utcDay(today))
-    .sort()
-    .slice(-HISTORY_DEPTH);
-  if (history.length < CONFIDENT_REPEATS) return fallback();
-
-  // Числа месяца собираются в грозди: у семьи бывает и одна выплата в месяц, и аванс с зарплатой.
-  const clusters: { days: number[]; months: Set<string> }[] = [];
-  for (const date of history) {
-    const dayOfMonth = Number(date.slice(8, 10));
-    const month = date.slice(0, 7);
-    const cluster = clusters.find((item) => item.days.some((day) => Math.abs(day - dayOfMonth) <= DAY_SPREAD));
-    if (cluster) {
-      cluster.days.push(dayOfMonth);
-      cluster.months.add(month);
-    } else {
-      clusters.push({ days: [dayOfMonth], months: new Set([month]) });
-    }
-  }
-
-  const candidates = clusters
-    // Гроздь считается расписанием, только если она повторилась в разные месяцы: две выплаты
-    // одного месяца — это ещё не «двадцатого числа каждого месяца».
-    .filter((cluster) => cluster.months.size >= CONFIDENT_REPEATS)
-    .map((cluster) => [...cluster.days].sort((left, right) => left - right)[Math.floor(cluster.days.length / 2)])
-    .filter((day): day is number => day !== undefined)
+  const candidates = paydayDays(incomeDates, today)
     .map((day) => nextOccurrence(day, today))
     .filter((date): date is string => date !== null)
     .map((date) => ({ date, daysAhead: daysBetween(today, date) }))
@@ -194,6 +207,42 @@ export function nextPayday(
 
   const nearest = candidates[0];
   return nearest ? { date: nearest.date, source: "income", daysAhead: nearest.daysAhead } : fallback();
+}
+
+/**
+ * Часы периода: где сегодняшний день стоит относительно месяца плана.
+ *
+ * Линейка до выплаты — прогноз, и прогноз имеет смысл только внутри своего месяца. Пока экран
+ * считал запас от сегодняшней даты, а число брал из месяца плана, на одной карточке оказывались
+ * два месяца: «ИЮЛЬ», остаток июля и «хватает до конца сентября». Здесь положение сегодняшнего
+ * дня названо явно, и каждый экран решает по нему одно и то же: внутри периода — линейка,
+ * снаружи — честные слова о том, что месяц закрыт (или ещё не начался), и никакого прогноза.
+ */
+export type PeriodPosition = "inside" | "after" | "before";
+
+export interface PeriodClock {
+  readonly today: string;
+  readonly position: PeriodPosition;
+  /** Сегодня лежит внутри периода — только тогда линейка до выплаты имеет смысл. */
+  readonly inPeriod: boolean;
+  /** Сколько дней периода прошло, считая сегодняшний; у закрытого месяца — весь месяц. */
+  readonly elapsedDays: number;
+  readonly payday: PaydayHorizon;
+}
+
+export function periodClock(
+  period: { readonly startDate: string; readonly endDate: string },
+  incomeDates: readonly string[],
+  today: string,
+): PeriodClock {
+  const position: PeriodPosition = today < period.startDate ? "before" : today > period.endDate ? "after" : "inside";
+  return {
+    today,
+    position,
+    inPeriod: position === "inside",
+    elapsedDays: daysElapsed(period.startDate, period.endDate, today),
+    payday: nextPayday(incomeDates, today, period.endDate),
+  };
 }
 
 /** Состояние линейки. Слово для человека подбирается по нему же, а не по цвету. */

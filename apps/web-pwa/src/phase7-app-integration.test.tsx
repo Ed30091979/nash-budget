@@ -124,8 +124,8 @@ describe("phase 7 App composition", () => {
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);
     const twentyFour = createDashboardModel(makePlanningSeed(), "2026-07", 24);
 
-    expect(source).toContain('import { DashboardScreen, nextScheduledDate } from "./features/dashboard"');
-    expect(source).toContain("<DashboardScreen budget={budget} onPlanning={onPlanning} />");
+    expect(source).toContain('import { DashboardScreen, monthsSpan, nextScheduledDate } from "./features/dashboard"');
+    expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
     // Поиск по операциям живёт на маршруте «Записать» — внутри самой истории, которую он
@@ -142,12 +142,14 @@ describe("phase 7 App composition", () => {
     expect(twentyFour.months.find((item) => item.month === "2027-06")?.annualDueMinor).toBe(9_000_000);
     expect(twentyFour.months.find((item) => item.month === "2028-01")?.annualDueMinor).toBe(7_200_000);
     expect(twentyFour.months.find((item) => item.month === "2028-06")?.annualDueMinor).toBe(0);
-    // «Год» отвечает за горизонт: одно крупное число, один график и точные значения под ним.
-    // Общие итоги «доход / расходы / капитал» живут на «Записать», в свёрнутых «Итогах и
-    // остатках», и вторым их набором экран больше не занят.
-    expect(textOf(dashboard)).toContain("Меньше всего свободно");
-    expect(textOf(dashboard)).toContain("в сентябре 2026 и ещё в 4 месяцах горизонта");
-    expect(textOf(dashboard)).toContain("13 191 ₽");
+    // «Год» отвечает за горизонт: вывод заголовком, лестница месяцев и точные значения под ней.
+    // Дно горизонта — пять месяцев на одной сумме — выделено в лестнице весом, а не названо
+    // одним месяцем. Общие итоги «доход / расходы / капитал» живут на «Записать», в свёрнутых
+    // «Итогах и остатках», и вторым их набором экран больше не занят.
+    expect(textOf(dashboard)).toContain("Плана хватает во все 12 месяцев");
+    expect(textOf(dashboard)).toContain("Свободно от 13 191 ₽ в сентябре 2026 до 48 750 ₽ в июне 2027.");
+    expect(dashboard.match(/class="ladder-row tight"/gu)).toHaveLength(5);
+    expect(textOf(dashboard)).toContain("сен 13 191 ₽");
     expect(textOf(dashboard)).toContain("сен 2026 180 000 ₽ 166 809 ₽ 19 809 ₽ 0 ₽ 13 191 ₽");
     expect(dashboard).not.toContain("Доход, факт");
     expect(dashboard).not.toContain("Капитал");

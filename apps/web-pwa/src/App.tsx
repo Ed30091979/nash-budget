@@ -15,7 +15,7 @@ import { Icon, IconSprite, type IconName } from "./components/Icon";
 import { Money } from "./components/Money";
 import { categoryVisual } from "./category-visual";
 import { UpdatePrompt } from "./components/UpdatePrompt";
-import { DashboardScreen, nextScheduledDate } from "./features/dashboard";
+import { DashboardScreen, monthsSpan, nextScheduledDate } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
 import {
   FamilyScreen,
@@ -39,13 +39,14 @@ import { buildDemoBudgetState } from "./onboarding/demo";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, moneyScale } from "./money";
 import {
-  daysElapsed,
   localToday,
-  nextPayday,
+  paydayDays,
+  periodClock,
   reach,
   reachWord,
   runsOutOn,
   type PaydayHorizon,
+  type PeriodClock,
   type Reach,
   type ReachState,
 } from "./reach";
@@ -59,7 +60,6 @@ const monthOnly = new Intl.DateTimeFormat("ru-RU", { month: "long", timeZone: "U
 const dateShort = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short" });
 /** «20 июля» — так дату называют вслух; сокращение «20 июл.» годится списку, но не линейке. */
 const dateLong = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long" });
-const calendarMonths = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 export const DISCARD_DRAFT_CONFIRMATION = "Несохранённый черновик будет удалён. Перейти в другой раздел?";
 
 /**
@@ -135,45 +135,6 @@ export const MAIN_CONTENT_ID = "main-content";
  */
 export const SLOW_LOAD_THRESHOLD_MS = 1000;
 
-interface CapacitorRuntimeContract {
-  readonly isNativePlatform?: () => boolean;
-}
-
-interface NetworkStatusPresentation {
-  readonly text: "в сети" | "офлайн" | "локально на устройстве";
-  readonly ariaLabel: string;
-  readonly className: string;
-}
-
-export function isCapacitorNativeRuntime(scope: unknown = globalThis): boolean {
-  if (!scope || (typeof scope !== "object" && typeof scope !== "function")) return false;
-  const runtime = (scope as { readonly Capacitor?: unknown }).Capacitor;
-  if (!runtime || (typeof runtime !== "object" && typeof runtime !== "function")) return false;
-  const contract = runtime as CapacitorRuntimeContract;
-  if (typeof contract.isNativePlatform !== "function") return false;
-  try {
-    return contract.isNativePlatform.call(runtime) === true;
-  } catch {
-    return false;
-  }
-}
-
-export function networkStatusPresentation(nativeRuntime: boolean, online: boolean): NetworkStatusPresentation {
-  if (nativeRuntime) {
-    return {
-      text: "локально на устройстве",
-      ariaLabel: "Состояние сети: локально на устройстве",
-      className: "network-badge",
-    };
-  }
-  const text = online ? "в сети" : "офлайн";
-  return {
-    text,
-    ariaLabel: `Состояние сети: ${text}`,
-    className: `network-badge${online ? "" : " offline"}`,
-  };
-}
-
 export function focusRouteHeading(root: ParentNode | null): boolean {
   const heading = root?.querySelector<HTMLElement>("h1");
   if (!heading) return false;
@@ -196,6 +157,26 @@ export function protectUnsavedDraftOnUnload(event: BeforeUnloadEvent, hasUnsaved
   if (!hasUnsavedDraft) return;
   event.preventDefault();
   event.returnValue = "";
+}
+
+/**
+ * «1 конверт», «2 конверта», «5 конвертов»: число в русской строке склоняет существительное.
+ * Одиннадцать–четырнадцать — исключение из хвоста, как у любого счётного слова.
+ */
+export function plural(count: number, forms: readonly [string, string, string]): string {
+  const tail = count % 100;
+  const last = count % 10;
+  if (tail >= 11 && tail <= 14) return `${count} ${forms[2]}`;
+  if (last === 1) return `${count} ${forms[0]}`;
+  if (last >= 2 && last <= 4) return `${count} ${forms[1]}`;
+  return `${count} ${forms[2]}`;
+}
+
+/** «5-го и 20-го» — даты выплат, выведенные из доходов, одной строкой; пусто — выводить не из чего. */
+export function paydayWords(days: readonly number[]): string {
+  if (days.length === 0) return "";
+  const named = days.map((day) => `${day}-го`);
+  return named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} и ${named[named.length - 1]}`;
 }
 
 function SkipLink() {
@@ -299,6 +280,12 @@ function monthGenitive(value: string): string {
   return parts[parts.length - 1] ?? value;
 }
 
+/** «Июль» — месяц плана с прописной, как начало фразы. */
+function monthNominative(month: string): string {
+  const word = monthOnly.format(new Date(`${month}-01T00:00:00.000Z`));
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
 /**
  * Как называется край линейки: «до 20 июля», когда дата выведена из доходов, и «до конца июля»,
  * когда выводить было не из чего. Второе — не запасной путь, а обычный: у нового пользователя
@@ -350,7 +337,6 @@ function storageText(health: StorageHealth | null): string {
 
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
-  const nativeRuntime = useMemo(() => isCapacitorNativeRuntime(), []);
   // Section 9: the address is configuration and is absent by default, so the whole family layer
   // below is inert in a build that was not given one — no request, no queue, no schema bump.
   const syncServerUrl = useMemo(
@@ -365,7 +351,6 @@ export default function App() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [headerScrolled, setHeaderScrolled] = useState(false);
   const [screen, setScreen] = useState<Screen>("today");
-  const [online, setOnline] = useState(navigator.onLine);
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -470,17 +455,6 @@ export default function App() {
     void load();
     return () => { cancelled = true; };
   }, [loadAttempt, repository]);
-
-  useEffect(() => {
-    const connected = () => setOnline(true);
-    const disconnected = () => setOnline(false);
-    window.addEventListener("online", connected);
-    window.addEventListener("offline", disconnected);
-    return () => {
-      window.removeEventListener("online", connected);
-      window.removeEventListener("offline", disconnected);
-    };
-  }, []);
 
   useEffect(() => {
     if (!hasUnsavedDraft) return;
@@ -590,20 +564,16 @@ export default function App() {
     .filter((row) => row.metric);
   const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   const safeToSpendMinor = plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor;
-  // §6, линейка до выплаты. «Сегодня» берётся по календарю семьи, а не по UTC: последний день
-  // месяца в UTC уже первый день следующего, и насечка прыгнула бы в начало полосы.
+  // §6, часы периода. «Сегодня» берётся по календарю семьи, а не по UTC: последний день месяца в
+  // UTC уже первый день следующего, и насечка прыгнула бы в начало полосы. Дата следующей выплаты
+  // выводится из дат уже записанных доходов — в слое представления, как иконки и тона категорий.
+  // Часы одни на все экраны: «Сегодня», «Записать» и «Год» считают от одного и того же дня.
   const today = localToday(new Date());
-  const todayInPeriod = today >= activeBudget.startDate && today <= activeBudget.endDate;
-  const elapsedDays = daysElapsed(activeBudget.startDate, activeBudget.endDate, today);
-  // Дата следующей выплаты выводится из дат уже записанных доходов — в слое представления, как
-  // иконки и тона категорий. Домен про расписания дохода не знает и знать не должен.
-  const payday = nextPayday(
-    budget.transactions
-      .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
-      .map((transaction) => transaction.occurredOn),
-    today,
-    activeBudget.endDate,
-  );
+  const incomeDates = budget.transactions
+    .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
+    .map((transaction) => transaction.occurredOn);
+  const clock = periodClock(activeBudget, incomeDates, today);
+  const paydays = paydayDays(incomeDates, today);
   const postedTransactions = [...budget.transactions]
     .filter((transaction) => transaction.status === "posted")
     .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
@@ -611,7 +581,6 @@ export default function App() {
   const memberOptions = memberFilterOptions(budget);
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const networkStatus = networkStatusPresentation(nativeRuntime, online);
   const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
   // 3.4 and 5.4.1: the one loud signal of this system. It is not a toast, it has no close button
   // and no timer, and it follows the person onto whichever screen they are on — the family screen
@@ -636,14 +605,10 @@ export default function App() {
         {/* Шапка называет план и больше ничего. Слоган «видим месяц и будущее» продавал продукт
             тому, кто его уже открыл, и делал это на каждом экране за 70 pt высоты. */}
         <div className="brand"><span className="brand-mark"><Icon name="piggy-bank" size={20} /></span><strong>Наш бюджет</strong></div>
-        <div className="header-badges">
-          {/* Состояние сети рисуется только тогда, когда синхронизация настроена. Без неё
-              приложение к сети не обращается вовсе, и пилюля «в сети» спорила бы с тем, что
-              тремя экранами ниже объясняет «Ещё». Слово при этом не пропадает: область остаётся
-              живой для читающих с экрана — состояние системы называть надо, рисовать незачем. */}
-          <span className={`${networkStatus.className}${syncIndicator.state === "local" ? " unheard" : ""}`} role="status" aria-label={networkStatus.ariaLabel}>{networkStatus.text}</span>
-          {syncIndicator.state === "local" ? null : <span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span>}
-        </div>
+        {/* Состояние синхронизации — единственное, что шапке есть сказать о сети, и только когда
+            семья вошла. Без входа приложение к сети не обращается вовсе, и пилюля «в сети» была
+            бы сведением ни о чём: она называла бы состояние, которым продукт не занят. */}
+        {syncIndicator.state === "local" ? null : <div className="header-badges"><span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span></div>}
       </header>
 
       <nav className="bottom-nav" aria-label="Основные разделы">
@@ -665,10 +630,10 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} today={today} todayInPeriod={todayInPeriod} elapsedDays={elapsedDays} payday={payday} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
-          {screen === "year" ? <YearScreen budget={budget} plan={plan} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
+          {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
-          {screen === "operations" ? <OperationsScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
+          {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
             storageHealth={storageHealth}
@@ -700,6 +665,11 @@ export default function App() {
               setLoadState("empty");
             }}
             onFamily={() => navigate("family")}
+            onPlanning={() => navigate("planning")}
+            familyNote={family.membership === null
+              ? "Без входа приложение работает как сейчас"
+              : `${plural(Math.max(1, family.members.length), ["участник", "участника", "участников"])} · приглашение, отпечатки ключей`}
+            monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
           {screen === "family" ? <FamilyScreen
@@ -739,6 +709,26 @@ export default function App() {
   );
 }
 
+/**
+ * Строка «Наш месяц» на «Ещё»: строй месяца одной строкой — выплаты, конверты, платежи.
+ *
+ * Те же числа, на которых стоят «Сегодня» и «Год», названные коротко: не второй экран плана, а
+ * дверь в него с табличкой, по которой видно, что за ней.
+ */
+export function monthNote(budget: BudgetState, paydays: readonly number[]): string {
+  const active = budget.budgets.find((item) => item.id === budget.activeBudgetId);
+  const lines = (active?.lines ?? []).filter((line) => line.active !== false);
+  const envelopesMinor = lines.reduce((total, line) => total + line.plannedMinor, 0);
+  const payments = budget.scheduledExpenses.filter((item) => item.active).length
+    + budget.annualCommitments.filter((item) => item.active).length;
+  const parts = [
+    paydays.length ? `выплаты ${paydayWords(paydays)}` : "даты выплат — из доходов",
+    lines.length ? `${plural(lines.length, ["конверт", "конверта", "конвертов"])} на ${formatMoney(envelopesMinor)}` : "конвертов нет",
+    payments ? plural(payments, ["платёж", "платежа", "платежей"]) : "платежей нет",
+  ];
+  return parts.join(" · ");
+}
+
 // Нижняя навигация берёт глифы из того же спрайта, что и остальной интерфейс: один набор,
 // одна толщина штриха, одна канва. Подпись под иконкой несёт смысл, иконка — декоративная.
 const navIcons = {
@@ -762,13 +752,20 @@ type CategoryRow = { category: BudgetState["categories"][number]; metric: Budget
  * Голос отвечает на тот вопрос, с которым приложение открывают, — хватит ли до выплаты, — и
  * важное внутри него отмечено весом, а не размером. Восемь ступеней кегля были восемью уровнями,
  * которые приходилось различать; различать больше нечего.
+ *
+ * Экран говорит про один месяц — месяц плана. Пока сегодняшний день лежит внутри него, число и
+ * линейка — про одно и то же: остаток месяца и на сколько дней вперёд он дотягивает. Когда месяц
+ * закрыт (или ещё не начался), линейки нет вовсе: прогноз «хватает до конца сентября» рядом с
+ * остатком июля был арифметически бессвязен, и честнее сказать словами, что показан закрытый
+ * месяц и почему у него нет прогноза.
  */
-function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, today, todayInPeriod, elapsedDays, payday, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; today: string; todayInPeriod: boolean; elapsedDays: number; payday: PaydayHorizon; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
+function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
   const nextMetrics = next ? plan.commitments[next.id] : undefined;
   const safeToSpend = formatMoney(safeToSpendMinor);
+  const { today, payday, elapsedDays } = clock;
   const line = reach({
     remainingMinor: safeToSpendMinor,
     spentMinor: flexibleSpentMinor,
@@ -783,29 +780,35 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpe
     ? safeToSpendMinor
     : Math.round((safeToSpendMinor - line.perDayMinor * payday.daysAhead) / 100) * 100;
   const needPerDay = payday.daysAhead > 0 ? Math.round(safeToSpendMinor / payday.daysAhead / 100) * 100 : 0;
+  const monthWord = monthOnly.format(new Date(`${plan.startMonth}-01T00:00:00.000Z`));
+  const monthOf = monthGenitive(`${plan.startMonth}-15`);
   return <>
     <h1 className="visually-hidden">Сегодня: семейный бюджет</h1>
-    <section className={`hero-card${line.state === "out" ? " danger" : ""}`}>
+    <section className={`hero-card${line.state === "out" && clock.inPeriod ? " danger" : ""}`}>
       {/* Эйбрау называет месяц плана и день внутри него. День появляется только тогда, когда
-          сегодня действительно лежит внутри периода: у закрытого месяца, открытого задним
-          числом, никакого «сегодня 9-е» не бывает, и врать про это экран не станет. */}
-      <p className="eyebrow">{monthOnly.format(new Date(`${plan.startMonth}-01T00:00:00.000Z`))}{todayInPeriod ? ` · сегодня ${Number(today.slice(8, 10))}-е` : ""}</p>
-      <span>Можно на повседневные расходы</span>
+          сегодня действительно лежит внутри периода; у закрытого месяца эйбрау так и говорит —
+          «закрыт», — и никакого «сегодня 9-е» у него не бывает. */}
+      <p className="eyebrow">{monthWord}{clock.inPeriod ? ` · сегодня ${Number(today.slice(8, 10))}-е` : clock.position === "after" ? " · закрыт" : " · ещё не начался"}</p>
+      <span>{clock.inPeriod ? "Можно на повседневные расходы" : `Осталось от повседневных лимитов ${monthOf}`}</span>
       <strong data-money-scale={moneyScale(safeToSpend)}><Money value={safeToSpendMinor} breakDigits /></strong>
-      <span className={`limit-bar hero-reach ${line.state}`} data-spent={line.fill} role="img" aria-label={`Линейка до выплаты: ${reachAnnouncement(line, payday, today)}`} />
-      {/* Слева сегодня, у самой насечки — дата края, за ней — запас. Дату сегодняшнего дня
-          подпись не повторяет: её уже сказал эйбрау над числом. */}
-      <p className="reach-legend">
-        <span><span>сегодня</span><b>{paydayLegend(payday)}</b></span>
-        <span>{line.surplusDays > 0 ? "запас" : ""}</span>
-      </p>
-      {line.state === "out"
-        ? <p><b>Повседневные лимиты исчерпаны.</b> До {until} ещё {payday.daysAhead} дн. Платежи и накопления учтены отдельно и на них это не влияет.</p>
-        : rate === null
-          ? <p><b>Хватает до {until}.</b> По повседневным лимитам в этом месяце пока ничего не записано.</p>
-          : line.state === "reaches"
-            ? <p><b>Хватает до {until}.</b> Тратим <Money value={rate} /> в день — к этому дню останется <Money value={Math.max(0, leftAtPayday)} />.</p>
-            : <p><b>Хватает до {formatDay(runsOutOn(today, line.daysCovered) ?? payday.date)}, а до {until} не дотягивает.</b> Тратим <Money value={rate} /> в день; чтобы дотянуть — <Money value={needPerDay} /> в день.</p>}
+      {clock.inPeriod ? <>
+        <span className={`limit-bar hero-reach ${line.state}`} data-spent={line.fill} role="img" aria-label={`Линейка до выплаты: ${reachAnnouncement(line, payday, today)}`} />
+        {/* Слева сегодня, у самой насечки — дата края, за ней — запас. Дату сегодняшнего дня
+            подпись не повторяет: её уже сказал эйбрау над числом. */}
+        <p className="reach-legend">
+          <span><span>сегодня</span><b>{paydayLegend(payday)}</b></span>
+          <span>{line.surplusDays > 0 ? "запас" : ""}</span>
+        </p>
+        {line.state === "out"
+          ? <p><b>Повседневные лимиты исчерпаны.</b> До {until} ещё {payday.daysAhead} дн. Платежи и накопления учтены отдельно и на них это не влияет.</p>
+          : rate === null
+            ? <p><b>Хватает до {until}.</b> По повседневным лимитам в этом месяце пока ничего не записано.</p>
+            : line.state === "reaches"
+              ? <p><b>Хватает до {until}.</b> Тратим <Money value={rate} /> в день — к этому дню останется <Money value={Math.max(0, leftAtPayday)} />.</p>
+              : <p><b>Хватает до {formatDay(runsOutOn(today, line.daysCovered) ?? payday.date)}, а до {until} не дотягивает.</b> Тратим <Money value={rate} /> в день; чтобы дотянуть — <Money value={needPerDay} /> в день.</p>}
+      </> : <p>
+        <b>{monthNominative(plan.startMonth)} {clock.position === "after" ? "закончился" : "ещё не начался"}.</b> Сегодня {formatDay(today)}, а показан месяц плана: линейка до выплаты считает только внутри своего месяца, и прогноза у него нет. Покупка, записанная сегодняшним числом, в эти конверты не попадёт.
+      </p>}
       <button className="primary-button" type="button" onClick={onAdd}><span className="icon-label"><Icon name="plus" size={20} />Записать покупку</span></button>
     </section>
 
@@ -823,8 +826,8 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpe
     </section> : null}
 
     <section className="section-card">
-      <SectionTitle title="Повседневные лимиты" note={`Та же линейка: дотянет ли конверт до ${until}`} />
-      <CategoryList rows={flexibleRows} today={today} elapsedDays={elapsedDays} payday={payday} onPlanning={onPlanning} />
+      <SectionTitle title="Повседневные лимиты" note={clock.inPeriod ? `Та же линейка: дотянет ли конверт до ${until}` : `Итог ${monthOf}: что осталось в конвертах`} />
+      <CategoryList rows={flexibleRows} clock={clock} onPlanning={onPlanning} />
     </section>
 
     <button className="year-preview" type="button" onClick={onYear}><span className="row-mark"><Icon name="calendar" size={24} /></span><span className="row-copy"><b>Посмотреть 12–24 месяца</b><small>Сезонные расходы, обучение, лагерь, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
@@ -855,19 +858,22 @@ function SplitRow({ icon, label, value }: { icon: IconName; label: string; value
 /**
  * «Год»: горизонт и платежи, которые его создают.
  *
- * Списков платежей здесь было три: «Ближайшие активные платежи» на самом горизонте, «Крупные и
- * ежегодные» и «Расходы по расписанию» под ним. Первый строился из двух последних, то есть каждый
- * платёж экран называл дважды. Остался один список, упорядоченный по дате ближайшего платежа: у
- * крупного это его срок, у регулярного — ближайшее вхождение в календарь.
+ * Верхнюю часть — вывод, строй месяца и лестницу месяцев — рисует `DashboardScreen`. Ниже стоит
+ * один список платежей, и упорядочен он по числу месяца, а не по названию: число — то, по чему
+ * семья помнит свои платежи («пятого — аренда, пятнадцатого — ЖКХ»). Крупные и разовые платежи
+ * идут своими группами: их копят помесячно, а не платят каждый месяц.
  */
-function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
-  const payments = planPaymentRows(budget, plan, categoryById);
+function YearScreen({ budget, plan, paydays, onPlanning, categoryById }: { budget: BudgetState; plan: AnnualPlan; paydays: readonly number[]; onPlanning: () => void; categoryById: Map<string, BudgetState["categories"][number]> }) {
+  const groups = paymentGroups(budget, plan, categoryById);
   return <>
-    <DashboardScreen budget={budget} onPlanning={onPlanning} />
+    <DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />
 
-    <section className="section-card">
-      <SectionTitle title="Платежи и крупные траты" note="Регулярные платим каждый месяц, крупные копим заранее" />
-      {payments.length ? <div className="plan-list">{payments.map((row) => <PlanRow key={row.key} row={row} />)}</div> : <div className="empty-state">
+    <section className="section-card" aria-labelledby="payments-by-day-title">
+      <SectionTitle id="payments-by-day-title" title="Платежи по числам" note="Число месяца — то, по чему семья помнит свои платежи" />
+      {groups.length ? groups.map((group) => <div className="pay-group" key={group.title}>
+        <h3>{group.title}</h3>
+        {group.rows.map((row) => <PayRow key={row.key} row={row} />)}
+      </div>) : <div className="empty-state">
         <span className="empty-state-mark"><Icon name="calendar-clock" size={32} /></span>
         <h3>Платежей в плане нет</h3>
         <p>Сюда попадает всё, что платят по расписанию или копят заранее: аренда, страховка, обучение, шины, отпуск. Горизонт держится на них — без них он равен доходу.</p>
@@ -878,99 +884,113 @@ function YearScreen({ budget, plan, onPlanning, categoryById }: { budget: Budget
     {/* Правило резерва объясняется один раз и по требованию: это справка, а не содержимое экрана. */}
     <details className="section-card collapsible-card">
       <summary><span>Как это считается</span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
-      <p className="body-copy">Крупный платёж показывается в месяце оплаты, но не вычитается второй раз: до срока приложение ежемесячно резервирует нужную сумму.</p>
+      <p className="body-copy">Крупный платёж показывается в месяце оплаты, но не вычитается второй раз: до срока приложение ежемесячно резервирует нужную сумму. Полоса месяца — что остаётся от дохода после платежей, резервов и взносов в цели; насечка на ней — конверты повседневных лимитов, и всё за насечкой свободно.</p>
     </details>
   </>;
 }
 
-interface PlanPaymentRow {
+interface PayRowData {
   readonly key: string;
-  readonly icon: IconName;
+  /** Число крупно: «5» и рядом «-го», либо «15» и «янв». */
+  readonly day: string;
+  readonly daySuffix: string;
   readonly name: string;
-  /** «Продукты · каждый год · 15 янв» — одна строка вместо трёх подписей. */
+  /** «Жильё · сентябрь — май» — одна строка вместо трёх подписей. */
   readonly note: string;
   readonly amountMinor: number;
   /** Сколько откладывать в месяц; `null` — регулярный платёж, его не копят. */
   readonly reserveMinor: number | null;
+  /** Состояние резерва, когда оно стоит того, чтобы его назвать: «по плану» — молчание. */
   readonly status: string | null;
-  /** Дата ближайшего платежа: по ней список и упорядочен. */
-  readonly dueDate: string;
+  /** Дата ближайшего платежа: по ней строки упорядочены внутри группы. */
+  readonly sortKey: string;
 }
 
-function planPaymentRows(
+interface PayGroup {
+  readonly title: string;
+  readonly rows: readonly PayRowData[];
+}
+
+const dayMonthShort = new Intl.DateTimeFormat("ru-RU", { month: "short" });
+
+/** «янв» — месяц срока крупного платежа без точки: «15 янв», а не «15 янв.». */
+function monthShortOf(date: string): string {
+  const parsed = new Date(`${date}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? date.slice(5, 7) : dayMonthShort.format(parsed).replace(".", "");
+}
+
+export function paymentGroups(
   budget: BudgetState,
   plan: AnnualPlan,
   categoryById: Map<string, BudgetState["categories"][number]>,
-): readonly PlanPaymentRow[] {
-  const commitments: PlanPaymentRow[] = budget.annualCommitments
-    .filter((item) => item.active)
-    .map((item) => ({
+): readonly PayGroup[] {
+  const byDay = (left: PayRowData, right: PayRowData) => left.sortKey.localeCompare(right.sortKey) || left.name.localeCompare(right.name, "ru-RU");
+  const schedules = budget.scheduledExpenses.filter((item) => item.active);
+  const monthly = schedules.filter((item) => item.mode === "monthly").map((item): PayRowData => ({
+    key: `schedule-${item.id}`,
+    day: String(item.dueDay),
+    daySuffix: "-го",
+    name: item.name,
+    note: categoryById.get(item.categoryId)?.name ?? "",
+    amountMinor: item.amountMinor,
+    reserveMinor: null,
+    status: null,
+    sortKey: String(item.dueDay).padStart(2, "0"),
+  })).sort(byDay);
+  const seasonal = schedules.filter((item) => item.mode !== "monthly").map((item): PayRowData => ({
+    key: `schedule-${item.id}`,
+    day: String(item.dueDay),
+    daySuffix: "-го",
+    name: item.name,
+    note: [categoryById.get(item.categoryId)?.name, monthsSpan(item.months ?? [])].filter((part) => part).join(" · "),
+    amountMinor: item.amountMinor,
+    reserveMinor: null,
+    status: null,
+    // Внутри группы — по числу месяца; расписание, чьи месяцы кончились, идёт в конец.
+    sortKey: `${nextScheduledDate(item, plan.startMonth) === null ? "z" : "a"}${String(item.dueDay).padStart(2, "0")}`,
+  })).sort(byDay);
+  const commitment = (item: BudgetState["annualCommitments"][number]): PayRowData => {
+    const status = plan.commitments[item.id]?.status ?? null;
+    return {
       key: `commitment-${item.id}`,
-      icon: "calendar-clock",
+      day: String(Number(item.dueDate.slice(8, 10))),
+      daySuffix: ` ${monthShortOf(item.dueDate)}`,
       name: item.name,
-      note: [categoryById.get(item.categoryId)?.name, item.recurrence === "annual" ? "каждый год" : "один раз", formatDate(item.dueDate)]
-        .filter((part) => part).join(" · "),
+      note: categoryById.get(item.categoryId)?.name ?? "",
       amountMinor: item.amountMinor,
       reserveMinor: plan.commitments[item.id]?.monthlyReserveMinor ?? 0,
-      status: plan.commitments[item.id]?.status ?? null,
-      dueDate: item.dueDate,
-    }));
-
-  const schedules: PlanPaymentRow[] = budget.scheduledExpenses
-    .filter((item) => item.active)
-    .map((item) => {
-      const dueDate = nextScheduledDate(item, plan.startMonth);
-      return {
-        key: `schedule-${item.id}`,
-        icon: "repeat" as IconName,
-        name: item.name,
-        note: [categoryById.get(item.categoryId)?.name, scheduleWords(item), `до ${item.dueDay}-го`]
-          .filter((part) => part).join(" · "),
-        amountMinor: item.amountMinor,
-        reserveMinor: null,
-        status: null,
-        // Расписание без ближайшего вхождения календарь уже прошёл: такая строка идёт в конец.
-        dueDate: dueDate ?? "9999-12-31",
-      };
-    });
-
-  return [...commitments, ...schedules].sort(
-    (left, right) => left.dueDate.localeCompare(right.dueDate) || left.name.localeCompare(right.name, "ru-RU"),
-  );
+      status: status === "on_track" ? null : status,
+      sortKey: item.dueDate,
+    };
+  };
+  const commitments = budget.annualCommitments.filter((item) => item.active);
+  const annual = commitments.filter((item) => item.recurrence === "annual").map(commitment).sort(byDay);
+  const once = commitments.filter((item) => item.recurrence !== "annual").map(commitment).sort(byDay);
+  return [
+    { title: "Каждый месяц", rows: monthly },
+    { title: "По расписанию", rows: seasonal },
+    { title: "Раз в год — откладываем помесячно", rows: annual },
+    { title: "Один раз", rows: once },
+  ].filter((group) => group.rows.length > 0);
 }
 
-/**
- * Когда платят регулярный расход — одной строкой.
- *
- * Девять трёхбуквенных сокращений подряд («янв, фев, мар, апр, май, сен, окт, ноя, дек») занимали
- * две строки и всё равно читались как шум: сколько месяцев в году платят — вот что человек хочет
- * знать в списке. Полный набор месяцев остаётся там, где его выбирают, — в плане.
- */
-function scheduleWords(item: BudgetState["scheduledExpenses"][number]): string {
-  if (item.mode === "monthly") return "каждый месяц";
-  const months = item.months ?? [];
-  if (months.length === 0) return "месяцы не выбраны";
-  if (months.length > 4) return `${months.length} месяцев в году`;
-  return months.map((month) => calendarMonths[month - 1]).join(", ");
-}
-
-function PlanRow({ row }: { row: PlanPaymentRow }) {
-  return <article className="plan-row">
-    <span className="plan-icon"><Icon name={row.icon} size={24} /></span>
-    <div>
+function PayRow({ row }: { row: PayRowData }) {
+  return <article className="pay-row">
+    <span className="pay-day"><b>{row.day}</b><small>{row.daySuffix}</small></span>
+    <div className="pay-copy">
       <strong>{row.name}</strong>
-      <small>{row.note}</small>
+      {row.note ? <small>{row.note}</small> : null}
       {row.status ? <span className={`status-chip ${row.status}`}><Icon name={statusIcons[row.status] ?? "circle-dashed"} size={20} />{statusLabels[row.status] ?? ""}</span> : null}
     </div>
-    <p>
+    <p className="pay-amount">
       <b><Money value={row.amountMinor} /></b>
-      {row.reserveMinor === null ? null : <span><Money value={row.reserveMinor} />/мес в резерв</span>}
+      {row.reserveMinor === null ? null : <span><Money value={row.reserveMinor} /> в месяц</span>}
     </p>
   </article>;
 }
 
-function SectionTitle({ title, note, icon }: { title: string; note: string; icon?: IconName }) {
-  return <div className="section-title"><div><h2>{icon ? <Icon name={icon} size={20} /> : null}{title}</h2><p>{note}</p></div></div>;
+function SectionTitle({ id, title, note, icon }: { id?: string; title: string; note: string; icon?: IconName }) {
+  return <div className="section-title"><div><h2 id={id}>{icon ? <Icon name={icon} size={20} /> : null}{title}</h2><p>{note}</p></div></div>;
 }
 
 /** Глиф состояния линейки: слово и глиф вместе, цвет — третьим (§6). */
@@ -1006,8 +1026,11 @@ function reachAnnouncement(line: Reach, payday: PaydayHorizon, today: string): s
  * Насечка у всех строк стоит на одной доле полосы, поэтому сквозь карточку проходит одна
  * вертикаль, и видно, какие конверты её не пересекают. Полоса «сколько процентов лимита
  * израсходовано» отвечала на вопрос, которого семья не задаёт.
+ *
+ * У закрытого месяца линейки нет: прогноз «до 20 июля» из сентября — не прогноз. Строка тогда
+ * называет итог словами и числами: сколько осталось, сколько ушло из лимита.
  */
-function CategoryList({ rows, today, elapsedDays, payday, onPlanning }: { rows: CategoryRow[]; today: string; elapsedDays: number; payday: PaydayHorizon; onPlanning: () => void }) {
+function CategoryList({ rows, clock, onPlanning }: { rows: CategoryRow[]; clock: PeriodClock; onPlanning: () => void }) {
   // Пустой список — не пустая разметка: §6 исследования требует назвать состояние, объяснить его
   // и дать дорогу дальше. Раньше здесь оставалась пустая карточка без единого слова.
   if (!rows.length) return <div className="empty-state">
@@ -1016,7 +1039,8 @@ function CategoryList({ rows, today, elapsedDays, payday, onPlanning }: { rows: 
     <p>Лимит — сумма на месяц по одной статье: продукты, транспорт, развлечения. Пока его нет, приложение не может сказать, сколько по ней осталось.</p>
     <button className="primary-button" type="button" onClick={onPlanning}>Задать лимиты в плане</button>
   </div>;
-  return <ul className="category-list">{rows.map(({ category, metric }) => {
+  const { today, payday, elapsedDays } = clock;
+  return <ul className={`category-list${clock.inPeriod ? "" : " closed"}`}>{rows.map(({ category, metric }) => {
     if (!metric) return null;
     const visual = categoryVisual(category);
     const line = reach({
@@ -1029,21 +1053,32 @@ function CategoryList({ rows, today, elapsedDays, payday, onPlanning }: { rows: 
     const rate = perDayMinor(line);
     const out = runsOutOn(today, line.daysCovered);
     const overMinor = metric.overMinor ?? 0;
+    // Закрытый месяц: слово итога вместо слова прогноза. «Хватило» — конверт дожил до конца
+    // месяца с остатком; «Конверт пуст» и «Перелимит» — факты, они не меняются.
+    const chipState: ReachState = line.state === "out" ? "out" : clock.inPeriod ? line.state : "reaches";
+    const chipWord = line.state === "out" && overMinor > 0
+      ? <>Перелимит <Money value={overMinor} /></>
+      : clock.inPeriod ? reachWord(line.state) : line.state === "out" ? reachWord("out") : "Хватило";
     return <li key={category.id}>
       <div className="category-head">
         <span className={`category-tile tone-${visual.tone}`}><Icon name={visual.icon} size={24} /></span>
         <strong>{category.name}</strong>
-        <span className={`status-chip ${line.state}`}>
-          <Icon name={reachIcons[line.state]} size={20} />
-          {line.state === "out" && overMinor > 0 ? <>Перелимит <Money value={overMinor} /></> : reachWord(line.state)}
+        <span className={`status-chip ${chipState}`}>
+          <Icon name={reachIcons[chipState]} size={20} />
+          {chipWord}
         </span>
       </div>
-      <span className={`limit-bar ${line.state}`} data-spent={line.fill} role="img" aria-label={`${category.name}: ${reachAnnouncement(line, payday, today)}`} />
+      {clock.inPeriod ? <span className={`limit-bar ${line.state}`} data-spent={line.fill} role="img" aria-label={`${category.name}: ${reachAnnouncement(line, payday, today)}`} /> : null}
       <div className="category-values">
-        <span><b><Money value={Math.max(0, metric.remainingMinor)} /></b>{rate === null ? "" : <> · <Money value={rate} /> в день</>}</span>
-        {line.state === "out"
-          ? <span className="out">{overMinor > 0 ? "потрачено сверх лимита" : "конверт пуст"}</span>
-          : <span className={line.state === "short" ? "short" : undefined}>{out === null ? "трат не было" : `до ${formatDay(out)}`}</span>}
+        {clock.inPeriod ? <>
+          <span><b><Money value={Math.max(0, metric.remainingMinor)} /></b>{rate === null ? "" : <> · <Money value={rate} /> в день</>}</span>
+          {line.state === "out"
+            ? <span className="out">{overMinor > 0 ? "потрачено сверх лимита" : "конверт пуст"}</span>
+            : <span className={line.state === "short" ? "short" : undefined}>{out === null ? "трат не было" : `до ${formatDay(out)}`}</span>}
+        </> : <>
+          <span><b><Money value={Math.max(0, metric.remainingMinor)} /></b> осталось</span>
+          <span className={line.state === "out" ? "out" : undefined}>ушло <Money value={metric.actualMinor} /> из <Money value={metric.availableMinor} /></span>
+        </>}
       </div>
     </li>;
   })}</ul>;
@@ -1098,6 +1133,14 @@ function transactionSign(kind: Transaction["kind"]): "+" | "−" | undefined {
   return kind === "expense" ? "−" : undefined;
 }
 
+/**
+ * «Ещё» — список: семья, план, данные, приложение.
+ *
+ * Экран не упразднён нарочно. Приложение офлайн-первое, сервер копией не является, и при утрате
+ * всех устройств данные не восстановить, — поэтому «Сделать копию» обязано находиться с одного
+ * взгляда, а не за дверью. Юридические абзацы при этом свёрнуты в строку факта: их читают один
+ * раз, а копию делают каждый месяц.
+ */
 function MoreScreen(props: {
   budget: BudgetState;
   storageHealth: StorageHealth | null;
@@ -1109,22 +1152,48 @@ function MoreScreen(props: {
   onPersistClear: () => Promise<void>;
   onPublishEmpty: () => void;
   onFamily: () => void;
+  onPlanning: () => void;
+  familyNote: string;
+  monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }) {
   return <>
-    <div className="screen-heading"><div><span className="card-kicker">Приложение</span><h1>Данные и установка</h1><p>Бюджет работает локально и без регистрации.</p></div></div>
-    {props.showIosInstall ? <div className="install-note"><strong><Icon name="smartphone" size={20} />Установите на iPhone</strong><p>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</p></div> : null}
-    <div className="storage-context" role="status"><strong><Icon name="hard-drive" size={20} />Локальное хранилище</strong><span>{storageText(props.storageHealth)}</span></div>
+    <h1 className="visually-hidden">Ещё: семья, план и данные</h1>
+    <section className="list-group" aria-labelledby="more-family-title">
+      <h2 id="more-family-title" className="list-kicker">Семья</h2>
+      <ul className="list-card">
+        <li><button className="list-row" type="button" onClick={props.onFamily}><span className="list-icon"><Icon name="users" size={24} /></span><span className="list-copy"><strong>Семья и синхронизация</strong><small>{props.familyNote}</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+      </ul>
+    </section>
+
+    <section className="list-group" aria-labelledby="more-plan-title">
+      <h2 id="more-plan-title" className="list-kicker">План</h2>
+      <ul className="list-card">
+        {/* Строй месяца одной строкой: то, на чём стоят «Сегодня» и «Год», и дверь туда, где это правят. */}
+        <li><button className="list-row" type="button" onClick={props.onPlanning}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>Наш месяц</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+      </ul>
+    </section>
+
     <DataManagementScreen
       budget={props.budget}
       lastSuccessfulBackup={props.lastSuccessfulBackup}
+      showIosInstall={props.showIosInstall}
       onCreateBackup={props.onCreateBackup}
       onRecordSuccessfulBackup={props.onRecordSuccessfulBackup}
       onRestoreBackup={props.onRestoreBackup}
       onPersistClear={props.onPersistClear}
       onPublishEmpty={props.onPublishEmpty}
     />
-    <button className="year-preview" type="button" onClick={props.onFamily}><span className="row-mark"><Icon name="users" size={24} /></span><span className="row-copy"><b>Семья и синхронизация</b><small>Участники, приглашение, отпечатки ключей. Без входа приложение работает как сейчас.</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button>
-    <section className="section-card"><SectionTitle title="Конфиденциальность" note="Данные остаются в этом браузере, пока вы не вошли" icon="shield" /><p className="body-copy">Нет рекламы и аналитики. Семейная синхронизация необязательна: пока вы не вошли, приложение не обращается к сети и ничего не отправляет.</p></section>
+
+    <section className="list-group" aria-labelledby="more-about-title">
+      <h2 id="more-about-title" className="list-kicker">О приложении</h2>
+      <ul className="list-card">
+        <li><details className="list-fact">
+          <summary><span className="list-icon"><Icon name="shield" size={24} /></span><span className="list-copy"><strong>Как хранятся данные</strong><small>На этом устройстве; в сеть — только после входа</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
+          <p>Нет рекламы и аналитики. Семейная синхронизация необязательна: пока вы не вошли, приложение не обращается к сети и ничего не отправляет. Сервер семьи не хранит имена и не является резервной копией — при утрате всех устройств данные не восстановить, поэтому копию делайте сами.</p>
+        </details></li>
+        <li><div className="list-row static" role="status"><span className="list-icon"><Icon name="hard-drive" size={24} /></span><span className="list-copy"><strong>Локальное хранилище</strong><small>{storageText(props.storageHealth)}</small></span></div></li>
+      </ul>
+    </section>
   </>;
 }

@@ -56,8 +56,9 @@ async function setSyncServer(
 
 /* ───────────────────────────── Экраны и величины ───────────────────────────── */
 
+/** Герой «Сегодня»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
 function flexibleRemaining(page: Page): Locator {
-  return page.getByText("Можно на повседневные расходы").locator("..").getByRole("strong");
+  return page.locator(".hero-card > strong");
 }
 
 async function restoreCanonicalBudget(page: Page): Promise<void> {
@@ -77,10 +78,9 @@ async function restoreCanonicalBudget(page: Page): Promise<void> {
 /** Июль G-002 в таблице «Месяцы по числам»: резерв и свободный остаток в одной строке. */
 async function expectJulyRow(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Год", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Финансовый горизонт семьи" })).toBeVisible();
-  await expect(
-    page.getByText("Меньше всего свободно").locator("..").getByRole("strong"),
-  ).toHaveText(TIGHTEST_MONTH_FREE);
+  // Заголовок «Года» — вывод; дно горизонта стоит в лестнице месяцев и выделено весом.
+  await expect(page.getByRole("heading", { name: /Плана хватает во все 12 месяцев/u })).toBeVisible();
+  await expect(page.locator(".ladder-row.tight .ladder-value").first()).toHaveText(TIGHTEST_MONTH_FREE);
   const numbers = page.getByRole("group", { name: "Месяцы по числам" }).or(
     page.locator("details").filter({ hasText: "Месяцы по числам" }),
   );
@@ -93,20 +93,31 @@ async function expectJulyRow(page: Page): Promise<void> {
 
 async function expectOperationCount(page: Page, count: number): Promise<void> {
   await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await openHistory(page);
   await expect(
     page.getByRole("status").filter({ hasText: `Показано ${count} из ${count}` }),
   ).toBeVisible();
 }
 
+/** «Вся история» свёрнута под табло: справка, а не действие. Раскрывается, если ещё не раскрыта. */
+async function openHistory(page: Page): Promise<void> {
+  const details = page.locator(".history-card details");
+  if ((await details.getAttribute("open")) === null) {
+    await page.getByText("Вся история", { exact: true }).click();
+  }
+}
+
+/** Покупка на табло: сумма, дата за «Изменить», конверт касанием — и отдельная кнопка записи. */
 async function recordExpense(
   page: Page,
   options: { readonly date: string; readonly amount: string; readonly category: string },
 ): Promise<void> {
   await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await page.getByRole("button", { name: "Изменить", exact: true }).click();
   await page.getByLabel("Дата").fill(options.date);
   await page.getByLabel("Сумма, ₽").fill(options.amount);
-  await page.getByLabel("Категория расходов").selectOption({ label: options.category });
-  await page.getByRole("button", { name: "Сохранить операцию «Расход»" }).click();
+  await page.getByRole("button", { name: new RegExp(`^${options.category}:`, "u") }).click();
+  await page.getByRole("button", { name: new RegExp(`^Записать .* в «${options.category}»$`, "u") }).click();
 }
 
 /** Тревоги главного потока — без тех, что бюджет ставит сам (перерасход категории). */

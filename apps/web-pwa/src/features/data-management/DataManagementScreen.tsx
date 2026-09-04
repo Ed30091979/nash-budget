@@ -39,6 +39,8 @@ export interface CreatedBackup {
 export interface DataManagementScreenProps {
   readonly budget: BudgetState;
   readonly lastSuccessfulBackup: string | null;
+  /** iPhone в Safari без установки: строка с подсказкой стоит среди данных, а не отдельной плашкой. */
+  readonly showIosInstall?: boolean;
   readonly onCreateBackup: () => Promise<CreatedBackup>;
   readonly onRecordSuccessfulBackup: (createdAt: string) => Promise<void>;
   readonly onRestoreBackup: (file: RecoveryFile) => Promise<void>;
@@ -53,9 +55,29 @@ const SAFE_ERRORS = {
   clear: "Не удалось удалить данные. Текущий бюджет сохранён.",
 } as const;
 
+/** «4 операции» — число тянет существительное за собой. */
+function operationsWord(count: number): string {
+  const tail = count % 100;
+  const last = count % 10;
+  if (tail >= 11 && tail <= 14) return `${count} операций`;
+  if (last === 1) return `${count} операция`;
+  if (last >= 2 && last <= 4) return `${count} операции`;
+  return `${count} операций`;
+}
+
+/**
+ * Данные: копия, таблица, восстановление, удаление — строками списка.
+ *
+ * Приложение офлайн-первое, и сервер копией не является: при утрате всех устройств данные не
+ * восстановить. Поэтому «Сделать копию» — первая строка списка, а не кнопка в четвёртой карточке
+ * после трёх абзацев. Абзацы никуда не делись: они свёрнуты в строку факта «Где хранятся файлы»,
+ * и на них по-прежнему ссылаются описания действий (`aria-describedby`) — читающий с экрана
+ * услышит предупреждение до нажатия, а глаз увидит его по требованию.
+ */
 export function DataManagementScreen({
   budget,
   lastSuccessfulBackup,
+  showIosInstall = false,
   onCreateBackup,
   onRecordSuccessfulBackup,
   onRestoreBackup,
@@ -193,42 +215,38 @@ export function DataManagementScreen({
   );
 
   return (
-    <section className="data-management" aria-labelledby="data-management-title" aria-busy={busy}>
-      <header>
-        <p className="eyebrow">Данные и восстановление</p>
-        <h2 id="data-management-title">Выгрузка и резервная копия</h2>
-        <p>
-          Приложение само не загружает файлы ни на свой сервер, ни на сторонние серверы.
-          Место сохранения выбираете вы. Если выбрать облачную папку, незашифрованный файл
-          может синхронизироваться с облаком.
-        </p>
-      </header>
-
-      <div className="data-management-grid">
-        <article className="data-management-card">
-          <h3><Icon name="download" size={20} />Резервная копия JSON</h3>
-          <p>Последняя успешная копия: <strong>{formatLastBackupDate(lastBackupAt)}</strong>.</p>
-          <p id="json-backup-notice" role="note">JSON не зашифрован и читается как обычный текст. Храните файл в безопасном месте.</p>
-          <button type="button" disabled={busy} aria-describedby="json-backup-notice" onClick={runBackup}>
-            {state.activity === "backup" ? "Готовим копию…" : "Скачать резервную копию"}
+    <section className="data-management list-group" aria-labelledby="data-management-title" aria-busy={busy}>
+      <h2 id="data-management-title" className="list-kicker">Данные</h2>
+      <ul className="list-card">
+        <li>
+          <button className="list-row" type="button" disabled={busy} aria-describedby="json-backup-notice" onClick={runBackup}>
+            <span className="list-icon"><Icon name="download" size={24} /></span>
+            <span className="list-copy">
+              <strong>{state.activity === "backup" ? "Готовим копию…" : "Сделать резервную копию"}</strong>
+              <small>Последняя успешная копия: {formatLastBackupDate(lastBackupAt)}</small>
+            </span>
+            <Icon name="chevron-right" size={24} className="row-chevron" />
           </button>
-        </article>
-
-        <article className="data-management-card">
-          <h3><Icon name="table" size={20} />Таблица операций CSV</h3>
-          <p>В выгрузке: <strong>{budget.transactions.length}</strong> операций.</p>
-          <p id="csv-export-notice" role="note">CSV не зашифрован и читается как обычный текст. Это таблица для Excel, а не резервная копия: импорт CSV не поддерживается.</p>
-          <span className="visually-hidden">{HUMAN_READABLE_CSV_NOTICE}</span>
-          <button type="button" disabled={busy} aria-describedby="csv-export-notice" onClick={runCsv}>
-            {state.activity === "csv" ? "Готовим таблицу…" : "Скачать таблицу CSV"}
+        </li>
+        <li>
+          <button className="list-row" type="button" disabled={busy} aria-describedby="csv-export-notice" onClick={runCsv}>
+            <span className="list-icon"><Icon name="table" size={24} /></span>
+            <span className="list-copy">
+              <strong>{state.activity === "csv" ? "Готовим таблицу…" : "Таблица операций CSV"}</strong>
+              <small><strong>{operationsWord(budget.transactions.length)}</strong> · для Excel, не резервная копия</small>
+              <span className="visually-hidden">{HUMAN_READABLE_CSV_NOTICE}</span>
+            </span>
+            <Icon name="chevron-right" size={24} className="row-chevron" />
           </button>
-        </article>
-
-        <article className="data-management-card">
-          <h3><Icon name="upload" size={20} />Восстановить из JSON</h3>
-          <p id="json-restore-notice" role="note">Выбирайте только свою доверенную JSON-копию размером не больше 5 МБ. Восстановление заменит текущие локальные данные.</p>
-          <label className="file-button" htmlFor="backup-file">
-            <span>{state.activity === "restore" ? "Проверяем копию…" : "Выбрать резервную копию JSON"}</span>
+        </li>
+        <li>
+          <label className="file-button list-row" htmlFor="backup-file">
+            <span className="list-icon"><Icon name="upload" size={24} /></span>
+            <span className="list-copy">
+              <strong>{state.activity === "restore" ? "Проверяем копию…" : "Восстановить из копии"}</strong>
+              <small>Файл JSON до 5 МБ · заменит данные на этом устройстве</small>
+            </span>
+            <Icon name="chevron-right" size={24} className="row-chevron" />
             <input
               id="backup-file"
               type="file"
@@ -238,25 +256,49 @@ export function DataManagementScreen({
               onChange={restore}
             />
           </label>
-        </article>
-
-        <article className="data-management-card danger-zone">
-          <h3><Icon name="trash-2" size={20} />Удалить локальные данные</h3>
-          <p>После удаления откроется первый запуск. Перед этим скачайте резервную копию.</p>
-          <button
-            ref={clearTriggerRef}
-            type="button"
-            className="danger-button"
-            disabled={busy}
-            onClick={() => dispatch({ type: "open-clear" })}
-          >
-            Перейти к удалению
-          </button>
-        </article>
-      </div>
+        </li>
+        {showIosInstall ? <li>
+          <div className="list-row static">
+            <span className="list-icon"><Icon name="smartphone" size={24} /></span>
+            <span className="list-copy">
+              <strong>Установить на iPhone</strong>
+              <small>В Safari нажмите «Поделиться» → «На экран Домой». После первого запуска план доступен без сети.</small>
+            </span>
+          </div>
+        </li> : null}
+        <li><details className="list-fact">
+          <summary><span className="list-icon"><Icon name="shield" size={24} /></span><span className="list-copy"><strong>Где хранятся файлы</strong><small>Место выбираете вы; файлы не зашифрованы</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
+          <p>
+            Приложение само не загружает файлы ни на свой сервер, ни на сторонние серверы.
+            Место сохранения выбираете вы. Если выбрать облачную папку, незашифрованный файл
+            может синхронизироваться с облаком.
+          </p>
+          <p id="json-backup-notice" role="note">JSON не зашифрован и читается как обычный текст. Храните файл в безопасном месте.</p>
+          <p id="csv-export-notice" role="note">CSV не зашифрован и читается как обычный текст. Это таблица для Excel, а не резервная копия: импорт CSV не поддерживается.</p>
+          <p id="json-restore-notice" role="note">Выбирайте только свою доверенную JSON-копию размером не больше 5 МБ. Восстановление заменит текущие локальные данные.</p>
+        </details></li>
+      </ul>
 
       {state.message ? <p role="status" aria-live="polite">{state.message}</p> : null}
       {state.error ? <p role="alert">{state.error}</p> : null}
+
+      <ul className="list-card list-danger">
+        <li>
+          <button
+            ref={clearTriggerRef}
+            type="button"
+            className="list-row danger"
+            disabled={busy}
+            onClick={() => dispatch({ type: "open-clear" })}
+          >
+            <span className="list-icon"><Icon name="trash-2" size={24} /></span>
+            <span className="list-copy">
+              <strong>Удалить данные с этого устройства</strong>
+              <small>Откроется первый запуск. Перед этим сделайте копию.</small>
+            </span>
+          </button>
+        </li>
+      </ul>
 
       {state.clearConfirmationOpen
         ? typeof document === "undefined"

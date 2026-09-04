@@ -60,6 +60,7 @@ export interface DashboardModel {
    * пересказывал таблицу и печатал месяц машинным `2026-07`.
    */
   readonly summary: string;
+  readonly verdict: HorizonVerdict;
 }
 
 export interface OperationSearchFilters {
@@ -218,20 +219,32 @@ function tightestMonth(months: readonly DashboardMonth[]): DashboardTightestMont
 }
 
 /**
- * Вывод, который график сообщает сам.
+ * Вывод, который лестница месяцев сообщает сама.
  *
  * Сначала беда, если она есть: месяц, где плана больше дохода, важнее любой другой мысли о
  * горизонте. Если беды нет — разброс: от самого тесного месяца до самого свободного. Числа названы
- * словами и не округляются.
+ * словами и не округляются. Заголовок короткий — это `h1` экрана, — а подробность стоит под ним;
+ * `summary` склеивает их в одну фразу для чтения вслух.
  */
-function horizonSummary(months: readonly DashboardMonth[]): string {
+export interface HorizonVerdict {
+  readonly title: string;
+  readonly detail: string;
+}
+
+export function horizonVerdict(months: readonly DashboardMonth[]): HorizonVerdict {
   const shortfalls = months.filter((month) => month.spendableAfterPlanMinor < 0);
   if (shortfalls.length === 1) {
     const only = shortfalls[0]!;
-    return `Плана больше дохода в ${monthNameIn(only.month)}: не хватает ${formatMoney(-only.spendableAfterPlanMinor)}.`;
+    return {
+      title: `Плана больше дохода в ${monthNameIn(only.month)}`,
+      detail: `Сверх дохода ${formatMoney(-only.spendableAfterPlanMinor)}; остальные месяцы горизонта проходят.`,
+    };
   }
   if (shortfalls.length > 1) {
-    return `Плана больше дохода в ${shortfalls.length} месяцах из ${months.length}, раньше всего — в ${monthNameIn(shortfalls[0]!.month)}.`;
+    return {
+      title: `Плана больше дохода в ${shortfalls.length} месяцах из ${months.length}`,
+      detail: `Раньше всего — в ${monthNameIn(shortfalls[0]!.month)}: сверх дохода ${formatMoney(-shortfalls[0]!.spendableAfterPlanMinor)}.`,
+    };
   }
   const lowest = tightestMonth(months);
   const highest = months.reduce(
@@ -239,9 +252,20 @@ function horizonSummary(months: readonly DashboardMonth[]): string {
     months[0]!,
   );
   if (highest.spendableAfterPlanMinor === lowest.freeMinor) {
-    return `Плана хватает во все ${months.length} месяцев: свободно ${formatMoney(lowest.freeMinor)} в каждом.`;
+    return {
+      title: `Плана хватает во все ${months.length} месяцев`,
+      detail: `Свободно ${formatMoney(lowest.freeMinor)} в каждом.`,
+    };
   }
-  return `Плана хватает во все ${months.length} месяцев: свободно от ${formatMoney(lowest.freeMinor)} в ${monthNameIn(lowest.month)} до ${formatMoney(highest.spendableAfterPlanMinor)} в ${monthNameIn(highest.month)}.`;
+  return {
+    title: `Плана хватает во все ${months.length} месяцев`,
+    detail: `Свободно от ${formatMoney(lowest.freeMinor)} в ${monthNameIn(lowest.month)} до ${formatMoney(highest.spendableAfterPlanMinor)} в ${monthNameIn(highest.month)}.`,
+  };
+}
+
+function horizonSummary(months: readonly DashboardMonth[]): string {
+  const verdict = horizonVerdict(months);
+  return `${verdict.title}: ${verdict.detail.charAt(0).toLowerCase()}${verdict.detail.slice(1)}`;
 }
 
 export function createDashboardModel(
@@ -262,6 +286,7 @@ export function createDashboardModel(
     months,
     tightest: tightestMonth(months),
     summary: horizonSummary(months),
+    verdict: horizonVerdict(months),
   };
 }
 
@@ -354,4 +379,145 @@ function filterOperationSearchIndex(
       if (query.length === 0) return true;
       return index.searchableById.get(transaction.id)!.includes(query);
     });
+}
+
+/** Три буквы месяца — для оси лестницы и коротких подписей расписания. */
+export const MONTH_SHORT: readonly string[] = [
+  "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек",
+];
+
+/**
+ * Выбранные месяцы расписания одной фразой: «сентябрь — май» в списке, «сен–май» на оси.
+ *
+ * Девять сокращений подряд занимали две строки и читались шумом. Если месяцы идут подряд — хотя
+ * бы через Новый год, — фраза называет края; иначе перечисляет, а сверх четырёх — считает.
+ */
+export function monthsSpan(months: readonly number[], form: "long" | "short" = "long"): string {
+  const chosen = new Set(months.filter((month) => Number.isInteger(month) && month >= 1 && month <= 12));
+  if (chosen.size === 0) return "месяцы не выбраны";
+  if (chosen.size === 12) return "каждый месяц";
+  const sorted = [...chosen].sort((left, right) => left - right);
+  const names = form === "long" ? MONTH_NAMES : MONTH_SHORT;
+  const previous = (month: number) => (month === 1 ? 12 : month - 1);
+  const next = (month: number) => (month === 12 ? 1 : month + 1);
+  const starts = sorted.filter((month) => !chosen.has(previous(month)));
+  if (starts.length === 1) {
+    const start = starts[0]!;
+    let end = start;
+    while (chosen.has(next(end))) end = next(end);
+    if (start === end) return names[start - 1]!;
+    return form === "long" ? `${names[start - 1]} — ${names[end - 1]}` : `${names[start - 1]}–${names[end - 1]}`;
+  }
+  if (sorted.length <= 4) return sorted.map((month) => MONTH_SHORT[month - 1]).join(", ");
+  return `${sorted.length} месяцев в году`;
+}
+
+/**
+ * Лестница месяцев: одна строка на месяц, длина полосы — деньги.
+ *
+ * Полоса — что остаётся от дохода после платежей, резервов и взносов в цели, то есть свободный
+ * остаток вместе с конвертами. Насечка на ней — конверты повседневных лимитов: полоса, дотянувшая
+ * до насечки, значит «конверты полны», всё за насечкой — запас. Насечка одна на всю лестницу —
+ * сквозь неё проходит одна вертикаль, и видно, какой месяц до неё не дотягивает.
+ *
+ * Доли квантованы: CSP запрещает инлайновые стили, и положение едет атрибутом. Насечка — шагом
+ * 1 %, заливка — шагом 5 %, и, как у линейки до выплаты, заливка прижимается к нужной стороне
+ * насечки: месяц с запасом не остановится перед ней, месяц с нехваткой не дойдёт до неё.
+ */
+export type LadderState = "normal" | "tight" | "short" | "out";
+
+export interface LadderRow {
+  readonly month: string;
+  readonly label: string;
+  /** Первый месяц нового года — над ним лестница ставит год. */
+  readonly yearBreak: boolean;
+  readonly spendableMinor: number;
+  readonly fill: number;
+  readonly state: LadderState;
+}
+
+export interface LadderModel {
+  readonly rows: readonly LadderRow[];
+  /** Где стоит насечка конвертов, в процентах ширины полосы, шагом 1 %. */
+  readonly markPercent: number;
+  readonly envelopesMinor: number;
+}
+
+const LADDER_STEP = 5;
+
+function ladderStep(ratio: number): number {
+  if (!Number.isFinite(ratio)) return 0;
+  return Math.round((Math.min(Math.max(ratio, 0), 1) * 100) / LADDER_STEP) * LADDER_STEP;
+}
+
+export function ladderModel(months: readonly DashboardMonth[], floorMinor: number): LadderModel {
+  const envelopesMinor = months.reduce((top, month) => Math.max(top, month.flexiblePlanMinor), 0);
+  const totals = months.map((month) => month.spendableAfterPlanMinor + month.flexiblePlanMinor);
+  const scale = Math.max(envelopesMinor, ...totals, 1);
+  const markPercent = Math.min(99, Math.max(0, Math.round((envelopesMinor / scale) * 100)));
+  const markAbove = Math.ceil(markPercent / LADDER_STEP) * LADDER_STEP;
+  const markBelow = Math.floor(markPercent / LADDER_STEP) * LADDER_STEP - LADDER_STEP;
+  const rows = months.map((month, index): LadderRow => {
+    const total = totals[index]!;
+    const free = month.spendableAfterPlanMinor;
+    const raw = ladderStep(total / scale);
+    const state: LadderState = total <= 0 ? "out" : free < 0 ? "short" : free === floorMinor ? "tight" : "normal";
+    const fill = state === "out"
+      ? 0
+      : free < 0
+        ? Math.max(0, Math.min(markBelow, raw))
+        : Math.min(100, Math.max(markAbove, raw));
+    return {
+      month: month.month,
+      label: MONTH_SHORT[Number(month.month.slice(5, 7)) - 1] ?? month.month,
+      yearBreak: index > 0 && month.month.slice(5, 7) === "01",
+      spendableMinor: free,
+      fill,
+      state,
+    };
+  });
+  return { rows, markPercent, envelopesMinor };
+}
+
+/**
+ * Строй месяца: регулярные платежи на своих числах.
+ *
+ * Число месяца — то, по чему семья помнит платежи: «пятого — аренда, пятнадцатого — ЖКХ». Ось
+ * 1…31 с выплатами и платежами на ней — тот самый календарь месяца, которого горизонту не
+ * хватало. Подпись у поздних чисел идёт влево от насечки: справа ей уже негде поместиться.
+ */
+export interface ShapeRow {
+  readonly key: string;
+  readonly day: number;
+  readonly name: string;
+  readonly amountMinor: number;
+  /** «сен–май» у сезонного расписания; пусто у ежемесячного. */
+  readonly note: string;
+  readonly side: "left" | "right";
+}
+
+const SHAPE_LABEL_LEFT_FROM = 17;
+
+export function monthShape(state: Pick<BudgetState, "scheduledExpenses">): readonly ShapeRow[] {
+  return state.scheduledExpenses
+    .filter((item) => item.active)
+    .map((item): ShapeRow => {
+      const day = Math.min(31, Math.max(1, item.dueDay));
+      return {
+        key: item.id,
+        day,
+        name: item.name,
+        amountMinor: item.amountMinor,
+        note: item.mode === "monthly" ? "" : monthsSpan(item.months ?? [], "short"),
+        side: day >= SHAPE_LABEL_LEFT_FROM ? "left" : "right",
+      };
+    })
+    .sort((left, right) => left.day - right.day || left.name.localeCompare(right.name, "ru-RU"));
+}
+
+/** Строй месяца словами — для читающих с экрана: ось и метки на ней объявлены одной фразой. */
+export function shapeAnnouncement(rows: readonly ShapeRow[], paydays: readonly number[]): string {
+  const pay = paydays.length ? `выплаты ${paydays.map((day) => `${day}-го`).join(" и ")}` : "даты выплат пока не выведены";
+  const items = rows.map((row) => `${row.name} ${row.day}-го, ${formatMoney(row.amountMinor)}${row.note ? ` (${row.note})` : ""}`);
+  return `Числа месяца: ${pay}${items.length ? `; платежи: ${items.join(", ")}` : ""}.`;
 }

@@ -25,7 +25,7 @@ async function loadDemo(page: Page) {
     page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.getByText("Можно на повседневные расходы")).toBeVisible();
+  await expect(page.locator(".hero-card")).toBeVisible();
 }
 
 async function expectFocusedRouteHeading(page: Page, navigationName: string) {
@@ -203,7 +203,7 @@ test("keyboard navigation exposes the skip link and route focus without stealing
 }) => {
   await loadDemo(page);
   await page.reload();
-  await expect(page.getByText("Можно на повседневные расходы")).toBeVisible();
+  await expect(page.locator(".hero-card")).toBeVisible();
 
   await page.keyboard.press("Tab");
   await expect(page.locator(".skip-link")).toBeFocused();
@@ -220,12 +220,14 @@ test("keyboard navigation exposes the skip link and route focus without stealing
   await expect(amount).toHaveValue("1234");
   await expect(page.getByRole("button", { name: "Очистить черновик" })).toBeVisible();
 
+  // Конверт — кнопка выбора с доступным именем, которое говорит, что в нём сейчас.
   await expect(
-    page.getByRole("status", { name: /Продукты: .*использовано/u }),
+    page.getByRole("button", { name: /^Продукты: в конверте/u }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("status", { name: "Состояние сети: в сети" }),
-  ).toHaveText("в сети");
+  // Состояния сети в дереве доступности больше нет — и требовать его незачем: без
+  // синхронизации приложение к сети не обращается, и слово «в сети» было бы сведением ни о чём.
+  // О сети говорит только индикатор синхронизации, а он появляется после входа в семью.
+  await expect(page.getByRole("status", { name: /Состояние сети/u })).toHaveCount(0);
 });
 
 test("phone, 200% zoom equivalent, and iPad layouts preserve targets and containment", async ({

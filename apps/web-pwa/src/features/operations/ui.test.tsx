@@ -12,6 +12,10 @@ import { describe, expect, it, vi } from "vitest";
 import { OperationsScreen } from "./OperationsScreen";
 import { createOperationsSubmissionGate } from "./form-state";
 import { archiveCategory, createTransaction } from "./model";
+import { periodClock } from "../../reach";
+
+/** Часы образца: 13 июля внутри июльского периода, выплат в истории нет — насечка на конце месяца. */
+const JULY_CLOCK = periodClock({ startDate: "2026-07-01", endDate: "2026-07-31" }, [], "2026-07-13");
 
 const extraIds = {
   categories: {
@@ -83,13 +87,16 @@ function textOf(markup: string): string {
 }
 
 describe("operations UI", () => {
-  it("renders all operation flows, exact summaries and accessible limit signals", () => {
-    const html = plainText(renderToStaticMarkup(<OperationsScreen budget={withAllSignalsAndFlows()} onChange={vi.fn(async () => undefined)} />));
+  it("держит все пять видов операций достижимыми и показывает конверты табло с итогами под ними", () => {
+    const html = plainText(renderToStaticMarkup(<OperationsScreen budget={withAllSignalsAndFlows()} clock={JULY_CLOCK} onChange={vi.fn(async () => undefined)} />));
     const text = textOf(html);
 
+    // Покупка — через табло; доход, возврат, перевод и взнос — той же формой через строку
+    // «Доход или перевод» и выбор вида. Ни один вид не потерян.
     for (const label of ["Доход", "Расход", "Возврат", "Перевод", "Взнос в цель"]) {
       expect(html).toContain(`>${label}<`);
     }
+    expect(text).toContain("Доход или перевод");
     expect(html).toContain("Счёт оплаты");
     expect(text).toContain("Доход 100 000 ₽");
     expect(text).toContain("Расходы с учётом возвратов 78 150 ₽");
@@ -100,27 +107,38 @@ describe("operations UI", () => {
     expect(text).toContain("Перевод 2026-07-11 · Основной → Накопительный 5 000 ₽");
     expect(text).toContain("Взнос в цель 2026-07-10 · Основной → Резерв 10 000 ₽");
 
-    expect(html).toContain("В норме");
-    expect(html).toContain("Почти лимит");
-    expect(html).toContain("Лимит исчерпан");
-    expect(html).toContain("Перелимит");
-    expect(html).toContain("Без плана");
-    expect(html).toContain("80%");
-    expect(html).toContain("100%");
-    expect(html).toContain("150%");
-    expect(html).toContain("нет плана");
-    expect(html).toMatch(/role="status" aria-label="Точный перелимит: Перелимит,[^"]*150%"/);
-    // §6: состояние лимита рисует векторный глиф, а не текстовый символ, и стоит он в чипе —
-    // рядом со словом «Перелимит». Плитка строки занята категорией: цвет метит категорию, а не
-    // величину (§8), поэтому «Продукты» окрашены одинаково в норме и в перерасходе.
-    const overChip = html.match(/<span class="status-chip over_limit">.*?<\/span>/su)?.[0] ?? "";
-    expect(overChip).toContain("#glyph-circle-alert");
-    expect(overChip).toContain('aria-hidden="true"');
-    expect(overChip).toContain("Перелимит");
-    expect(html).toMatch(/<span class="plan-icon tone-[a-z]+"><svg[^>]*aria-hidden="true"[^>]*>/);
-    expect(html).not.toMatch(/status-chip [a-z_]+"[^>]*>[!○✓]/u);
+    // Конверт — кнопка выбора, и её имя говорит, что в нём сейчас: линейка в нём — та же, что на
+    // «Сегодня», с теми же словами состояния. Перелимит назван суммой, а не только цветом.
+    expect(html).toMatch(/<button class="envelope" type="button" aria-pressed="false" aria-label="Продукты: в конверте [^"]*"/u);
+    expect(html).toMatch(/aria-label="Точный перелимит: перелимит 50 ₽[^"]*"/u);
+    expect(html).toContain('<span class="envelope-after out"><small>перелимит</small>');
+    expect(html).toMatch(/<span class="limit-bar out" data-spent="0"/u);
+    expect(html).toMatch(/<span class="limit-bar (?:reaches|short)" data-spent="\d+"/u);
+    expect(text).toContain("сверх лимита");
+    expect(text).toMatch(/до конца месяца|дотянет/u);
+    // §6: плитка конверта — тон категории и векторный глиф; текстовых символов в роли иконки нет.
+    expect(html).toMatch(/<span class="category-tile tone-[a-z]+"><svg[^>]*aria-hidden="true"[^>]*>/);
+    expect(html).not.toMatch(/envelope-foot[^>]*>[!○✓]/u);
+    // Записывает не касание конверта, а отдельная кнопка, которая называет действие словами.
+    expect(html).toMatch(/<button class="primary-button wide" type="submit"[^>]*>Записать покупку<\/button>/u);
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
     expect(html).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("показывает под суммой, что останется в каждом конверте, — до записи, а не после", () => {
+    // Табло отвечает на «а мы можем себе это позволить?» до траты, и сразу по всем конвертам.
+    // Проверка рисует экран с уже введённой суммой: то же самое человек видит, набрав её.
+    const state = withAllSignalsAndFlows();
+    const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+    // Предпросмотр считается от разобранной суммы черновика и только для новой покупки в месяце
+    // плана; при редактировании сумма уже в остатках, и вычитать её второй раз нельзя.
+    expect(source).toContain('const previewApplies = draft.kind === "expense" && editingId === null && amountMinor > 0 && dateInPeriod;');
+    expect(source).toContain("const afterRemaining = applies ? metric.remainingMinor - amountMinor : metric.remainingMinor;");
+    // Укус покупки — отрезок между «было» и «станет», второй атрибут той же шкалы.
+    expect(source).toContain("data-bite={bite ?? undefined}");
+    const html = plainText(renderToStaticMarkup(<OperationsScreen budget={state} clock={JULY_CLOCK} onChange={vi.fn(async () => undefined)} />));
+    expect(html).toContain('<small>в конверте</small>');
+    expect(html).not.toContain("останется");
   });
 
   it("keeps archived categories contextual in history without offering them for new expenses", () => {
@@ -155,7 +173,9 @@ describe("operations UI", () => {
     const html = plainText(renderToStaticMarkup(
       <OperationsScreen budget={inactiveLine} onChange={vi.fn(async () => undefined)} />,
     ));
-    expect(html).not.toContain('role="status" aria-label="Продукты:');
+    // Выключенная строка плана — не конверт: категория уходит в «Вне конвертов», а история остаётся.
+    expect(html).not.toMatch(/class="envelope" [^>]*aria-label="Продукты:/u);
+    expect(html).toContain(">Продукты</button>");
     expect(textOf(html)).toContain("Продукты 2026-07-05 · Расход −31 500 ₽");
     expect(html).toContain("Архивировать использованную категорию «Продукты»");
   });

@@ -122,9 +122,10 @@ describe("форма", () => {
   /** Поверхности, которые до этой версии были скруглены, а теперь обязаны быть прямыми. */
   const surfaces = [
     ".hero-card", ".section-card, .entry-card", ".quick-card", ".month-split", ".next-card",
-    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-chart",
-    ".data-management-card", ".limit-alert", ".explain-card", ".install-note", ".invite-code",
-    ".limit-bar", ".dialog-aside", ".step-progress-bar",
+    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
+    ".list-card", ".limit-alert", ".explain-card", ".record-outside", ".invite-code",
+    ".limit-bar", ".dialog-aside", ".step-progress-bar", ".envelope-board", ".month-shape, .ladder-block",
+    ".pay-row", ".record-action",
   ];
 
   function radiusRules(): { selector: string; value: string }[] {

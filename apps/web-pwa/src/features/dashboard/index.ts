@@ -1,13 +1,22 @@
 export { DashboardScreen, type DashboardScreenProps } from "./DashboardScreen";
 export {
   createDashboardModel,
+  horizonVerdict,
+  ladderModel,
   monthName,
+  monthShape,
+  monthsSpan,
   nextScheduledDate,
   searchOperations,
+  shapeAnnouncement,
   type DashboardHorizon,
   type DashboardModel,
   type DashboardMonth,
   type DashboardTightestMonth,
+  type HorizonVerdict,
+  type LadderModel,
+  type LadderRow,
   type OperationSearchFilters,
   type OperationSearchResult,
+  type ShapeRow,
 } from "./model";

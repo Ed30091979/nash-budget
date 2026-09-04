@@ -16,17 +16,25 @@ function expectNavigationSecurityHeaders(response: Response | null) {
   expect(response?.headers()["x-frame-options"]).toBe("DENY");
 }
 
+/** «Вся история» на «Записать» свёрнута: это справка, а не действие, и её раскрывают, когда нужна. */
+async function openHistory(page: Page) {
+  const details = page.locator(".history-card details");
+  if ((await details.getAttribute("open")) === null) {
+    await page.getByText("Вся история", { exact: true }).click();
+  }
+}
+
 async function expectBudgetSnapshot(
   page: Page,
   remaining: RegExp,
   operationCount: number,
 ) {
   await page.getByRole("button", { name: "Сегодня", exact: true }).click();
-  await expect(
-    page.getByText("Можно на повседневные расходы").locator("..").getByRole("strong"),
-  ).toHaveText(remaining);
+  // Герой называет остаток месяца плана независимо от того, идёт этот месяц сейчас или уже закрыт.
+  await expect(page.locator(".hero-card > strong")).toHaveText(remaining);
 
   await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await openHistory(page);
   await expect(
     page.getByRole("status").filter({ hasText: `Показано ${operationCount} из ${operationCount}` }),
   ).toBeVisible();
@@ -36,7 +44,7 @@ async function expectAddedExpense(page: Page) {
   // Строка истории называет категорию, дату с видом операции и сумму со знаком направления.
   // Проверяется то, что видно в строке, а не порядок тегов внутри неё.
   const row = page
-    .getByRole("region", { name: "Полная история" })
+    .getByRole("region", { name: "Вся история" })
     .getByRole("listitem")
     .filter({ hasText: /9\s*000\s*₽/u });
   await expect(row).toContainText("2026-07-18");
@@ -73,10 +81,14 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
     .toBeVisible();
   await expectBudgetSnapshot(page, INITIAL_FLEXIBLE_REMAINING, G002_INITIAL_OPERATION_COUNT);
 
+  // Покупка: сумма, конверт на табло, дата под «Изменить» — и отдельная кнопка, которая называет
+  // действие словами. Касание конверта его только выбирает.
+  await page.getByRole("button", { name: "Изменить", exact: true }).click();
   await page.getByLabel("Дата").fill("2026-07-18");
   await page.getByLabel("Сумма, ₽").fill("9000");
-  await page.getByLabel("Категория расходов").selectOption({ label: "Продукты" });
-  await page.getByRole("button", { name: "Сохранить операцию «Расход»" }).click();
+  await page.getByRole("button", { name: /^Продукты:/u }).click();
+  await expect(page.getByRole("button", { name: /^Продукты:/u })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: /^Записать 9\s000\s₽ в «Продукты»$/u }).click();
   await expect(
     page.getByRole("status").filter({
       hasText: `Показано ${G002_INITIAL_OPERATION_COUNT + 1} из ${G002_INITIAL_OPERATION_COUNT + 1}`,
@@ -85,9 +97,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expectAddedExpense(page);
 
   await page.getByRole("button", { name: "Сегодня", exact: true }).click();
-  await expect(
-    page.getByText("Можно на повседневные расходы").locator("..").getByRole("strong"),
-  ).toHaveText(UPDATED_FLEXIBLE_REMAINING);
+  await expect(page.locator(".hero-card > strong")).toHaveText(UPDATED_FLEXIBLE_REMAINING);
   await expect(page.getByRole("alert")).toContainText(PRODUCTS_OVER_LIMIT);
 
   await page.evaluate(async () => {
@@ -101,7 +111,8 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   const offlineRootResponse = await page.reload();
   expect(offlineRootResponse?.fromServiceWorker()).toBe(true);
   expectNavigationSecurityHeaders(offlineRootResponse);
-  await expect(page.getByRole("status", { name: "Состояние сети: офлайн" })).toBeVisible();
+  // Офлайн доказывается тем, что страница пришла из сервис-воркера и бюджет на месте, — а не
+  // пилюлей «офлайн»: приложение к сети не обращается и своё состояние сети не объявляет.
   await expectBudgetSnapshot(
     page,
     UPDATED_FLEXIBLE_REMAINING,
@@ -112,16 +123,14 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   const nestedResponse = await page.goto("/year");
   expect(nestedResponse?.fromServiceWorker()).toBe(true);
   expectNavigationSecurityHeaders(nestedResponse);
-  await expect(page.getByRole("status", { name: "Состояние сети: офлайн" })).toBeVisible();
   await page.getByRole("button", { name: "Год", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Финансовый горизонт семьи" })).toBeVisible();
-  // «Год» отвечает за горизонт: одно крупное число — дно горизонта восстановленного G-002.
-  // Остаток повседневного лимита живёт на «Сегодня» и уже проверен снимком выше.
-  await expect(
-    page.getByText("Меньше всего свободно").locator("..").getByRole("strong"),
-  ).toHaveText(TIGHTEST_MONTH_FREE);
-  await expect(page.getByText("в сентябре 2026 и ещё в 4 месяцах горизонта")).toBeVisible();
+  // «Год» отвечает за горизонт: заголовок — вывод, лестница месяцев — где дно. У восстановленного
+  // G-002 дно — пять месяцев на одной сумме, и все пять выделены в лестнице.
+  await expect(page.getByRole("heading", { name: /Плана хватает во все 12 месяцев/u })).toBeVisible();
+  await expect(page.locator(".ladder-row.tight")).toHaveCount(5);
+  await expect(page.locator(".ladder-row.tight .ladder-value").first()).toHaveText(TIGHTEST_MONTH_FREE);
   await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await openHistory(page);
   await expect(
     page.getByRole("status").filter({
       hasText: `Показано ${G002_INITIAL_OPERATION_COUNT + 1} из ${G002_INITIAL_OPERATION_COUNT + 1}`,
@@ -202,7 +211,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
       return (await response.json() as { buildId: string }).buildId;
     });
   }).toBe("phase8-e2e-b");
-  await expect(page.getByText("Можно на повседневные расходы")).toBeVisible();
+  await expect(page.locator(".hero-card")).toBeVisible();
   expect(mainFrameNavigations).toBe(1);
 
   await expectBudgetSnapshot(

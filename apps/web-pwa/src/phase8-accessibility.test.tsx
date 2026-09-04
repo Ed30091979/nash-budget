@@ -3,9 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   focusRouteHeading,
-  isCapacitorNativeRuntime,
   MAIN_CONTENT_ID,
-  networkStatusPresentation,
 } from "./App";
 import { addressesTouchTarget, designTouchTargetMinimum } from "./design-contract";
 
@@ -133,66 +131,20 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(widened.filter((selector) => !scrollers.some((scroller) => selector.startsWith(scroller)))).toEqual([]);
   });
 
-  it("retains text labels for network and budget states instead of color-only status", () => {
+  it("не называет состояние сети: без синхронизации приложение к сети не обращается", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
-    expect(source).toContain('ariaLabel: "Состояние сети: локально на устройстве"');
-    expect(source).toContain('text: "локально на устройстве"');
-    expect(source).toContain('ariaLabel: `Состояние сети: ${text}`');
-    // Состояние сети остаётся живой областью с доступным именем и словом внутри — оно не
-    // становится цветной точкой и не пропадает совсем. Рисуется оно только там, где сеть есть:
-    // без синхронизации приложение к ней не обращается, и пилюля «в сети» была бы неправдой о
-    // том, чем продукт занят. Проверяется здесь именно это: имя, слово и живая область.
-    expect(source).toMatch(/role="status" aria-label=\{networkStatus\.ariaLabel\}>\{networkStatus\.text\}<\/span>/u);
-    expect(source).toMatch(/networkStatus\.className\}\$\{syncIndicator\.state === "local" \? " unheard" : ""\}/u);
+    // Пилюля «в сети» была сведением ни о чём: она называла состояние, которым продукт не занят.
+    // Единственное слово шапки о сети — индикатор синхронизации, и только после входа в семью.
+    // Он остаётся живой областью с доступным именем: состояние системы называется словом, а не
+    // цветной точкой.
+    expect(source).not.toMatch(/Состояние сети|network-badge|navigator\.onLine/u);
+    expect(styles).not.toContain(".network-badge");
+    expect(source).toMatch(/syncIndicator\.state === "local" \? null : <div className="header-badges"><span className=\{syncIndicator\.className\} role="status" aria-label=\{syncIndicator\.ariaLabel\}>\{syncIndicator\.text\}<\/span>/u);
+    // Состояние лимита по-прежнему словом, а не только цветом.
     expect(source).toContain('over_limit: "Перелимит"');
     expect(source).toContain('near_limit: "Почти лимит"');
-  });
-
-  it("не оставляет невидимую область без слова: спрятана она стилем, а не пустотой", () => {
-    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-    const hidden = styles.match(/\.network-badge\.unheard \{([^}]*)\}/u)?.[1] ?? "";
-
-    // Приём тот же, что у `.sr-only`: область остаётся в дереве доступности, но не занимает
-    // места на экране. `display: none` и `visibility: hidden` вынули бы её и оттуда тоже.
-    expect(hidden).toContain("position: absolute");
-    expect(hidden).toContain("clip-path: inset(50%)");
-    expect(hidden).not.toContain("display: none");
-    expect(hidden).not.toContain("visibility: hidden");
-  });
-
-  it.each([true, false])("shows a neutral local-device status in native runtime when navigator online is %s", (online) => {
-    expect(networkStatusPresentation(true, online)).toEqual({
-      text: "локально на устройстве",
-      ariaLabel: "Состояние сети: локально на устройстве",
-      className: "network-badge",
-    });
-  });
-
-  it("preserves online and offline status in the web runtime", () => {
-    expect(networkStatusPresentation(false, true)).toEqual({
-      text: "в сети",
-      ariaLabel: "Состояние сети: в сети",
-      className: "network-badge",
-    });
-    expect(networkStatusPresentation(false, false)).toEqual({
-      text: "офлайн",
-      ariaLabel: "Состояние сети: офлайн",
-      className: "network-badge offline",
-    });
-  });
-
-  it("accepts only an explicit, successful Capacitor native-platform contract", () => {
-    const nativeCheck = vi.fn(() => true);
-    const runtime = { isNativePlatform: nativeCheck };
-
-    expect(isCapacitorNativeRuntime({ Capacitor: runtime })).toBe(true);
-    expect(nativeCheck).toHaveBeenCalledOnce();
-    expect(nativeCheck.mock.contexts[0]).toBe(runtime);
-    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: () => false } })).toBe(false);
-    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: "true" } })).toBe(false);
-    expect(isCapacitorNativeRuntime({ Capacitor: { isNativePlatform: () => { throw new Error("untrusted bridge"); } } })).toBe(false);
-    expect(isCapacitorNativeRuntime({})).toBe(false);
   });
 
   it("не рисует рамку вокруг программно сфокусированного заголовка, но рисует её на кнопке", () => {
