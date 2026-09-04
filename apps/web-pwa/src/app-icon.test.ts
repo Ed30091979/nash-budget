@@ -58,16 +58,17 @@ describe("значок приложения", () => {
     const used = new Set(hexes(svg));
     expect(used.size).toBeGreaterThan(0);
     for (const hex of used) expect(palette, `${hex} в значке нет среди токенов :root`).toContain(hex);
-    // Мир приложения: холст, белая карточка, чернила и единственный оранжевый.
-    for (const name of ["--canvas", "--surface", "--ink", "--orange"]) expect(used).toContain(rootToken(name));
+    // Мир приложения: холст, чернила и единственный оранжевый.
+    for (const name of ["--canvas", "--ink", "--orange"]) expect(used).toContain(rootToken(name));
   });
 
   it("держит всё значимое в безопасном круге маски — 80 % полотна", () => {
     // icon-512 объявлен `any maskable`: снаружи круга система обрежет. Круг радиуса 204,8 от
-    // центра; тень карточки добавляет к её углу ещё около 12 px, они тоже обязаны быть внутри.
+    // центра; запас 12 px — на сглаживание края и на тень, если она у фигуры появится.
     const shadowMargin = 12;
     const content = rects().filter((rect) => rect.width !== 512);
-    expect(content.length).toBeGreaterThan(3);
+    // Полоса, её продолжение за разрывом и вертикаль — минимум три фигуры, иначе разбор SVG сломан.
+    expect(content.length).toBeGreaterThanOrEqual(3);
     for (const rect of content) {
       const corners: readonly (readonly [number, number])[] = [[rect.x, rect.y], [rect.x + rect.width, rect.y], [rect.x, rect.y + rect.height], [rect.x + rect.width, rect.y + rect.height]];
       for (const [x, y] of corners) {
