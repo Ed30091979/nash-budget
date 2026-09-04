@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -17,6 +17,7 @@ import { BackButton } from "./components/BackButton";
 import { Icon, IconSprite, type IconName } from "./components/Icon";
 import { Money } from "./components/Money";
 import { categoryVisual } from "./category-visual";
+import { observeLayoutSpace } from "./layout-space";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { DashboardScreen, monthsSpan, nextScheduledDate } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
@@ -372,6 +373,18 @@ export default function App() {
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   const previousScreenRef = useRef<Screen>(screen);
+  // Место под шапку и навигацию снимается с разметки, а не берётся из числа: панель растёт с
+  // системным шрифтом, и полоса записи обязана стоять на настоящей панели (`layout-space.ts`).
+  // Оболочка появляется вместе с готовым бюджетом, поэтому наблюдение привязано к состоянию
+  // загрузки: до него рефы пусты, и мерить нечего.
+  const headerRef = useRef<HTMLElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const nav = navRef.current;
+    if (!header || !nav) return undefined;
+    return observeLayoutSpace(document.documentElement, header, nav);
+  }, [loadState]);
   const hasUnsavedDraft = operationDraftDirty || planningDraftDirty;
   budgetRef.current = budget;
   // Экран семьи собирается ниже, а координатор записи — выше него: путь записи через журнал
@@ -639,7 +652,7 @@ export default function App() {
     <div className="app-shell">
       <IconSprite />
       <SkipLink />
-      <header className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
+      <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
         {/* Шапка называет план и больше ничего. Слоган «видим месяц и будущее» продавал продукт
             тому, кто его уже открыл, и делал это на каждом экране за 70 pt высоты. */}
         <div className="brand"><span className="brand-mark"><Icon name="piggy-bank" size={20} /></span><strong>Наш бюджет</strong></div>
@@ -649,7 +662,7 @@ export default function App() {
         {syncIndicator.state === "local" ? null : <div className="header-badges"><span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span></div>}
       </header>
 
-      <nav className="bottom-nav" aria-label="Основные разделы">
+      <nav ref={navRef} className="bottom-nav" aria-label="Основные разделы">
         <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
         <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
         <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />

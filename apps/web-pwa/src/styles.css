@@ -91,10 +91,19 @@
      поэтому доля объявлена здесь одним числом: сквозь экран проходит одна вертикаль. */
   --reach-mark: 75%;
 
-  /* §6 Нижняя навигация: 4 + 48 + 4. От этой высоты считаются отступ оболочки и полоса записи.
-     Полоса стояла на воображаемой навигации в 80 px, а настоящая — 56, и в зазоре между ними
-     просвечивала карточка. */
+  /* §6 Нижняя навигация: 4 + 48 + 4 — проектная высота, от неё считается только `min-height`
+     самой панели. Полоса записи стояла на воображаемой навигации в 80 px, а настоящая — 56, и в
+     зазоре между ними просвечивала карточка. */
   --nav-height: 56px;
+  /* §6 Место под навигацию и шапку. Отступ оболочки, полоса записи и тост считаются отсюда, а не
+     от `--nav-height`: панель растёт с системным шрифтом — при ×2.7 подписи переносятся, и на
+     320 pt она занимает 188 pt, на 390 — 150, а не 56, — и полоса на 56 уводила кнопку записи под
+     навигацию. На широком экране навигация липнет под шапку, и та при ×2.7 — 79, а не 56.
+     Значения здесь — проектные, на первый кадр; настоящие высоты снимает с разметки
+     `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены не читают, иначе
+     измерение кормило бы само себя. */
+  --nav-space: calc(var(--nav-height) + env(safe-area-inset-bottom));
+  --header-space: calc(56px + env(safe-area-inset-top));
 
   /* §10 Движение. Длительности и кривые — Material 3, взятые как есть (§5 исследования).
      Пружины берутся standard (демпфирование 0.9), а не expressive: наш тон спокойный, не
@@ -202,7 +211,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .skip-link { position: fixed; top: max(8px, env(safe-area-inset-top)); left: 16px; z-index: 100; display: inline-grid; max-width: calc(100% - 32px); min-height: 48px; padding: 13px 20px; place-items: center; overflow-wrap: anywhere; hyphens: auto; color: var(--ink); font-size: var(--size-body); font-weight: 700; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); box-shadow: var(--shadow-card); transform: translateY(calc(-100% - 20px)); }
 .skip-link:focus, .skip-link:focus-visible { transform: translateY(0); }
 
-.app-shell { min-height: 100dvh; padding-bottom: calc(var(--nav-height) + 24px + env(safe-area-inset-bottom)); background: var(--canvas); }
+.app-shell { min-height: 100dvh; padding-bottom: calc(var(--nav-space) + 24px); background: var(--canvas); }
 /* §3 Scroll edge, упрощённый: шапка прозрачна в нуле прокрутки и получает фон с границей, как
    только под неё что-то поехало. Цвет и прозрачность не пружинят никогда — в самой спецификации
    у слоя эффектов демпфирование 1.0 (§5 исследования), поэтому здесь обычный переход.
@@ -279,7 +288,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    приглушение сделано весом и ролью, а не размером (§2). Побочный выигрыш — узкий экран: сетка
    из трёх плиток на 320 pt разворачивалась в три полноразмерные карточки. */
 .month-split { display: grid; margin-top: 24px; padding: 4px 16px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.month-split > div { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
+/* Сумма переносится под подпись, когда им не хватает строки: на 320 pt при ×2.7 строка «Платежи
+   месяца · 53 000 ₽» была шире карточки и давала экрану горизонтальную прокрутку. */
+.month-split > div { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .month-split > div:last-child { border-bottom: 0; }
 .month-split dt { display: flex; gap: 8px; min-width: 0; align-items: center; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .month-split dt .icon { flex: none; color: var(--ink); }
@@ -428,7 +439,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 
 /* §6 Поля ввода и кнопки. */
 .form-grid { display: grid; gap: 16px; }
-.field, .amount-field { display: grid; gap: 4px; min-width: 0; }
+/* Единственная колонка объявлена с нулевым минимумом: у поля даты есть собственная ширина, при
+   ×2.7 — 383 pt, и колонка `auto` растягивалась под неё, вынося поле за край экрана. */
+.field, .amount-field { display: grid; gap: 4px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .field label, .amount-field label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .field input, .field select, .amount-field input { width: 100%; min-height: 52px; padding: 14px 16px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-input); }
 .field input::placeholder, .amount-field input::placeholder { color: var(--ink-muted); }
@@ -498,8 +511,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* Сообщение занимает своё место в разметке и липнет к низу экрана, а не висит над ним.
    Фиксированное положение накрывало кнопку сохранения и поле даты, стоило форме прокрутиться:
    у плашки не было собственной высоты, и домотать содержимое из-под неё было нельзя. Теперь
-   высота есть, и на самом низу страницы плашка садится над навигацией, ничего не закрывая. */
-.update-toast, .message-toast { position: sticky; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 40; width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
+   высота есть, и на самом низу страницы плашка садится над навигацией, ничего не закрывая, —
+   над измеренной навигацией: число 84 было 56 + 28 и при крупном шрифте сажало её под панель. */
+.update-toast, .message-toast { position: sticky; bottom: calc(var(--nav-space) + 28px); z-index: 40; width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
 .update-toast p, .message-toast p { margin: 0 0 12px; color: var(--on-ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .update-toast .primary-button, .message-toast .primary-button { color: var(--ink); background: var(--surface); border-color: var(--surface); }
 .update-toast .quiet-button, .message-toast .quiet-button { color: var(--on-ink); }
@@ -647,9 +661,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    выбранное словами, и ей место под большим пальцем, а не за десятью конвертами.
    Полоса цвета холста едет поверх белых конвертов, и встречать их она обязана намеренно, а не
    срезом: верхние 16 px — переход от прозрачного к холсту, и конверт уходит под полосу, как под
-   край листа, а не обрывается белой кромкой. Снизу полоса стоит вплотную на навигации — между
-   ними нечему просвечивать. Она остаётся в потоке: fixed прятал бы конверты насовсем. */
-.record-action { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 10; display: grid; gap: 8px; padding: 24px 0 8px; background: linear-gradient(to bottom, transparent, var(--canvas) 16px); }
+   край листа, а не обрывается белой кромкой. Снизу полоса стоит вплотную на навигации — на
+   измеренной, а не на числе: при ×2.7 панель втрое выше проектной, и полоса на 56 уводила кнопку
+   записи под неё. Между ними нечему просвечивать. Она остаётся в потоке: fixed прятал бы конверты
+   насовсем. */
+.record-action { position: sticky; bottom: var(--nav-space); z-index: 10; display: grid; gap: 8px; padding: 24px 0 8px; background: linear-gradient(to bottom, transparent, var(--canvas) 16px); }
 .record-form > .limit-alert { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 12px; color: var(--amber-ink); background: var(--amber-soft); }
 .record-form > .limit-alert > b, .record-form > .limit-alert > span { grid-column: 1; }
 .record-form > .limit-alert > button { grid-row: 1 / span 2; }
@@ -956,7 +972,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .entry-card { max-width: 680px; }
   .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .segmented, .amount-field, .wide { grid-column: 1 / -1; }
-  .bottom-nav { position: sticky; top: calc(56px + env(safe-area-inset-top)); bottom: auto; width: min(680px, calc(100% - 32px)); margin: 12px auto 0; padding: 4px; box-shadow: var(--shadow-card); }
+  /* Навигация липнет под настоящую шапку, а не под 56 pt: при ×2.7 шапка — 79, и верх вкладок
+     уходил под неё. */
+  .bottom-nav { position: sticky; top: var(--header-space); bottom: auto; width: min(680px, calc(100% - 32px)); margin: 12px auto 0; padding: 4px; box-shadow: var(--shadow-card); }
   .nav-button { grid-template-columns: auto auto; min-height: 48px; place-content: center; }
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
@@ -1034,12 +1052,24 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .dashboard-screen > header [role="group"] { grid-template-columns: 1fr; border-radius: var(--radius-control); }
   .dashboard-screen > header button { border-radius: var(--radius-control); }
   .status-chip { white-space: normal; border-radius: var(--radius-control); }
-  .reserve-pill { width: 100%; }
+  /* Карточка ближайшего платежа встаёт столбцом и на широком экране: при ×2.7 в неё попадает и
+     768 pt, а пилюля во всю ширину рядом с текстом выезжала за правый край. */
+  .next-card { align-items: flex-start; flex-direction: column; }
+  .reserve-pill { width: 100%; text-align: left; }
+  /* Слово вправе переноситься где угодно: «Страхование» в заголовке ближайшего платежа при ×2.7
+     шире карточки на 320 pt — 294 против 256, — и карточка выезжала за край экрана. Переносы по
+     слогам — там, где есть словарь; разрыв в любом месте — гарантия, что за край не выйдет ничто.
+     Суммы не в списке: число рвать нельзя (§7). */
+  .route-screen h1, .route-screen h2, .route-screen h3, .route-screen p, .route-screen small, .route-screen dt, .route-screen legend, .route-screen summary { overflow-wrap: anywhere; hyphens: auto; }
   /* Сумма операции переезжает под её название: в строку из трёх колонок она на таком кегле не
      помещается, а обрезать её нельзя (§1). Столбец сумм при этом теряется — но столбца из одной
      колонки и так не бывает: на этом масштабе на экране видно две строки. */
   .transaction-row, .row-open { grid-template-columns: 40px minmax(0, 1fr); }
-  .transaction-row > b, .row-open > b { grid-column: 2; text-align: left; }
+  /* Сумма занимает всю ширину строки: под плиткой ей стоять незачем, а 40 pt колонки — это три
+     цифры. Доход набран кеглем строки, а не заголовка: «+110 000 ₽» на 320 pt при ×2.7 в кегле
+     заголовка — 258 pt, и знак валюты уходил за край экрана; число рвать нельзя (§7). */
+  .transaction-row > b, .row-open > b { grid-column: 1 / -1; text-align: left; }
+  .transaction-row.income > b, .transaction-row.refund > b { font-size: var(--size-body); line-height: var(--lh-body); }
   /* Подписи линейки встают столбцом: в три четверти экрана дата такого кегля не помещается, а
      колонка под насечкой на этом масштабе всё равно уже не читается как колонка. */
   .reach-legend, .reach-legend > span:first-child { grid-template-columns: minmax(0, 1fr); }
@@ -1073,6 +1103,16 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .pay-amount > span { margin-left: 0; }
   .list-row, .list-fact > summary { grid-template-columns: 24px minmax(0, 1fr); }
   .list-row .row-chevron, .list-fact > summary .row-chevron { display: none; }
+}
+
+/* §6 Полоса записи липнет, пока табло в поле зрения, — а на коротком экране при крупном шрифте
+   ей негде быть в поле зрения вместе с табло: на 320×568 при ×2.7 шапка, полоса и навигация
+   занимают 79 + 178 + 188 = 445 pt из 568, и под прилипшей полосой не поместился бы ни один
+   конверт — ни одна цель, ради которой полоса и липнет. Высота экрана здесь тоже считается в
+   кеглях: меньше шестнадцати строк — полоса встаёт в поток, и к кнопке доезжают, как к любой
+   другой. При обычном кегле 16 строк — 256 pt, и таких экранов нет. */
+@media (max-width: 18em) and (max-height: 16em) {
+  .record-action { position: static; }
 }
 
 @media (prefers-reduced-motion: reduce) {

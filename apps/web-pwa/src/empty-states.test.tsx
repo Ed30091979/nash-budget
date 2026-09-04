@@ -151,8 +151,9 @@ describe("сообщение, которое накрывало кнопки", (
     expect(rule).not.toContain("position: fixed");
     expect(rule).toContain("position: sticky");
     expect(rule).toMatch(/margin: 24px auto 0/u);
-    // И садится она над нижней навигацией, а не под ней.
-    expect(rule).toMatch(/bottom: calc\(84px \+ env\(safe-area-inset-bottom\)\)/u);
+    // И садится она над нижней навигацией — над измеренной, а не над числом: 84 было 56 + 28 и
+    // при крупном шрифте сажало плашку под панель.
+    expect(rule).toMatch(/bottom: calc\(var\(--nav-space\) \+ 28px\)/u);
   });
 
   it("не оставляет ни одного `position: fixed` над содержимым, кроме навигации, обхода и затемнений", () => {
