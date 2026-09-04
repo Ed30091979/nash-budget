@@ -243,6 +243,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .hero-card.danger > strong { color: var(--red-ink); }
 .hero-card p { margin: 12px 0 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .hero-card .primary-button { width: 100%; margin-top: 16px; }
+/* У закрытого месяца на карточке два действия: открыть месяц и записать покупку. Главное из них
+   одно — открыть, — а второе стоит под ним обычной кнопкой и ближе к нему, чем к тексту выше:
+   зазор говорит, что это пара действий, а не третий абзац. */
+.hero-card .secondary-button { width: 100%; margin-top: 8px; }
 
 /* §7.2 Денежная лестница: сумма понижает ступень и никогда не обрезается. Ступень ровно одна —
    48 на 28: дальше число разрывается между разрядами, а не мельчает. Точки разрыва ставит сама

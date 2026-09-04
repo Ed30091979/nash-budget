@@ -26,10 +26,9 @@ import type {
   StableId,
   Transaction,
 } from "./types.js";
+import { daysInMonth, MAX_LOCAL_MONTH_INDEX, monthFromIndex, monthIndex } from "./calendar.js";
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const LOCAL_MONTH_PATTERN = /^\d{4}-\d{2}$/;
-const MAX_LOCAL_MONTH_INDEX = 9999 * 12 + 11;
 
 function assertEnum(value: unknown, allowed: readonly string[], label: string): asserts value is string {
   if (typeof value !== "string" || !allowed.includes(value)) {
@@ -632,24 +631,6 @@ export function calculateMemberExpenses(
   };
 }
 
-function monthIndex(value: string, label: string): number {
-  if (!LOCAL_MONTH_PATTERN.test(value)) {
-    throw new Error(`${label} must use YYYY-MM`);
-  }
-  const year = Number(value.slice(0, 4));
-  const month = Number(value.slice(5, 7));
-  if (!Number.isSafeInteger(year) || month < 1 || month > 12) {
-    throw new Error(`${label} must be a valid calendar month`);
-  }
-  return year * 12 + month - 1;
-}
-
-function monthFromIndex(value: number): string {
-  const year = Math.floor(value / 12);
-  const month = value - year * 12 + 1;
-  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}`;
-}
-
 function effectiveCommitmentDueIndex(
   item: AnnualCommitment,
   startIndex: number,
@@ -674,11 +655,7 @@ export function normalizeScheduledDueDate(month: string, dueDay: number): string
   if (!Number.isSafeInteger(dueDay) || dueDay < 1 || dueDay > 31) {
     throw new Error("dueDay must be from 1 to 31");
   }
-  const year = Number(month.slice(0, 4));
-  const calendarMonth = Number(month.slice(5, 7));
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return `${month}-${String(Math.min(dueDay, days[calendarMonth - 1]!)).padStart(2, "0")}`;
+  return `${month}-${String(Math.min(dueDay, daysInMonth(month))).padStart(2, "0")}`;
 }
 
 function validateAnnualCommitment(

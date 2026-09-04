@@ -13,7 +13,15 @@
  * человек на экране второго устройства.
  */
 import "fake-indexeddb/auto";
-import { makeSeedBudget, SEED_IDS, type BudgetState, type Transaction } from "@family-budget/domain";
+import {
+  calculateBudget,
+  carriedBudgetId,
+  carryBudgetForward,
+  makeSeedBudget,
+  SEED_IDS,
+  type BudgetState,
+  type Transaction,
+} from "@family-budget/domain";
 import { SyncEngine, SyncServerError } from "@family-budget/sync-client";
 import type {
   DeliveredEnvelope,
@@ -339,6 +347,54 @@ describe("два клиента одной семьи", () => {
     const afterDelete = await documentOf(boris);
     expect(afterDelete.transactions.some((entry) => entry.id === TRANSPORT_4000.id)).toBe(false);
     expect(afterDelete.transactions).toHaveLength(5);
+  });
+
+  it("два устройства, открывшие август порознь, сходятся к одному бюджету, а не к двум", async () => {
+    const transport = new JournalServer();
+    const familyKey = await generateFamilyKey();
+    const anna = await makeClient("anna-5", transport, DEVICE_ANNA, MEMBER_ANNA, familyKey, "local");
+    const boris = await makeClient("boris-5", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family");
+
+    // Общая отправная точка: июльский бюджет семьи есть у обоих.
+    await anna.apply((state) => ({
+      ...state,
+      members: [{ id: MEMBER_ANNA, name: "Анна", role: "owner", active: true }],
+    }));
+    await anna.drain();
+    await boris.receive();
+    expect((await documentOf(boris)).budgets).toHaveLength(1);
+
+    // Июль кончился. Каждая нажимает «Открыть август» у себя, не зная о другой: обе офлайн, и
+    // ни одна операция ещё не ушла на сервер.
+    await anna.apply((state) => carryBudgetForward(state, "2026-08").state);
+    await boris.apply((state) => carryBudgetForward(state, "2026-08").state);
+
+    await anna.drain();
+    await boris.drain();
+    await anna.receive();
+    await boris.receive();
+
+    for (const client of [anna, boris]) {
+      const seen = await documentOf(client);
+      // Один август на двоих, а не два: имя месяца выведено из июльского бюджета и самого
+      // месяца, поэтому обе назвали одно и то же, и журнал свёл две записи в одну.
+      expect(seen.budgets).toHaveLength(2);
+      const august = seen.budgets.find((budget) => budget.startDate === "2026-08-01");
+      expect(august?.id).toBe(carriedBudgetId(SEED_IDS.budget, "2026-08"));
+      expect(seen.activeBudgetId).toBe(august?.id);
+      expect(august?.endDate).toBe("2026-08-31");
+      // По одной строке на категорию — и остаток транспорта на месте: 10 000 плана, 5 000 факта.
+      expect(august?.lines.map((line) => line.categoryId).sort()).toEqual(
+        [SEED_IDS.categories.housing, SEED_IDS.categories.food, SEED_IDS.categories.transport].sort(),
+      );
+      const transportLine = august?.lines.find((line) => line.categoryId === SEED_IDS.categories.transport);
+      expect(transportLine?.plannedMinor).toBe(1_000_000);
+      expect(transportLine?.rolloverMinor).toBe(500_000);
+      expect(calculateBudget(seen).categoryMetrics[SEED_IDS.categories.transport]?.availableMinor).toBe(1_500_000);
+    }
+
+    // И оба устройства показывают буквально одно и то же состояние.
+    expect(await documentOf(boris)).toEqual(await documentOf(anna));
   });
 
   it("сохранение, ничего не изменившее, не рассылает семье ни одной операции", async () => {

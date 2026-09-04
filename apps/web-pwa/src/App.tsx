@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
+  carryBudgetForward,
+  findBudgetForMonth,
+  monthAfterPeriod,
   type BudgetState,
   type Member,
   type Transaction,
@@ -280,9 +283,19 @@ function monthGenitive(value: string): string {
   return parts[parts.length - 1] ?? value;
 }
 
-/** «Июль» — месяц плана с прописной, как начало фразы. */
+/**
+ * «сентябрь» — месяц назван словом, строчными: «Открыть сентябрь».
+ *
+ * У названий месяцев винительный падеж совпадает с именительным, поэтому одна форма работает и
+ * подлежащим, и дополнением, и склонять здесь нечего.
+ */
+function monthName(month: string): string {
+  return monthOnly.format(new Date(`${month}-01T00:00:00.000Z`));
+}
+
+/** «Июль» — тот же месяц с прописной, как начало фразы. */
 function monthNominative(month: string): string {
-  const word = monthOnly.format(new Date(`${month}-01T00:00:00.000Z`));
+  const word = monthName(month);
   return word.charAt(0).toUpperCase() + word.slice(1);
 }
 
@@ -354,6 +367,7 @@ export default function App() {
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [openingMonth, setOpeningMonth] = useState(false);
   const [operationDraftDirty, setOperationDraftDirty] = useState(false);
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
@@ -574,6 +588,30 @@ export default function App() {
     .map((transaction) => transaction.occurredOn);
   const clock = periodClock(activeBudget, incomeDates, today);
   const paydays = paydayDays(incomeDates, today);
+  // §6, выход из закрытого месяца. Пока месяц плана идёт, предлагать нечего; когда он кончился —
+  // предлагается ровно один месяц, тот, в котором семья сейчас живёт и тратит.
+  const monthToOpen = clock.position === "after" ? monthAfterPeriod(activeBudget, today) : null;
+  /**
+   * Открытие месяца — обычная правка состояния, и идёт она тем же путём, что и всякая другая:
+   * через координатор записи, а значит — через журнал семьи, если она есть. Никакого своего пути
+   * у неё нет и быть не должно: второе устройство узнаёт про новый месяц оттуда же, откуда узнаёт
+   * про каждую покупку.
+   */
+  const openMonth = async (month: string) => {
+    if (openingMonth) return;
+    setOpeningMonth(true);
+    try {
+      const opened = findBudgetForMonth(budget, month) === undefined;
+      await budgetSave.apply((state) => carryBudgetForward(state, month).state);
+      setMessage(opened
+        ? `${monthNominative(month)} открыт: лимиты перенесены, остатки конвертов легли в них сверху. Всё это можно поправить в плане.`
+        : `${monthNominative(month)} уже был в плане — открыли его.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось открыть месяц.");
+    } finally {
+      setOpeningMonth(false);
+    }
+  };
   const postedTransactions = [...budget.transactions]
     .filter((transaction) => transaction.status === "posted")
     .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
@@ -630,7 +668,7 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
@@ -759,7 +797,7 @@ type CategoryRow = { category: BudgetState["categories"][number]; metric: Budget
  * остатком июля был арифметически бессвязен, и честнее сказать словами, что показан закрытый
  * месяц и почему у него нет прогноза.
  */
-function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
+export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, monthToOpen, openingMonth, onOpenMonth, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; monthToOpen: string | null; openingMonth?: boolean; onOpenMonth?: (month: string) => void; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -806,10 +844,21 @@ function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpe
             : line.state === "reaches"
               ? <p><b>Хватает до {until}.</b> Тратим <Money value={rate} /> в день — к этому дню останется <Money value={Math.max(0, leftAtPayday)} />.</p>
               : <p><b>Хватает до {formatDay(runsOutOn(today, line.daysCovered) ?? payday.date)}, а до {until} не дотягивает.</b> Тратим <Money value={rate} /> в день; чтобы дотянуть — <Money value={needPerDay} /> в день.</p>}
-      </> : <p>
-        <b>{monthNominative(plan.startMonth)} {clock.position === "after" ? "закончился" : "ещё не начался"}.</b> Сегодня {formatDay(today)}, а показан месяц плана: линейка до выплаты считает только внутри своего месяца, и прогноза у него нет. Покупка, записанная сегодняшним числом, в эти конверты не попадёт.
-      </p>}
-      <button className="primary-button" type="button" onClick={onAdd}><span className="icon-label"><Icon name="plus" size={20} />Записать покупку</span></button>
+      </> : <>
+        <p>
+          <b>{monthNominative(plan.startMonth)} {clock.position === "after" ? "закончился" : "ещё не начался"}.</b> Сегодня {formatDay(today)}, а показан месяц плана: линейка до выплаты считает только внутри своего месяца, и прогноза у него нет. Покупка, записанная сегодняшним числом, в эти конверты не попадёт.
+        </p>
+        {/* Выход из закрытого месяца. Экран, который называет тупик и ничего не предлагает, —
+            это половина ответа: месяц плана кончился, а нового взять неоткуда, и каждая покупка
+            уходит мимо конвертов. Открывает месяц человек и только человек: за его спиной это
+            не случается, потому что перенос — это его деньги и его план, и приложение обязано
+            сначала сказать, что именно оно перенесёт. */}
+        {monthToOpen && onOpenMonth ? <>
+          <p>Открыть {monthName(monthToOpen)} — значит перенести в него те же лимиты и положить сверху остатки конвертов {monthOf}. {monthNominative(plan.startMonth)} останется в истории со своими числами.</p>
+          <button className="primary-button" type="button" disabled={openingMonth} aria-busy={openingMonth} onClick={() => onOpenMonth(monthToOpen)}><span className="icon-label"><Icon name="calendar-clock" size={20} />Открыть {monthName(monthToOpen)}</span></button>
+        </> : null}
+      </>}
+      <button className={monthToOpen && onOpenMonth && !clock.inPeriod ? "secondary-button" : "primary-button"} type="button" onClick={onAdd}><span className="icon-label"><Icon name="plus" size={20} />Записать покупку</span></button>
     </section>
 
     {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row, index) => <span key={row.category.id}>{index > 0 ? " · " : ""}{row.category.name}: <Money value={row.metric?.overMinor ?? 0} sign="+" /></span>)}</span></div> : null}
