@@ -90,6 +90,36 @@ transport sends `authorization` and `content-type`. The sync server must
 therefore name `https://localhost` in its CORS allowlist (`SYNC_ALLOWED_ORIGINS`)
 in addition to the origin the PWA is served from.
 
+## Palette: what the shell paints before the first web frame
+
+Everything Android draws before the page paints its first frame - the system
+splash on Android 12+, the activity window and its pre-12 splash drawable, the
+status and navigation bars, the WebView background, the launcher icon backdrop
+- is the application's canvas, and nothing in the shell has a dark mode: the
+app itself is light-only (`color-scheme: light`), so a `DayNight` theme here
+would paint a dark frame between a light launcher and a light page. That seam
+existed: the shell kept `#100904` from the 1.0.0 dark design after the web app
+moved to paper, and on Android 12+ the system splash showed the compat
+library's generic Android icon because none was named.
+
+The source of the colours is `:root` in `../web-pwa/src/styles.css`
+(`--canvas`, `--ink`, `--orange`). `res/values/colors.xml` is the only place
+in the shell that spells them out; `capacitor.config.ts` carries `--canvas` as
+the WebView background and pins the core `SystemBars` plugin to `style: "LIGHT"`
+(its `DEFAULT` follows the system night mode and turned the status-bar glyphs
+white over the canvas); themes, the splash drawable and the adaptive icons
+reference `colors.xml` and contain no hex. `scripts/brand-palette.mjs` compares
+all of that with the stylesheet, `scripts/brand-palette.test.mjs` runs it as
+part of `pnpm test`, and `scripts/verify-artifacts.mjs` runs it again against
+the `capacitor.config.json` packaged in the APK and AAB.
+
+Rasters (`splash_logo`, `ic_launcher_foreground`, legacy `ic_launcher` and
+`ic_launcher_round`, five densities each) are drawn from the same mark as the
+PWA icon and the iOS launch images by `pnpm render:brand`: Chromium via the
+web app's Playwright, packed with the web app's PNG codec, no downloads and no
+extra dependencies. Re-run it whenever `:root` changes; the test fails until
+you do.
+
 ## Security and publication boundary
 
 Apart from `INTERNET` in a build that was given a server address, the app

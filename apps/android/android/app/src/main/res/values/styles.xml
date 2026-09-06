@@ -1,22 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Тема одна, светлая. У приложения нет тёмного оформления (`color-scheme: light`, DESIGN.md
+    §11), и обёртка обязана рисовать то же: `DayNight` здесь красил окно, строку состояния и
+    системную заставку в тёмное при системной тёмной теме — ровно тот шов, которого нет ни в
+    браузере, ни на iOS. Цвета — только ссылки на colors.xml.
+
+    Порядок запуска: система (Android 12+) показывает свою заставку — фон из
+    `windowSplashScreenBackground` и значок из `windowSplashScreenAnimatedIcon`; затем окно
+    активности с `AppTheme.NoActionBarLaunch` (фон — @drawable/splash, до Android 12 это и есть
+    заставка); затем Capacitor переключает тему на `AppTheme.NoActionBar` и ставит WebView, фон
+    которого задан в capacitor.config.ts; затем — первый кадр страницы. Каждый из четырёх кадров —
+    холст.
+
+    Атрибуты заставки — из core-splashscreen, без префикса android: на API 31+ библиотека сама
+    переводит их в платформенные. Без явных значений она подставляет свои: фон
+    `?android:colorBackground` (в тёмной теме — тёмный) и значок `sym_def_app_icon` — обобщённый
+    значок Android вместо значка приложения; ровно это и показывала обёртка до этой правки.
+
+    Цепочка `Base.*` нужна, чтобы values-v27 добавлял по одному атрибуту, а не переписывал стиль
+    целиком: стили по квалификаторам не сливаются, а замещаются.
+-->
 <resources>
 
-    <!-- Base application theme. -->
-    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
-        <!-- Customize your theme here. -->
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
+    <style name="Base.AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/ink</item>
+        <item name="colorPrimaryDark">@color/ink</item>
+        <item name="colorAccent">@color/orange</item>
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:statusBarColor">@color/canvas</item>
+        <item name="android:navigationBarColor">@color/canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 
-    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <style name="AppTheme" parent="Base.AppTheme" />
+
+    <style name="AppTheme.NoActionBar" parent="AppTheme">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
-        <item name="android:background">@null</item>
     </style>
 
-
-    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+    <style name="Base.AppTheme.Launch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/canvas</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:statusBarColor">@color/canvas</item>
+        <item name="android:navigationBarColor">@color/canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Base.AppTheme.Launch" />
 </resources>

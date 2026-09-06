@@ -14,6 +14,7 @@ import {
   collectArtifactInputs,
 } from "./artifact-staleness.mjs";
 import { verifyDebugApkSigner } from "./apk-signer-policy.mjs";
+import { readWebPalette, wrapperPaletteProblems } from "./brand-palette.mjs";
 import {
   expectedManifestPermissions,
   resolveConfiguredSyncOrigin,
@@ -23,6 +24,7 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const androidRoot = join(packageRoot, "android");
 const appRoot = join(androidRoot, "app");
 const webDist = resolve(packageRoot, "../web-pwa/dist");
+const webStyles = resolve(packageRoot, "../web-pwa/src/styles.css");
 const syncedWebAssets = join(appRoot, "src/main/assets/public");
 const debugApk = join(appRoot, "build/outputs/apk/debug/app-debug.apk");
 const releaseAab = join(
@@ -286,6 +288,25 @@ assertLocalConfig(
   JSON.parse(readZipEntry(releaseAab, aabConfigEntry)),
   "release AAB config",
 );
+
+// Палитра обёртки — палитра приложения, и проверяется по упакованному конфигу, а не по
+// исходнику: фон WebView в APK — это байты capacitor.config.json. Остальное (colors.xml,
+// заставка, значки, темы) сверяется по ресурсам, из которых собран этот же артефакт.
+const webPalette = readWebPalette(webStyles);
+for (const [artifact, zipPath, entry] of [
+  ["debug APK", debugApk, apkConfigEntry],
+  ["release AAB", releaseAab, aabConfigEntry],
+]) {
+  const problems = wrapperPaletteProblems({
+    palette: webPalette,
+    androidRoot,
+    capacitorConfig: JSON.parse(readZipEntry(zipPath, entry)),
+  });
+  assert(
+    problems.length === 0,
+    `${artifact}: wrapper palette differs from the web :root palette: ${problems.join("; ")}`,
+  );
+}
 
 const packagedSyncOrigins = new Map();
 for (const [artifact, entries, indexEntry] of [

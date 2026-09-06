@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Заставка до Android 12 и кадр между системной заставкой и WebView после: холст во весь экран
+    и по центру знак — та же насечка с вертикалью, что в значке и на экране запуска iOS.
+    Цвет — только @color/canvas; растр знака прозрачный, рисуется scripts/render-brand.mjs.
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
-        <color android:color="#100904"/>
+        <color android:color="@color/canvas"/>
     </item>
     <item android:gravity="center">
         <bitmap android:src="@drawable/splash_logo" android:gravity="center"/>

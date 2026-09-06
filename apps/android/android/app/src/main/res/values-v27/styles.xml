@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- С API 27 у навигационной панели есть светлый режим: иначе на холсте её кнопки белые. -->
+<resources>
+    <style name="AppTheme" parent="Base.AppTheme">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="AppTheme.NoActionBarLaunch" parent="Base.AppTheme.Launch">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

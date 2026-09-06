@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Подложка — холст приложения; знак на переднем плане лежит в безопасной зоне 66 dp.
+    Монохромный слой (тематические значки Android 13+) — тот же знак: система берёт из него
+    только альфу и красит в цвет темы, так что силуэт полосы с вертикалью остаётся.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
+    <background android:drawable="@color/canvas"/>
     <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground"/>
 </adaptive-icon>
