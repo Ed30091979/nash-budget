@@ -35,6 +35,7 @@ import {
   type BudgetJournalWrite,
   type MemberFilter,
 } from "./features/family";
+import { createImportMemory, ImportScreen } from "./features/import";
 import { OperationsScreen } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
@@ -56,7 +57,7 @@ import {
 } from "./reach";
 import { createBudgetRepository } from "./storage-repository";
 
-export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family";
+export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family" | "import";
 type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -351,6 +352,8 @@ function storageText(health: StorageHealth | null): string {
 
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
+  // Память назначений импорта: локальная запись на этом устройстве, стирается вместе с данными.
+  const importMemory = useMemo(() => createImportMemory(), []);
   // Section 9: the address is configuration and is absent by default, so the whole family layer
   // below is inert in a build that was not given one — no request, no queue, no schema bump.
   const syncServerUrl = useMemo(
@@ -371,6 +374,7 @@ export default function App() {
   const [openingMonth, setOpeningMonth] = useState(false);
   const [operationDraftDirty, setOperationDraftDirty] = useState(false);
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
+  const [importDraftDirty, setImportDraftDirty] = useState(false);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   const previousScreenRef = useRef<Screen>(screen);
   // Место под шапку и навигацию снимается с разметки, а не берётся из числа: панель растёт с
@@ -385,7 +389,7 @@ export default function App() {
     if (!header || !nav) return undefined;
     return observeLayoutSpace(document.documentElement, header, nav);
   }, [loadState]);
-  const hasUnsavedDraft = operationDraftDirty || planningDraftDirty;
+  const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;
   budgetRef.current = budget;
   // Экран семьи собирается ниже, а координатор записи — выше него: путь записи через журнал
   // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
@@ -666,7 +670,7 @@ export default function App() {
         <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
         <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
         <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />
-        <NavButton active={screen === "more" || screen === "family"} icon="more" label="Ещё" onClick={() => navigate("more")} />
+        <NavButton active={screen === "more" || screen === "family" || screen === "import"} icon="more" label="Ещё" onClick={() => navigate("more")} />
       </nav>
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
@@ -681,7 +685,7 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} onImport={() => navigate("import")} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
@@ -707,7 +711,11 @@ export default function App() {
                 setMessage(`Снято меток участника: ${clearedLabels}. Такого участника в копии нет; сами операции и все суммы восстановлены без изменений.`);
               }
             }}
-            onPersistClear={() => repository.clear()}
+            onPersistClear={async () => {
+              await repository.clear();
+              // Ключи памяти — названия продавцов из выписок семьи; они уходят вместе с бюджетом.
+              await importMemory.clear().catch(() => undefined);
+            }}
             onPublishEmpty={() => {
               budgetRef.current = null;
               revisionRef.current = null;
@@ -717,12 +725,14 @@ export default function App() {
             }}
             onFamily={() => navigate("family")}
             onPlanning={() => navigate("planning")}
+            onImportStatement={() => navigate("import")}
             familyNote={family.membership === null
               ? "Без входа приложение работает как сейчас"
               : `${plural(Math.max(1, family.members.length), ["участник", "участника", "участников"])} · приглашение, отпечатки ключей`}
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
+          {screen === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setImportDraftDirty} onBack={() => navigate("more")} /> : null}
           {screen === "family" ? <FamilyScreen
             serverUrl={family.serverUrl}
             session={family.session}
@@ -755,7 +765,7 @@ export default function App() {
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
-      <UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />
+      <UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty} />
     </div>
   );
 }
@@ -810,7 +820,7 @@ type CategoryRow = { category: BudgetState["categories"][number]; metric: Budget
  * остатком июля был арифметически бессвязен, и честнее сказать словами, что показан закрытый
  * месяц и почему у него нет прогноза.
  */
-export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, monthToOpen, openingMonth, onOpenMonth, onAdd, onYear, onPlanning }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; monthToOpen: string | null; openingMonth?: boolean; onOpenMonth?: (month: string) => void; onAdd: () => void; onYear: () => void; onPlanning: () => void }) {
+export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, monthToOpen, openingMonth, onOpenMonth, onAdd, onYear, onPlanning, onImport }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; monthToOpen: string | null; openingMonth?: boolean; onOpenMonth?: (month: string) => void; onAdd: () => void; onYear: () => void; onPlanning: () => void; onImport?: () => void }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -904,6 +914,12 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
       </div> : null}
       <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
     </section>
+
+    {/* Холодный старт: пока записей нет, вторая дверь — выписка банка. Она стоит после пустого
+        состояния, а не внутри него: основное действие там одно, ручная запись, и порядок «сначала
+        руками, потом банк» — тот, что повышает доверие (§6 исследования, пункт 31). Постоянный дом
+        импорта — «Ещё → Данные»; здесь только дверь для того, у кого история ещё пуста. */}
+    {!hasRecords && onImport ? <button className="year-preview" type="button" onClick={onImport}><span className="row-mark"><Icon name="receipt-text" size={24} /></span><span className="row-copy"><b>Загрузить выписку банка</b><small>CSV из Т-Банка. Файл читается на этом устройстве и никуда не уходит</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button> : null}
   </>;
 }
 
@@ -1215,6 +1231,7 @@ function MoreScreen(props: {
   onPublishEmpty: () => void;
   onFamily: () => void;
   onPlanning: () => void;
+  onImportStatement: () => void;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
@@ -1245,6 +1262,7 @@ function MoreScreen(props: {
       onRestoreBackup={props.onRestoreBackup}
       onPersistClear={props.onPersistClear}
       onPublishEmpty={props.onPublishEmpty}
+      onImportStatement={props.onImportStatement}
     />
 
     <section className="list-group" aria-labelledby="more-about-title">

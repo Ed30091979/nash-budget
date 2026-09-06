@@ -964,6 +964,47 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
+/* §8 «Выписка банка». Карточка выбора файла с обещанием приватности — плашкой в потоке, а не
+   строкой в политике: файл читается на устройстве и не сохраняется, и это сказано там, где палец
+   выбирает файл. Предпросмотр — строки одного списка; незнакомые продавцы — поля выбора
+   категории; кнопка добавления липнет к низу той же полосой, что и запись покупки. Поверхности
+   прямые, скруглено только то, что нажимают. */
+.import-screen { min-width: 0; }
+.import-screen > * + * { margin-top: 12px; }
+.import-screen > .planning-toolbar { margin-bottom: 4px; }
+.import-screen > .section-card:first-child { margin-top: 0; }
+.import-card > h1 { margin-top: 4px; }
+.import-card > .body-copy, .import-card > .field-hint { margin: 8px 0 0; }
+.import-privacy { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 16px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
+.import-privacy-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }
+.import-privacy > div { min-width: 0; }
+.import-privacy strong { display: block; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.import-privacy p { margin: 4px 0 0; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.import-card > .file-button { margin-top: 16px; }
+.import-card > .row-disclosure > p { margin: 0 0 8px; }
+.import-card > .row-disclosure ol { margin: 0; padding-left: 20px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.import-summary { display: grid; margin: 16px 0 0; }
+.import-summary > div { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; align-items: baseline; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); }
+.import-summary dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.import-summary dd { margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: right; overflow-wrap: normal; }
+.import-summary dd > small { display: block; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.import-summary dd.muted { color: var(--ink-muted); font-weight: 400; }
+.import-summary dd.short { color: var(--amber-ink); }
+.import-choices { display: grid; gap: 12px; margin-top: 16px; }
+.import-merchants { display: grid; margin: 0; padding: 0; list-style: none; }
+.import-merchant { padding: 12px 0; border-top: 1px solid var(--border); }
+.import-merchant .field { gap: 8px; }
+.import-merchant .field > label { color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); }
+.import-merchant .field > label > strong, .import-merchant .field > label > small { display: block; }
+.import-merchant .field > label > small { margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.import-merchant .field > small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.import-screen .transaction-row.transfer > b { color: var(--ink-muted); }
+.import-screen .record-action > .field-hint { text-align: center; }
+.import-screen .danger-button { color: var(--red-ink); background: var(--surface); border-color: var(--red-ink); }
+.import-screen .save-receipt { margin-top: 0; }
+.import-done > .body-copy { margin: 16px 0 0; }
+.import-done > .primary-button, .import-done > .secondary-button { margin-top: 12px; }
+
 @media (min-width: 760px) {
   .app-shell { padding-bottom: 40px; }
   .content { width: min(960px, 100%); padding: 32px max(24px, env(safe-area-inset-right)) 56px max(24px, env(safe-area-inset-left)); }

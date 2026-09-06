@@ -118,7 +118,7 @@ describe("operations app integration", () => {
       expect(element, `${screen} обязан сообщать о несохранённом черновике`)
         .toContain(`onDirtyChange={${dirtyFlag}}`);
     }
-    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty} />");
+    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty} />");
     expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);

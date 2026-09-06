@@ -359,6 +359,57 @@ export function createTransaction(
   return validateResult({ ...state, transactions: [...state.transactions, transaction] });
 }
 
+export interface TransactionBatchCreation {
+  readonly state: BudgetState;
+  /** Идентификаторы созданных операций, в порядке черновиков: по ним пачку можно отменить. */
+  readonly ids: readonly string[];
+}
+
+/**
+ * Записывает несколько операций одним изменением состояния.
+ *
+ * Тот же путь, что у одиночной записи: те же проверки счёта, категории, даты и суммы для каждой
+ * операции, та же проверка целого документа — только один раз на пачку, а не на каждую строку.
+ * Нужно импорту выписки: сотни операций через `createTransaction` по одной пересчитывали бы весь
+ * бюджет сотни раз, а координатор записи всё равно сохраняет состояние целиком.
+ */
+export function createTransactions(
+  state: BudgetState,
+  drafts: readonly TransactionDraft[],
+  makeId: OperationsIdFactory = () => crypto.randomUUID(),
+): TransactionBatchCreation {
+  validateState(state);
+  if (state.transactions.length + drafts.length > OPERATIONS_LIMITS.transactions) {
+    fail("transactions", "Достигнут лимит операций.");
+  }
+  const ids = allDocumentIds(state);
+  const created = drafts.map((draft) => {
+    const id = nextId(ids, makeId);
+    return makeTransaction(state, id, draft);
+  });
+  return {
+    state: validateResult({ ...state, transactions: [...state.transactions, ...created] }),
+    ids: created.map((transaction) => transaction.id),
+  };
+}
+
+/**
+ * Удаляет несколько операций одним изменением: отмена импорта. Отказывает, если хоть одной нет
+ * или если с одной из них связан возврат, который не удаляется вместе с ней.
+ */
+export function deleteTransactions(state: BudgetState, ids: readonly string[]): BudgetState {
+  validateState(state);
+  const removing = new Set(ids.map((id) => assertIdentifier(id)));
+  for (const id of removing) {
+    if (!state.transactions.some((item) => item.id === id)) fail("id", "Операция не найдена.");
+  }
+  const blocked = state.transactions.some(
+    (item) => item.kind === "refund" && removing.has(item.originalTransactionId) && !removing.has(item.id),
+  );
+  if (blocked) fail("id", "Сначала удалите связанные возвраты.");
+  return validateResult({ ...state, transactions: state.transactions.filter((item) => !removing.has(item.id)) });
+}
+
 export function editTransaction(state: BudgetState, id: string, draft: TransactionDraft): BudgetState {
   validateState(state);
   assertIdentifier(id);

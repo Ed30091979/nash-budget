@@ -46,6 +46,8 @@ export interface DataManagementScreenProps {
   readonly onRestoreBackup: (file: RecoveryFile) => Promise<void>;
   readonly onPersistClear: () => Promise<void>;
   readonly onPublishEmpty: () => void;
+  /** Дверь в импорт выписки; без неё строки нет — экран, вставленный без навигации, вести некуда. */
+  readonly onImportStatement?: () => void;
 }
 
 const SAFE_ERRORS = {
@@ -83,6 +85,7 @@ export function DataManagementScreen({
   onRestoreBackup,
   onPersistClear,
   onPublishEmpty,
+  onImportStatement,
 }: DataManagementScreenProps) {
   const [state, dispatch] = useReducer(recoveryReducer, initialRecoveryState);
   const [lastBackupAt, setLastBackupAt] = useState(lastSuccessfulBackup);
@@ -228,6 +231,18 @@ export function DataManagementScreen({
             <Icon name="chevron-right" size={24} className="row-chevron" />
           </button>
         </li>
+        {onImportStatement ? <li>
+          {/* Выписка — второй строкой, сразу после копии: копию делают ради сохранности, выписку
+              грузят каждый месяц. Разбор на устройстве, и это сказано уже здесь. */}
+          <button className="list-row" type="button" disabled={busy} onClick={onImportStatement}>
+            <span className="list-icon"><Icon name="receipt-text" size={24} /></span>
+            <span className="list-copy">
+              <strong>Загрузить выписку банка</strong>
+              <small>CSV из Т-Банка · разбор на этом устройстве, файл никуда не уходит</small>
+            </span>
+            <Icon name="chevron-right" size={24} className="row-chevron" />
+          </button>
+        </li> : null}
         <li>
           <button className="list-row" type="button" disabled={busy} aria-describedby="csv-export-notice" onClick={runCsv}>
             <span className="list-icon"><Icon name="table" size={24} /></span>

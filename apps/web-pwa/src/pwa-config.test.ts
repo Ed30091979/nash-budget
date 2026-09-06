@@ -134,7 +134,7 @@ describe("service worker registration coverage", () => {
     for (const guard of routeGuards) {
       expect(guard).toContain("<UpdatePrompt");
     }
-    expect(appSource).toContain('hasUnsavedChanges={operationDraftDirty || planningDraftDirty}');
+    expect(appSource).toContain('hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty}');
   });
 });
 
