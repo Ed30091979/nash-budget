@@ -104,7 +104,9 @@ describe("выход из закрытого месяца", () => {
     const september = carryBudgetForward(july, "2026-09").state;
     const { markup, text } = renderToday(september, "2026-09-04");
 
-    expect(text).toContain("сентябрь · сегодня 4-е");
+    // Эйбрау называет месяц чисел и молчит про день: месяц идёт, сообщать нечего.
+    expect(text).toContain("сентябрь");
+    expect(text).not.toMatch(/сентябрь\s*·/u);
     expect(text).toContain("Можно на повседневные расходы");
     expect(text).not.toContain("закончился");
     expect(markup).toContain("hero-reach");

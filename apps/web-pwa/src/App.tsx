@@ -846,10 +846,12 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
   return <>
     <h1 className="visually-hidden">Сегодня: семейный бюджет</h1>
     <section className={`hero-card${line.state === "out" && clock.inPeriod ? " danger" : ""}`}>
-      {/* Эйбрау называет месяц плана и день внутри него. День появляется только тогда, когда
-          сегодня действительно лежит внутри периода; у закрытого месяца эйбрау так и говорит —
-          «закрыт», — и никакого «сегодня 9-е» у него не бывает. */}
-      <p className="eyebrow">{monthWord}{clock.inPeriod ? ` · сегодня ${Number(today.slice(8, 10))}-е` : clock.position === "after" ? " · закрыт" : " · ещё не начался"}</p>
+      {/* Эйбрау называет месяц, к которому относятся числа, и больше ничего. Числа дня здесь
+          не было: его человек видит в строке состояния телефона, а положение внутри месяца
+          показывает линейка под суммой. Слово «сегодня» вдобавок повторяло имя вкладки, на
+          которой человек стоит. Приписка появляется только когда месяц не идёт — тогда ей есть
+          что сообщить. */}
+      <p className="eyebrow">{monthWord}{clock.inPeriod ? "" : clock.position === "after" ? " · закрыт" : " · ещё не начался"}</p>
       <span>{clock.inPeriod ? "Можно на повседневные расходы" : `Осталось от повседневных лимитов ${monthOf}`}</span>
       <strong data-money-scale={moneyScale(safeToSpend)}><Money value={safeToSpendMinor} breakDigits /></strong>
       {clock.inPeriod ? <>
