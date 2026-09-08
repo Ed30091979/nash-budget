@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { designTouchTargetMinimum } from "../src/design-contract";
+import { applyFontScale, FONT_SCALES } from "./font-scale";
 
 interface ViewportContract {
   readonly name: string;
@@ -277,14 +277,6 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
  * снова встанет на число, а не на панель.
  * --------------------------------------------------------------------------------------------- */
 
-const STYLES = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-/** Ступени §4 из `:root`: имена и базовые значения читаются из таблицы стилей, а не переписаны сюда. */
-const TYPE_SCALE_TOKENS = [...STYLES.matchAll(/\n\s*(--(?:size|lh)-[\w-]+):\s*(\d+)px;/gu)]
-  .map((match) => [match[1] ?? "", Number(match[2])] as const);
-const ROOT_FONT_SIZE = Number(/\n\s*font-size:\s*(\d+)px;/u.exec(STYLES)?.[1]);
-/** ×1 и штатный максимум доступности iOS. */
-const FONT_SCALES = [1, 2.7] as const;
-
 const PHONE_VIEWPORTS: readonly ViewportContract[] = [
   { name: "phone-320", width: 320, height: 568 },
   { name: "phone-375", width: 375, height: 667 },
@@ -308,27 +300,6 @@ const ROUTE_TARGET_SELECTOR = [
   ".message-toast button",
   ".update-toast button",
 ].join(",");
-
-/**
- * Масштаб системного шрифта в прогоне. `Page.setFontSizes` двигает размер по умолчанию — от него
- * считаются `em` в медиазапросах, и правило крупного шрифта (§5, `max-width: 18em`) срабатывает
- * так же, как на устройстве. Ступени §4 умножаются на тот же множитель прямо на `:root`.
- */
-async function applyFontScale(page: Page, scale: number) {
-  if (scale === 1) return;
-  expect(TYPE_SCALE_TOKENS.length, "ступени §4 не найдены в styles.css").toBeGreaterThan(0);
-  expect(ROOT_FONT_SIZE, "кегль :root не найден в styles.css").toBeGreaterThan(0);
-  const session = await page.context().newCDPSession(page);
-  await session.send("Page.setFontSizes", {
-    fontSizes: { standard: Math.round(16 * scale), fixed: Math.round(13 * scale) },
-  });
-  await page.evaluate(({ tokens, rootFontSize, factor }) => {
-    document.documentElement.style.setProperty("font-size", `${Math.round(rootFontSize * factor)}px`);
-    for (const [name, base] of tokens) {
-      document.documentElement.style.setProperty(name, `${Math.round(base * factor)}px`);
-    }
-  }, { tokens: TYPE_SCALE_TOKENS, rootFontSize: ROOT_FONT_SIZE, factor: scale });
-}
 
 interface NavigationClearance {
   readonly clientWidth: number;

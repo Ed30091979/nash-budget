@@ -93,7 +93,10 @@ describe("planning app integration", () => {
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     expect(source).toContain("<BackButton label=\"К горизонту\" onClick={() => navigate(\"year\")} />");
     expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
-    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty} />");
+    // Черновики всех трёх экранов держат обновление: их сумма уходит в раму, а рама — в плашку.
+    expect(source).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
+    expect(source).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
+    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} />");
     expect(source).toContain('active={screen === "year" || screen === "planning"}');
     expect(source).toContain("activeBudget.lines.filter((line) => line.active !== false)");
     expect(source).toContain("category.active && flexibleIds.has(category.id)");

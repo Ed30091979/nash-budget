@@ -10,4 +10,11 @@ export { FamilyScreen, type ActiveInvite, type FamilyActions, type FamilyScreenP
  */
 export { useFamily, type BudgetJournalWrite, type FamilyController } from "./controller";
 export * from "./model";
+export {
+  familyNewsLines,
+  familyNewsSince,
+  transactionIds,
+  type OwnAuthor,
+  type TransactionAuthor,
+} from "./news";
 export { resolveSyncServerUrl, type FamilyRole, type FamilySession } from "./session";

@@ -17,6 +17,7 @@ import {
   G002_INITIAL_OPERATION_COUNT,
   makeG002BackupBuffer,
 } from "./canonical-budget";
+import { helloShot } from "./hello-shot";
 
 const FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const FLEXIBLE_AFTER_TRANSPORT = /23\s*000\s*₽/u;
@@ -342,6 +343,25 @@ test("два клиента одной семьи сходятся до копе
     await borisContext.setOffline(false);
     await anna.reload();
     await boris.reload();
+
+    // §6 «Семейная новость» — единственный заслуженный момент на входе: первое открытие после
+    // того, как второй участник что-то записал. У Анны — покупка Бориса, у Бориса — покупка
+    // Анны, и каждый видит только чужое; своя запись новостью не является.
+    await expect(anna.locator(".family-news")).toContainText(/1\s*500\s*₽/u, { timeout: 45_000 });
+    await expect(anna.locator(".family-news")).not.toContainText(/4\s*000\s*₽/u);
+    await expect(anna.locator(".family-news")).toContainText(/Boris two: 1 покупка/u);
+    await expect(boris.locator(".family-news")).toContainText(/4\s*000\s*₽/u, { timeout: 45_000 });
+    await expect(boris.locator(".family-news")).not.toContainText(/1\s*500\s*₽/u);
+    await helloShot(anna, "family-news");
+    // Увидена — человек ушёл с «Сегодня» — и за тем же не возвращается: ни на этот экран, ни
+    // после перезапуска, когда «прошлый раз» читается с диска.
+    await anna.getByRole("button", { name: "Год", exact: true }).click();
+    await anna.getByRole("button", { name: "Сегодня", exact: true }).click();
+    await expect(anna.locator(".family-news")).toHaveCount(0);
+    await anna.reload();
+    await expect(flexibleRemaining(anna)).toHaveText(/21\s*500\s*₽/u);
+    await expect(anna.locator(".family-news")).toHaveCount(0);
+
     await expectSyncIndicator(anna, /синхронизировано$/u);
     await expectSyncIndicator(boris, /синхронизировано$/u);
     await anna.reload();

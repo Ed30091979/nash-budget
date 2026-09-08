@@ -117,6 +117,43 @@ describe("UpdatePromptView", () => {
     expect(html).toContain("Обновить сейчас");
   });
 
+  it("уступает место сообщению приложения и не теряет при этом своего состояния", () => {
+    // Потолок моментов: плашка внизу одна. Две плашки с одним прилипанием вставали друг на
+    // друга, и верхняя накрывала «Закрыть» нижней. Скрытие — свойство вида, не состояния:
+    // `offlineReady` остаётся истинным, и плашка возвращается, когда сообщение погасло.
+    const shown = renderToStaticMarkup(
+      <UpdatePromptView
+        offlineReady
+        needRefresh={false}
+        registrationFailed={false}
+        updatePhase="idle"
+        updateBlocked={false}
+        onUpdate={noOp}
+        onLater={noOp}
+        onDismissOfflineReady={noOp}
+        onDismissRegistrationError={noOp}
+      />,
+    );
+    expect(shown).toContain("Приложение готово работать без интернета.");
+    const hidden = renderToStaticMarkup(
+      <UpdatePromptView
+        hidden
+        offlineReady
+        needRefresh
+        registrationFailed={false}
+        updatePhase="idle"
+        updateBlocked={false}
+        onUpdate={noOp}
+        onLater={noOp}
+        onDismissOfflineReady={noOp}
+        onDismissRegistrationError={noOp}
+      />,
+    );
+    expect(hidden).toBe("");
+    const source = readFileSync(new URL("./UpdatePrompt.tsx", import.meta.url), "utf8");
+    expect(source).toContain("hidden={suppressed}");
+  });
+
   it("does not log registration or update errors or add an automatic reload path", () => {
     const source = [
       readFileSync(new URL("./UpdatePrompt.tsx", import.meta.url), "utf8"),

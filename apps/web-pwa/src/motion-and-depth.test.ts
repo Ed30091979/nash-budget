@@ -125,7 +125,7 @@ describe("форма", () => {
     ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
     ".list-card", ".limit-alert", ".explain-card", ".record-outside", ".invite-code",
     ".limit-bar", ".dialog-aside", ".step-progress-bar", ".envelope-board", ".month-shape, .ladder-block",
-    ".pay-row", ".record-action",
+    ".pay-row", ".record-action", ".family-news",
   ];
 
   function radiusRules(): { selector: string; value: string }[] {

@@ -64,6 +64,7 @@ function renderToday(state: BudgetState, today: string) {
       onAdd={() => undefined}
       onYear={() => undefined}
       onPlanning={() => undefined}
+      familyNews={[]}
     />,
   );
   return { markup, text: textOf(markup), heroActions: heroActions(markup), opened };
@@ -110,6 +111,24 @@ describe("выход из закрытого месяца", () => {
     expect(text).toContain("Можно на повседневные расходы");
     expect(text).not.toContain("закончился");
     expect(markup).toContain("hero-reach");
+  });
+
+  it("ведёт себя одинаково при отсутствии в два дня и в девять месяцев", () => {
+    // Внимание к деньгам падает, когда дела плохи: тот, кто открыл приложение после долгого
+    // перерыва, уже преодолел избегание, и экран не вправе взять с него за это плату — ни
+    // словом о перерыве, ни другим устройством экрана. Разница между двумя открытиями — только
+    // имя месяца, который предлагается открыть: тот, в котором семья живёт сейчас.
+    const twoDays = renderToday(makePlanningSeed(), "2026-08-02");
+    const nineMonths = renderToday(makePlanningSeed(), "2027-04-15");
+    const normalize = (text: string) => text.replace(/Открыть (?:август|апрель)/gu, "Открыть месяц").replace(/(?:2 августа|15 апреля)/gu, "сегодня");
+
+    expect(normalize(twoDays.text)).toBe(normalize(nineMonths.text));
+    expect(twoDays.heroActions.map((action) => action.weight)).toEqual(nineMonths.heroActions.map((action) => action.weight));
+    expect(twoDays.heroActions[0]?.label).toBe("Открыть август");
+    expect(nineMonths.heroActions[0]?.label).toBe("Открыть апрель");
+    for (const text of [twoDays.text, nineMonths.text]) {
+      expect(text).not.toMatch(/давно|долго|перерыв|отсутств|не были|вернулись|пропустили|соскучил/iu);
+    }
   });
 
   it("ведёт открытие месяца тем же путём записи, что и всякое другое изменение", () => {

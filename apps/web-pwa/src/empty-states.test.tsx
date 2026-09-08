@@ -149,11 +149,34 @@ describe("сообщение, которое накрывало кнопки", (
     const rule = styles.match(/\.update-toast, \.message-toast \{([^}]*)\}/u)?.[1] ?? "";
 
     expect(rule).not.toContain("position: fixed");
-    expect(rule).toContain("position: sticky");
+    expect(rule).not.toContain("position: sticky");
     expect(rule).toMatch(/margin: 24px auto 0/u);
-    // И садится она над нижней навигацией — над измеренной, а не над числом: 84 было 56 + 28 и
-    // при крупном шрифте сажало плашку под панель.
-    expect(rule).toMatch(/bottom: calc\(var\(--nav-space\) \+ 28px\)/u);
+    // Липнет плашка только внутри оболочки приложения: там есть измеренная навигация, на
+    // которой стоять, и прокрутка, которой её доматывают. Садится она над навигацией — над
+    // измеренной, а не над числом: 84 было 56 + 28 и при крупном шрифте сажало плашку под панель.
+    const shell = styles.match(/\.app-shell > \.update-toast, \.app-shell > \.message-toast \{([^}]*)\}/u)?.[1] ?? "";
+    expect(shell).toContain("position: sticky");
+    expect(shell).toMatch(/bottom: calc\(var\(--nav-space\) \+ 28px\)/u);
+    // Две липкие полосы с одним краем вставали друг на друга: плашка накрывала кнопки полосы
+    // записи. Там, где низ занят полосой, плашка стоит в потоке.
+    const yields = styles.match(/\.app-shell:has\(\.record-action\) > \.update-toast, \.app-shell:has\(\.record-action\) > \.message-toast \{([^}]*)\}/u)?.[1] ?? "";
+    expect(yields).toContain("position: static");
+  });
+
+  it("на онбординге стоит в потоке под карточкой, а не над её полями", () => {
+    // Дефект: на маршруте онбординга навигации нет, `--nav-space` держал проектные 56, и
+    // прилипшая плашка «готово работать без интернета» вставала на y=464 при 390×664 — поверх
+    // полей «Название плана» и «Как назвать основной счёт», у новичка, на первом шаге. Здесь
+    // плашка не липнет нигде, кроме оболочки, а колонку на весь экран держит сам маршрут,
+    // чтобы карточка и плашка центрировались вместе, друг под другом.
+    expect(styles).not.toMatch(/\.onboarding-shell \{[^}]*(?:min-height: 100dvh|position)/u);
+    const route = styles.match(/\.onboarding-route \{([^}]*)\}/u)?.[1] ?? "";
+    expect(route).toContain("min-height: 100dvh");
+    expect(route).toContain("align-content: center");
+    // Плашка одна на все маршруты: рама монтирует её один раз, и признак «готово к офлайну»
+    // переживает переход с онбординга в приложение, а не пропадает недочитанным.
+    expect(appSource.match(/<UpdatePrompt /gu)).toHaveLength(1);
+    expect(appSource).toContain('<AppFrame className="onboarding-route"');
   });
 
   it("не оставляет ни одного `position: fixed` над содержимым, кроме навигации, обхода и затемнений", () => {

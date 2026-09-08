@@ -58,6 +58,7 @@ import {
 } from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
 import { budgetJournalDrafts } from "./journal";
+import { authorsOfTransactions, type TransactionAuthor } from "./news";
 import {
   classifySyncFailure,
   normalizeEmail,
@@ -494,6 +495,15 @@ export interface FamilyController {
    */
   readonly syncRound: SyncRoundOutcome;
   readonly integrity: JournalIntegrity | null;
+  /**
+   * Кто записал каждую операцию бюджета — из заголовков выигравших операций журнала.
+   *
+   * Нужно семейной новости (§6): сама операция автора не хранит, форма записи метку участника
+   * не ставит, а журнал ставит всегда. Пустая карта — журнала нет: без адреса сервера, без
+   * сессии, без семьи. Читается там же и тогда же, где журнал читается ради целостности, —
+   * второго прохода по журналу ради неё нет.
+   */
+  readonly transactionAuthors: ReadonlyMap<string, TransactionAuthor>;
   /** Ход смены ключа семьи, или `null`, когда её никто не начинал в этой сессии. */
   readonly rotation: RotationState | null;
   /**
@@ -835,6 +845,7 @@ export function useFamily(
   const [status, setStatus] = useState<SyncStatusReport | null>(null);
   const [syncRound, setSyncRound] = useState<SyncRoundOutcome>("ok");
   const [integrity, setIntegrity] = useState<JournalIntegrity | null>(null);
+  const [transactionAuthors, setTransactionAuthors] = useState<ReadonlyMap<string, TransactionAuthor>>(new Map());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1019,9 +1030,18 @@ export function useFamily(
       }
       try {
         const journal = await store.readSyncState(SYNC_STATE_KEYS.journal);
-        setIntegrity(journal === undefined ? null : restoreJournal(journal).integrity);
+        if (journal === undefined) {
+          setIntegrity(null);
+          setTransactionAuthors(new Map());
+        } else {
+          const snapshot = restoreJournal(journal);
+          setIntegrity(snapshot.integrity);
+          // Авторы — из того же снимка: заголовки выигравших операций, по одной на сущность.
+          setTransactionAuthors(authorsOfTransactions(snapshot.entries));
+        }
       } catch {
         setIntegrity(null);
+        setTransactionAuthors(new Map());
       }
       if (!publishDocument) return;
       try {
@@ -1129,6 +1149,7 @@ export function useFamily(
     if (!isSyncActive(serverUrl, session) || session?.familyId == null || api === null) {
       setStatus(null);
       setIntegrity(null);
+      setTransactionAuthors(new Map());
       setSyncRound("ok");
       return;
     }
@@ -1776,6 +1797,7 @@ export function useFamily(
     status,
     syncRound,
     integrity,
+    transactionAuthors,
     rotation,
     epochAlarm,
     busy,

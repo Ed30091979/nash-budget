@@ -12,6 +12,7 @@ import { MAX_STATEMENT_BYTES, StatementParseError } from "./csv";
 import { createImportMemory, type ImportMemory } from "./memory";
 import { applyImportPlan, buildImportPlan, undoImport, type Assignment, type ImportChoices, type ImportPlan } from "./plan";
 import { parseStatement, type ParsedStatement } from "./statement";
+import { plural } from "../../plural";
 
 /**
  * Экран «Выписка банка»: файл → предпросмотр → бюджет, с отменой.
@@ -88,15 +89,6 @@ export function periodWords(period: { readonly from: string; readonly to: string
     return `с ${Number(period.from.slice(8, 10))} по ${formatDay(period.to)}`;
   }
   return `с ${formatDay(period.from)} по ${formatDay(period.to)}`;
-}
-
-export function plural(count: number, forms: readonly [string, string, string]): string {
-  const tail = count % 100;
-  const last = count % 10;
-  if (tail >= 11 && tail <= 14) return `${count} ${forms[2]}`;
-  if (last === 1) return `${count} ${forms[0]}`;
-  if (last >= 2 && last <= 4) return `${count} ${forms[1]}`;
-  return `${count} ${forms[2]}`;
 }
 
 const OPERATIONS: readonly [string, string, string] = ["операция", "операции", "операций"];

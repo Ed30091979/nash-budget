@@ -7,6 +7,12 @@ import {
 } from "./update-policy";
 
 interface UpdatePromptViewProps {
+  /**
+   * Плашка уступает место сообщению приложения: на экране одна плашка, а не две друг на друге.
+   * Состояние при этом не теряется — спрятанное сообщение об обновлении возвращается, как только
+   * сообщение приложения закрыто или погасло.
+   */
+  hidden?: boolean;
   offlineReady: boolean;
   needRefresh: boolean;
   registrationFailed: boolean;
@@ -19,6 +25,7 @@ interface UpdatePromptViewProps {
 }
 
 export function UpdatePromptView({
+  hidden = false,
   offlineReady,
   needRefresh,
   registrationFailed,
@@ -29,7 +36,7 @@ export function UpdatePromptView({
   onDismissOfflineReady,
   onDismissRegistrationError,
 }: UpdatePromptViewProps) {
-  if (!offlineReady && !needRefresh && !registrationFailed) {
+  if (hidden || (!offlineReady && !needRefresh && !registrationFailed)) {
     return null;
   }
 
@@ -104,7 +111,7 @@ export function UpdatePromptView({
   );
 }
 
-export function UpdatePrompt({ hasUnsavedChanges = false }: { readonly hasUnsavedChanges?: boolean }) {
+export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: { readonly hasUnsavedChanges?: boolean; readonly suppressed?: boolean }) {
   const [registrationFailed, setRegistrationFailed] = useState(false);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updateBlocked, setUpdateBlocked] = useState(false);
@@ -148,6 +155,7 @@ export function UpdatePrompt({ hasUnsavedChanges = false }: { readonly hasUnsave
 
   return (
     <UpdatePromptView
+      hidden={suppressed}
       offlineReady={offlineReady}
       needRefresh={needRefresh}
       registrationFailed={registrationFailed}

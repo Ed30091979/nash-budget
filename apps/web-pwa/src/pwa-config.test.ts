@@ -126,15 +126,22 @@ describe("service worker registration coverage", () => {
   const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 
   it("registers the service worker on every route, including first-run onboarding", () => {
+    // Регистрация живёт в раме, которую отдаёт каждая ветка маршрута, — один экземпляр на всё
+    // время жизни приложения, а не по экземпляру на ветку: так состояние плашки переживает
+    // переход с онбординга в приложение.
     const routeGuards = appSource
       .split("\n")
       .filter((line) => /^\s{2}if \((?:loadState === |!budget \|\|).*\) return </u.test(line));
 
     expect(routeGuards).toHaveLength(4);
     for (const guard of routeGuards) {
-      expect(guard).toContain("<UpdatePrompt");
+      expect(guard).toContain("<AppFrame ");
     }
-    expect(appSource).toContain('hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty}');
+    expect(appSource).toContain('<AppFrame className="app-shell"');
+    expect(appSource.match(/<UpdatePrompt /gu)).toHaveLength(1);
+    expect(appSource).toMatch(/function AppFrame\([\s\S]*?<UpdatePrompt hasUnsavedChanges=\{hasUnsavedChanges\} suppressed=\{messageShown\} \/>/u);
+    expect(appSource).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
+    expect(appSource).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
   });
 });
 

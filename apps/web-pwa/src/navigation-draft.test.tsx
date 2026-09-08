@@ -72,7 +72,7 @@ describe("draft-safe navigation", () => {
     // «Сегодня» доступно и с планирования, и с экрана семьи, куда ведёт только «Назад» внутри них.
     // Ищется сама панель, а не форма её открывающего тега: атрибуты у тега могут появляться
     // (реф для измерения высоты), дорога домой от этого не меняется.
-    const shell = source.slice(source.indexOf('<div className="app-shell">'));
+    const shell = source.slice(source.indexOf('<AppFrame className="app-shell"'));
     const navigationTag = /<nav\b[^>]*\bclassName="bottom-nav"/u;
     expect(shell.search(navigationTag)).toBeGreaterThan(-1);
     expect(shell.search(navigationTag)).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));

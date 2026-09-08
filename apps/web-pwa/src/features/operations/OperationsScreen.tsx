@@ -438,6 +438,9 @@ function Envelope({ row, amountMinor, applies, selected, clock, onSelect }: { ro
   const rate = after.perDayMinor === null ? null : Math.round(after.perDayMinor / 100) * 100;
   const out = runsOutOn(today, after.daysCovered);
   const line = after;
+  // Факт и путь (§6): «не дотянет» не называется без числа, которым нехватку закрывают, —
+  // сколько в день надо тратить, чтобы этот конверт дожил до выплаты.
+  const needPerDay = payday.daysAhead > 0 ? Math.round(Math.max(0, afterRemaining) / payday.daysAhead / 100) * 100 : 0;
   const bite = applies && before.fill > after.fill ? before.fill : null;
 
   const nowWords = overNow > 0
@@ -454,7 +457,11 @@ function Envelope({ row, amountMinor, applies, selected, clock, onSelect }: { ro
     ? ""
     : line.state === "out"
       ? (overAfter > 0 ? "сверх лимита" : "конверт пуст")
-      : out === null ? "до конца месяца" : `до ${formatDay(out)} · ${reachWord(line.state).toLowerCase()}`;
+      : out === null
+        ? "до конца месяца"
+        : line.state === "short"
+          ? `до ${formatDay(out)} · не дотянет · чтобы дотянуть — ${rubles(needPerDay)} в день`
+          : `до ${formatDay(out)} · ${reachWord(line.state).toLowerCase()}`;
   const footLeft = !clock.inPeriod
     ? `ушло ${rubles(metric.actualMinor)} из ${rubles(metric.availableMinor)}`
     : line.state === "out"

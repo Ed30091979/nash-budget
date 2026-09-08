@@ -296,6 +296,18 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .month-split dt .icon { flex: none; color: var(--ink); }
 .month-split dd { flex: none; margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 
+/* §6 Семейная новость: чужие записи с прошлого раза. Плашка в потоке под героем, той же
+   анатомии, что обещание приватности на импорте: глиф 40 на белом, две строки текста.
+   Поверхность прямая; цвета нет — новость сообщает, а не поздравляет (§3: цвет появляется,
+   когда есть что сказать, а здесь сказано словами). Контраст: `--ink` на плашке 14.08:1,
+   `--ink-muted` на ней 5.49:1. */
+.family-news { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 24px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
+.family-news-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }
+.family-news > div { min-width: 0; }
+.family-news strong { display: block; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.family-news strong + strong { margin-top: 4px; }
+.family-news small { display: block; margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+
 /* §6 Плашка внимания. */
 .limit-alert { display: grid; gap: 4px; margin-top: 24px; padding: 16px; color: var(--amber-ink); background: var(--amber-soft); }
 .limit-alert b { font-size: var(--size-body); font-weight: 700; }
@@ -512,8 +524,21 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Фиксированное положение накрывало кнопку сохранения и поле даты, стоило форме прокрутиться:
    у плашки не было собственной высоты, и домотать содержимое из-под неё было нельзя. Теперь
    высота есть, и на самом низу страницы плашка садится над навигацией, ничего не закрывая, —
-   над измеренной навигацией: число 84 было 56 + 28 и при крупном шрифте сажало её под панель. */
-.update-toast, .message-toast { position: sticky; bottom: calc(var(--nav-space) + 28px); z-index: 40; width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
+   над измеренной навигацией: число 84 было 56 + 28 и при крупном шрифте сажало её под панель.
+   Липнет она только внутри оболочки приложения — там есть навигация, на которой стоять, и
+   прокрутка, которой содержимое доматывают из-под неё. На онбординге навигации нет, и
+   `--nav-space` держал проектные 56: плашка вставала над серединой экрана — ровно на полях
+   первого шага, которые новичок в эту секунду заполняет. Дефект был невидим всем, у кого
+   приложение уже стоит: признак «готово к работе офлайн» срабатывает один раз за установку.
+   Вне оболочки плашка стоит в потоке — в той же колонке, что и карточка, под ней. */
+.update-toast, .message-toast { width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
+.app-shell > .update-toast, .app-shell > .message-toast { position: sticky; bottom: calc(var(--nav-space) + 28px); z-index: 40; }
+/* Низ экрана занят, когда к навигации липнет полоса записи («Записать», предпросмотр выписки):
+   две полосы с одним краем вставали друг на друга, и плашка накрывала «Очистить черновик» и
+   кнопку записи во всех положениях прокрутки, кроме самого края потока. Полоса — главное
+   действие экрана и обязана оставаться под большим пальцем; плашка уступает и стоит в потоке.
+   Найдено измерением сообщений: прежняя проверка считала плашку держателем целей, а не помехой. */
+.app-shell:has(.record-action) > .update-toast, .app-shell:has(.record-action) > .message-toast { position: static; }
 .update-toast p, .message-toast p { margin: 0 0 12px; color: var(--on-ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .update-toast .primary-button, .message-toast .primary-button { color: var(--ink); background: var(--surface); border-color: var(--surface); }
 .update-toast .quiet-button, .message-toast .quiet-button { color: var(--on-ink); }
@@ -525,13 +550,29 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .storage-error-state h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
 .storage-error-state p { margin: 12px 0 20px; color: var(--ink-muted); font-weight: 400; }
 
-/* §8 Онбординг. */
-.onboarding-shell { display: grid; min-height: 100dvh; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); place-items: center; background: var(--canvas); }
+/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: карточка и плашка
+   сервис-воркера стоят в ней друг под другом и центрируются вместе. Пока высоту экрана держала
+   сама оболочка, плашка оказывалась вне потока карточки и накрывала её поля. */
+.onboarding-route { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100dvh; align-content: center; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--canvas); }
+/* Колонки онбординга объявлены с нулевым минимумом — те же грабли, что у `.field`: у поля ввода
+   есть собственная ширина (`size=20`, при ×2.7 — 440 pt), неявная колонка `auto` растягивалась
+   под неё, и вся карточка при ×2.7 на 320 pt была шире экрана: `width: min(680px, 100%)`
+   считался от колонки, а не от экрана. Найдено измерением сообщений на онбординге. */
+.onboarding-shell { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; }
+/* §1 «ничего не обрезается» — и на первом экране тоже. Правила переноса маршрута (`.route-screen`)
+   на онбординг не распространяются, и при ×2.7 на 320 pt «демонстрационный» в текстовой кнопке
+   был шире экрана на полсотни пунктов: страница получала горизонтальную прокрутку — у новичка,
+   на первом шаге, в режиме, который включают ради читаемости. Найдено измерением сообщений. */
+.onboarding-shell button, .onboarding-shell label, .onboarding-shell strong, .onboarding-shell span, .onboarding-shell legend { overflow-wrap: anywhere; hyphens: auto; }
 .onboarding-card { width: min(680px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
 .onboarding-heading { display: flex; gap: 12px; align-items: center; }
 .onboarding-heading .brand-mark { flex: none; color: var(--ink); background: var(--surface-sunken); }
 .onboarding-heading h1, .onboarding-heading p { margin: 0; }
-.onboarding-heading h1 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); }
+/* Текстовый блок шапки шага — flex-элемент, и без нулевого минимума он не ужимается ниже
+   самого длинного слова: «Повседневные» при ×2.7 на 320 pt — 300 pt, и заголовок выносил всю
+   карточку за экран. Слово переносится по слогам (§1), а не выталкивает край. */
+.onboarding-heading > div { min-width: 0; }
+.onboarding-heading h1 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); overflow-wrap: anywhere; hyphens: auto; }
 .onboarding-kicker { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .step-progress { margin: 20px 0; }
 .step-progress ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 0; margin: 0; list-style: none; }
@@ -544,7 +585,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .step-progress-step.done .step-progress-number { color: var(--ink); }
 .step-progress-step.current .step-progress-number { color: var(--ink); }
 .onboarding-form { display: grid; gap: 16px; }
-.onboarding-fields { display: grid; min-width: 0; gap: 16px; padding: 0; margin: 0; border: 0; }
+.onboarding-fields { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; padding: 0; margin: 0; border: 0; }
 .onboarding-help { margin: 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .composition-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 12px; margin: 0; background: var(--canvas); border: 1px solid var(--border); }
 .composition-options legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -562,8 +603,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .demo-option p strong { color: var(--ink); }
 .text-button { min-height: 48px; padding: 13px 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
-.category-edit-list { display: grid; gap: 12px; }
-.category-edit-row { display: grid; gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); }
+.category-edit-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.category-edit-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); }
 .category-edit-row legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .remove-category { width: fit-content; min-height: 48px; color: var(--red-ink); font-size: var(--size-caption); }
 .onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; }
@@ -1019,7 +1060,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .nav-button { grid-template-columns: auto auto; min-height: 48px; place-content: center; }
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
-  .update-toast, .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .app-shell > .update-toast, .app-shell > .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
   .onboarding-card { padding: 32px; }
   .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
   .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
@@ -1154,6 +1195,15 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    другой. При обычном кегле 16 строк — 256 pt, и таких экранов нет. */
 @media (max-width: 18em) and (max-height: 16em) {
   .record-action { position: static; }
+}
+
+/* §6 Тост при крупном шрифте стоит в потоке. При ×2.7 его текст и кнопка — около 430 pt, и
+   прилипший он был стеной между шапкой и панелью: на 390×844 под ним оставалось 136 pt, на iPad в
+   альбоме — 64, и в кнопку в этой щели не попасть. Крупный шрифт узнаётся в кеглях, как в §5:
+   по ширине (телефоны и iPad в портрете) или по высоте (iPad в альбоме). В потоке к плашке
+   доезжают, как к любой другой карточке, и ничего под ней нет. */
+@media (max-width: 18em), (max-height: 20em) {
+  .app-shell > .update-toast, .app-shell > .message-toast { position: static; }
 }
 
 @media (prefers-reduced-motion: reduce) {

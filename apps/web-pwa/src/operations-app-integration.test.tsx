@@ -118,7 +118,10 @@ describe("operations app integration", () => {
       expect(element, `${screen} обязан сообщать о несохранённом черновике`)
         .toContain(`onDirtyChange={${dirtyFlag}}`);
     }
-    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty} />");
+    // Черновики всех трёх экранов держат обновление: их сумма уходит в раму, а рама — в плашку.
+    expect(source).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
+    expect(source).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
+    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} />");
     expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);

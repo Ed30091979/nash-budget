@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -24,6 +24,8 @@ import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./f
 import {
   FamilyScreen,
   MEMBER_FILTER_ALL,
+  familyNewsLines,
+  familyNewsSince,
   filterTransactionsByMember,
   memberFilterOptions,
   membersById,
@@ -31,9 +33,11 @@ import {
   syncAlarm,
   syncIndicatorPresentation,
   transactionAuthorLabel,
+  transactionIds,
   useFamily,
   type BudgetJournalWrite,
   type MemberFilter,
+  type OwnAuthor,
 } from "./features/family";
 import { createImportMemory, ImportScreen } from "./features/import";
 import { OperationsScreen } from "./features/operations";
@@ -43,6 +47,7 @@ import { persistCompletedOnboarding } from "./onboarding/model";
 import { buildDemoBudgetState } from "./onboarding/demo";
 import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
 import { formatMoney, moneyScale } from "./money";
+import { plural } from "./plural";
 import {
   localToday,
   paydayDays,
@@ -162,19 +167,6 @@ export function protectUnsavedDraftOnUnload(event: BeforeUnloadEvent, hasUnsaved
   if (!hasUnsavedDraft) return;
   event.preventDefault();
   event.returnValue = "";
-}
-
-/**
- * «1 конверт», «2 конверта», «5 конвертов»: число в русской строке склоняет существительное.
- * Одиннадцать–четырнадцать — исключение из хвоста, как у любого счётного слова.
- */
-export function plural(count: number, forms: readonly [string, string, string]): string {
-  const tail = count % 100;
-  const last = count % 10;
-  if (tail >= 11 && tail <= 14) return `${count} ${forms[2]}`;
-  if (last === 1) return `${count} ${forms[0]}`;
-  if (last >= 2 && last <= 4) return `${count} ${forms[1]}`;
-  return `${count} ${forms[2]}`;
 }
 
 /** «5-го и 20-го» — даты выплат, выведенные из доходов, одной строкой; пусто — выводить не из чего. */
@@ -350,6 +342,23 @@ function storageText(health: StorageHealth | null): string {
   return `${(health.usage / 1024 / 1024).toFixed(1)} МБ из ${(health.quota / 1024 / 1024).toFixed(0)} МБ`;
 }
 
+/**
+ * Рама, общая для всех маршрутов: содержимое маршрута и под ним плашка сервис-воркера.
+ *
+ * Плашка монтируется один раз на всё время жизни приложения — она всегда второй ребёнок одного и
+ * того же корневого `div`, — поэтому её состояние переживает смену маршрута. Иначе признак «готово
+ * к работе офлайн», который срабатывает один раз за установку, ловил тот экземпляр, что стоял на
+ * онбординге, и молча пропадал в ту секунду, когда человек нажимал «Создать бюджет»: сообщение,
+ * которое никто не закрывал, исчезало само.
+ *
+ * Плашка одна на все маршруты и одна на экране: пока стоит сообщение приложения, плашка
+ * обновления прячется. Две плашки с одним и тем же прилипанием к низу вставали друг на друга, и
+ * верхняя накрывала кнопку «Закрыть» нижней.
+ */
+function AppFrame({ className, hasUnsavedChanges, messageShown, children }: { className: string; hasUnsavedChanges: boolean; messageShown: boolean; children: ReactNode }) {
+  return <div className={className}>{children}<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} /></div>;
+}
+
 export default function App() {
   const repository = useMemo(() => createBudgetRepository(), []);
   // Память назначений импорта: локальная запись на этом устройстве, стирается вместе с данными.
@@ -376,6 +385,11 @@ export default function App() {
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
   const [importDraftDirty, setImportDraftDirty] = useState(false);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
+  // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
+  // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
+  // следующем открытии «прошлый раз» — это бюджет, прочитанный с диска, а в него приём уже
+  // записал всё, что пришло, одной транзакцией с курсором.
+  const [seenTransactionIds, setSeenTransactionIds] = useState<ReadonlySet<string> | null>(null);
   const previousScreenRef = useRef<Screen>(screen);
   // Место под шапку и навигацию снимается с разметки, а не берётся из числа: панель растёт с
   // системным шрифтом, и полоса записи обязана стоять на настоящей панели (`layout-space.ts`).
@@ -454,6 +468,7 @@ export default function App() {
             budgetRef.current = prepared;
             revisionRef.current = stored.revision;
             setBudget(prepared);
+            setSeenTransactionIds(transactionIds(prepared));
             setLoadState("ready");
           } else {
             budgetRef.current = null;
@@ -539,6 +554,36 @@ export default function App() {
   );
   const memberById = useMemo(() => (budget ? membersById(budget) : new Map()), [budget]);
 
+  // §6 «Семейная новость»: чужие записи, которых не было в прошлый раз. Своё — участник этого
+  // устройства из сессии; без сессии (синхронизация не настроена или входа нет) новость не
+  // считается вовсе, и это первая проверка, а не следствие пустой карты авторов. Герой-число от
+  // неё не зависит: новость выводится из состояния, которое приходит позже него, и стоит под ним.
+  const ownDeviceId = family.session?.deviceId ?? null;
+  const ownMemberId = family.session?.memberId ?? null;
+  const familyNews = useMemo(() => {
+    if (budget === null || seenTransactionIds === null || ownDeviceId === null) return [];
+    const own: OwnAuthor = { deviceId: ownDeviceId, memberId: ownMemberId };
+    return familyNewsSince(seenTransactionIds, budget, family.transactionAuthors, own);
+  }, [budget, seenTransactionIds, family.transactionAuthors, ownDeviceId, ownMemberId]);
+  const familyNewsText = useMemo(() => familyNewsLines(familyNews, memberById), [familyNews, memberById]);
+  // Новость увидена, когда человек ушёл с «Сегодня» или свернул приложение, пока она там стояла:
+  // «прошлый раз» становится нынешним состоянием, и за тем же она не возвращается.
+  const newsOnScreen = screen === "today" && familyNews.length > 0;
+  const markNewsSeen = () => {
+    const current = budgetRef.current;
+    if (current !== null) setSeenTransactionIds(transactionIds(current));
+  };
+  useEffect(() => {
+    if (!newsOnScreen) return undefined;
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      const current = budgetRef.current;
+      if (current !== null) setSeenTransactionIds(transactionIds(current));
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [newsOnScreen]);
+
   const recordBackup = async (createdAt: string) => {
     await repository.setLastSuccessfulBackup(createdAt);
     setLastSuccessfulBackup(createdAt);
@@ -559,6 +604,7 @@ export default function App() {
     budgetRef.current = next;
     revisionRef.current = null;
     setBudget(next);
+    setSeenTransactionIds(transactionIds(next));
     setLoadState("ready");
   };
 
@@ -581,10 +627,10 @@ export default function App() {
   // локального хранилища укладывается в первый кадр: пока порог не перейдён, экран молчит, но
   // `aria-busy` уже говорит читающему с экрана, что здесь ещё не готово. Слово появляется только
   // тогда, когда ждать действительно пришлось, — и тогда оно уже не мельтешение, а объяснение.
-  if (loadState === "loading") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main><UpdatePrompt /></>;
-  if (loadState === "error") return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main><UpdatePrompt /></>;
-  if (loadState === "empty") return <div className="onboarding-route"><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div><UpdatePrompt /></div>;
-  if (!budget || !metrics || !plan) return <><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main><UpdatePrompt /></>;
+  if (loadState === "loading") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main></AppFrame>;
+  if (loadState === "error") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main></AppFrame>;
+  if (loadState === "empty") return <AppFrame className="onboarding-route" hasUnsavedChanges={false} messageShown={false}><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div></AppFrame>;
+  if (!budget || !metrics || !plan) return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
   const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
@@ -648,12 +694,13 @@ export default function App() {
       hasUnsavedDraft,
       () => window.confirm(DISCARD_DRAFT_CONFIRMATION),
     )) {
+      if (newsOnScreen) markNewsSeen();
       setScreen(destination);
     }
   };
 
   return (
-    <div className="app-shell">
+    <AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>
       <IconSprite />
       <SkipLink />
       <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
@@ -685,7 +732,7 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} onImport={() => navigate("import")} /> : null}
+          {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} onImport={() => navigate("import")} familyNews={familyNewsText} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
           {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
@@ -720,6 +767,7 @@ export default function App() {
               budgetRef.current = null;
               revisionRef.current = null;
               setBudget(null);
+              setSeenTransactionIds(null);
               setLastSuccessfulBackup(null);
               setLoadState("empty");
             }}
@@ -765,8 +813,7 @@ export default function App() {
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
-      <UpdatePrompt hasUnsavedChanges={operationDraftDirty || planningDraftDirty || importDraftDirty} />
-    </div>
+    </AppFrame>
   );
 }
 
@@ -820,7 +867,7 @@ type CategoryRow = { category: BudgetState["categories"][number]; metric: Budget
  * остатком июля был арифметически бессвязен, и честнее сказать словами, что показан закрытый
  * месяц и почему у него нет прогноза.
  */
-export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, monthToOpen, openingMonth, onOpenMonth, onAdd, onYear, onPlanning, onImport }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; monthToOpen: string | null; openingMonth?: boolean; onOpenMonth?: (month: string) => void; onAdd: () => void; onYear: () => void; onPlanning: () => void; onImport?: () => void }) {
+export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flexibleSpentMinor, clock, recentTransactions, categoryById, memberById, memberOptions, memberFilter, onMemberFilterChange, hasRecords, monthToOpen, openingMonth, onOpenMonth, onAdd, onYear, onPlanning, onImport, familyNews }: { budget: BudgetState; plan: AnnualPlan; flexibleRows: CategoryRow[]; safeToSpendMinor: number; flexibleSpentMinor: number; clock: PeriodClock; recentTransactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[]; memberFilter: MemberFilter; onMemberFilterChange: (value: MemberFilter) => void; hasRecords: boolean; monthToOpen: string | null; openingMonth?: boolean; onOpenMonth?: (month: string) => void; onAdd: () => void; onYear: () => void; onPlanning: () => void; onImport?: () => void; familyNews: readonly string[] }) {
   const overLimit = flexibleRows.filter((row) => row.metric?.status === "over_limit");
   const nextId = plan.upcomingCommitmentIds[0];
   const next = budget.annualCommitments.find((item) => item.id === nextId);
@@ -885,6 +932,18 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
       </>}
       <button className={monthToOpen && onOpenMonth && !clock.inPeriod ? "secondary-button" : "primary-button"} type="button" onClick={onAdd}><span className="icon-label"><Icon name="plus" size={20} />Записать покупку</span></button>
     </section>
+
+    {/* §6 Семейная новость: единственный заслуженный момент на входе — первое открытие после
+        того, как второй участник что-то записал. Стоит под героем и никогда над ним: герой
+        не ждёт её и не двигается из-за неё. В потоке, ничего не накрывает. Итог по видам и
+        суммам, а не строки операций — те и так стоят в «Последних записях». */}
+    {familyNews.length > 0 ? <div className="family-news" role="status">
+      <span className="family-news-mark"><Icon name="users" size={24} /></span>
+      <div>
+        {familyNews.map((line) => <strong key={line}>{line}</strong>)}
+        <small>Новое с прошлого раза</small>
+      </div>
+    </div> : null}
 
     {overLimit.length ? <div className="limit-alert danger" role="alert"><b>Перелимит</b><span>{overLimit.map((row, index) => <span key={row.category.id}>{index > 0 ? " · " : ""}{row.category.name}: <Money value={row.metric?.overMinor ?? 0} sign="+" /></span>)}</span></div> : null}
 
@@ -1133,6 +1192,9 @@ function CategoryList({ rows, clock, onPlanning }: { rows: CategoryRow[]; clock:
     const rate = perDayMinor(line);
     const out = runsOutOn(today, line.daysCovered);
     const overMinor = metric.overMinor ?? 0;
+    // Факт и путь: нехватка не называется без числа, которым её закрывают. «До 12-го» — факт,
+    // «чтобы дотянуть — 400 ₽ в день» — путь; строка без второго была бы упрёком без ответа.
+    const needPerDay = payday.daysAhead > 0 ? Math.round(Math.max(0, metric.remainingMinor) / payday.daysAhead / 100) * 100 : 0;
     // Закрытый месяц: слово итога вместо слова прогноза. «Хватило» — конверт дожил до конца
     // месяца с остатком; «Конверт пуст» и «Перелимит» — факты, они не меняются.
     const chipState: ReachState = line.state === "out" ? "out" : clock.inPeriod ? line.state : "reaches";
@@ -1154,7 +1216,9 @@ function CategoryList({ rows, clock, onPlanning }: { rows: CategoryRow[]; clock:
           <span><b><Money value={Math.max(0, metric.remainingMinor)} /></b>{rate === null ? "" : <> · <Money value={rate} /> в день</>}</span>
           {line.state === "out"
             ? <span className="out">{overMinor > 0 ? "потрачено сверх лимита" : "конверт пуст"}</span>
-            : <span className={line.state === "short" ? "short" : undefined}>{out === null ? "трат не было" : `до ${formatDay(out)}`}</span>}
+            : line.state === "short" && out !== null
+              ? <span className="short">до {formatDay(out)} · чтобы дотянуть — <Money value={needPerDay} /> в день</span>
+              : <span>{out === null ? "трат не было" : `до ${formatDay(out)}`}</span>}
         </> : <>
           <span><b><Money value={Math.max(0, metric.remainingMinor)} /></b> осталось</span>
           <span className={line.state === "out" ? "out" : undefined}>ушло <Money value={metric.actualMinor} /> из <Money value={metric.availableMinor} /></span>

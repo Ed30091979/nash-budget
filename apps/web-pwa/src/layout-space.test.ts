@@ -132,7 +132,7 @@ describe("таблица стилей считает от измеренного
     const bar = rulesFor(".record-action").flatMap((rule) => rule.declarations);
     expect(bar).toContain("bottom: var(--nav-space)");
 
-    const toast = rulesFor(".update-toast").flatMap((rule) => rule.declarations);
+    const toast = rulesFor(".app-shell > .update-toast").flatMap((rule) => rule.declarations);
     expect(toast).toContain("bottom: calc(var(--nav-space) + 28px)");
   });
 
