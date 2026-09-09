@@ -23,7 +23,7 @@ import {
   DashboardScreen,
   searchOperations,
 } from "./features/dashboard";
-import { OperationsScreen } from "./features/operations";
+import { HistoryScreen, OperationsScreen } from "./features/operations";
 import {
   makeG000State,
   OPERATIONS_TEST_IDS,
@@ -128,9 +128,11 @@ describe("phase 7 App composition", () => {
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
-    // Поиск по операциям живёт на маршруте «Записать» — внутри самой истории, которую он
-    // фильтрует, а не отдельным вторым списком под ней и не на «Годе».
+    // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на маршруте
+    // «История» внутри «Ещё», а не отдельным вторым списком и не на «Годе». Экран записи
+    // истории больше не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
     expect(source).toMatch(/screen === "operations" \? <OperationsScreen budget=\{budget\}/);
+    expect(source).toMatch(/screen === "history" \? <HistoryScreen budget=\{budget\}/);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
     expect(source).not.toMatch(/repository\.save\(/);
@@ -144,7 +146,7 @@ describe("phase 7 App composition", () => {
     expect(twentyFour.months.find((item) => item.month === "2028-06")?.annualDueMinor).toBe(0);
     // «Год» отвечает за горизонт: вывод заголовком, лестница месяцев и точные значения под ней.
     // Дно горизонта — пять месяцев на одной сумме — выделено в лестнице весом, а не названо
-    // одним месяцем. Общие итоги «доход / расходы / капитал» живут на «Записать», в свёрнутых
+    // одним месяцем. Общие итоги «доход / расходы / капитал» живут на «Ещё», в свёрнутых
     // «Итогах и остатках», и вторым их набором экран больше не занят.
     expect(textOf(dashboard)).toContain("Плана хватает во все 12 месяцев");
     expect(textOf(dashboard)).toContain("Свободно от 13 191 ₽ в сентябре 2026 до 48 750 ₽ в июне 2027.");
@@ -153,7 +155,9 @@ describe("phase 7 App composition", () => {
     expect(textOf(dashboard)).toContain("сен 2026 180 000 ₽ 166 809 ₽ 19 809 ₽ 0 ₽ 13 191 ₽");
     expect(dashboard).not.toContain("Доход, факт");
     expect(dashboard).not.toContain("Капитал");
-    expect(textOf(operations)).toContain("Показано 6 из 6");
+    expect(textOf(operations)).not.toContain("Показано");
+    const history = renderToStaticMarkup(<HistoryScreen budget={sixOperationState()} onEdit={() => undefined} onAdd={() => undefined} onBack={() => undefined} />);
+    expect(textOf(history)).toContain("Показано 6 из 6");
   });
 
   it("round-trips the canonical six-operation backup through the shared CAS path exactly", async () => {

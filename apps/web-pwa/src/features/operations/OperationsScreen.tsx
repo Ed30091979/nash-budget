@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   calculateBudget,
   type BudgetState,
@@ -10,8 +10,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { MoneyOdometer } from "../../components/MoneyOdometer";
 import { categoryVisual } from "../../category-visual";
-import { searchOperations } from "../dashboard";
-import { formatMoney, parseMoney } from "../../money";
+import { parseMoney } from "../../money";
 import {
   localToday as calendarToday,
   periodClock,
@@ -35,6 +34,15 @@ import {
 import { createOperationsSubmissionGate } from "./form-state";
 import { groupedCategoryOptions } from "./category-picker";
 import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "./CategorySheet";
+import { editAmount, evaluateAmount, settleAmount, type AmountSelection, type KeypadKey } from "./amount-expression";
+import { Keypad, useKeypadAvailable } from "./Keypad";
+import { kindLabels, rubles } from "./transaction-words";
+
+/** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
+export interface EditRequest {
+  readonly id: string;
+  readonly nonce: number;
+}
 
 interface OperationsScreenProps {
   readonly budget: BudgetState;
@@ -52,6 +60,12 @@ interface OperationsScreenProps {
    * выплаты. Без них экран заводит часы сам по календарю; так его рисуют проверки.
    */
   readonly clock?: PeriodClock;
+  /**
+   * Просьба открыть операцию из истории. Экран открывает её в форме и тут же сообщает, что
+   * просьба выполнена: повторный приход на экран не должен открыть ту же операцию снова.
+   */
+  readonly editRequest?: EditRequest | null;
+  readonly onEditRequestHandled?: () => void;
 }
 
 /**
@@ -76,8 +90,6 @@ type Confirmation =
   | { readonly type: "edit"; readonly id: string; readonly draft: TransactionDraft }
   | { readonly type: "delete"; readonly id: string; readonly label: string };
 
-const PAGE_SIZE = 25;
-
 /**
  * Образец суммы в поле высотой 68 (§6).
  *
@@ -89,32 +101,15 @@ const PAGE_SIZE = 25;
  */
 const AMOUNT_PLACEHOLDER = "1200,50";
 
-/** Квитанция записи: её же подводят под глаз после сохранения. */
-export const SAVE_RECEIPT_ID = "operation-save-receipt";
-
-/**
- * «1 операция», «2 операции», «5 операций».
- *
- * Число в русской строке склоняет за собой существительное, и «Всего в истории 4» без него
- * читается обрывком. Правило то же, что у любого счётного слова: одиннадцать–четырнадцать —
- * исключение из хвоста.
- */
-export function operationsCount(count: number): string {
-  const tail = count % 100;
-  const last = count % 10;
-  if (tail >= 11 && tail <= 14) return `${count} операций`;
-  if (last === 1) return `${count} операция`;
-  if (last >= 2 && last <= 4) return `${count} операции`;
-  return `${count} операций`;
+/** Что произносит клавиатура суммы после нажатия: набранное, а у выражения — и его итог. */
+function spokenAmountText(text: string): string {
+  if (text === "") return "Сумма пуста";
+  const result = evaluateAmount(text);
+  return result.kind === "value" && result.compound ? `${text}, итого ${rubles(result.minor)}` : text;
 }
 
-const kindLabels: Record<TransactionKind, string> = {
-  income: "Доход",
-  expense: "Расход",
-  refund: "Возврат",
-  transfer: "Перевод",
-  goal_contribution: "Взнос в цель",
-};
+/** Квитанция записи: её же подводят под глаз после сохранения. */
+export const SAVE_RECEIPT_ID = "operation-save-receipt";
 
 /** «Записать доход» — глагол и вид операции в винительном падеже. */
 const kindObjects: Record<TransactionKind, string> = {
@@ -123,16 +118,6 @@ const kindObjects: Record<TransactionKind, string> = {
   refund: "возврат",
   transfer: "перевод",
   goal_contribution: "взнос в цель",
-};
-
-// §6: вид операции рисует тот же глиф, что и на «Сегодня» — один смысл, один глиф.
-// Он достаётся только строке без категории: у категорийной строки плитку занимает категория.
-const kindIcons: Record<TransactionKind, IconName> = {
-  income: "arrow-down-left",
-  expense: "arrow-up-right",
-  refund: "rotate-ccw",
-  transfer: "arrow-left-right",
-  goal_contribution: "target",
 };
 
 /** Глиф состояния линейки: слово и глиф вместе, цвет — третьим (§6). */
@@ -168,40 +153,6 @@ function dateWords(value: string, today: string): string {
   if (value === today) return `сегодня, ${formatDay(value)}`;
   if (value === yesterday) return `вчера, ${formatDay(value)}`;
   return formatDay(value, value.slice(0, 4) !== today.slice(0, 4));
-}
-
-/** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
-function kindSign(kind: TransactionKind): "+" | "−" | undefined {
-  if (kind === "income" || kind === "refund") return "+";
-  return kind === "expense" ? "−" : undefined;
-}
-
-/** Категория операции, если она у неё есть. Доход тоже бывает с категорией. */
-function transactionCategory(transaction: Transaction, budget: BudgetState): BudgetState["categories"][number] | undefined {
-  const id = transaction.kind === "expense" || transaction.kind === "refund" || transaction.kind === "income"
-    ? transaction.categoryId
-    : undefined;
-  return id === undefined ? undefined : budget.categories.find((item) => item.id === id);
-}
-
-/**
- * Вторая строка операции — без названия категории: оно уже стоит первой строкой, а повтор в
- * плотной строке читается как шум.
- */
-function transactionDetail(transaction: Transaction, budget: BudgetState): string {
-  const account = (id: string) => budget.accounts.find((item) => item.id === id)?.name ?? "Неизвестный счёт";
-  const goal = (id: string) => budget.goals.find((item) => item.id === id)?.name ?? "Неизвестная цель";
-  switch (transaction.kind) {
-    case "income":
-    case "expense": return account(transaction.accountId);
-    case "refund": return `возврат расхода · ${account(transaction.accountId)}`;
-    case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
-    case "goal_contribution": return `${account(transaction.fromAccountId)} → ${goal(transaction.goalId)}`;
-  }
-}
-
-function rubles(minor: number): string {
-  return formatMoney(minor);
 }
 
 function moneyInput(minor: number): string {
@@ -497,7 +448,7 @@ function Envelope({ row, amountMinor, applies, selected, clock, onSelect }: { ro
  * от задетого пальцем экрана. Счёт и дата стоят строкой факта с «Изменить»; доход и перевод —
  * строкой под конвертами, и та же форма ведёт их до конца.
  */
-export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, clock: givenClock }: OperationsScreenProps) {
+export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, clock: givenClock, editRequest = null, onEditRequestHandled }: OperationsScreenProps) {
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   // Часы периода те же, что на «Сегодня». Без переданных — свои, по календарю семьи.
   const clock = useMemo<PeriodClock>(() => {
@@ -513,29 +464,20 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<SaveReceipt | null>(null);
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // Строка факта раскрывается по «Изменить»; у дохода и перевода поля открыты всегда — это их форма.
   const [factOpen, setFactOpen] = useState(false);
-  // Фильтр истории — не часть черновика: он ничего не записывает.
-  const [historyQuery, setHistoryQuery] = useState("");
-  const [historyKind, setHistoryKind] = useState<TransactionKind | "all">("all");
+  // Клавиатура суммы и то, что она произносит читающему с экрана: поле не в фокусе, и его
+  // значение само не объявляется. Каретка ставится после отрисовки, если поле в фокусе.
+  const keypadAvailable = useKeypadAvailable();
+  const amountRef = useRef<HTMLInputElement>(null);
+  const caretRef = useRef<number | null>(null);
+  const [spokenAmount, setSpokenAmount] = useState("");
   const [sheet, setSheet] = useState<CategorySheetDraft | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const gate = useRef(createOperationsSubmissionGate());
   const pristineDraft = useMemo(() => defaultDraft(draft.kind, budget, today), [budget, draft.kind, today]);
   const dirty = editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristineDraft);
   const metrics = useMemo(() => calculateBudget(budget), [budget]);
-  /**
-   * Один список операций вместо двух. Раньше экран показывал полную историю и отдельным блоком
-   * поиск по тем же операциям — две ленты об одном и том же, полтора экрана прокрутки. Теперь
-   * поиск фильтрует саму историю, а «Показать ещё» по-прежнему держит разметку ограниченной:
-   * даже на пятидесяти тысячах операций в DOM попадают только видимые строки.
-   */
-  const filtered = useMemo(
-    () => searchOperations(budget, { query: historyQuery, kind: historyKind }),
-    [budget, historyKind, historyQuery],
-  );
-  const filtering = historyQuery.trim().length > 0 || historyKind !== "all";
   const envelopeIds = new Set(
     activeBudget?.lines
       .filter((item) => item.active !== false)
@@ -563,12 +505,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     .filter((group) => group.options.length > 0);
   const outsideSelected = selectedCategory !== undefined && !envelopeIds.has(selectedCategory.id);
 
-  let amountMinor = 0;
-  try {
-    amountMinor = draft.amount.trim() === "" ? 0 : parseMoney(draft.amount);
-  } catch {
-    // Пока сумма не разобралась, предпросмотра нет: конверты показывают, что в них сейчас.
-  }
+  // Сумма — выражение: «1200+350» считается слева направо. Пока оно не разобралось,
+  // предпросмотра нет: конверты показывают, что в них сейчас.
+  const amount = evaluateAmount(draft.amount);
+  const amountMinor = amount.kind === "value" ? amount.minor : 0;
   const dateInPeriod = activeBudget !== undefined && draft.occurredOn >= activeBudget.startDate && draft.occurredOn <= activeBudget.endDate;
   // Предпросмотр считается только для новой покупки внутри месяца плана: при редактировании
   // сумма уже учтена в остатках, и вычитать её второй раз значило бы показать неправду.
@@ -711,11 +651,12 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
+    // Выражение сворачивается в число здесь: «=» — это и есть кнопка записи.
+    const pending = { ...draft, amount: settleAmount(draft.amount) };
     if (editingId) {
-      setConfirmation({ type: "edit", id: editingId, draft });
+      setConfirmation({ type: "edit", id: editingId, draft: pending });
       return;
     }
-    const pending = draft;
     void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); });
   };
   const confirm = () => {
@@ -740,9 +681,41 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     // Квитанция отвечала на прошлую запись; над формой, открывшей чужую операцию, она врёт.
     setReceipt(null);
     clearTransient();
+    // Фокус остаётся на заголовке маршрута: читающий с экрана слышит «Изменить операцию», а не
+    // голое поле. Сумму лишь подводят под глаз.
     window.setTimeout(() => document.getElementById("operation-amount")?.scrollIntoView({ block: "center" }), 0);
-    window.setTimeout(() => document.getElementById("operation-amount")?.focus(), 0);
   };
+  useEffect(() => {
+    if (!editRequest) return;
+    const transaction = budget.transactions.find((item) => item.id === editRequest.id);
+    if (transaction) beginEdit(transaction);
+    onEditRequestHandled?.();
+    // Просьба — событие, а не состояние: выполняется один раз на каждую, чем бы ни было занято
+    // остальное. Более широкие зависимости открывали бы операцию заново на каждой правке.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest]);
+  /**
+   * Клавиша клавиатуры суммы. Если поле в фокусе, правка идёт по каретке, как с обычной
+   * клавиатуры; иначе — в конец. Результат произносится отдельно: значение поля, которое не в
+   * фокусе, читающему с экрана само не объявляется.
+   */
+  const pressKey = (key: KeypadKey) => {
+    const input = amountRef.current;
+    const focused = input !== null && document.activeElement === input && input.selectionStart !== null && input.selectionEnd !== null;
+    const selection: AmountSelection | null = focused ? { start: input.selectionStart ?? 0, end: input.selectionEnd ?? 0 } : null;
+    const next = editAmount(draft.amount, key, selection);
+    if (next.text !== draft.amount) {
+      caretRef.current = focused ? next.caret : null;
+      patch("amount", next.text);
+    }
+    setSpokenAmount(spokenAmountText(next.text));
+  };
+  useLayoutEffect(() => {
+    const caret = caretRef.current;
+    if (caret === null) return;
+    caretRef.current = null;
+    amountRef.current?.setSelectionRange(caret, caret);
+  });
   const requestDelete = (transaction: Transaction) => {
     setConfirmation({ type: "delete", id: transaction.id, label: `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}` });
     setError(null);
@@ -762,10 +735,22 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
         заголовок карточки суммы: второго на экране нет. */}
     <form className="record-form" onSubmit={submit} noValidate aria-busy={busy} inert={sheet !== null}>
       <section className="section-card record-card" aria-labelledby="operation-form-title">
-        <h1 id="operation-form-title">{title}</h1>
+        {/* «Очистить черновик» стоит у заголовка, а не в полосе записи: полоса с клавиатурой не
+            меняет высоты от первой цифры, и на 320 pt под ней остаётся место конверту. */}
+        <div className="record-head">
+          <h1 id="operation-form-title">{title}</h1>
+          {!editingId && dirty ? <button className="text-button" type="button" aria-label="Очистить черновик" onClick={() => reset()}>Очистить</button> : null}
+        </div>
         <fieldset disabled={busy}>
           <legend>Данные операции</legend>
-          <div className="field amount-field"><label htmlFor="operation-amount">Сумма, ₽</label><input id="operation-amount" inputMode="decimal" maxLength={24} placeholder={AMOUNT_PLACEHOLDER} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} /></div>
+          <div className="field amount-field">
+            <label htmlFor="operation-amount">Сумма, ₽</label>
+            {/* Поле настоящее. `inputmode="none"` просит платформу не поднимать системную
+                клавиатуру — и только: `readonly` разом сломал бы физическую клавиатуру, вставку
+                из буфера и экранный диктор. Без клавиатуры на экране поле зовёт системную. */}
+            <input ref={amountRef} id="operation-amount" inputMode={keypadAvailable ? "none" : "decimal"} maxLength={24} placeholder={AMOUNT_PLACEHOLDER} value={draft.amount} onChange={(event) => patch("amount", event.target.value)} />
+            {amount.kind === "value" && amount.compound ? <output htmlFor="operation-amount" className="amount-total">= <Money value={amount.minor} /></output> : null}
+          </div>
           <div className="record-fact">
             <p>{factWords(draft, budget, today)}</p>
             {draft.kind === "expense" && editingId === null
@@ -821,13 +806,20 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
         </details>
       </> : null}
 
-      <div className="record-action">
+      <div className={`record-action${keypadAvailable ? " with-keypad" : ""}`}>
         <button className="primary-button wide" type="submit" disabled={busy} aria-busy={busy}>{submitLabel}</button>
-        {editingId ? <button className="secondary-button wide" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button> : null}
-        {/* Удаление живёт здесь, а не в каждой строке списка: разрушающее действие не должно
-            стоять под пальцем при пролистывании истории. */}
-        {editingTransaction ? <button className="secondary-button danger-button wide" type="button" disabled={busy} aria-label={`Удалить операцию «${editingLabel}»`} onClick={() => requestDelete(editingTransaction)}>Удалить</button> : null}
-        {!editingId && dirty ? <button className="secondary-button wide" type="button" onClick={() => reset()}>Очистить черновик</button> : null}
+        {editingId ? <div className="record-edit-actions">
+          <button className="secondary-button wide" type="button" aria-label="Отменить редактирование операции" onClick={() => reset()}>Отмена</button>
+          {/* Удаление живёт здесь, а не в строке истории: разрушающее действие не должно стоять
+              под пальцем при пролистывании. */}
+          {editingTransaction ? <button className="secondary-button danger-button wide" type="button" disabled={busy} aria-label={`Удалить операцию «${editingLabel}»`} onClick={() => requestDelete(editingTransaction)}>Удалить</button> : null}
+        </div> : null}
+        {/* §6 Клавиатура суммы: в той же липкой полосе, что и кнопка записи, — над навигацией и
+            под табло, которое она не закрывает. Без неё поле зовёт системную клавиатуру. */}
+        {keypadAvailable ? <>
+          <Keypad onKey={pressKey} disabled={busy} />
+          <span className="sr-only" role="status">{spokenAmount}</span>
+        </> : null}
       </div>
 
       {confirmation ? <div className="limit-alert" role="alertdialog" aria-labelledby="operation-confirmation-title">
@@ -853,68 +845,5 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       onRestore={restoreArchivedCategory}
     /> : null}
 
-    {/* Итоги — справка, а не действие: они свёрнуты, пока их не спросят (§1, уплотнение). */}
-    <details className="section-card collapsible-card">
-      <summary><span>Итоги и остатки</span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
-      <div className="quick-grid" aria-label="Итоги бюджета">
-        <article className="quick-card"><span className="quick-label">Доход</span><strong><Money value={metrics.incomeMinor} /></strong></article>
-        <article className="quick-card"><span className="quick-label">Расходы с учётом возвратов</span><strong><Money value={metrics.expensesMinor} /></strong></article>
-        <article className="quick-card"><span className="quick-label">Капитал</span><strong><Money value={metrics.capitalMinor} /></strong></article>
-      </div>
-      <dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd><Money value={metrics.accountBalancesMinor[account.id] ?? 0} /></dd></div>)}</dl>
-    </details>
-
-    {/* Вся история свёрнута: на экране записи она справка, а не действие. Поиск стоит внутри неё,
-        над списком, который он фильтрует. */}
-    <section className="section-card collapsible-card history-card" aria-labelledby="operations-history-title">
-      <details>
-        <summary><span><span id="operations-history-title">Вся история</span><small>{operationsCount(budget.transactions.length)}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></summary>
-        <div className="search-controls">
-          <label htmlFor="operation-history-search">Поиск по категории, счёту или сумме</label>
-          <input id="operation-history-search" type="search" autoComplete="off" maxLength={80} value={historyQuery} onChange={(event) => { setHistoryQuery(event.target.value); setVisibleCount(PAGE_SIZE); }} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
-          <label htmlFor="operation-history-kind">Вид операции</label>
-          <select id="operation-history-kind" value={historyKind} onChange={(event) => { setHistoryKind(event.target.value as TransactionKind | "all"); setVisibleCount(PAGE_SIZE); }}>
-            <option value="all">Все виды</option>
-            {Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-          </select>
-          <button className="secondary-button" type="button" disabled={!filtering} onClick={() => { setHistoryQuery(""); setHistoryKind("all"); setVisibleCount(PAGE_SIZE); }}>Сбросить</button>
-        </div>
-        {filtered.length ? <ul className="transaction-list">{filtered.slice(0, visibleCount).map(({ transaction }) => {
-          const category = transactionCategory(transaction, budget);
-          const visual = category ? categoryVisual(category) : null;
-          const name = `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}`;
-          return <li className={`transaction-row history-row ${transaction.kind}`} key={transaction.id}>
-            {/* Вся строка — одна цель нажатия: она открывает операцию в форме наверху, где её и
-                меняют, и удаляют. Две текстовые кнопки в каждой строке занимали отдельный ряд и
-                растили список вдвое, а разрушающее действие стояло под пальцем в каждой строке. */}
-            <button className="row-open" type="button" disabled={busy} aria-label={`Изменить операцию «${name}»`} onClick={() => beginEdit(transaction)}>
-              <span className={`transaction-icon ${visual ? `tone-${visual.tone}` : "tone-neutral"}`}><Icon name={visual ? visual.icon : kindIcons[transaction.kind]} size={24} /></span>
-              <span className="transaction-copy"><strong>{category ? category.name : kindLabels[transaction.kind]}</strong><small>{transaction.occurredOn} · {category ? kindLabels[transaction.kind] : transactionDetail(transaction, budget)}</small></span>
-              <b><Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} /></b>
-            </button>
-          </li>;
-        })}</ul> : <div className="empty-state">
-          <span className="empty-state-mark"><Icon name="inbox" size={32} /></span>
-          {/* §6 исследования, пункт 29: сообщить состояние, не соврав про него; объяснить, что сюда
-              попадает; дать прямой путь к задаче. Фильтр и пустая история — разные состояния, и
-              называть их одними словами значит соврать про одно из них. */}
-          {filtering ? <>
-            <h3>По этому запросу ничего не нашлось</h3>
-            <p>В истории всё ещё {operationsCount(budget.transactions.length)}. Поиск идёт по названию категории, названию счёта и по сумме.</p>
-            <button className="primary-button" type="button" onClick={() => { setHistoryQuery(""); setHistoryKind("all"); setVisibleCount(PAGE_SIZE); }}>Показать все операции</button>
-          </> : <>
-            <h3>Записей пока нет</h3>
-            <p>Сюда попадает каждая покупка, доход и перевод — сразу после того, как их записали в форме наверху.</p>
-            <button className="primary-button" type="button" onClick={() => {
-              const amount = document.getElementById("operation-amount");
-              amount?.scrollIntoView({ block: "center" });
-              amount?.focus();
-            }}>Записать первую операцию</button>
-          </>}
-        </div>}
-        {visibleCount < filtered.length ? <button className="secondary-button" type="button" disabled={busy} aria-label={`Показать ещё операции, осталось ${filtered.length - visibleCount}`} onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>Показать ещё ({filtered.length - visibleCount})</button> : null}
-        <p role="status">{filtering ? `Найдено ${filtered.length} из ${budget.transactions.length}. ` : ""}Показано {Math.min(visibleCount, filtered.length)} из {filtered.length}</p>
-      </details>
-    </section>
   </div>;
 }

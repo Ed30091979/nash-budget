@@ -61,7 +61,7 @@ describe("draft-safe navigation", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     // Ключи проверяются типом: новый экран не пройдёт мимо этого списка.
     const screens = Object.keys({
-      today: 1, year: 1, planning: 1, operations: 1, more: 1, family: 1, import: 1,
+      today: 1, year: 1, planning: 1, operations: 1, more: 1, family: 1, import: 1, history: 1,
     } satisfies Record<Screen, number>) as Screen[];
 
     for (const screen of screens.filter((value) => value !== "today")) {
@@ -79,7 +79,7 @@ describe("draft-safe navigation", () => {
     expect(source).toContain('label="Сегодня" onClick={() => navigate("today")}');
     expect(source).toContain('active={screen === "year" || screen === "planning"}');
     // Экран выписки — дверь из «Ещё», и вкладка «Ещё» остаётся подсвеченной на нём.
-    expect(source).toContain('active={screen === "more" || screen === "family" || screen === "import"}');
+    expect(source).toContain('active={screen === "more" || screen === "family" || screen === "import" || screen === "history"}');
 
     // И ничто её не прячет: ни узкий экран, ни альбомная ориентация.
     const navRules = [...styles.matchAll(/([^{}]*\.bottom-nav[^{}]*)\{([^{}]*)\}/gu)];

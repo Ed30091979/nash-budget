@@ -93,19 +93,19 @@ async function expectJulyRow(page: Page): Promise<void> {
 }
 
 async function expectOperationCount(page: Page, count: number): Promise<void> {
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
   await openHistory(page);
   await expect(
     page.getByRole("status").filter({ hasText: `Показано ${count} из ${count}` }),
   ).toBeVisible();
 }
 
-/** «Вся история» свёрнута под табло: справка, а не действие. Раскрывается, если ещё не раскрыта. */
+/** «Вся история» живёт на «Ещё»: справка, а не действие, и с экрана записи она уехала. */
 async function openHistory(page: Page): Promise<void> {
-  const details = page.locator(".history-card details");
-  if ((await details.getAttribute("open")) === null) {
-    await page.getByText("Вся история", { exact: true }).click();
-  }
+  const history = page.getByRole("region", { name: "Вся история" });
+  if (await history.count()) return;
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("button", { name: /^Вся история/u }).click();
+  await expect(history).toBeVisible();
 }
 
 /** Покупка на табло: сумма, дата за «Изменить», конверт касанием — и отдельная кнопка записи. */

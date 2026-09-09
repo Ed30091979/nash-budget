@@ -41,6 +41,7 @@ import {
 } from "./features/family";
 import { createImportMemory, ImportScreen } from "./features/import";
 import { OperationsScreen } from "./features/operations";
+import { HistoryScreen, operationsCount, TotalsFact, type EditRequest } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
@@ -62,7 +63,7 @@ import {
 } from "./reach";
 import { createBudgetRepository } from "./storage-repository";
 
-export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family" | "import";
+export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family" | "import" | "history";
 type LoadState = "loading" | "empty" | "ready" | "error";
 
 const monthLong = new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" });
@@ -384,6 +385,8 @@ export default function App() {
   const [operationDraftDirty, setOperationDraftDirty] = useState(false);
   const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
   const [importDraftDirty, setImportDraftDirty] = useState(false);
+  // Просьба открыть операцию из истории на «Ещё» в форме «Записать»; экран записи её гасит.
+  const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
   // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
@@ -717,7 +720,7 @@ export default function App() {
         <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
         <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
         <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />
-        <NavButton active={screen === "more" || screen === "family" || screen === "import"} icon="more" label="Ещё" onClick={() => navigate("more")} />
+        <NavButton active={screen === "more" || screen === "family" || screen === "import" || screen === "history"} icon="more" label="Ещё" onClick={() => navigate("more")} />
       </nav>
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
@@ -735,9 +738,10 @@ export default function App() {
           {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} onImport={() => navigate("import")} familyNews={familyNewsText} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
           {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
-          {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} /> : null}
+          {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} editRequest={editRequest} onEditRequestHandled={() => setEditRequest(null)} /> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
+            metrics={metrics}
             storageHealth={storageHealth}
             showIosInstall={isIos && !isStandalone}
             lastSuccessfulBackup={lastSuccessfulBackup}
@@ -773,6 +777,7 @@ export default function App() {
             }}
             onFamily={() => navigate("family")}
             onPlanning={() => navigate("planning")}
+            onHistory={() => navigate("history")}
             onImportStatement={() => navigate("import")}
             familyNote={family.membership === null
               ? "Без входа приложение работает как сейчас"
@@ -780,6 +785,8 @@ export default function App() {
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
+          {/* Вся история — маршрут внутри «Ещё»; строка истории открывает операцию в форме записи. */}
+          {screen === "history" ? <HistoryScreen budget={budget} onEdit={(transaction) => { setEditRequest({ id: transaction.id, nonce: Date.now() }); navigate("operations"); }} onAdd={() => navigate("operations")} onBack={() => navigate("more")} /> : null}
           {screen === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setImportDraftDirty} onBack={() => navigate("more")} /> : null}
           {screen === "family" ? <FamilyScreen
             serverUrl={family.serverUrl}
@@ -1287,6 +1294,7 @@ function transactionSign(kind: Transaction["kind"]): "+" | "−" | undefined {
  */
 function MoreScreen(props: {
   budget: BudgetState;
+  metrics: BudgetMetrics;
   storageHealth: StorageHealth | null;
   showIosInstall: boolean;
   lastSuccessfulBackup: string | null;
@@ -1297,6 +1305,7 @@ function MoreScreen(props: {
   onPublishEmpty: () => void;
   onFamily: () => void;
   onPlanning: () => void;
+  onHistory: () => void;
   onImportStatement: () => void;
   familyNote: string;
   monthNote: string;
@@ -1316,6 +1325,16 @@ function MoreScreen(props: {
       <ul className="list-card">
         {/* Строй месяца одной строкой: то, на чём стоят «Сегодня» и «Год», и дверь туда, где это правят. */}
         <li><button className="list-row" type="button" onClick={props.onPlanning}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>Наш месяц</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+      </ul>
+    </section>
+
+    {/* Записи: история с поиском — дверью, итоги — строкой факта. С экрана записи они уехали:
+        он отвечает на «можем ли мы себе это позволить» до траты, а не на «что уже записано». */}
+    <section className="list-group" aria-labelledby="more-records-title">
+      <h2 id="more-records-title" className="list-kicker">Записи</h2>
+      <ul className="list-card">
+        <li><button className="list-row" type="button" onClick={props.onHistory}><span className="list-icon"><Icon name="history" size={24} /></span><span className="list-copy"><strong>Вся история</strong><small>{operationsCount(props.budget.transactions.length)} · поиск по категории, счёту и сумме</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><TotalsFact budget={props.budget} metrics={props.metrics} /></li>
       </ul>
     </section>
 

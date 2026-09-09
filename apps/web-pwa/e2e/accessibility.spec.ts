@@ -251,6 +251,14 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
     for (const route of ["Записать", "Ещё", "Сегодня"]) {
       await expectFocusedRouteHeading(page, route);
       await expectGeometryContract(page, viewport);
+      if (route === "Ещё") {
+        // «Вся история» — маршрут внутри «Ещё»: поиск, список и его цели меряются отдельно.
+        await page.getByRole("button", { name: /^Вся история/u }).click();
+        await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
+        await expectGeometryContract(page, viewport);
+        await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
+        await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
+      }
     }
 
     if (viewport.name === "phone-landscape") {

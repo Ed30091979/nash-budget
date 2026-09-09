@@ -6,7 +6,6 @@ import {
   SEED_IDS,
   type BudgetState,
   type Category,
-  type Transaction,
 } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 import { OperationsScreen } from "./OperationsScreen";
@@ -87,7 +86,7 @@ function textOf(markup: string): string {
 }
 
 describe("operations UI", () => {
-  it("держит все пять видов операций достижимыми и показывает конверты табло с итогами под ними", () => {
+  it("держит все пять видов операций достижимыми и делает одно дело: ни истории, ни итогов под табло", () => {
     const html = plainText(renderToStaticMarkup(<OperationsScreen budget={withAllSignalsAndFlows()} clock={JULY_CLOCK} onChange={vi.fn(async () => undefined)} />));
     const text = textOf(html);
 
@@ -98,14 +97,14 @@ describe("operations UI", () => {
     }
     expect(text).toContain("Доход или перевод");
     expect(html).toContain("Счёт оплаты");
-    expect(text).toContain("Доход 100 000 ₽");
-    expect(text).toContain("Расходы с учётом возвратов 78 150 ₽");
-    expect(text).toContain("Капитал 21 850 ₽");
-    expect(text).toContain("Основной 6 850 ₽");
-    expect(text).toContain("Накопительный 15 000 ₽");
-    expect(text).toContain("Продукты 2026-07-07 · Возврат +1 500 ₽");
-    expect(text).toContain("Перевод 2026-07-11 · Основной → Накопительный 5 000 ₽");
-    expect(text).toContain("Взнос в цель 2026-07-10 · Основной → Резерв 10 000 ₽");
+    // Экран отвечает на «можем ли мы себе это позволить» до траты — и только на него. «Итоги и
+    // остатки» и «Вся история» с поиском уехали на «Ещё» (`HistoryScreen`, `TotalsFact`): второй
+    // главный экран внутри формы к этому вопросу отношения не имел.
+    expect(text).not.toContain("Итоги и остатки");
+    expect(text).not.toContain("Вся история");
+    expect(text).not.toContain("Капитал");
+    expect(html).not.toContain("transaction-list");
+    expect(html).not.toContain("operation-history-search");
 
     // Конверт — кнопка выбора, и её имя говорит, что в нём сейчас: линейка в нём — та же, что на
     // «Сегодня», с теми же словами состояния. Перелимит назван суммой, а не только цветом.
@@ -141,7 +140,7 @@ describe("operations UI", () => {
     expect(html).not.toContain("останется");
   });
 
-  it("keeps archived categories contextual in history without offering them for new expenses", () => {
+  it("не предлагает архивную категорию для новой покупки и выключенную строку плана — конвертом", () => {
     const source = withAllSignalsAndFlows();
     const withoutActiveLine = {
       ...source,
@@ -152,81 +151,14 @@ describe("operations UI", () => {
           : line),
       })),
     };
-    const archived = archiveCategory(withoutActiveLine, SEED_IDS.categories.food);
-    const html = plainText(renderToStaticMarkup(<OperationsScreen budget={archived} onChange={vi.fn(async () => undefined)} />));
-    expect(textOf(html)).toContain("Продукты 2026-07-07 · Возврат");
-    expect(textOf(html)).toContain("Продукты 2026-07-05 · Расход −31 500 ₽");
-    expect(html).not.toContain("Архивировать использованную категорию «Продукты»");
-  });
-
-  it("omits an archived planning line from limit signals while retaining category history", () => {
-    const source = withAllSignalsAndFlows();
-    const inactiveLine = {
-      ...source,
-      budgets: source.budgets.map((budget) => ({
-        ...budget,
-        lines: budget.lines.map((line) => line.categoryId === SEED_IDS.categories.food
-          ? { ...line, active: false }
-          : line),
-      })),
-    };
-    const html = plainText(renderToStaticMarkup(
-      <OperationsScreen budget={inactiveLine} onChange={vi.fn(async () => undefined)} />,
-    ));
-    // Выключенная строка плана — не конверт: категория уходит в «Вне конвертов», а история остаётся.
-    expect(html).not.toMatch(/class="envelope" [^>]*aria-label="Продукты:/u);
-    expect(html).toContain(">Продукты</button>");
-    expect(textOf(html)).toContain("Продукты 2026-07-05 · Расход −31 500 ₽");
-    expect(html).toContain("Архивировать использованную категорию «Продукты»");
-  });
-
-  it("paginates the complete history instead of permanently slicing it", () => {
-    const seed = makeSeedBudget();
-    const extra: Transaction[] = Array.from({ length: 26 }, (_, index) => ({
-      id: `90000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-      occurredOn: "2026-07-15",
-      status: "posted",
-      kind: "income",
-      amountMinor: 100,
-      accountId: SEED_IDS.accounts.main,
-    }));
-    const html = plainText(renderToStaticMarkup(<OperationsScreen budget={{ ...seed, transactions: [...seed.transactions, ...extra] }} onChange={vi.fn(async () => undefined)} />));
-    expect(html).toContain("Показано 25 из 31");
-    expect(html).toContain("Показать ещё (6)");
-    expect(html).toContain("aria-label=\"Показать ещё операции, осталось 6\"");
-  });
-
-  it("фильтрует ту же историю, а не показывает вторым списком те же операции", () => {
-    const state = withAllSignalsAndFlows();
-    const html = renderToStaticMarkup(<OperationsScreen budget={state} onChange={vi.fn(async () => undefined)} />);
-    const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
-
-    // Один список операций на экране, и поиск стоит над ним, а не над своей копией.
-    expect(html.match(/class="transaction-list"/gu)).toHaveLength(1);
-    expect(textOf(html)).toContain("Поиск по категории, счёту или сумме");
-    expect(textOf(html)).toContain(`Показано ${state.transactions.length} из ${state.transactions.length}`);
-    // Смена запроса и вида возвращает список к первой странице: иначе фильтр показывал бы
-    // «Показать ещё» там, где найденное уже помещается целиком.
-    expect(source.match(/setVisibleCount\(PAGE_SIZE\)/gu)?.length).toBeGreaterThanOrEqual(3);
-    expect(source).toContain("maxLength={80}");
-  });
-
-  it("держит разметку ограниченной на истории в пятьдесят тысяч операций", () => {
-    const seed = makeSeedBudget();
-    const many: Transaction[] = Array.from({ length: 50_000 }, (_, index) => ({
-      id: `b0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      occurredOn: `2026-07-${String((index % 28) + 1).padStart(2, "0")}`,
-      status: "posted",
-      kind: "income",
-      amountMinor: index + 1,
-      accountId: SEED_IDS.accounts.main,
-    }));
-    const html = plainText(renderToStaticMarkup(
-      <OperationsScreen budget={{ ...seed, transactions: [...seed.transactions, ...many] }} onChange={vi.fn(async () => undefined)} />,
-    ));
-
-    expect(html.match(/class="transaction-row history-row/gu)).toHaveLength(25);
-    expect(textOf(html)).toContain("Показано 25 из 50005");
+    // Выключенная строка плана — не конверт: категория уходит в «Вне конвертов».
+    const inactive = plainText(renderToStaticMarkup(<OperationsScreen budget={withoutActiveLine} onChange={vi.fn(async () => undefined)} />));
+    expect(inactive).not.toMatch(/class="envelope" [^>]*aria-label="Продукты:/u);
+    expect(inactive).toContain(">Продукты</button>");
+    expect(inactive).toContain("Архивировать использованную категорию «Продукты»");
+    // Архивная категория из новых покупок исчезает вовсе — и из списка на архивирование тоже.
+    const archived = plainText(renderToStaticMarkup(<OperationsScreen budget={archiveCategory(withoutActiveLine, SEED_IDS.categories.food)} onChange={vi.fn(async () => undefined)} />));
+    expect(archived).not.toContain("Архивировать использованную категорию «Продукты»");
   });
 
   it("locks before await so a same-tick double submit calls onChange once", async () => {

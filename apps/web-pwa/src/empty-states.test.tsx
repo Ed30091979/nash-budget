@@ -4,8 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { makeSeedBudget, type BudgetState } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 
-import { OperationsScreen } from "./features/operations";
-import { operationsCount } from "./features/operations/OperationsScreen";
+import { HistoryScreen, OperationsScreen, operationsCount } from "./features/operations";
 
 const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
@@ -40,9 +39,9 @@ function assertThreeRules(markup: string, section: string) {
 }
 
 describe("пустые состояния", () => {
-  it("на «Записать» история без операций называет состояние, объясняет и ведёт к форме", () => {
+  it("история без операций называет состояние, объясняет и ведёт к записи", () => {
     const markup = renderToStaticMarkup(
-      <OperationsScreen budget={budgetWithoutOperations()} onChange={vi.fn()} />,
+      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
     );
 
     assertThreeRules(markup.slice(markup.indexOf("Вся история")), "вся история");
@@ -53,7 +52,7 @@ describe("пустые состояния", () => {
   it("отличает «ничего не записано» от «фильтр ничего не нашёл» — иначе одно из двух ложь", () => {
     const budget = makeSeedBudget();
     const markup = renderToStaticMarkup(
-      <OperationsScreen budget={budget} onChange={vi.fn()} />,
+      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
     );
 
     // В бюджете операции есть, поэтому «Записей пока нет» тут звучать не должно ни при каких

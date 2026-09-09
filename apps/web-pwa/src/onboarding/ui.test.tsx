@@ -55,7 +55,10 @@ describe("onboarding UI contract", () => {
     expect(app).toContain('setLoadState("empty")');
     expect(app.match(/buildDemoBudgetState\(\)/g)).toHaveLength(1);
     expect(app.match(/result\.status === "existing"/g)).toHaveLength(2);
-    expect(operations).toContain('id="operation-amount" inputMode="decimal" maxLength={24}');
+    // Поле суммы — настоящее поле: с клавиатурой на экране оно просит не поднимать системную
+    // (`inputmode="none"`), без неё зовёт десятичную; `readonly` здесь запрещён.
+    expect(operations).toContain('id="operation-amount" inputMode={keypadAvailable ? "none" : "decimal"} maxLength={24}');
+    expect(operations).not.toContain("readOnly");
     expect(app).not.toMatch(/\sstyle\s*=/);
     // Полоса лимита раньше была `<progress>` с двумя наборами браузерных псевдоэлементов, и тест
     // сторожил именно их написание. Сторожить надо не написание, а смысл: полоса объявляет себя

@@ -1,6 +1,9 @@
 /**
  * §12: ни одно сообщение не накрывает цель нажатия — измерено, а не отмечено галочкой.
  *
+ * Маршруты: с первого шага онбординга до «Выписки», включая «Историю» внутри «Ещё». На
+ * «Записать» полоса записи держит клавиатуру суммы — самый высокий из липких блоков.
+ *
  * Пункт стоял пройденным годами, а проверки под ним не было; дефект при этом был: на маршруте
  * онбординга нет навигации, `--nav-space` держал проектные 56, и плашка «готово работать без
  * интернета» вставала над серединой экрана — поверх полей первого шага. Признак срабатывает один
@@ -256,6 +259,12 @@ test("плашка сервис-воркера не накрывает ни од
       await expect(page.getByRole("button", { name: "Очистить черновик" })).toHaveCount(0);
       await goToRoute(page, "Ещё");
       await expectMessageClearance(page, label("Ещё"));
+      // «Вся история» — маршрут внутри «Ещё» с поиском над списком: своя раскладка, свои цели.
+      await page.getByRole("button", { name: /^Вся история/u }).click();
+      await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
+      await expectMessageClearance(page, label("История"));
+      await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
+      await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await page.getByRole("button", { name: /Семья и синхронизация/u }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Семья"));

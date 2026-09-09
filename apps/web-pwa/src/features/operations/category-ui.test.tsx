@@ -52,7 +52,7 @@ describe("выбор категории на экране операций", () 
     // всё, у чего лимита нет, лежит за одной свёрнутой строкой — пилюлями, сгруппированными
     // по смыслу, чтобы «Кредиты» искали среди обязательных, а «Подарки» — среди личного.
     const markup = screenMarkup();
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
 
     for (const title of ["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]) {
       expect(outside).toContain(`<p class="field-hint">${title}</p>`);
@@ -68,7 +68,7 @@ describe("выбор категории на экране операций", () 
     const state = fullCatalogue();
     const envelope = state.categories.find((item) => item.type === "expense")!;
     const markup = screenMarkup(state);
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
 
     expect(markup).toMatch(new RegExp(`<button class="envelope" type="button" aria-pressed="false" aria-label="${envelope.name}:`, "u"));
     expect(outside).not.toContain(`>${envelope.name}</button>`);
@@ -76,7 +76,7 @@ describe("выбор категории на экране операций", () 
 
   it("держит «Свою категорию» последней пилюлей списка", () => {
     const markup = screenMarkup();
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action"'));
+    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
     const chips = outside.slice(0, outside.indexOf('class="row-disclosure"')).match(/<button class="secondary-button"[^>]*>([^<]*)<\/button>/gu) ?? [];
 
     expect(chips.length).toBeGreaterThan(10);

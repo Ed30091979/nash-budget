@@ -16,12 +16,13 @@ function expectNavigationSecurityHeaders(response: Response | null) {
   expect(response?.headers()["x-frame-options"]).toBe("DENY");
 }
 
-/** «Вся история» на «Записать» свёрнута: это справка, а не действие, и её раскрывают, когда нужна. */
+/** «Вся история» живёт на «Ещё»: справка, а не действие, и с экрана записи она уехала. */
 async function openHistory(page: Page) {
-  const details = page.locator(".history-card details");
-  if ((await details.getAttribute("open")) === null) {
-    await page.getByText("Вся история", { exact: true }).click();
-  }
+  const history = page.getByRole("region", { name: "Вся история" });
+  if (await history.count()) return;
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("button", { name: /^Вся история/u }).click();
+  await expect(history).toBeVisible();
 }
 
 async function expectBudgetSnapshot(
@@ -33,7 +34,6 @@ async function expectBudgetSnapshot(
   // Герой называет остаток месяца плана независимо от того, идёт этот месяц сейчас или уже закрыт.
   await expect(page.locator(".hero-card > strong")).toHaveText(remaining);
 
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
   await openHistory(page);
   await expect(
     page.getByRole("status").filter({ hasText: `Показано ${operationCount} из ${operationCount}` }),
@@ -83,12 +83,15 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
 
   // Покупка: сумма, конверт на табло, дата под «Изменить» — и отдельная кнопка, которая называет
   // действие словами. Касание конверта его только выбирает.
+  await page.getByRole("button", { name: "Записать", exact: true }).click();
   await page.getByRole("button", { name: "Изменить", exact: true }).click();
   await page.getByLabel("Дата").fill("2026-07-18");
   await page.getByLabel("Сумма, ₽").fill("9000");
   await page.getByRole("button", { name: /^Продукты:/u }).click();
   await expect(page.getByRole("button", { name: /^Продукты:/u })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: /^Записать 9\s000\s₽ в «Продукты»$/u }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Записано: расход 9\s000\s₽/u })).toBeVisible();
+  await openHistory(page);
   await expect(
     page.getByRole("status").filter({
       hasText: `Показано ${G002_INITIAL_OPERATION_COUNT + 1} из ${G002_INITIAL_OPERATION_COUNT + 1}`,
@@ -129,7 +132,6 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expect(page.getByRole("heading", { name: /Плана хватает во все 12 месяцев/u })).toBeVisible();
   await expect(page.locator(".ladder-row.tight")).toHaveCount(5);
   await expect(page.locator(".ladder-row.tight .ladder-value").first()).toHaveText(TIGHTEST_MONTH_FREE);
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
   await openHistory(page);
   await expect(
     page.getByRole("status").filter({
@@ -139,6 +141,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expectAddedExpense(page);
 
   await context.setOffline(false);
+  await page.getByRole("button", { name: "Записать", exact: true }).click();
   await page.getByLabel("Сумма, ₽").fill("1234");
 
   const switchResponse = await request.post(`${baseURL}/__e2e__/switch-build`, {

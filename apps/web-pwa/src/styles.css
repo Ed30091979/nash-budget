@@ -711,21 +711,43 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .record-form > .limit-alert > b, .record-form > .limit-alert > span { grid-column: 1; }
 .record-form > .limit-alert > button { grid-row: 1 / span 2; }
 .record-form > .limit-alert > button:last-child { grid-column: 3; }
-/* История свёрнута: сводка — заголовок и число операций рядом. */
-.history-card > details > summary { display: flex; min-height: 48px; gap: 12px; align-items: center; justify-content: space-between; padding: 4px 0; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; list-style: none; }
-.history-card > details > summary::-webkit-details-marker { display: none; }
-.history-card > details > summary > span > small { display: block; margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.history-card > details[open] > summary .row-chevron { transform: rotate(90deg); }
-.history-card > details[open] { padding-bottom: 8px; }
-.history-card > details > :not(summary) { margin-top: 8px; }
-.history-card > details > p[role="status"] { margin-top: 12px; }
+/* §6 Клавиатура суммы: четыре ряда клавиш в той же липкой полосе, что и кнопка записи. Клавиша —
+   цель нажатия: 48 в высоту, между клавишами 8 (§9), скруглена (§5), белая с границей `--line`
+   на холсте полосы. Цифры — кегль заголовка весом 700, знаки — 400 и `--ink-muted` (7.16:1):
+   цифры набирают, знаки — реже, и вес это говорит. Ноль шире вдвое, как на калькуляторе. */
+.keypad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.keypad button.key-wide { grid-column: span 2; }
+.keypad button.key-op { color: var(--ink-muted); font-weight: 400; }
+/* Правка операции: «Отмена» и «Удалить» рядом, а не столбцом, — полоса с клавиатурой и без того
+   высокая, и второй ряд кнопок отнял бы у табло последний конверт на 320 pt. */
+.record-edit-actions { display: grid; gap: 8px; }
+.record-action.with-keypad > .record-edit-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Заголовок карточки суммы и «Очистить черновик» справа от него — не в полосе записи: полоса с
+   клавиатурой не меняет высоты от первой цифры, и под ней остаётся место конверту. */
+.record-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.record-head > h1 { min-width: 0; margin: 0; }
+.record-head > .text-button { flex: none; padding: 13px 8px; text-decoration: none; }
+/* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
+.amount-total { display: block; margin-top: 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
+/* §8 «Вся история» — маршрут внутри «Ещё»: заголовок, число операций, поиск над списком. */
+.history-screen > .planning-toolbar { margin-bottom: 4px; }
+.history-card > h1 { margin: 4px 0 0; }
+.history-count { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.history-card > .transaction-list { margin-top: 8px; }
+.history-card > .secondary-button { margin-top: 12px; }
+.history-card > p[role="status"] { margin-top: 12px; }
+/* «Итоги и остатки» на «Ещё» — строка факта; плитки внутри белой карточки стоят на утопленной
+   плоскости, иначе белое на белом не имело бы края. */
+.list-fact > .quick-grid { margin: 4px 0 0; }
+.list-fact > .quick-grid .quick-card { background: var(--surface-sunken); box-shadow: none; }
+.list-fact > .summary-list { margin: 8px 0 16px; }
 .summary-list { display: grid; gap: 0; margin: 16px 0 0; }
 .summary-list div { display: flex; gap: 16px; align-items: baseline; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .summary-list div:last-child { border-bottom: 0; }
 .summary-list dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .summary-list dd { margin: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 .operations-screen .planning-edit-list + .secondary-button { margin-top: 12px; }
-.operations-screen .section-card > p[role="status"] { margin-top: 12px; }
 
 .dashboard-screen { min-width: 0; }
 .dashboard-screen > * + * { margin-top: 24px; }
@@ -1156,9 +1178,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
      колонка под насечкой на этом масштабе всё равно уже не читается как колонка. */
   .reach-legend, .reach-legend > span:first-child { grid-template-columns: minmax(0, 1fr); }
   .reach-legend b { text-align: left; }
-  /* Строка факта: «Изменить» встаёт под текстом, а не сжимает его до слова в строке. */
-  .record-fact { flex-direction: column; align-items: flex-start; gap: 0; }
-  .record-fact > .text-button { padding-left: 0; }
+  /* Строка факта: «Изменить» встаёт под текстом, а не сжимает его до слова в строке. То же с
+     заголовком и «Очистить»: на таком кегле им не хватает одной строки. */
+  .record-fact, .record-head { flex-direction: column; align-items: flex-start; gap: 0; }
+  .record-fact > .text-button, .record-head > .text-button { padding-left: 0; }
   /* Конверт: колонка «останется» переезжает под название, подписи встают столбцом. */
   .envelope-head { grid-template-columns: 40px minmax(0, 1fr); }
   .envelope-after { grid-column: 2; padding-left: 0; text-align: left; }
