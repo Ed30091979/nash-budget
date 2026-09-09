@@ -151,10 +151,10 @@ describe("UpdatePromptView", () => {
     );
     expect(hidden).toBe("");
     const source = readFileSync(new URL("./UpdatePrompt.tsx", import.meta.url), "utf8");
-    expect(source).toContain("hidden={suppressed}");
+    expect(source).toContain("hidden={suppressed || applyingSilently}");
   });
 
-  it("does not log registration or update errors or add an automatic reload path", () => {
+  it("does not log registration or update errors and never reloads the page by hand", () => {
     const source = [
       readFileSync(new URL("./UpdatePrompt.tsx", import.meta.url), "utf8"),
       readFileSync(new URL("./update-policy.ts", import.meta.url), "utf8"),

@@ -124,6 +124,33 @@ describe("PWA production configuration", () => {
 
 describe("service worker registration coverage", () => {
   const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const updatePolicySource = readFileSync(
+    new URL("./components/update-policy.ts", import.meta.url),
+    "utf8",
+  );
+  const updatePromptSource = readFileSync(
+    new URL("./components/UpdatePrompt.tsx", import.meta.url),
+    "utf8",
+  );
+
+  /**
+   * Сборка и политика обмена версии — одно решение, записанное в двух файлах.
+   *
+   * Момент обмена выбирает страница: `skipWaiting`/`clientsClaim` включили бы его в браузере, и
+   * новая предзагрузка встала бы под старый код посреди набора покупки. Раз работник не
+   * активируется сам, приложение обязано спрашивать про обновление само — иначе установленное на
+   * экран «Домой» приложение, которое не делает переходов, останется на старой версии навсегда.
+   */
+  it("держит ожидающего работника и сам спрашивает про новую версию", () => {
+    expect(configSource).toContain('registerType: "prompt"');
+    expect(configSource).toContain("clientsClaim: false");
+    expect(configSource).toContain("skipWaiting: false");
+    expect(updatePromptSource).toContain("createAutomaticUpdates");
+    expect(updatePromptSource).toContain("updates.track(registration)");
+    expect(updatePromptSource).toContain("updates.updateWaiting()");
+    expect(updatePolicySource).toContain('page?.addEventListener("visibilitychange", onResume)');
+    expect(updatePolicySource).toContain('frame?.addEventListener("pageshow", onResume)');
+  });
 
   it("registers the service worker on every route, including first-run onboarding", () => {
     // Регистрация живёт в раме, которую отдаёт каждая ветка маршрута, — один экземпляр на всё

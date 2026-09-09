@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import {
+  createAutomaticUpdates,
   createUpdatePromptActions,
   createUpdateRequestGate,
   type UpdatePhase,
@@ -111,10 +112,36 @@ export function UpdatePromptView({
   );
 }
 
+/**
+ * Плашка обновления — и молчаливое обновление, которому плашка не нужна.
+ *
+ * Вопрос остаётся ровно там, где есть что терять: непустой черновик отменяет молчание, и человек
+ * видит прежнюю плашку с «Позже». Когда терять нечего и приложение ничем не занято — запуск или
+ * возвращение из фона, до первого касания, — новая версия применяется сама, и плашка на эту
+ * секунду не показывается: нажимать в ней нечего. Не удалась — плашка возвращается обычным
+ * предложением, а не жалобой на действие, которого человек не совершал.
+ */
 export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: { readonly hasUnsavedChanges?: boolean; readonly suppressed?: boolean }) {
   const [registrationFailed, setRegistrationFailed] = useState(false);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updateBlocked, setUpdateBlocked] = useState(false);
+  const [applyingSilently, setApplyingSilently] = useState(false);
+  // Решение о молчании принимается в обработчике сервис-воркера, а не в эффекте: обработчик
+  // закрыт над первым отрисованным состоянием, поэтому свежие значения он берёт из ссылок.
+  const unsavedChanges = useRef(hasUnsavedChanges);
+  const pendingSilentApply = useRef(false);
+  const applySilently = useRef<() => void>(() => {
+    pendingSilentApply.current = true;
+  });
+  const [updates] = useState(() =>
+    createAutomaticUpdates({
+      apply: () => applySilently.current(),
+      hasUnsavedChanges: () => unsavedChanges.current,
+      isVisible: () =>
+        typeof document === "undefined" || document.visibilityState === "visible",
+      now: () => Date.now(),
+    }),
+  );
   const {
     offlineReady: [offlineReady, setOfflineReady],
     needRefresh: [needRefresh, setNeedRefresh],
@@ -122,6 +149,12 @@ export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: 
   } = useRegisterSW({
     onRegisterError() {
       setRegistrationFailed(true);
+    },
+    onRegisteredSW(_scriptUrl, registration) {
+      updates.track(registration);
+    },
+    onNeedRefresh() {
+      updates.updateWaiting();
     },
   });
 
@@ -141,6 +174,33 @@ export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: 
   );
 
   useEffect(() => {
+    applySilently.current = () => {
+      setApplyingSilently(true);
+      void requestUpdate().then((attempt) => {
+        if (attempt !== "failed") return;
+        // Молчаливая попытка не удалась — версия по-прежнему ждёт. Человеку показывают обычное
+        // предложение обновиться, а не ошибку действия, которого он не совершал.
+        updates.applyFailed();
+        setApplyingSilently(false);
+        setUpdatePhase("idle");
+      });
+    };
+    if (!pendingSilentApply.current) return;
+    pendingSilentApply.current = false;
+    applySilently.current();
+  }, [requestUpdate, updates]);
+
+  useEffect(
+    () =>
+      updates.watch({
+        page: typeof document === "undefined" ? undefined : document,
+        frame: typeof window === "undefined" ? undefined : window,
+      }),
+    [updates],
+  );
+
+  useEffect(() => {
+    unsavedChanges.current = hasUnsavedChanges;
     if (!hasUnsavedChanges) setUpdateBlocked(false);
   }, [hasUnsavedChanges]);
 
@@ -155,7 +215,7 @@ export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: 
 
   return (
     <UpdatePromptView
-      hidden={suppressed}
+      hidden={suppressed || applyingSilently}
       offlineReady={offlineReady}
       needRefresh={needRefresh}
       registrationFailed={registrationFailed}

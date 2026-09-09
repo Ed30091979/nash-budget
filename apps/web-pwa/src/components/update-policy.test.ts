@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  MINIMUM_UPDATE_CHECK_INTERVAL_MS,
+  createAutomaticUpdates,
   createUpdatePromptActions,
   createUpdateRequestGate,
   type UpdatePhase,
@@ -95,5 +97,189 @@ describe("controlled PWA update policy", () => {
     expect(clearNeedRefresh).toHaveBeenCalledTimes(1);
     expect(updateServiceWorker).not.toHaveBeenCalled();
     expect(unsavedForm).toEqual(snapshot);
+  });
+});
+
+/**
+ * Молчаливое обновление в тихий момент.
+ *
+ * Дефект, который здесь закрыт: приложение с ярлыка на экране «Домой» не делает переходов, новый
+ * работник вставал в ожидание и никогда не брал управление сам, а предложение обновиться нужно
+ * было принять внутри той самой установки. Верные пользователи получали починки последними.
+ */
+class FakeTarget {
+  readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const forType = this.listeners.get(type) ?? new Set<() => void>();
+    forType.add(listener);
+    this.listeners.set(type, forType);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener();
+  }
+
+  get attached(): number {
+    return [...this.listeners.values()].reduce((total, forType) => total + forType.size, 0);
+  }
+}
+
+function automaticUpdates(
+  overrides: {
+    hasUnsavedChanges?: () => boolean;
+    isVisible?: () => boolean;
+    now?: () => number;
+  } = {},
+) {
+  const page = new FakeTarget();
+  const frame = new FakeTarget();
+  const apply = vi.fn();
+  const update = vi.fn(() => Promise.resolve());
+  const updates = createAutomaticUpdates({
+    apply,
+    hasUnsavedChanges: overrides.hasUnsavedChanges ?? (() => false),
+    isVisible: overrides.isVisible ?? (() => true),
+    now: overrides.now ?? (() => 0),
+  });
+  const stop = updates.watch({ page, frame });
+  return { apply, frame, page, stop, update, updates };
+}
+
+describe("обновление без вопроса, когда терять нечего", () => {
+  it("применяет новую версию сама при пустом черновике и нетронутом экране", () => {
+    const { apply, updates } = automaticUpdates();
+
+    expect(updates.updateWaiting()).toBe(true);
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
+
+  it("не применяет её, пока в форме есть несохранённый ввод", () => {
+    let unsaved = true;
+    const { apply, updates } = automaticUpdates({ hasUnsavedChanges: () => unsaved });
+
+    expect(updates.updateWaiting()).toBe(false);
+    expect(apply).not.toHaveBeenCalled();
+
+    // Черновик очищен, но человек в этот момент работает: молчаливое применение перестроило бы
+    // экран под руками. Оно дождётся следующего возвращения из фона.
+    unsaved = false;
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("не перезапускает приложение под руками: после первого касания — только по кнопке", () => {
+    const { apply, page, updates } = automaticUpdates();
+
+    page.emit("pointerdown");
+    expect(updates.updateWaiting()).toBe(false);
+    expect(apply).not.toHaveBeenCalled();
+
+    page.emit("keydown");
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("применяет отложенную версию, когда человек вернулся из фона", () => {
+    const { apply, page, updates } = automaticUpdates();
+
+    page.emit("keydown");
+    expect(updates.updateWaiting()).toBe(false);
+
+    page.emit("visibilitychange");
+
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
+
+  it("держит вопрос там, где есть что терять, даже при возвращении из фона", () => {
+    const { apply, page, updates } = automaticUpdates({ hasUnsavedChanges: () => true });
+
+    updates.updateWaiting();
+    page.emit("pointerdown");
+    page.emit("visibilitychange");
+    page.emit("pageshow");
+
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("применяет версию один раз, а после неудачи возвращается к вопросу", () => {
+    const { apply, page, updates } = automaticUpdates();
+
+    expect(updates.updateWaiting()).toBe(true);
+    page.emit("visibilitychange");
+    expect(apply).toHaveBeenCalledTimes(1);
+
+    updates.applyFailed();
+    page.emit("visibilitychange");
+
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("проверка обновления при запуске и при возвращении из фона", () => {
+  it("спрашивает регистрацию при запуске и на каждом возвращении из фона", () => {
+    let clock = 0;
+    const registration = { update: vi.fn(() => Promise.resolve()) };
+    const { frame, page, updates } = automaticUpdates({ now: () => clock });
+
+    // Запуск: регистрация только появилась — и её сразу спрашивают о новой версии.
+    updates.track(registration);
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    // Свёрнутое приложение iOS не перезагружает: без этого обращения новый `sw.js` не запрашивается
+    // неделями, потому что ни одного перехода не происходит.
+    clock += MINIMUM_UPDATE_CHECK_INTERVAL_MS;
+    page.emit("visibilitychange");
+    expect(registration.update).toHaveBeenCalledTimes(2);
+
+    // Страница, восстановленная из кеша переходов, приходит `pageshow` и вовсе без перехода.
+    clock += MINIMUM_UPDATE_CHECK_INTERVAL_MS;
+    frame.emit("pageshow");
+    expect(registration.update).toHaveBeenCalledTimes(3);
+  });
+
+  it("не спрашивает чаще раза в полминуты и не спрашивает, пока приложение скрыто", () => {
+    let clock = 0;
+    let visible = true;
+    const registration = { update: vi.fn(() => Promise.resolve()) };
+    const { frame, page, updates } = automaticUpdates({
+      isVisible: () => visible,
+      now: () => clock,
+    });
+
+    updates.track(registration);
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    clock += MINIMUM_UPDATE_CHECK_INTERVAL_MS - 1;
+    page.emit("visibilitychange");
+    frame.emit("pageshow");
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    // Уход в фон — это тот же `visibilitychange`, и спрашивать в нём не о чем.
+    visible = false;
+    clock += MINIMUM_UPDATE_CHECK_INTERVAL_MS;
+    page.emit("visibilitychange");
+    expect(registration.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("молчит, когда сети нет: отказ проверки — не событие приложения", async () => {
+    const registration = {
+      update: vi.fn(() => Promise.reject(new Error("Failed to fetch"))),
+    };
+    const { updates } = automaticUpdates();
+
+    expect(() => updates.track(registration)).not.toThrow();
+    await Promise.resolve();
+    expect(registration.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("снимает все подписки, когда рама размонтирована", () => {
+    const { frame, page, stop } = automaticUpdates();
+
+    expect(page.attached + frame.attached).toBe(4);
+    stop();
+    expect(page.attached + frame.attached).toBe(0);
   });
 });
