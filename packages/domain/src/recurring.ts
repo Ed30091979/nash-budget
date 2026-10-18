@@ -1,6 +1,6 @@
 import { indexState, validateTransactionReferences } from "./calculate.js";
 import { addDays, dayIndex, monthIndex, monthOfDate, shiftDate } from "./calendar.js";
-import { convertMinor, findRate } from "./currency.js";
+import { convertMinor, type RateIndex } from "./currency.js";
 import { documentIds, recurringOccurrenceId } from "./identity.js";
 import { MAX_MONEY_MINOR } from "./limits.js";
 import type {
@@ -98,10 +98,10 @@ function snapshotFor(
   amountMinor: number,
   currency: string,
   baseCurrency: string,
-  rates: readonly ExchangeRate[],
+  rates: RateIndex,
   date: LocalDate,
 ): { readonly baseAmountMinor: number; readonly baseCurrency: string; readonly rate: ExchangeRate["rate"] } | null {
-  const rate = findRate(rates, currency, baseCurrency, date);
+  const rate = rates.find(currency, baseCurrency, date);
   if (rate === undefined) return null;
   let baseAmountMinor: number;
   try {
@@ -146,7 +146,7 @@ export function materializeRecurring(
 
   const transactionIds = new Set<StableId>(state.transactions.map((item) => item.id));
   const otherIds = new Set<StableId>(documentIds(state).filter((id) => !transactionIds.has(id)));
-  const rates = [...index.exchangeRates.values()];
+  const rates = index.rates;
   const created: Transaction[] = [];
   const skipped: RecurringSkip[] = [];
   const watermarks = new Map<RecurringRuleId, LocalDate>();

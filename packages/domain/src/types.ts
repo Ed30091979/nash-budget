@@ -547,15 +547,24 @@ export interface DebtBalanceMetrics {
   readonly debtId: DebtId;
   readonly direction: DebtDirection;
   readonly currency: CurrencyCode;
-  /** Posted money that left an account for this debt up to the day, in the debt's currency. */
-  readonly outMinor: MinorUnits;
-  /** Posted money that came to an account from this debt up to the day, in the debt's currency. */
-  readonly inMinor: MinorUnits;
-  /** owed_to_me: opening + out − in; i_owe: opening + in − out. Below zero is an overpayment. */
-  readonly balanceMinor: MinorUnits;
-  /** The balance in the base currency at the latest rate on or before the day; null without one. */
+  /**
+   * Posted money that left an account for this debt up to the day, in the debt's currency; null
+   * when the sum leaves the safe integer range.
+   */
+  readonly outMinor: MinorUnits | null;
+  /** Posted money that came to an account from this debt up to the day; null as {@link outMinor}. */
+  readonly inMinor: MinorUnits | null;
+  /**
+   * owed_to_me: opening + out − in; i_owe: opening + in − out. Below zero is an overpayment; null
+   * when the exact balance leaves the safe integer range.
+   */
+  readonly balanceMinor: MinorUnits | null;
+  /**
+   * The balance in the base currency at the latest rate on or before the day; null without one, or
+   * when it cannot be represented, or when it would carry its total past what can.
+   */
   readonly balanceInBaseMinor: MinorUnits | null;
-  /** Past its due date with something still owed. */
+  /** Past its due date with something still owed, decided on the exact balance. */
   readonly overdue: boolean;
 }
 
@@ -573,8 +582,8 @@ export interface DebtMetrics {
   readonly receivableInBaseMinor: MinorUnits;
   /** What the family owes others, in the base currency: the valued i_owe balances, summed. */
   readonly payableInBaseMinor: MinorUnits;
-  /** receivable − payable. */
-  readonly netInBaseMinor: MinorUnits;
+  /** receivable − payable, exactly; null when that difference cannot be represented. */
+  readonly netInBaseMinor: MinorUnits | null;
   /** Debts whose balance could not be valued in the base currency: no rate, or too large a sum. */
   readonly unvaluedDebtIds: readonly DebtId[];
 }

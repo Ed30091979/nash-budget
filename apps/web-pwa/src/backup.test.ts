@@ -1,7 +1,9 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateDebts,
   calculateMemberExpenses,
+  carryBudgetForward,
   COLLECTION_LIMITS,
   HOUSEHOLD_ID,
   makePlanningSeed,
@@ -1191,6 +1193,51 @@ describe("долги в резервной копии", () => {
     expect(BACKUP_LIMITS.debts).toBe(COLLECTION_LIMITS.debts);
     expect(prepareBudgetState(many)).toEqual(many);
     expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`debts: допускается не более ${BACKUP_LIMITS.debts} элементов`);
+  });
+});
+
+describe("суммы, которые задаёт участник семьи", () => {
+  const KWD_RATE = "c7000000-0000-4000-8000-0000000000b1";
+  const LENT = "c7000000-0000-4000-8000-0000000000b2";
+  const OWED = "c7000000-0000-4000-8000-0000000000b3";
+  const MOVED = "c7000000-0000-4000-8000-0000000000b4";
+
+  /**
+   * Сценарий ревью безопасности из значений, которые принимает каждый шлюз: динар по 9 000 ₽ за
+   * филс с 1900 года, долг семье на потолок поля в динарах и копейка, отданная по долгу семьи с
+   * суммой в динарах на тот же потолок. Каждый остаток в рублях помещается в безопасный диапазон —
+   * 9·10¹⁵ и −9·10¹⁵, — а их разность нет: прежде расчёт долгов бросал, и шлюз отвергал состояние
+   * на каждом устройстве семьи.
+   */
+  const kuwaiti = (movedOn: string): BudgetState => {
+    const seed = makePlanningSeed();
+    return {
+      ...seed,
+      exchangeRates: [{ id: KWD_RATE, currency: "KWD", baseCurrency: "RUB", date: "1900-01-01", rate: { baseMinor: 900_000, quoteMinor: 1 } }],
+      debts: [
+        { id: LENT, counterparty: "Али", direction: "owed_to_me", currency: "KWD", openingMinor: 10 ** 10, active: true },
+        { id: OWED, counterparty: "Омар", direction: "i_owe", currency: "KWD", openingMinor: 0, active: true },
+      ],
+      transactions: [...seed.transactions, {
+        id: MOVED, occurredOn: movedOn, status: "posted", kind: "debt_out", amountMinor: 1,
+        accountId: seed.accounts[0]!.id, debtId: OWED, debtAmountMinor: 10 ** 10,
+      }],
+    };
+  };
+
+  it("принимает состояние, чьи итоги по долгам не представимы, вместо того чтобы отвергнуть его", () => {
+    const state = kuwaiti("2026-07-15");
+    expect(prepareBudgetState(state)).toEqual(state);
+    expect(calculateDebts(state, "2026-07-31").netInBaseMinor).toBeNull();
+  });
+
+  it("не ломается при переходе месяца, когда движение после конца бюджета входит в окно", () => {
+    const state = kuwaiti("2026-08-05");
+    expect(prepareBudgetState(state)).toEqual(state);
+    const august = carryBudgetForward(state, "2026-08").state;
+    expect(august.activeBudgetId).not.toBe(state.activeBudgetId);
+    expect(prepareBudgetState(august)).toEqual(august);
+    expect(calculateDebts(august, "2026-08-31").netInBaseMinor).toBeNull();
   });
 });
 

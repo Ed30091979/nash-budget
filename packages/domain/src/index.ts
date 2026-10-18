@@ -50,12 +50,14 @@ export {
   currencyExponent,
   DEFAULT_BASE_CURRENCY,
   findRate,
+  indexRates,
   isExchangeRateValue,
   isSupportedCurrency,
   RATE_PART_MAX,
   RATE_PART_MIN,
   SUPPORTED_CURRENCIES,
 } from "./currency.js";
+export type { RateIndex } from "./currency.js";
 export {
   archiveDebt,
   calculateDebts,
@@ -66,6 +68,7 @@ export {
 } from "./debts.js";
 export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
 export { calculateHoldings } from "./holdings.js";
+export type { HoldingsOptions } from "./holdings.js";
 export { carriedId, documentIds, HOUSEHOLD_ID, isUuid, recurringOccurrenceId } from "./identity.js";
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
 export {

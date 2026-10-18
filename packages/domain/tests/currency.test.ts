@@ -7,6 +7,7 @@ import {
   DEFAULT_BASE_CURRENCY,
   findRate,
   HOUSEHOLD_ID,
+  indexRates,
   isExchangeRateValue,
   isSupportedCurrency,
   makeSeedBudget,
@@ -157,5 +158,45 @@ describe("findRate", () => {
     expect(findRate(rates, "USD", "EUR", "2026-08-31")?.rate.baseMinor).toBe(9_400);
     expect(findRate(rates, "CNY", "RUB", "2026-08-31")?.rate.baseMinor).toBe(1_000);
     expect(findRate(rates, "EUR", "RUB", "2026-08-31")).toBeUndefined();
+  });
+});
+
+describe("indexRates", () => {
+  it("chooses exactly the rate findRate chooses, for every pair and day", () => {
+    // A seeded table with every case findRate decides: several rates a day, two bases, gaps,
+    // identifiers out of order and days before the first rate and after the last.
+    let seed = 7;
+    const next = (bound: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % bound;
+    };
+    const days = Array.from({ length: 40 }, (_, day) => `2026-08-${String((day % 28) + 1).padStart(2, "0")}`);
+    const rates: ExchangeRate[] = Array.from({ length: 400 }, (_, index) => rate(
+      // Unique, and in no particular order: a random prefix and the position as the tail.
+      `8e000000-0000-4000-8000-${String(next(1_000_000) * 1_000 + index).padStart(12, "0")}`,
+      days[next(days.length)]!,
+      1 + next(10_000),
+      { currency: ["USD", "EUR", "CNY"][next(3)]!, baseCurrency: ["RUB", "KZT"][next(2)]! },
+    ));
+    const index = indexRates(rates);
+    for (const currency of ["USD", "EUR", "CNY", "JPY"]) {
+      for (const base of ["RUB", "KZT", "USD"]) {
+        for (const day of ["2026-07-31", ...days, "2026-09-01"]) {
+          expect(index.find(currency, base, day), `${currency}/${base} ${day}`).toBe(findRate(rates, currency, base, day));
+        }
+      }
+    }
+    expect(indexRates([]).find("USD", "RUB", "2026-08-01")).toBeUndefined();
+  });
+
+  it("breaks a tie on the date by the larger identifier, whatever the order of the list", () => {
+    const tied = [
+      rate("8e000000-0000-4000-8000-000000000003", "2026-08-15", 9_300),
+      rate("8e000000-0000-4000-8000-000000000002", "2026-08-15", 9_250),
+      rate("8e000000-0000-4000-8000-000000000001", "2026-07-31", 9_000),
+    ];
+    expect(indexRates(tied).find("USD", "RUB", "2026-08-15")?.id).toBe("8e000000-0000-4000-8000-000000000003");
+    expect(indexRates([...tied].reverse()).find("USD", "RUB", "2026-08-15")?.id).toBe("8e000000-0000-4000-8000-000000000003");
+    expect(indexRates(tied).find("USD", "RUB", "2026-08-14")?.id).toBe("8e000000-0000-4000-8000-000000000001");
   });
 });

@@ -932,8 +932,11 @@ export function prepareBudgetState(
   calculateMemberExpenses(state);
   // The metrics of wave 1, each a calculation of its own, run on the last day of the active
   // budget: a copy that would crash the debts, the holdings or the split by tag never lands either.
-  calculateDebts(state, activeBudget.endDate);
-  calculateHoldings(state, activeBudget.endDate);
+  // None of them throws on a magnitude — a figure it cannot represent is null — so what refuses a
+  // state here is a malformed state, never an amount that grows into the window next month. The
+  // holdings reuse the debts rather than valuing every debt twice.
+  const debts = calculateDebts(state, activeBudget.endDate);
+  calculateHoldings(state, activeBudget.endDate, { debts });
   calculateTagExpenses(state);
   return state;
 }

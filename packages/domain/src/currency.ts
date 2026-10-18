@@ -102,6 +102,14 @@ export function isExchangeRateValue(value: unknown): value is ExchangeRateValue 
 const SAFE_MAX = BigInt(Number.MAX_SAFE_INTEGER);
 
 /**
+ * An exact sum as a number when it is one, and null when it is not: the answer every metric gives
+ * a magnitude it cannot represent, instead of an exception that would take the whole state down.
+ */
+export function safeMinorOrNull(value: bigint): MinorUnits | null {
+  return value <= SAFE_MAX && value >= -SAFE_MAX ? Number(value) : null;
+}
+
+/**
  * `amountMinor` minor units of a quoted currency in minor units of the base one, at `rate`.
  *
  * Exact integer arithmetic in BigInt — the product of an amount and a rate part leaves the safe
@@ -148,6 +156,70 @@ export function findRate(
     if (best === undefined || rate.date > best.date || (rate.date === best.date && rate.id > best.id)) best = rate;
   }
   return best;
+}
+
+/**
+ * The rates of a state arranged for many lookups: the rate {@link findRate} chooses, found by a
+ * binary search instead of a pass over every rate.
+ *
+ * {@link findRate} reads the whole table on every call, and the metrics ask once per debt and once
+ * per account, so a family's ten thousand rates against ten thousand debts — counts the journal
+ * reports and does not refuse — was a hundred million comparisons in every calculation, several
+ * seconds a call and several calls to every change on the screen. The index is built once per
+ * calculation and shared by everything that calculation values.
+ */
+export interface RateIndex {
+  /** Exactly the rate `findRate(rates, currency, baseCurrency, onDate)` chooses. */
+  find(currency: CurrencyCode, baseCurrency: CurrencyCode, onDate: LocalDate): ExchangeRate | undefined;
+}
+
+/** The order {@link findRate} decides by: the date, and then the identifier, both as plain strings. */
+function compareRates(left: ExchangeRate, right: ExchangeRate): number {
+  if (left.date !== right.date) return left.date < right.date ? -1 : 1;
+  if (left.id !== right.id) return left.id < right.id ? -1 : 1;
+  return 0;
+}
+
+/**
+ * Builds a {@link RateIndex}: per pair of currencies, the rates sorted by date and then by
+ * identifier, so "the latest on or before the day, the larger identifier on a tie" is the last entry
+ * not after the day. Nothing is sorted until the first lookup, so a calculation that values nothing
+ * pays nothing for it.
+ */
+export function indexRates(rates: Iterable<ExchangeRate>): RateIndex {
+  const source = [...rates];
+  let byPair: Map<CurrencyCode, Map<CurrencyCode, ExchangeRate[]>> | null = null;
+  const build = (): Map<CurrencyCode, Map<CurrencyCode, ExchangeRate[]>> => {
+    const pairs = new Map<CurrencyCode, Map<CurrencyCode, ExchangeRate[]>>();
+    for (const rate of source) {
+      let byBase = pairs.get(rate.currency);
+      if (byBase === undefined) {
+        byBase = new Map<CurrencyCode, ExchangeRate[]>();
+        pairs.set(rate.currency, byBase);
+      }
+      const list = byBase.get(rate.baseCurrency);
+      if (list === undefined) byBase.set(rate.baseCurrency, [rate]);
+      else list.push(rate);
+    }
+    for (const byBase of pairs.values()) for (const list of byBase.values()) list.sort(compareRates);
+    return pairs;
+  };
+  return {
+    find(currency, baseCurrency, onDate) {
+      byPair ??= build();
+      const list = byPair.get(currency)?.get(baseCurrency);
+      if (list === undefined) return undefined;
+      // The first entry dated after the day; the one before it is the answer.
+      let low = 0;
+      let high = list.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (list[middle]!.date <= onDate) low = middle + 1;
+        else high = middle;
+      }
+      return low === 0 ? undefined : list[low - 1];
+    },
+  };
 }
 
 /**

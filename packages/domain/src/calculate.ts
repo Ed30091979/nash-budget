@@ -47,10 +47,12 @@ import {
 import {
   baseAmountOf,
   baseCurrencyOf,
+  indexRates,
   isExchangeRateValue,
   isSupportedCurrency,
   RATE_PART_MAX,
   RATE_PART_MIN,
+  type RateIndex,
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
 import { MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
@@ -182,12 +184,17 @@ export interface StateIndex {
   readonly recurringRules: ReadonlyMap<StableId, RecurringRule>;
   /** The currency every budget figure is counted in: the household's, or roubles. */
   readonly baseCurrency: CurrencyCode;
+  /**
+   * The exchange rates arranged for lookup, built once per calculation and shared by everything
+   * it values: the debts, the holdings and the occurrences of a recurring rule.
+   */
+  readonly rates: RateIndex;
 }
 
 export function indexState(state: BudgetState): StateIndex {
   // Object literals evaluate in source order, so a duplicate is reported for the same collection
   // the inlined copies reported it for; the collections no older state has come last.
-  const index: StateIndex = {
+  const indexed = {
     accounts: indexById(state.accounts, "accounts"),
     categories: indexById(state.categories, "categories"),
     budgets: indexById(state.budgets, "budgets"),
@@ -199,6 +206,7 @@ export function indexState(state: BudgetState): StateIndex {
     recurringRules: indexById(state.recurringRules ?? [], "recurringRules"),
     baseCurrency: baseCurrencyOf(state),
   };
+  const index: StateIndex = { ...indexed, rates: indexRates(indexed.exchangeRates.values()) };
   for (const tag of index.tags.values()) validateTag(tag);
   if (state.household !== undefined) validateHousehold(state.household);
   for (const rate of index.exchangeRates.values()) validateExchangeRate(rate);

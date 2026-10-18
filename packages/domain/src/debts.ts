@@ -1,6 +1,6 @@
-import { indexState, validateTransactionReferences } from "./calculate.js";
+import { indexState, validateTransactionReferences, type StateIndex } from "./calculate.js";
 import { dayIndex, isWithinDateWindow } from "./calendar.js";
-import { convertMinor, findRate, isSupportedCurrency } from "./currency.js";
+import { convertMinor, isSupportedCurrency, safeMinorOrNull } from "./currency.js";
 import { documentIds } from "./identity.js";
 import { COLLECTION_LIMITS, MAX_MONEY_MINOR } from "./limits.js";
 import {
@@ -201,32 +201,42 @@ function addOrNull(total: MinorUnits, value: MinorUnits): MinorUnits | null {
  * operations dated on or before `asOf` count. Archived debts count like any other: archiving hides a
  * debt from new operations, it does not forgive it.
  *
- * Never throws for a missing rate or a sum too large to represent: such a debt is valued at null and
- * listed in `unvaluedDebtIds`, and the totals carry what could be valued. It does throw, like every
- * calculation, on a state the domain refuses.
+ * Never throws on a magnitude. Every amount here is written by some participant of the family — an
+ * opening balance, a movement, a rate up to a trillion — and an exception would refuse the whole
+ * state on every device, including the day a movement dated next month comes into the window. So
+ * the arithmetic is exact, in BigInt, and what cannot be represented is null: a sum of movements or
+ * a balance outside the safe range, a balance with no rate or worth more than the safe range in the
+ * base currency (listed in `unvaluedDebtIds`, left out of the totals), and a net position the two
+ * totals cannot be subtracted into. It does throw, like every calculation, on a state the domain
+ * refuses.
  */
 export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics {
   const index = indexState(state);
   dayIndex(asOf, "asOf");
   for (const transaction of state.transactions) validateTransactionReferences(transaction, index);
-  const rates = [...index.exchangeRates.values()];
+  return debtMetricsOf(state, index, asOf);
+}
+
+/**
+ * {@link calculateDebts} over a state already indexed and validated with `index`, so the holdings
+ * of the same state on the same day value its debts without indexing and validating it twice. Not
+ * part of the package's public surface.
+ */
+export function debtMetricsOf(state: BudgetState, index: StateIndex, asOf: LocalDate): DebtMetrics {
   const baseCurrency = index.baseCurrency;
 
   // What moved on each debt up to the day, in the debt's own currency: the debt amount when the
-  // account is in another currency, the amount itself otherwise.
-  const moved = new Map<DebtId, { out: MinorUnits; in: MinorUnits }>();
+  // account is in another currency, the amount itself otherwise. Exact, whatever the count.
+  const moved = new Map<DebtId, { out: bigint; in: bigint }>();
   for (const transaction of state.transactions) {
     if (transaction.kind !== "debt_out" && transaction.kind !== "debt_in") continue;
     if (transaction.status !== "posted" || transaction.occurredOn > asOf) continue;
-    const amount = transaction.debtAmountMinor ?? transaction.amountMinor;
-    const current = moved.get(transaction.debtId) ?? { out: 0, in: 0 };
-    const next = transaction.kind === "debt_out"
-      ? { out: current.out + amount, in: current.in }
-      : { out: current.out, in: current.in + amount };
-    if (!Number.isSafeInteger(next.out) || !Number.isSafeInteger(next.in)) {
-      throw new Error(`debt ${transaction.debtId} movements leave the safe integer range`);
-    }
-    moved.set(transaction.debtId, next);
+    const amount = BigInt(transaction.debtAmountMinor ?? transaction.amountMinor);
+    const current = moved.get(transaction.debtId) ?? { out: 0n, in: 0n };
+    moved.set(
+      transaction.debtId,
+      transaction.kind === "debt_out" ? { out: current.out + amount, in: current.in } : { out: current.out, in: current.in + amount },
+    );
   }
 
   const debts: DebtBalanceMetrics[] = [];
@@ -236,18 +246,17 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
   let payableInBaseMinor = 0;
 
   for (const debt of index.debts.values()) {
-    const outMinor = moved.get(debt.id)?.out ?? 0;
-    const inMinor = moved.get(debt.id)?.in ?? 0;
-    const balanceMinor = debt.direction === "owed_to_me"
-      ? debt.openingMinor + outMinor - inMinor
-      : debt.openingMinor + inMinor - outMinor;
-    if (!Number.isSafeInteger(balanceMinor)) throw new Error(`debt ${debt.id} balance leaves the safe integer range`);
+    const out = moved.get(debt.id)?.out ?? 0n;
+    const into = moved.get(debt.id)?.in ?? 0n;
+    const opening = BigInt(debt.openingMinor);
+    const balance = debt.direction === "owed_to_me" ? opening + out - into : opening + into - out;
+    const balanceMinor = safeMinorOrNull(balance);
 
     let balanceInBaseMinor: MinorUnits | null = null;
-    if (debt.currency === baseCurrency) {
+    if (balanceMinor !== null && debt.currency === baseCurrency) {
       balanceInBaseMinor = balanceMinor;
-    } else {
-      const rate = findRate(rates, debt.currency, baseCurrency, asOf);
+    } else if (balanceMinor !== null) {
+      const rate = index.rates.find(debt.currency, baseCurrency, asOf);
       if (rate !== undefined) {
         try {
           balanceInBaseMinor = convertMinor(balanceMinor, rate.rate);
@@ -257,6 +266,8 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
       }
     }
     if (balanceInBaseMinor !== null) {
+      // A debt that would carry its total past what can be represented is not valued either: a
+      // total that silently left it out would be a figure nobody could check.
       const total = debt.direction === "owed_to_me" ? receivableInBaseMinor : payableInBaseMinor;
       const next = addOrNull(total, balanceInBaseMinor);
       if (next === null) balanceInBaseMinor = null;
@@ -269,18 +280,17 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
       debtId: debt.id,
       direction: debt.direction,
       currency: debt.currency,
-      outMinor,
-      inMinor,
+      outMinor: safeMinorOrNull(out),
+      inMinor: safeMinorOrNull(into),
       balanceMinor,
       balanceInBaseMinor,
-      overdue: debt.dueDate !== undefined && debt.dueDate < asOf && balanceMinor > 0,
+      // Decided on the exact balance, so a balance too large to show is still overdue when it is.
+      overdue: debt.dueDate !== undefined && debt.dueDate < asOf && balance > 0n,
     };
     debts.push(metrics);
     byDebt[debt.id] = metrics;
   }
 
-  const netInBaseMinor = receivableInBaseMinor - payableInBaseMinor;
-  if (!Number.isSafeInteger(netInBaseMinor)) throw new Error("debt totals leave the safe integer range");
   return {
     asOf,
     baseCurrency,
@@ -288,7 +298,9 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
     byDebt,
     receivableInBaseMinor,
     payableInBaseMinor,
-    netInBaseMinor,
+    // Exactly, in BigInt: two totals each within the safe range — a receivable and an overpaid,
+    // negative payable — may still not subtract into it.
+    netInBaseMinor: safeMinorOrNull(BigInt(receivableInBaseMinor) - BigInt(payableInBaseMinor)),
     unvaluedDebtIds,
   };
 }

@@ -6,6 +6,8 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateDebts,
+  calculateHoldings,
+  carryBudgetForward,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
   createDebt,
@@ -19,6 +21,8 @@ import {
   type DebtId,
   type Transaction,
 } from "../src/index.js";
+import { indexState } from "../src/calculate.js";
+import { debtMetricsOf } from "../src/debts.js";
 
 const PETYA = "8f100000-0000-4000-8000-0000000000d1";
 const SERGEY = "8f100000-0000-4000-8000-0000000000d2";
@@ -274,5 +278,87 @@ describe("debt movements", () => {
     expect(() => calculateBudget(change(lent, { baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } }))).toThrow(/moves a debt and must not carry baseAmountMinor/);
     expect(() => calculateMemberExpenses(change(lent, { toAmountMinor: 1 }))).toThrow(/moves a debt and must not carry toAmountMinor/);
     expect(() => calculateAnnualPlan(change(lent, { accountId: "missing" }), "2026-07", 12)).toThrow(/references unknown id missing/);
+  });
+});
+
+const KWD_RATE = "8e000000-0000-4000-8000-0000000000b1";
+const LENT_KWD = "8f100000-0000-4000-8000-0000000000b1";
+const OWED_KWD = "8f100000-0000-4000-8000-0000000000b2";
+const MOVED_KWD = "8d100000-0000-4000-8000-0000000000b1";
+
+/**
+ * The overflow the security review built from values every gate accepts: a dinar at 9 000 roubles
+ * per fils, dated 1900, a debt owed to the family of the field's ceiling in dinars, and one kopeck
+ * paid out against a debt the family owes, recorded as the ceiling in dinars. Each balance is within
+ * the safe range in roubles — 9e15 and −9e15 — and their difference, the net position, is not.
+ */
+function kuwaitiDebts(movedOn = "2026-07-15"): BudgetState {
+  const seed = makeSeedBudget();
+  return {
+    ...seed,
+    exchangeRates: [{ id: KWD_RATE, currency: "KWD", baseCurrency: "RUB", date: "1900-01-01", rate: { baseMinor: 900_000, quoteMinor: 1 } }],
+    debts: [
+      { id: LENT_KWD, counterparty: "Али", direction: "owed_to_me", currency: "KWD", openingMinor: 10 ** 10, active: true },
+      { id: OWED_KWD, counterparty: "Омар", direction: "i_owe", currency: "KWD", openingMinor: 0, active: true },
+    ],
+    transactions: [
+      ...seed.transactions,
+      { id: MOVED_KWD, occurredOn: movedOn, status: "posted", kind: "debt_out", amountMinor: 1, accountId: SEED_IDS.accounts.main, debtId: OWED_KWD, debtAmountMinor: 10 ** 10 },
+    ],
+  };
+}
+
+describe("debt magnitudes a participant controls", () => {
+  it("values the review's dinar debts and gives no net position rather than throwing", () => {
+    const metrics = calculateDebts(kuwaitiDebts(), "2026-07-31");
+    expect(metrics.byDebt[LENT_KWD]).toMatchObject({ balanceMinor: 10 ** 10, balanceInBaseMinor: 9_000_000_000_000_000 });
+    expect(metrics.byDebt[OWED_KWD]).toMatchObject({ outMinor: 10 ** 10, balanceMinor: -(10 ** 10), balanceInBaseMinor: -9_000_000_000_000_000 });
+    expect(metrics.receivableInBaseMinor).toBe(9_000_000_000_000_000);
+    expect(metrics.payableInBaseMinor).toBe(-9_000_000_000_000_000);
+    expect(metrics.netInBaseMinor).toBeNull();
+    expect(metrics.unvaluedDebtIds).toEqual([]);
+    expect(calculateHoldings(kuwaitiDebts(), "2026-07-31").netWorthInBaseMinor).toBeNull();
+  });
+
+  it("does not wait for the next month to throw: a movement dated after the window comes in without one", () => {
+    const later = kuwaitiDebts("2026-08-05");
+    // On the last day of July the movement is not counted yet, and everything is representable.
+    expect(calculateDebts(later, "2026-07-31").netInBaseMinor).toBe(9_000_000_000_000_000);
+    // The month rolls over, the movement comes into the window, and the figure goes, not the state.
+    const august = carryBudgetForward(later, "2026-08").state;
+    const end = august.budgets.find((budget) => budget.id === august.activeBudgetId)!.endDate;
+    expect(end).toBe("2026-08-31");
+    expect(calculateDebts(august, end).netInBaseMinor).toBeNull();
+    expect(calculateHoldings(august, end).netWorthInBaseMinor).toBeNull();
+    expect(() => calculateBudget(august)).not.toThrow();
+  });
+
+  it("gives null for a sum of movements, or a balance, outside the safe range, and keeps the rest", () => {
+    // Amounts no gate lets through — the field ceiling is 10^10 — so the arithmetic is asked
+    // directly, over an index and without the validation a calculation runs first: it is what has
+    // to survive a flood of nine hundred thousand movements at the ceiling.
+    const seed = makeSeedBudget();
+    const movement = (index: number, kind: "debt_out" | "debt_in"): Transaction => ({
+      id: `8d100000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      occurredOn: "2026-07-10", status: "posted", kind, amountMinor: 4_000_000_000_000_000, accountId: SEED_IDS.accounts.main, debtId: PETYA,
+    });
+    const flooded: BudgetState = {
+      ...seed,
+      debts: [
+        { id: PETYA, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true },
+        { id: SERGEY, counterparty: "Сергей", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, dueDate: "2026-07-01", active: true },
+      ],
+      transactions: [
+        ...seed.transactions,
+        movement(1, "debt_out"), movement(2, "debt_out"), movement(3, "debt_out"), movement(4, "debt_out"), movement(5, "debt_in"),
+      ],
+    };
+    const metrics = debtMetricsOf(flooded, indexState(flooded), "2026-07-31");
+    // 1.6e16 out and 4e15 back: neither the sum out nor the balance of 1.2e16 is a safe integer.
+    expect(metrics.byDebt[PETYA]).toMatchObject({ outMinor: null, inMinor: 4_000_000_000_000_000, balanceMinor: null, balanceInBaseMinor: null });
+    expect(metrics.unvaluedDebtIds).toEqual([PETYA]);
+    expect(metrics.byDebt[SERGEY]).toMatchObject({ balanceMinor: 300_000, balanceInBaseMinor: 300_000, overdue: true });
+    expect(metrics.receivableInBaseMinor).toBe(300_000);
+    expect(metrics.netInBaseMinor).toBe(300_000);
   });
 });

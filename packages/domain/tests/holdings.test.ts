@@ -8,6 +8,8 @@ import {
   SEED_IDS,
   type Account,
   type BudgetState,
+  type Debt,
+  type DebtMetrics,
   type ExchangeRate,
   type Transaction,
 } from "../src/index.js";
@@ -166,4 +168,51 @@ describe("calculateHoldings", () => {
     const dangling = withTransactions(makeSeedBudget(), { id: "55555555-5555-4555-8555-5555555555d1", occurredOn: "2026-07-01", status: "posted", kind: "income", amountMinor: 1, accountId: "8c000000-0000-4000-8000-0000000000ff" });
     expect(() => calculateHoldings(dangling, "2026-07-31")).toThrow(/references unknown id/);
   });
+});
+
+describe("holdings at scale", () => {
+  it("reuses the debts the caller already has, and only those of the same day", () => {
+    const state = withDollars(inAugust());
+    const debts = calculateDebts(state, "2026-08-31");
+    const marked: DebtMetrics = { ...debts, unvaluedDebtIds: ["marker"] };
+    expect(calculateHoldings(state, "2026-08-31", { debts: marked }).debts).toBe(marked);
+    // Another day's debts would be another day's figures: they are recomputed instead.
+    expect(calculateHoldings(state, "2026-08-30", { debts: marked }).debts).toEqual(calculateDebts(state, "2026-08-30"));
+  });
+
+  it("values twenty thousand debts against twenty thousand rates in well under a second", () => {
+    // The security review measured 5.9 s a call here, with every lookup a pass over every rate.
+    // Counts the journal reports and does not refuse (collection_limit), so a family can hold them.
+    const currencies = ["USD", "EUR", "CNY", "KZT", "GBP"];
+    const rates: ExchangeRate[] = Array.from({ length: 20_000 }, (_, index) => ({
+      id: `8e000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      currency: currencies[index % currencies.length]!,
+      baseCurrency: "RUB",
+      date: `20${String(10 + (index % 16)).padStart(2, "0")}-${String(1 + (index % 12)).padStart(2, "0")}-${String(1 + (index % 28)).padStart(2, "0")}`,
+      rate: { baseMinor: 9_000 + (index % 500), quoteMinor: 100 },
+    }));
+    const debts: Debt[] = Array.from({ length: 20_000 }, (_, index) => ({
+      id: `8f100000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      counterparty: `Должник ${index}`,
+      direction: index % 2 === 0 ? "owed_to_me" : "i_owe",
+      currency: currencies[index % currencies.length]!,
+      openingMinor: 1_000 + index,
+      active: true,
+    }));
+    const accounts = currencies.map((currency, index): Account => ({
+      id: `8c000000-0000-4000-8000-${String(index).padStart(12, "0")}`, name: currency, type: "savings", currency, openingBalanceMinor: 50_000, active: true,
+    }));
+    const seed = makeSeedBudget();
+    const state: BudgetState = { ...seed, accounts: [...seed.accounts, ...accounts], exchangeRates: rates, debts };
+
+    const started = performance.now();
+    const holdings = calculateHoldings(state, "2026-08-31");
+    const elapsed = performance.now() - started;
+
+    expect(holdings.debts.unvaluedDebtIds).toEqual([]);
+    expect(holdings.unvaluedAccountIds).toEqual([]);
+    expect(holdings.debts.debts).toHaveLength(20_000);
+    // Generous on purpose: it measures the shape of the work, not the machine it runs on.
+    expect(elapsed).toBeLessThan(1_000);
+  }, 60_000);
 });
