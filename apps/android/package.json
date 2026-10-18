@@ -21,10 +21,10 @@
     "verify:android": "pnpm sync && pnpm --filter @family-budget/web release:scan && pnpm gradle:clean && pnpm gradle:test && pnpm gradle:lint && pnpm assemble:debug && pnpm bundle:release && pnpm artifact:scan"
   },
   "dependencies": {
-    "@capacitor/android": "8.4.2",
-    "@capacitor/core": "8.4.2"
+    "@capacitor/android": "8.4.3",
+    "@capacitor/core": "8.4.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "8.4.2"
+    "@capacitor/cli": "8.4.3"
   }
 }

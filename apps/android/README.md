@@ -1,6 +1,6 @@
 # Android local build
 
-This directory contains the Capacitor 8.4.2 Android shell for the offline
+This directory contains the Capacitor 8.4.3 Android shell for the offline
 family-budget web application. It is a local release-candidate pipeline, not a
 RuStore publication setup.
 
@@ -9,9 +9,9 @@ RuStore publication setup.
 - `minSdk 24` is the Capacitor 8 generated minimum and keeps Android 7.0 as the
   oldest supported local test target.
 - `compileSdk 36` and `targetSdk 36` match the installed Android SDK and the
-  generated Capacitor 8.4.2 project.
+  generated Capacitor 8.4.3 project.
 - Gradle uses the generated wrapper `8.14.3`, Android Gradle Plugin `8.13.0`,
-  and JDK 21. Capacitor 8.4.2 compiles its Android sources with Java 21, so
+  and JDK 21. Capacitor 8.4.3 compiles its Android sources with Java 21, so
   JDK 17 is not compatible with this generated project.
 - Local test identity is `versionCode 1`, `versionName 0.1.0-local`.
 - `ru.familybudget.app` remains provisional until the owner confirms the final

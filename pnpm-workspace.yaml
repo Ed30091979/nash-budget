@@ -3,13 +3,21 @@ packages:
   - "packages/*"
 
 allowBuilds:
-  better-sqlite3: set this to true or false
+  better-sqlite3: true
 
 onlyBuiltDependencies:
   - better-sqlite3
   - esbuild
 
 overrides:
-  brace-expansion: 5.0.8
+  brace-expansion: 5.0.12
   filelist@1.0.6: 2.0.2
   tar@7.5.20: 7.5.21
+  fast-uri@3.1.4: 3.1.8
+  fast-uri@4.1.1: 4.1.5
+  "@xmldom/xmldom@0.9.10": 0.9.12
+  baseline-browser-mapping@2.10.43: 2.11.0
+  browserslist@4.28.6: 4.28.7
+  nanoid@3.3.16: 3.3.18
+  postcss@8.5.19: 8.5.23
+  source-map-js@1.2.1: 1.2.2
