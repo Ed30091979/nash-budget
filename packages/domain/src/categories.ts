@@ -365,11 +365,11 @@ export function suggestedCategories(
   const taken = new Set(
     state.categories
       .filter((item) => item.active)
-      .map((item) => `${item.type} ${categoryNameKey(item.name)}`),
+      .map((item) => `${item.type}\u0000${categoryNameKey(item.name)}`),
   );
   return CATEGORY_SUGGESTIONS.filter(
     (template) =>
       (type === undefined || template.type === type) &&
-      !taken.has(`${template.type} ${categoryNameKey(template.name)}`),
+      !taken.has(`${template.type}\u0000${categoryNameKey(template.name)}`),
   );
 }
