@@ -16,7 +16,7 @@ import type {
   Tag,
   Transaction,
 } from "@family-budget/domain";
-import { COLLECTION_LIMITS, convertMinor, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID } from "@family-budget/domain";
+import { COLLECTION_LIMITS, convertMinor, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID, isUuid } from "@family-budget/domain";
 
 import {
   canonicalOperationText,
@@ -613,6 +613,34 @@ function reportEntryBudget(
 }
 
 /**
+ * Withholds every entity whose identifier is not a UUID — second review of wave 1.
+ *
+ * The codec demands a UUID only of the kinds added in wave 1; the older kinds carry whatever
+ * identifier it reads, and the application's gate refuses a state that holds anything but a UUID.
+ * Left in the state, one account called "account-1" made the journal call ready a state every
+ * device then refused: held on yesterday's budget, the whole family, by one operation of one
+ * device that bypassed the domain. Withheld here, the family sees everything else and is told what
+ * it cannot see. The withholding comes first, so that whatever referred to the entity is swept
+ * out as dangling by the rules below rather than reaching the state.
+ *
+ * A function of the converged journal like every other step: the same entities go on every
+ * replica, whatever order the operations came in.
+ */
+function withholdInvalidIdentifiers(
+  live: LiveEntities,
+  report: (problem: JournalProblem) => void,
+  record: (entity: WithheldEntity) => void,
+): void {
+  for (const [kind, index] of entityIndexes(live)) {
+    for (const id of [...index.keys()]) {
+      if (isUuid(id)) continue;
+      index.delete(id);
+      withhold(report, record, withheldFor(kind, id, "invalid_id"));
+    }
+  }
+}
+
+/**
  * An identifier belongs to one entity for good, because a backup export keeps one flat set
  * of identifiers and a collision would make it refuse the whole file.
  *
@@ -910,8 +938,11 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
     let cleared: Transaction = transaction;
     if (cleared.memberId !== undefined && !live.members.has(cleared.memberId)) {
       const { memberId: _unknown, ...unlabelled } = cleared;
+      // A label that is not even a UUID is malformed rather than merely unknown — the application
+      // refuses it either way — and is named for what it is. Its participant, if one was written
+      // under it, was withheld for the same reason above.
+      report(problem(isUuid(cleared.memberId) ? "unknown_reference" : "invalid_id", "transaction", id));
       cleared = unlabelled;
-      report(problem("unknown_reference", "transaction", id));
     }
     if (cleared.kind === "income" && cleared.categoryId !== undefined) {
       const code = incomeCategoryCode(live, cleared.categoryId);
@@ -1410,6 +1441,7 @@ function buildView(
     if (entry.action !== "delete") owners.set(entryKey(entry.entity, entry.targetId), entry);
   }
 
+  withholdInvalidIdentifiers(live, report, record);
   resolveSharedIdentifiers(live, owners, report, record);
   rejectDuplicateBudgetLines(live, owners, report, record);
   dropDanglingEntities(live, report, record);

@@ -57,10 +57,13 @@ import {
   DEVICE_C,
   DEVICE_D,
   DEVICE_E,
+  inSeries,
   mintedDevice,
   opUuid,
   SAMPLE_FIELDS,
   sampleTargetId,
+  SERIES,
+  seriesUuid,
   tagUuid,
   testUuid,
   UPDATED_FIELDS,
@@ -77,10 +80,15 @@ const PRODUCTS_EXPENSE_ID = "75555555-5555-4555-8555-555555555553";
 const MAIN_ACCOUNT_ID = "22222222-2222-4222-8222-222222222221";
 const RESERVE_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 const GOAL_ID = "66666666-6666-4666-8666-666666666661";
-const MEMBER_ANNA = "member-anna";
-const MEMBER_PETR = "member-petr";
-const GHOST_ID = "ghost-transaction";
-const LABELLED_EXPENSE_ID = "expense-anna-wrote-down-for-petr";
+// UUIDs like every identifier the application writes: the journal withholds an entity under any
+// other (`invalid_id`), and a test about something else would be testing that instead.
+const MEMBER_ANNA = testUuid(0x3e3, 1);
+// Not `2`: the tie of "does not hand the last word to whoever writes the largest identifier" is
+// settled by the digest of the operations, and the claim it pins — the largest identifier there is
+// does not win by being largest — needs a target on which it loses. On this one it does.
+const MEMBER_PETR = testUuid(0x3e3, 4);
+const GHOST_ID = testUuid(0x60057, 1);
+const LABELLED_EXPENSE_ID = testUuid(0x1abe1, 1);
 
 // The state of G-002, named: the adapter's return type also covers G-003's ledger since step 15.
 type FixtureState = DomainBudgetState;
@@ -135,8 +143,16 @@ function transactionFields(transaction: FixtureTransaction): TransactionFields {
   }
 }
 
-/** Rebuilds the canonical G-002 budget as an append-only journal written by one device. */
-function buildFixtureJournal(): Operation[] {
+/**
+ * Rebuilds the canonical G-002 budget as an append-only journal written by one device.
+ *
+ * `members` names its two participants. The default is UUIDs, like everything the application
+ * writes; the test that pins this journal's canonical text byte for byte passes the readable
+ * names it was pinned with.
+ */
+function buildFixtureJournal(members: { readonly anna: string; readonly petr: string } = { anna: MEMBER_ANNA, petr: MEMBER_PETR }): Operation[] {
+  const MEMBER_ANNA = members.anna;
+  const MEMBER_PETR = members.petr;
   const state: FixtureState = toDomainBudgetState(G002);
   const operations: Operation[] = [];
   let clock = createClock(DEVICE_A);
@@ -195,12 +211,19 @@ function productsLimitMinor(snapshot: JournalSnapshot): number {
   return metrics.availableMinor;
 }
 
+/**
+ * The author a header of the tie tests names. A header's participant never reaches the state, and
+ * the ties below are settled by the digest of these exact bytes, so it keeps the readable name the
+ * tests were written with.
+ */
+const TIE_AUTHOR = "member-anna";
+
 function productsLineEdit(deviceId: string, opId: string, plannedMinor: number, lamport: number): Operation {
   return {
     opId,
     deviceId,
     lamport,
-    memberId: MEMBER_ANNA,
+    memberId: TIE_AUTHOR,
     entity: "budgetLine",
     action: "update",
     targetId: PRODUCTS_LINE_ID,
@@ -416,7 +439,7 @@ function moneyJournal(count: number, amountMinor: number): Operation[] {
         lamport: 100 + index,
         entity: "transaction",
         action: "create",
-        targetId: `tx-${String(index).padStart(5, "0")}`,
+        targetId: seriesUuid(SERIES.tx, index),
         fields: { ...SAMPLE_FIELDS.transaction, amountMinor, accountId: SEED_ACCOUNT_ID, categoryId: SEED_CATEGORY_ID },
       }),
     );
@@ -1186,7 +1209,7 @@ describe("integrity gate", () => {
           lamport: 10 + index,
           entity: "transaction",
           action: "create",
-          targetId: `salary-${String(index).padStart(4, "0")}`,
+          targetId: seriesUuid(SERIES.salary, index),
           fields: {
             kind: "income",
             occurredOn: "2026-07-05",
@@ -1204,7 +1227,7 @@ describe("integrity gate", () => {
           lamport: 1_000 + index,
           entity: "transaction",
           action: "create",
-          targetId: `hostile-${String(index).padStart(6, "0")}`,
+          targetId: seriesUuid(SERIES.hostile, index),
           fields: {
             kind: "income",
             occurredOn: "2026-07-05",
@@ -1221,8 +1244,8 @@ describe("integrity gate", () => {
 
       // Every salary is in the state, and so is every hostile income: the total is over the
       // ceiling and the gate says so instead of picking somebody's records.
-      expect(shown.filter((id) => id.startsWith("salary-"))).toHaveLength(salaries.length);
-      expect(shown.filter((id) => id.startsWith("hostile-"))).toHaveLength(hostileCount);
+      expect(shown.filter((id) => inSeries(id, SERIES.salary))).toHaveLength(salaries.length);
+      expect(shown.filter((id) => inSeries(id, SERIES.hostile))).toHaveLength(hostileCount);
       expect(snapshot.integrity.problems).toContainEqual({
         code: "amount_out_of_range",
         entity: null,
@@ -1263,7 +1286,7 @@ describe("integrity gate", () => {
       lamport: 100 + index,
       entity: "transaction",
       action: "create",
-      targetId: `flood-${String(index).padStart(7, "0")}`,
+      targetId: seriesUuid(SERIES.flood, index),
       fields: {
         ...SAMPLE_FIELDS.transaction,
         amountMinor: amountAt(index),
@@ -1308,7 +1331,7 @@ describe("integrity gate", () => {
 
   it("resolves an identifier claimed by two entity kinds instead of switching the family off", () => {
     const journal = buildFixtureJournal();
-    const shared = "identifier-claimed-twice";
+    const shared = seriesUuid(SERIES.named, 1);
     const claim = (entity: "account" | "category", opId: string, lamport: number): Operation =>
       parseOperation({
         opId,
@@ -1366,7 +1389,7 @@ describe("integrity gate", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1429,7 +1452,7 @@ describe("integrity gate", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `honest-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.honest, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1444,7 +1467,7 @@ describe("integrity gate", () => {
         memberId: MEMBER_PETR,
         entity: "transaction",
         action: "create",
-        targetId: `spend-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.spend, index),
         fields: {
           kind: "expense",
           occurredOn: "2026-07-11",
@@ -1465,7 +1488,7 @@ describe("integrity gate", () => {
         lamport: MAX_LAMPORT_SKEW + index,
         entity: "member",
         action: "create",
-        targetId: `flood-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.flood, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1533,7 +1556,7 @@ describe("integrity gate", () => {
       lamport: 610,
       entity: "transaction",
       action: "create",
-      targetId: "refund-before-the-expense",
+      targetId: seriesUuid(SERIES.named, 3),
       fields: {
         kind: "refund",
         occurredOn: "2026-07-01",
@@ -1550,7 +1573,7 @@ describe("integrity gate", () => {
       lamport: 611,
       entity: "transaction",
       action: "create",
-      targetId: "contribution-to-the-wrong-account",
+      targetId: seriesUuid(SERIES.named, 2),
       fields: {
         kind: "goal_contribution",
         occurredOn: "2026-07-11",
@@ -1564,8 +1587,8 @@ describe("integrity gate", () => {
 
     const snapshot = applyJournal([...journal, earlyRefund, strayContribution]);
     expect(snapshot.integrity.problems).toEqual([
-      { code: "goal_account_mismatch", entity: "transaction", id: "contribution-to-the-wrong-account" },
-      { code: "invalid_refund", entity: "transaction", id: "refund-before-the-expense" },
+      { code: "goal_account_mismatch", entity: "transaction", id: seriesUuid(SERIES.named, 2) },
+      { code: "invalid_refund", entity: "transaction", id: seriesUuid(SERIES.named, 3) },
     ]);
     // Both entities are out of the state, so what is left is exactly what the family had and
     // is safe for the domain. Waiting for more operations cannot change either verdict, and a
@@ -1579,10 +1602,10 @@ describe("integrity gate", () => {
     expect(snapshot.integrity.withheld).toEqual([
       {
         entity: "transaction",
-        id: "contribution-to-the-wrong-account",
+        id: seriesUuid(SERIES.named, 2),
         reason: "goal_account_mismatch",
       },
-      { entity: "transaction", id: "refund-before-the-expense", reason: "invalid_refund" },
+      { entity: "transaction", id: seriesUuid(SERIES.named, 3), reason: "invalid_refund" },
     ]);
     expect(calculateAnnualPlan(snapshot.state, G002.startMonth, 12).currentMonth.annualReserveMinor).toBe(1_980_900);
 
@@ -1596,7 +1619,7 @@ describe("integrity gate", () => {
       lamport: 612,
       entity: "transaction",
       action: "create",
-      targetId: "refund-of-an-expense-not-yet-delivered",
+      targetId: seriesUuid(SERIES.named, 4),
       fields: {
         kind: "refund",
         occurredOn: "2026-07-20",
@@ -1612,7 +1635,7 @@ describe("integrity gate", () => {
     expect(waiting.integrity.withheld).toEqual([
       {
         entity: "transaction",
-        id: "refund-of-an-expense-not-yet-delivered",
+        id: seriesUuid(SERIES.named, 4),
         reason: "unknown_reference",
       },
     ]);
@@ -1822,7 +1845,10 @@ describe("integrity gate", () => {
   it("settles a category planned twice by the total order, not by the name of the line", () => {
     // The lowest identifier used to stay, and an identifier is whatever the writing device
     // chose to call the line: naming one `!` replaced the limit the family had planned for
-    // that category however long ago they had planned it.
+    // that category however long ago they had planned it. A name that is not a UUID is withheld
+    // for that alone now (`invalid_id`), so the intruder takes the lowest UUID there is instead —
+    // the same lever, under the identifier the codec and the gate both accept.
+    const LOWEST = "00000000-0000-4000-8000-000000000000";
     const journal = buildFixtureJournal();
     const honest = productsLimitMinor(applyJournal(journal));
     const intruder = (opId: string, plannedMinor: number, lamport: number): Operation =>
@@ -1832,14 +1858,14 @@ describe("integrity gate", () => {
         lamport,
         entity: "budgetLine",
         action: "create",
-        targetId: "!products",
+        targetId: LOWEST,
         fields: { budgetId: BUDGET_ID, categoryId: PRODUCTS_CATEGORY_ID, plannedMinor },
       });
 
     const early = applyJournal([...journal, intruder(opUuid(978), 100_000, 1)]);
     expect(productsLimitMinor(early)).toBe(honest);
     expect(early.integrity.problems).toEqual([
-      { code: "duplicate_budget_line", entity: "budgetLine", id: "!products" },
+      { code: "duplicate_budget_line", entity: "budgetLine", id: LOWEST },
     ]);
     // Already resolved, so the family goes on seeing its budget.
     expect(early.integrity.ready).toBe(true);
@@ -1899,7 +1925,9 @@ describe("integrity gate", () => {
     ];
 
     const problems: readonly JournalProblem[] = applyJournal(journal).integrity.problems;
-    expect(problems).toEqual([{ code: "unknown_reference", entity: "goal", id: hostile }]);
+    // Not a UUID either, so the gate withholds the goal for its identifier before it ever looks at
+    // the reference — and still hands the identifier back as data, never as a sentence.
+    expect(problems).toEqual([{ code: "invalid_id", entity: "goal", id: hostile }]);
     for (const problem of problems) {
       expect(Object.keys(problem).sort()).toEqual(["code", "entity", "id"]);
     }
@@ -1968,13 +1996,14 @@ describe("untrusted input", () => {
     `{"opId":"${opUuid(2)}","deviceId":"${DEVICE_B}","lamport":9,"entity":"member","action":"create",` +
     `"targetId":"member-poison","fields":{"name":"Пётр","role":"member","active":true,"__proto__":{"polluted":true}}}`;
 
+  const REAL_ACCOUNT_ID = seriesUuid(SERIES.named, 0x60);
   const REAL_ENTRY = parseOperation({
     opId: opUuid(3),
     deviceId: DEVICE_A,
     lamport: 12,
     entity: "account",
     action: "create",
-    targetId: "account-1",
+    targetId: REAL_ACCOUNT_ID,
     fields: SAMPLE_FIELDS.account,
   });
 
@@ -2027,7 +2056,7 @@ describe("untrusted input", () => {
 
   it("rebuilds a snapshot it did not build instead of believing its state", () => {
     const rebuilt = applyOperations(forgedSnapshot(), []);
-    expect(rebuilt.state.accounts).toEqual([{ id: "account-1", ...SAMPLE_FIELDS.account }]);
+    expect(rebuilt.state.accounts).toEqual([{ id: REAL_ACCOUNT_ID, ...SAMPLE_FIELDS.account }]);
     expect(rebuilt.state.activeBudgetId).toBe("");
     // The entries are replayed and the state is recomputed. The bookkeeping and the clock are
     // validated and carried, not recomputed: an entry only holds the operation that still owns
@@ -2174,7 +2203,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2204,7 +2233,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2248,7 +2277,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2261,7 +2290,7 @@ describe("delivery in envelopes", () => {
         lamport: 9_000,
         entity: "member",
         action: "delete",
-        targetId: "member-000000",
+        targetId: seriesUuid(SERIES.member, 0),
       }),
     ]);
     expect(branch).not.toBe(base);
@@ -2308,7 +2337,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-undo-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.memberUndo, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2571,7 +2600,7 @@ describe("Lamport clock", () => {
         lamport,
         entity: "member",
         action: "create",
-        targetId: `minted-${String(index)}`,
+        targetId: seriesUuid(SERIES.minted, index),
         fields: SAMPLE_FIELDS.member,
       });
       const owned = applyOperations(base, [minted]);
@@ -2775,7 +2804,7 @@ describe("Lamport clock", () => {
         lamport: (index + 1) * MAX_LAMPORT_SKEW,
         entity: "member",
         action: "create",
-        targetId: `member-rung-${String(index).padStart(3, "0")}`,
+        targetId: seriesUuid(SERIES.memberRung, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2823,15 +2852,21 @@ describe("withheld entities", () => {
   // can be added or removed without this test noticing.
   const PHANTOM_BUDGET_ID = "7bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
   const INCOME_CATEGORY_ID = "73333333-3333-4333-8333-333333333339";
-  const SHARED_ID = "claimed-by-two-kinds";
-  const STRAY_LINE_ID = "!products";
-  const ORPHAN_GOAL_ID = "goal-of-an-account-in-flight";
-  const INCOME_EXPENSE_ID = "expense-planned-on-an-income-category";
-  const EARLY_REFUND_ID = "refund-dated-before-its-expense";
-  const STRAY_CONTRIBUTION_ID = "contribution-to-an-unlinked-account";
-  const DOLLAR_ACCOUNT_ID = "account-kept-in-dollars";
-  const UNVALUED_EXPENSE_ID = "dollar-expense-without-its-rouble-value";
-  const INEXACT_EXPENSE_ID = "dollar-expense-off-its-rate";
+  // UUIDs, numbered in the order their old readable names sorted in, so the list below reads as
+  // it always did; the one entity under a readable name is the one withheld for that name.
+  const SHARED_ID = seriesUuid(SERIES.named, 0x10);
+  // The lowest UUID there is: the intruder's line sorts first and still loses by the total order.
+  const STRAY_LINE_ID = "00000000-0000-4000-8000-000000000000";
+  const ORPHAN_GOAL_ID = seriesUuid(SERIES.named, 0x40);
+  const INCOME_EXPENSE_ID = seriesUuid(SERIES.named, 0x50);
+  const STRAY_CONTRIBUTION_ID = seriesUuid(SERIES.named, 0x21);
+  const INEXACT_EXPENSE_ID = seriesUuid(SERIES.named, 0x22);
+  const UNVALUED_EXPENSE_ID = seriesUuid(SERIES.named, 0x23);
+  const EARLY_REFUND_ID = seriesUuid(SERIES.named, 0x24);
+  const DOLLAR_ACCOUNT_ID = seriesUuid(SERIES.named, 0x30);
+  /** A participant under a name the application never writes, and the purchase labelled with it. */
+  const READABLE_MEMBER_ID = "member-written-by-hand";
+  const READABLE_LABEL_EXPENSE_ID = seriesUuid(SERIES.named, 0x25);
 
   function journalWithEveryWithholding(): Operation[] {
     const write = (draft: Record<string, unknown>): Operation => parseOperation(draft);
@@ -2983,6 +3018,35 @@ describe("withheld entities", () => {
           goalId: GOAL_ID,
         },
       }),
+      // A participant under an identifier that is not a UUID, and a purchase labelled with it: the
+      // application refuses a state that holds either (second review of wave 1, invalid_id). The
+      // participant is withheld; the purchase stays, to the kopeck, and only its label goes.
+      write({
+        opId: opUuid(990),
+        deviceId: DEVICE_B,
+        lamport: 708,
+        entity: "member",
+        action: "create",
+        targetId: READABLE_MEMBER_ID,
+        fields: SAMPLE_FIELDS.member,
+      }),
+      write({
+        opId: opUuid(991),
+        deviceId: DEVICE_B,
+        lamport: 709,
+        entity: "transaction",
+        action: "create",
+        targetId: READABLE_LABEL_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-12",
+          status: "posted",
+          amountMinor: 1_000,
+          accountId: MAIN_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+          memberId: READABLE_MEMBER_ID,
+        },
+      }),
       // An activation of a budget nobody has: the pointer stays on the budget the family sees.
       write({
         opId: opUuid(989),
@@ -3005,6 +3069,7 @@ describe("withheld entities", () => {
     { entity: "transaction", id: INEXACT_EXPENSE_ID, reason: "snapshot_mismatch" },
     { entity: "transaction", id: UNVALUED_EXPENSE_ID, reason: "currency_mismatch" },
     { entity: "transaction", id: EARLY_REFUND_ID, reason: "invalid_refund" },
+    { entity: "member", id: READABLE_MEMBER_ID, reason: "invalid_id" },
   ];
 
   it("names the kind, the identifier and the reason of everything it left out of the state", () => {
@@ -3026,6 +3091,13 @@ describe("withheld entities", () => {
       expect(snapshot.entries.some((held) => held.targetId === entry.id)).toBe(true);
     }
     expect(snapshot.activations.map((entry) => entry.targetId)).toContain(PHANTOM_BUDGET_ID);
+    // The label that named the withheld participant is off the purchase, said out loud, and the
+    // purchase is counted.
+    const labelled = snapshot.state.transactions.find((item) => item.id === READABLE_LABEL_EXPENSE_ID);
+    expect(labelled).toBeDefined();
+    expect(labelled?.memberId).toBeUndefined();
+    expect(snapshot.integrity.problems).toContainEqual({ code: "invalid_id", entity: "transaction", id: READABLE_LABEL_EXPENSE_ID });
+    expect(snapshot.integrity.problems).toContainEqual({ code: "invalid_id", entity: "member", id: READABLE_MEMBER_ID });
   });
 
   it("goes on showing the family its budget while it withholds", () => {
@@ -3099,7 +3171,7 @@ describe("tags and labels through the journal", () => {
   // UUIDs, as the codec demands of a tag (security review MEDIUM-1).
   const TAG_HOME = tagUuid(0x401);
   const TAG_HOLIDAY = tagUuid(0x402);
-  const TAGGED_EXPENSE_ID = "expense-tagged-for-the-dacha";
+  const TAGGED_EXPENSE_ID = seriesUuid(SERIES.named, 0x70);
 
   function tag(targetId: string, name: string, lamport: number, opIndex: number): Operation {
     return parseOperation({
@@ -3142,7 +3214,10 @@ describe("tags and labels through the journal", () => {
     // Pinned before the codec learned a single new field: the kinds are appended at the end of
     // ENTITY_KINDS, every new field is optional and absent stays absent, so a journal that uses
     // none of them encodes, orders and converges byte for byte as before.
-    const snapshot = applyJournal(buildFixtureJournal());
+    // The participants under the readable names this journal was pinned with, before the journal
+    // withheld an entity under an identifier that is not a UUID (`invalid_id`): the text of the
+    // journal is what is pinned, and the journal keeps every entry it is given.
+    const snapshot = applyJournal(buildFixtureJournal({ anna: "member-anna", petr: "member-petr" }));
     expect(snapshot.entries).toHaveLength(28);
     expect(sha256Hex(snapshot.entries.map((entry) => encodeOperation(entry)).join("\n")))
       .toBe("8518c76130c93fc5f0282edff1869076f57353ef0fcad8c6684fd866c8588423");
@@ -3150,6 +3225,15 @@ describe("tags and labels through the journal", () => {
       .toBe("9df5e0a45dec26f541167505314af91cd8796324281a839dff50ba62f768cb12");
     // And the state promises the new list the way it promises participants: empty, not absent.
     expect(snapshot.state.tags).toEqual([]);
+    // The participants are in the journal and out of the state, by name, and the labels that named
+    // them are taken off the operations — reported, never silently, the money untouched.
+    expect(snapshot.integrity.withheld).toEqual([
+      { entity: "member", id: "member-anna", reason: "invalid_id" },
+      { entity: "member", id: "member-petr", reason: "invalid_id" },
+    ]);
+    expect(snapshot.state.members).toEqual([]);
+    expect(snapshot.state.transactions.every((transaction) => transaction.memberId === undefined)).toBe(true);
+    expect(snapshot.integrity.ready).toBe(true);
     // The kinds of 1.0.0 in their order, and every later one after them (plan 4.1): the order
     // sorts the entries, so a kind inserted among them would reorder this very listing.
     expect(ENTITY_KINDS.slice(0, 9)).toEqual([
@@ -3750,14 +3834,15 @@ describe("recurring rules through the journal", () => {
   });
 
   it("withholds a rule whose template names an account or an expense category that is not there, and gives it back", () => {
+    const LATE_ACCOUNT_ID = seriesUuid(SERIES.named, 0x80);
     const journal = buildFixtureJournal();
-    const early = applyJournal([...journal, rule({ ...WATER, accountId: "account-late" }), occurrence()]);
+    const early = applyJournal([...journal, rule({ ...WATER, accountId: LATE_ACCOUNT_ID }), occurrence()]);
     expect(early.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
     // The occurrence is an ordinary operation: it stays, and only the label of a rule nobody sees goes.
     expect(firstOf(early)?.amountMinor).toBe(150_000);
     expect(firstOf(early) !== undefined && "recurringRuleId" in firstOf(early)!).toBe(false);
     expect(() => calculateBudget(early.state)).not.toThrow();
-    const arrived = applyOperations(early, [write("account", "account-late", SAMPLE_FIELDS.account, 990)]);
+    const arrived = applyOperations(early, [write("account", LATE_ACCOUNT_ID, SAMPLE_FIELDS.account, 990)]);
     expect(arrived.integrity.withheld).toEqual([]);
     expect(firstOf(arrived)?.recurringRuleId).toBe(RULE);
 
@@ -3766,7 +3851,7 @@ describe("recurring rules through the journal", () => {
     expect(wrongSide.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "wrong_category_type" }]);
     const noCategory = applyJournal([...journal, rule({ ...WATER, categoryId: "category-late" })]);
     expect(noCategory.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
-    const transferFrom = applyJournal([...journal, rule({ kind: "transfer", amountMinor: 100, fromAccountId: "account-late", toAccountId: MAIN_ACCOUNT_ID })]);
+    const transferFrom = applyJournal([...journal, rule({ kind: "transfer", amountMinor: 100, fromAccountId: LATE_ACCOUNT_ID, toAccountId: MAIN_ACCOUNT_ID })]);
     expect(transferFrom.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
   });
 

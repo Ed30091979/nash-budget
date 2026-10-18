@@ -9,7 +9,7 @@ import {
   type SyncStatusReport,
   type SyncStop,
 } from "@family-budget/sync-client";
-import type { JournalIntegrity } from "@family-budget/sync-protocol";
+import { WITHHOLDING_REASONS, type JournalIntegrity } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -293,6 +293,21 @@ describe("перечень удержанных сущностей", () => {
       withheld: [{ entity: "transaction", id: "55555555-5555-4555-8555-555555555559", reason: "snapshot_mismatch" }],
     });
     expect(rows[0]).toMatchObject({ entityLabel: "Операция", reasonLabel: "сумма в базовой валюте не сходится с суммой операции по её курсу" });
+  });
+
+  it("называет запись с идентификатором не того вида своими словами — и у каждой причины есть слова", () => {
+    // Второе ревью волны 1: журнал удерживает сущность под идентификатором, который не UUID.
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "account", id: "account-1", reason: "invalid_id" }],
+    });
+    expect(rows[0]).toMatchObject({ entityLabel: "Счёт", reasonLabel: "идентификатор записи не того вида, что пишет приложение" });
+    // Закрытый перечень причин целиком: новая причина без слов не пройдёт мимо этой проверки.
+    for (const reason of WITHHOLDING_REASONS) {
+      const [row] = withheldRows({ ready: true, problems: [], withheld: [{ entity: "transaction", id: "x", reason }] });
+      expect(row?.reasonLabel.length, reason).toBeGreaterThan(0);
+    }
   });
 
   it("молчит только когда удерживать нечего", () => {

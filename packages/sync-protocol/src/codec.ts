@@ -436,9 +436,12 @@ function readNote(record: Record<string, unknown>, key: string, label: string): 
  * and the domain's census demand of every identifier (`isUuid` in the domain).
  *
  * The kinds that existed before carry whatever identifier `readId` accepts, and the gate demands a
- * UUID of them too; that older gap is not closed here, because the journals of their tests name
- * entities "account-1". For the new kinds there is no such history, and a journal that accepted a
- * tag called "x" handed the family a state the app refused on every write.
+ * UUID of them too. That older gap is closed one step later, in the journal's integrity gate, which
+ * withholds such an entity (`invalid_id`) rather than refusing the operation: an operation the
+ * codec refuses is gone for good, while a withheld entity stays in the journal, is named on the
+ * family screen and is back the moment it is rewritten under a UUID. For the new kinds there is no
+ * history, and a journal that accepted a tag called "x" handed the family a state the app refused
+ * on every write.
  */
 function parseEntityUuid(value: unknown, label: string): string {
   const id = parseId(value, label);

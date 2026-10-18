@@ -258,6 +258,17 @@ export const JOURNAL_PROBLEM_CODES = [
    * an edit makes the two agree.
    */
   "snapshot_mismatch",
+  /**
+   * An identifier that is not a UUID (`isUuid` in the domain). The codec demands one only of the
+   * kinds added in wave 1; an entity of an older kind — an account, a category, a budget or its
+   * line, a goal, a large payment, a schedule, an operation, a participant — under any other
+   * identifier is withheld, because the application refuses a state that holds one, and a state
+   * the journal calls ready but the application refuses would hold every device of the family on
+   * yesterday's budget. A participant label of an operation that is not a UUID is cleared with the
+   * same code, the operation itself kept. Only a device that bypassed the domain writes either:
+   * every identifier the application creates is a UUID.
+   */
+  "invalid_id",
 ] as const;
 
 export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
@@ -284,6 +295,7 @@ export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
  *   such a state, and reachable concurrent edits produce it (see the problem code).
  * - `snapshot_mismatch` — the snapshot of an operation is not its amount at its rate; the domain
  *   throws on such a state.
+ * - `invalid_id` — the identifier is not a UUID; the application refuses such a state.
  */
 export const WITHHOLDING_REASONS = [
   "identifier_claimed_twice",
@@ -295,6 +307,7 @@ export const WITHHOLDING_REASONS = [
   "unknown_active_budget",
   "currency_mismatch",
   "snapshot_mismatch",
+  "invalid_id",
 ] as const satisfies readonly JournalProblemCode[];
 
 export type WithholdingReason = (typeof WITHHOLDING_REASONS)[number];

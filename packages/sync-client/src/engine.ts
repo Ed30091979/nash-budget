@@ -215,10 +215,11 @@ export interface SyncEngineOptions {
    * The application's own gate over a materialised state, asked before the state replaces the
    * document.
    *
-   * The journal's integrity gate guarantees a state the domain accepts; the application may demand
-   * more of a state it stores — a UUID for every identifier, for one — and a state the journal calls
-   * ready but the application refuses would otherwise be written to the document and then refused
-   * on every load and every write of every device. Absent, every ready state is accepted, as before.
+   * The journal's integrity gate guarantees a state the domain accepts, and withholds whatever it
+   * can tell the application would refuse (an identifier that is not a UUID, for one); what is left
+   * is a version skew — a peer's newer build wrote what this one does not open. Such a state, ready
+   * but refused, would otherwise be written to the document and then refused on every load and
+   * every write of every device. Absent, every ready state is accepted, as before.
    *
    * `false` keeps the refused state out of the document, and four things make that safe rather
    * than a silent freeze. The refusal is recorded ({@link SYNC_STATE_KEYS.hold}) and reported by

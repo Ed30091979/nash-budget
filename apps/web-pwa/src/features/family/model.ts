@@ -289,6 +289,7 @@ const WITHHOLDING_LABELS = {
   unknown_active_budget: "выбранный бюджет в семью ещё не пришёл",
   currency_mismatch: "валюта записи не сходится с валютой счёта или семьи",
   snapshot_mismatch: "сумма в базовой валюте не сходится с суммой операции по её курсу",
+  invalid_id: "идентификатор записи не того вида, что пишет приложение",
 } as const satisfies Readonly<Record<WithheldEntity["reason"], string>>;
 
 export interface WithheldRow {

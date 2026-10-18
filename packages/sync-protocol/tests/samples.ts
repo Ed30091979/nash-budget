@@ -36,6 +36,15 @@ export function mintedDevice(index: number): string {
 
 export type FieldsSample = { readonly [K in EntityKind]: EntityFieldsByKind[K] };
 
+/**
+ * The account, the category and the budget every sample refers to. UUIDs, like every identifier
+ * the application writes: the journal withholds an entity under any other (`invalid_id`), so a
+ * sample under a readable name would test the withholding instead of the rule it was written for.
+ */
+export const SAMPLE_ACCOUNT_ID = testUuid(0x5a3, 1);
+export const SAMPLE_CATEGORY_ID = testUuid(0x5a3, 2);
+export const SAMPLE_BUDGET_ID = testUuid(0x5a3, 3);
+
 /** One valid field set per entity kind, so every mutation of BudgetState is exercised. */
 export const SAMPLE_FIELDS: FieldsSample = {
   account: { name: "Основной", type: "current", currency: "RUB", openingBalanceMinor: 0, active: true },
@@ -47,10 +56,10 @@ export const SAMPLE_FIELDS: FieldsSample = {
     plannedIncomeMinor: 18_000_000,
     warningThreshold: 0.8,
   },
-  budgetLine: { budgetId: "sample-budget", categoryId: "sample-category", plannedMinor: 3_000_000 },
+  budgetLine: { budgetId: SAMPLE_BUDGET_ID, categoryId: SAMPLE_CATEGORY_ID, plannedMinor: 3_000_000 },
   goal: {
     name: "Финансовая подушка",
-    linkedAccountId: "sample-account",
+    linkedAccountId: SAMPLE_ACCOUNT_ID,
     targetMinor: 60_000_000,
     openingContributedMinor: 1_500_000,
     plannedContributionMinor: 1_000_000,
@@ -58,8 +67,8 @@ export const SAMPLE_FIELDS: FieldsSample = {
   },
   annualCommitment: {
     name: "Страхование автомобиля",
-    categoryId: "sample-category",
-    accountId: "sample-account",
+    categoryId: SAMPLE_CATEGORY_ID,
+    accountId: SAMPLE_ACCOUNT_ID,
     dueDate: "2027-01-15",
     amountMinor: 7_200_000,
     reservedMinor: 0,
@@ -68,8 +77,8 @@ export const SAMPLE_FIELDS: FieldsSample = {
   },
   scheduledExpense: {
     name: "Обучение детей",
-    categoryId: "sample-category",
-    accountId: "sample-account",
+    categoryId: SAMPLE_CATEGORY_ID,
+    accountId: SAMPLE_ACCOUNT_ID,
     amountMinor: 2_500_000,
     dueDay: 10,
     mode: "selected_months",
@@ -81,8 +90,8 @@ export const SAMPLE_FIELDS: FieldsSample = {
     occurredOn: "2026-07-08",
     status: "posted",
     amountMinor: 2_200_000,
-    accountId: "sample-account",
-    categoryId: "sample-category",
+    accountId: SAMPLE_ACCOUNT_ID,
+    categoryId: SAMPLE_CATEGORY_ID,
   },
   member: { name: "Мария", role: "owner", active: true },
   tag: { name: "Отпуск", active: true },
@@ -91,7 +100,7 @@ export const SAMPLE_FIELDS: FieldsSample = {
   debt: { counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, active: true },
   recurringRule: {
     name: "Доставка воды",
-    template: { kind: "expense", amountMinor: 150_000, accountId: "sample-account", categoryId: "sample-category", note: "Доставка воды" },
+    template: { kind: "expense", amountMinor: 150_000, accountId: SAMPLE_ACCOUNT_ID, categoryId: SAMPLE_CATEGORY_ID, note: "Доставка воды" },
     frequency: "weekly",
     interval: 2,
     startDate: "2026-08-04",
@@ -118,21 +127,18 @@ export const UPDATED_FIELDS: FieldsSample = {
 };
 
 /**
- * Kinds whose identifiers the codec demands as UUIDs: the kinds of wave 1, which have no history of
- * readable names. The older kinds keep the readable identifiers their tests always used.
- */
-const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate", "debt", "recurringRule"];
-
-/**
- * A target identifier for `entity`, readable where the codec allows it: `${entity}-${name}` for the
- * older kinds, a UUID derived from the kind and the name for the kinds of wave 1, so a test can still
+ * A target identifier for `entity`: a UUID derived from the kind and the name, so a test can still
  * name its targets and get the same identifier for the same name, and `HOUSEHOLD_ID` for the
  * household whatever the name.
+ *
+ * The older kinds used to get readable identifiers — `account-1` — because the codec accepts them.
+ * The journal no longer shows an entity under one (`invalid_id`, second review of wave 1: the
+ * application refuses such a state), so every kind gets a UUID here, and the tests that are about
+ * readable identifiers write them out on purpose.
  */
 export function sampleTargetId(entity: EntityKind, name = "1"): string {
   // One household per family, always under the identifier every device derives.
   if (entity === "household") return HOUSEHOLD_ID;
-  if (!UUID_KINDS.includes(entity)) return `${entity}-${name}`;
   let hash = 0;
   for (const character of name) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
   return testUuid(0x7e000 + ENTITY_KINDS.indexOf(entity), hash);
@@ -142,6 +148,35 @@ export function sampleTargetId(entity: EntityKind, name = "1"): string {
 export const SAMPLE_TARGET_IDS: { readonly [K in EntityKind]: string } = Object.fromEntries(
   ENTITY_KINDS.map((entity) => [entity, sampleTargetId(entity)]),
 ) as { readonly [K in EntityKind]: string };
+
+/**
+ * Numbered identifiers of one series — `series` names the series, `index` the member — and whether
+ * an identifier belongs to one. UUIDs whose order follows the index, so a test that floods the
+ * journal with ten thousand entities can still say which of them it means and in which order they
+ * sort, the way it did when it called them `flood-0000042`.
+ */
+export function seriesUuid(series: number, index: number): string {
+  return testUuid(series, index);
+}
+
+export function inSeries(id: string, series: number): boolean {
+  return id.startsWith(`${series.toString(16).padStart(8, "0")}-`);
+}
+
+/** The series the journal tests number their entities in. One per purpose, never shared. */
+export const SERIES = {
+  tx: 0x7a00001,
+  salary: 0x7a00002,
+  hostile: 0x7a00003,
+  flood: 0x7a00004,
+  member: 0x7a00005,
+  honest: 0x7a00006,
+  spend: 0x7a00007,
+  memberUndo: 0x7a00008,
+  memberRung: 0x7a00009,
+  minted: 0x7a0000a,
+  named: 0x7a0000b,
+} as const;
 
 /** Tag identifiers for tests that put tags on operations. */
 export function tagUuid(index: number): string {
