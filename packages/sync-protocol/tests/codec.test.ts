@@ -825,7 +825,9 @@ describe("display fields, notes and tags", () => {
     // Most of the plane is ordinary text; the refusals are the hidden characters and no more.
     expect(notes).toBeGreaterThan(60_000);
     expect(names).toBeGreaterThan(40_000);
-  });
+    // Two operations parsed per character of the plane: 2.7-3.0 s alone and 6.1 s under the load of
+    // the whole suite, past the default 5 s, so it gets the explicit timeout the heavy journal tests have.
+  }, 60_000);
 
   it("fits the largest transaction the new fields allow into one envelope", () => {
     const largest = {
