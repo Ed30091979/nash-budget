@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  isBlankStoredText,
   isStorableLabel,
   isStorableNote,
   normalizeCategoryName,
@@ -177,5 +178,30 @@ describe("stored text", () => {
     expect(source).not.toContain("normalize(");
     expect(source).not.toContain("toLocale");
     expect(source).not.toContain("Intl.");
+    expect(source).not.toContain(".trim(");
+  });
+});
+
+describe("blank stored text", () => {
+  it("is blank when only the listed whitespace is there, the empty string included", () => {
+    expect(isBlankStoredText("")).toBe(true);
+    expect(isBlankStoredText(String.fromCharCode(...STORED_TEXT_EDGE_WHITESPACE))).toBe(true);
+    for (const codePoint of STORED_TEXT_EDGE_WHITESPACE) {
+      expect(isBlankStoredText(String.fromCharCode(codePoint, codePoint)), codePoint.toString(16)).toBe(true);
+    }
+    expect(isBlankStoredText(" a ")).toBe(false);
+    expect(isBlankStoredText("\u{1f334}")).toBe(false);
+    // Mongolian vowel separator: white space to engines before Unicode 6.3, not after — not on the list.
+    expect(isBlankStoredText("\u180e")).toBe(false);
+  });
+
+  it("never calls blank what the engine's trim leaves something of, over the whole plane", () => {
+    // One direction only, the one that must hold on every engine: the list is white space every
+    // engine trims. The other direction is the point of the list — it does not follow an engine
+    // that trims more.
+    for (let codePoint = 0; codePoint <= 0xffff; codePoint += 1) {
+      const value = ` ${String.fromCharCode(codePoint)} `;
+      if (isBlankStoredText(value)) expect(value.trim(), codePoint.toString(16)).toBe("");
+    }
   });
 });

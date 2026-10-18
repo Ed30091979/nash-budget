@@ -58,7 +58,7 @@ import {
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
 import { MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
-import { isStorableLabel, isStorableNote } from "./stored-text.js";
+import { isBlankStoredText, isStorableLabel, isStorableNote } from "./stored-text.js";
 import {
   COUNTERPARTY_MAX_LENGTH,
   isDisplayKey,
@@ -77,7 +77,9 @@ function assertEnum(value: unknown, allowed: readonly string[], label: string): 
 }
 
 function assertStableId(id: StableId, label: string): void {
-  if (id.trim().length === 0) {
+  // The stored-text whitespace and not `trim`: a document's identifier must not become blank
+  // because the engine's Unicode version moved.
+  if (isBlankStoredText(id)) {
     throw new Error(`${label} must have a non-empty stable id`);
   }
 }

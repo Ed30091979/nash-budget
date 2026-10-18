@@ -2339,7 +2339,9 @@ describe("delivery in envelopes", () => {
     ]);
     expect(recent.entries).toHaveLength(steps + 1);
     expect(snapshot.entries).toHaveLength(steps);
-  });
+    // A hundred and ten thousand operations folded: 3-4.4 s alone and past the default 5 s under the
+    // load of the whole suite, so it gets the explicit timeout of its heavy neighbour above.
+  }, 60_000);
 });
 
 describe("Lamport clock", () => {
@@ -3462,6 +3464,43 @@ describe("several currencies through the journal", () => {
     expect(dollars.state.goals).toEqual([]);
     expect(dollars.integrity.ready).toBe(true);
     expect(() => calculateBudget(dollars.state)).not.toThrow();
+  });
+
+  it("pins what one household in another currency does to a rouble history: withheld, visible, reversible", () => {
+    // Security review LOW-3. No screen writes the household — the base currency is set once (D-031) —
+    // but any device can send one. This pins today's answer, so that changing it is a decision and
+    // not an accident: every rouble operation and every plan on a rouble account is withheld with
+    // currency_mismatch and named, nothing is lost, and writing roubles back shows all of it again.
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const dollars = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "USD" }, 960)]);
+
+    const counted = plain.state.transactions.filter((item) => item.kind === "income" || item.kind === "expense" || item.kind === "refund");
+    const expected = [
+      ...plain.state.goals.map((item) => ({ entity: "goal", id: item.id, reason: "currency_mismatch" })),
+      ...plain.state.annualCommitments.map((item) => ({ entity: "annualCommitment", id: item.id, reason: "currency_mismatch" })),
+      ...plain.state.scheduledExpenses.map((item) => ({ entity: "scheduledExpense", id: item.id, reason: "currency_mismatch" })),
+      ...counted.map((item) => ({ entity: "transaction", id: item.id, reason: "currency_mismatch" })),
+    ];
+    expect(counted.length).toBeGreaterThan(0);
+    const order = (list: readonly { entity: string; id: string }[]) => [...list].sort((left, right) => `${left.entity} ${left.id}`.localeCompare(`${right.entity} ${right.id}`));
+    expect(order(withheldOf(dollars))).toEqual(order(expected));
+    expect(dollars.integrity.ready).toBe(true);
+    expect(dollars.state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "USD" });
+    // What is not about money in the base currency stays: accounts, categories, the budget and its lines.
+    expect(dollars.state.accounts).toEqual(plain.state.accounts);
+    expect(dollars.state.budgets).toEqual(plain.state.budgets);
+    // The journal still holds every one of them.
+    expect(dollars.entries.length).toBe(plain.entries.length + 1);
+
+    const back = applyJournal([
+      ...journal,
+      write("household", HOUSEHOLD_ID, { baseCurrency: "USD" }, 960),
+      write("household", HOUSEHOLD_ID, { baseCurrency: "RUB" }, 961, "update"),
+    ]);
+    expect(withheldOf(back)).toEqual([]);
+    expect(calculateBudget(back.state)).toEqual(calculateBudget(plain.state));
+    expect(calculateAnnualPlan(back.state, G002.startMonth, 12)).toEqual(calculateAnnualPlan(plain.state, G002.startMonth, 12));
   });
 
   it("measures the totals in the base currency, the way the domain adds them", () => {

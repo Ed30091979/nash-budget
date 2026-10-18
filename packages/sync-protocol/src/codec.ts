@@ -1,6 +1,7 @@
 import {
   COUNTERPARTY_MAX_LENGTH,
   HOUSEHOLD_ID,
+  isBlankStoredText,
   isDisplayKey,
   isStorableLabel,
   isStorableNote,
@@ -240,7 +241,9 @@ function requireFieldNames(
 function readString(record: Record<string, unknown>, key: string, label: string, allowEmpty = false): string {
   const value = record[key];
   if (typeof value !== "string") fail(`${label} must be a string`);
-  if (!allowEmpty && value.trim().length === 0) fail(`${label} must not be empty`);
+  // The domain's stored-text whitespace, not `trim`: whether a field is empty must not depend on the
+  // Unicode version of the engine reading the journal.
+  if (!allowEmpty && isBlankStoredText(value)) fail(`${label} must not be empty`);
   if (value.length > MAX_TEXT_LENGTH) fail(`${label} must be at most ${MAX_TEXT_LENGTH} characters`);
   if (hasUnsafeCharacter(value)) fail(`${label} must not contain control or formatting characters`);
   return value;
@@ -260,7 +263,7 @@ function readId(record: Record<string, unknown>, key: string, label: string): st
 function parseId(value: unknown, label: string): string {
   if (typeof value !== "string") fail(`${label} must be a string`);
   // The domain rejects a blank stable id, so whitespace alone never counts as an identifier.
-  if (value.trim().length === 0) fail(`${label} must not be empty`);
+  if (isBlankStoredText(value)) fail(`${label} must not be empty`);
   if (value.length > MAX_ID_LENGTH) fail(`${label} must be at most ${MAX_ID_LENGTH} characters`);
   if (hasUnsafeCharacter(value)) fail(`${label} must not contain control or formatting characters`);
   return value;

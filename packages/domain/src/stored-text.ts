@@ -72,6 +72,23 @@ export const STORED_TEXT_EDGE_WHITESPACE: readonly number[] = Object.freeze([
 
 const EDGE_WHITESPACE = new Set(STORED_TEXT_EDGE_WHITESPACE);
 
+/**
+ * Whether `value` holds nothing but {@link STORED_TEXT_EDGE_WHITESPACE}, the empty string included.
+ *
+ * The engine-independent spelling of "nothing is left once trimmed", for the paths that read stored
+ * or transmitted text — an identifier, a name, any required string of a document, a backup or an
+ * operation. `String.prototype.trim` removes whatever the engine's Unicode version calls white space,
+ * and that list has moved before (U+180E left it in Unicode 6.3), so an identifier one engine
+ * accepted could be "empty" on another; this list never moves. Every code point here is one every
+ * engine trims, so nothing the engine called non-blank becomes blank.
+ */
+export function isBlankStoredText(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (!EDGE_WHITESPACE.has(value.charCodeAt(index))) return false;
+  }
+  return true;
+}
+
 function isForbidden(codePoint: number): boolean {
   for (const [first, last] of STORED_TEXT_FORBIDDEN) {
     if (codePoint < first) return false;

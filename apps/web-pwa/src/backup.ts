@@ -13,6 +13,7 @@ import {
   HOUSEHOLD_ID,
   isExchangeRateValue,
   isSupportedCurrency,
+  isBlankStoredText,
   isDisplayKey,
   isStorableLabel,
   isStorableNote,
@@ -172,7 +173,8 @@ function requireString(
   nonEmpty = false,
   maxLength: number = BACKUP_LIMITS.textLength,
 ): string {
-  if (typeof value !== "string" || (nonEmpty && value.trim().length === 0)) {
+  // Blank by the domain's stored-text whitespace, not by `trim`, whose answer moves with the engine.
+  if (typeof value !== "string" || (nonEmpty && isBlankStoredText(value))) {
     throw new Error(`${label}: ожидалась${nonEmpty ? " непустая" : ""} строка.`);
   }
   if (value.length > maxLength) throw new Error(`${label}: строка длиннее ${maxLength} символов.`);

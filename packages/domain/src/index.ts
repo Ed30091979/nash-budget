@@ -107,6 +107,7 @@ export {
 } from "./tags.js";
 export type { TagCreation, TagErrorCode } from "./tags.js";
 export {
+  isBlankStoredText,
   isStorableLabel,
   isStorableNote,
   STORED_TEXT_EDGE_WHITESPACE,
