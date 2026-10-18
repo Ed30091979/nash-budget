@@ -10,6 +10,10 @@ export type ScheduledExpenseId = StableId;
 export type MemberId = StableId;
 export type TagId = StableId;
 export type RecurringRuleId = StableId;
+export type ExchangeRateId = StableId;
+export type HouseholdId = StableId;
+/** An ISO 4217 code, and only one of `SUPPORTED_CURRENCIES` in `currency.ts`. */
+export type CurrencyCode = string;
 
 /**
  * Key of a design token the interface draws an entity with: kebab-case, at most 40 characters,
@@ -75,7 +79,8 @@ export interface Account {
   readonly id: AccountId;
   readonly name: string;
   readonly type: AccountType;
-  readonly currency: string;
+  /** Every amount on the account is a count of this currency's minor unit. */
+  readonly currency: CurrencyCode;
   readonly openingBalanceMinor: MinorUnits;
   readonly active: boolean;
   // Display fields. Each is optional on purpose, exactly like `BaseTransaction.memberId`: every
@@ -167,6 +172,45 @@ export interface Tag {
   readonly active: boolean;
 }
 
+/**
+ * The household itself: for now, the one currency every budget, category and plan is counted in.
+ *
+ * An entity rather than a setting, because the journal replicates entities and only entities, and
+ * its identifier is derived — always `HOUSEHOLD_ID` — so two devices that name the base currency
+ * independently write one and the same record. A state without one is counted in roubles, which is
+ * what every state written before it existed is.
+ */
+export interface Household {
+  readonly id: HouseholdId;
+  readonly baseCurrency: CurrencyCode;
+}
+
+/**
+ * A rate as two integers: `quoteMinor` minor units of the quoted currency are worth `baseMinor`
+ * minor units of the base one. Integers on both sides, so a conversion is exact arithmetic followed
+ * by one rounding, and never a binary fraction.
+ */
+export interface ExchangeRateValue {
+  readonly baseMinor: MinorUnits;
+  readonly quoteMinor: MinorUnits;
+}
+
+/**
+ * What one unit of `currency` was worth in `baseCurrency` on `date`.
+ *
+ * Read only by valuations that are meant to move with the rate — the holdings of a later step —
+ * and by whoever writes a snapshot. No budget figure reads it: an operation carries its own value in
+ * the base currency, so a new rate never revalues the past.
+ */
+export interface ExchangeRate {
+  readonly id: ExchangeRateId;
+  /** The quoted currency; never the base one. */
+  readonly currency: CurrencyCode;
+  readonly baseCurrency: CurrencyCode;
+  readonly date: LocalDate;
+  readonly rate: ExchangeRateValue;
+}
+
 /** A large predictable payment with one next due date and a reserve built in advance. */
 export interface AnnualCommitment {
   readonly id: AnnualCommitmentId;
@@ -223,7 +267,21 @@ interface BaseTransaction {
   readonly recurringRuleId?: RecurringRuleId;
 }
 
-export interface IncomeTransaction extends BaseTransaction {
+/**
+ * The value of an operation in the base currency, fixed when it was written.
+ *
+ * Carried only by an operation on an account in another currency, and then all three fields
+ * together: the budget, the categories and the plan add up `baseAmountMinor` and never read a rate
+ * table, so the rouble figure of a dollar purchase is the one the family saw that day. An operation
+ * in the base currency carries none of them — its amount already is the figure.
+ */
+interface BaseAmountSnapshot {
+  readonly baseAmountMinor?: MinorUnits;
+  readonly baseCurrency?: CurrencyCode;
+  readonly rate?: ExchangeRateValue;
+}
+
+export interface IncomeTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "income";
   readonly accountId: AccountId;
   /**
@@ -236,13 +294,13 @@ export interface IncomeTransaction extends BaseTransaction {
   readonly categoryId?: CategoryId;
 }
 
-export interface ExpenseTransaction extends BaseTransaction {
+export interface ExpenseTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "expense";
   readonly accountId: AccountId;
   readonly categoryId: CategoryId;
 }
 
-export interface RefundTransaction extends BaseTransaction {
+export interface RefundTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "refund";
   readonly accountId: AccountId;
   readonly categoryId: CategoryId;
@@ -253,6 +311,12 @@ export interface TransferTransaction extends BaseTransaction {
   readonly kind: "transfer";
   readonly fromAccountId: AccountId;
   readonly toAccountId: AccountId;
+  /**
+   * What arrived, in the currency of `toAccountId`; `amountMinor` is what left, in the currency of
+   * `fromAccountId`. Present exactly when the two accounts are in different currencies: within one
+   * currency the two amounts are one amount, and two fields for it could disagree.
+   */
+  readonly toAmountMinor?: MinorUnits;
 }
 
 export interface GoalContributionTransaction extends BaseTransaction {
@@ -275,6 +339,10 @@ export interface BudgetState {
   readonly members?: readonly Member[];
   /** Absent in every budget written before tags existed, exactly like `members`. */
   readonly tags?: readonly Tag[];
+  /** Absent in every budget written before it existed; such a state is counted in roubles. */
+  readonly household?: Household;
+  /** Absent in every budget written before rates existed, exactly like `members`. */
+  readonly exchangeRates?: readonly ExchangeRate[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];

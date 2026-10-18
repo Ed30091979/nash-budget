@@ -39,7 +39,20 @@ export {
   formatMinor,
   normalizeScheduledDueDate,
 } from "./calculate.js";
-export { carriedId, documentIds } from "./identity.js";
+export {
+  baseAmountOf,
+  baseCurrencyOf,
+  convertMinor,
+  currencyExponent,
+  DEFAULT_BASE_CURRENCY,
+  findRate,
+  isExchangeRateValue,
+  isSupportedCurrency,
+  RATE_PART_MAX,
+  RATE_PART_MIN,
+  SUPPORTED_CURRENCIES,
+} from "./currency.js";
+export { carriedId, documentIds, HOUSEHOLD_ID } from "./identity.js";
 export {
   budgetMonth,
   carriedBudgetId,

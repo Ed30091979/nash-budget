@@ -8,6 +8,7 @@ import {
   carriedBudgetLineId,
   carryBudgetForward,
   findBudgetForMonth,
+  HOUSEHOLD_ID,
   makeSeedBudget,
   monthAfterPeriod,
   SEED_IDS,
@@ -239,5 +240,28 @@ describe("перенос месяца", () => {
       transactions: july.transactions,
     };
     expect(() => carryBudgetForward(clash, "2026-08")).toThrow(/is already used/);
+  });
+  it("не трогает хозяйство, курсы и валютные счета и переносит остаток конверта в базовой валюте", () => {
+    const july = makeSeedBudget();
+    const usd = "8c000000-0000-4000-8000-0000000000a2";
+    const state: BudgetState = {
+      ...july,
+      household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" },
+      exchangeRates: [{ id: "8e000000-0000-4000-8000-000000000001", currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+      accounts: [...july.accounts, { id: usd, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [
+        ...july.transactions,
+        // 10 $ на транспорт по 90 ₽: в конверт попадают 900 ₽, а не 10 «копеек».
+        { id: "8d000000-0000-4000-8000-000000000003", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 1_000, accountId: usd, categoryId: TRANSPORT, baseAmountMinor: 90_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 } },
+      ],
+    };
+    const { state: next, budget } = carryBudgetForward(state, "2026-08");
+
+    expect(next.household).toEqual(state.household);
+    expect(next.exchangeRates).toEqual(state.exchangeRates);
+    expect(next.accounts).toEqual(state.accounts);
+    expect(next.transactions).toEqual(state.transactions);
+    // Доступно 10 000 ₽, потрачено 5 000 ₽ и ещё 900 ₽ долларами — переносится 4 100 ₽.
+    expect(lineOf(next, budget.id, TRANSPORT)?.rolloverMinor).toBe(410_000);
   });
 });

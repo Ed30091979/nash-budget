@@ -77,6 +77,12 @@ export function carriedId(...parts: readonly string[]): StableId {
 }
 
 /**
+ * The identifier of the household: one name every device derives, so that two devices that set the
+ * base currency without having met write one entity rather than two households.
+ */
+export const HOUSEHOLD_ID: StableId = carriedId("household");
+
+/**
  * Every identifier the document holds, budget lines included, in one census.
  *
  * Identifiers are unique across the whole document, not only inside each collection: a backup
@@ -89,6 +95,8 @@ export function documentIds(state: BudgetState): StableId[] {
   return [
     ...(state.members ?? []).map((item) => item.id),
     ...(state.tags ?? []).map((item) => item.id),
+    ...(state.household === undefined ? [] : [state.household.id]),
+    ...(state.exchangeRates ?? []).map((item) => item.id),
     ...state.accounts.map((item) => item.id),
     ...state.categories.map((item) => item.id),
     ...state.budgets.flatMap((item) => [item.id, ...item.lines.map((line) => line.id)]),

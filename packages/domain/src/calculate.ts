@@ -12,10 +12,13 @@ import type {
   CategoryBudgetStatus,
   CategoryId,
   CategoryMetrics,
+  CurrencyCode,
+  ExchangeRate,
   ExpenseShareMetrics,
   FormatMinorOptions,
   Goal,
   GoalId,
+  Household,
   Member,
   MemberExpenseBreakdown,
   MemberExpenseMetrics,
@@ -29,6 +32,15 @@ import type {
   Transaction,
 } from "./types.js";
 import { daysInMonth, MAX_LOCAL_MONTH_INDEX, monthFromIndex, monthIndex } from "./calendar.js";
+import {
+  baseAmountOf,
+  baseCurrencyOf,
+  isExchangeRateValue,
+  isSupportedCurrency,
+  RATE_PART_MAX,
+  RATE_PART_MIN,
+} from "./currency.js";
+import { HOUSEHOLD_ID } from "./identity.js";
 import {
   isDisplayKey,
   isNormalizedLabel,
@@ -123,7 +135,10 @@ function indexById<T extends { readonly id: StableId }>(
  *
  * Tags are the one collection validated here as well. Every calculation resolves the tags of every
  * transaction it reads, so every calculation needs them whole, and no state written before tags
- * existed carries one: checking them in all three adds no refusal to any state that was valid.
+ * existed carries one: checking them in all three adds no refusal to any state that was valid. The
+ * household and the exchange rates are validated here for the same reason — every calculation
+ * reads the base currency, to know which operations must carry a snapshot — and no older state
+ * carries either.
  */
 export interface StateIndex {
   readonly accounts: ReadonlyMap<StableId, Account>;
@@ -132,11 +147,14 @@ export interface StateIndex {
   readonly goals: ReadonlyMap<StableId, Goal>;
   readonly transactions: ReadonlyMap<StableId, Transaction>;
   readonly tags: ReadonlyMap<TagId, Tag>;
+  readonly exchangeRates: ReadonlyMap<StableId, ExchangeRate>;
+  /** The currency every budget figure is counted in: the household's, or roubles. */
+  readonly baseCurrency: CurrencyCode;
 }
 
 export function indexState(state: BudgetState): StateIndex {
   // Object literals evaluate in source order, so a duplicate is reported for the same collection
-  // the inlined copies reported it for; tags, which no older state has, come last.
+  // the inlined copies reported it for; the collections no older state has come last.
   const index: StateIndex = {
     accounts: indexById(state.accounts, "accounts"),
     categories: indexById(state.categories, "categories"),
@@ -144,9 +162,42 @@ export function indexState(state: BudgetState): StateIndex {
     goals: indexById(state.goals, "goals"),
     transactions: indexById(state.transactions, "transactions"),
     tags: indexById(state.tags ?? [], "tags"),
+    exchangeRates: indexById(state.exchangeRates ?? [], "exchangeRates"),
+    baseCurrency: baseCurrencyOf(state),
   };
   for (const tag of index.tags.values()) validateTag(tag);
+  if (state.household !== undefined) validateHousehold(state.household);
+  for (const rate of index.exchangeRates.values()) validateExchangeRate(rate);
   return index;
+}
+
+function validateHousehold(household: Household): void {
+  if (household.id !== HOUSEHOLD_ID) {
+    throw new Error(`household id must be ${HOUSEHOLD_ID}, the identifier every device derives`);
+  }
+  if (!isSupportedCurrency(household.baseCurrency)) {
+    throw new Error(`household baseCurrency has unknown value ${String(household.baseCurrency)}`);
+  }
+}
+
+function assertRateValue(value: unknown, label: string): void {
+  if (!isExchangeRateValue(value)) {
+    throw new Error(`${label} parts must be integers from ${RATE_PART_MIN} to ${RATE_PART_MAX}`);
+  }
+}
+
+function validateExchangeRate(rate: ExchangeRate): void {
+  if (!isSupportedCurrency(rate.currency)) {
+    throw new Error(`exchange rate ${rate.id} currency has unknown value ${String(rate.currency)}`);
+  }
+  if (!isSupportedCurrency(rate.baseCurrency)) {
+    throw new Error(`exchange rate ${rate.id} baseCurrency has unknown value ${String(rate.baseCurrency)}`);
+  }
+  if (rate.currency === rate.baseCurrency) {
+    throw new Error(`exchange rate ${rate.id} must value one currency in another`);
+  }
+  assertLocalDate(rate.date, `exchange rate ${rate.id} date`);
+  assertRateValue(rate.rate, `exchange rate ${rate.id} rate`);
 }
 
 function validateTag(tag: Tag): void {
@@ -217,6 +268,9 @@ function categoryStatus(
 
 function validateAccount(account: Account): void {
   assertEnum(account.type, ["current", "cash", "savings", "reserve"], `account ${account.id} type`);
+  if (!isSupportedCurrency(account.currency)) {
+    throw new Error(`account ${account.id} currency has unknown value ${String(account.currency)}`);
+  }
   assertMinor(account.openingBalanceMinor, `account ${account.id} openingBalanceMinor`);
   // Display fields: optional, read by no figure, and never allowed to be something else.
   if (account.sortOrder !== undefined && !Number.isSafeInteger(account.sortOrder)) {
@@ -238,7 +292,19 @@ function validateCategory(category: Category): void {
   assertOptionalDisplayKey(category.color, `category ${category.id} color`);
 }
 
-function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): void {
+/**
+ * A plan — a goal, a large payment, a schedule — lives on an account kept in the base currency.
+ *
+ * The annual plan adds their amounts up as they stand, without a rate, so a plan that mixed dollars
+ * into roubles would be a plausible figure and a wrong one (D-032).
+ */
+function assertBaseCurrencyAccount(account: Account, baseCurrency: CurrencyCode, label: string): void {
+  if (account.currency !== baseCurrency) {
+    throw new Error(`${label} must use an account in the base currency ${baseCurrency}`);
+  }
+}
+
+function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>, baseCurrency: CurrencyCode): void {
   assertEnum(goal.status, ["active", "completed", "cancelled"], `goal ${goal.id} status`);
   assertNonNegativeMinor(goal.targetMinor, `goal ${goal.id} targetMinor`);
   assertNonNegativeMinor(
@@ -249,7 +315,8 @@ function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): voi
     goal.plannedContributionMinor,
     `goal ${goal.id} plannedContributionMinor`,
   );
-  requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
+  const account = requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `goal ${goal.id}`);
   if (goal.deadline !== undefined) assertLocalDate(goal.deadline, `goal ${goal.id} deadline`);
   assertOptionalDisplayKey(goal.icon, `goal ${goal.id} icon`);
 }
@@ -350,8 +417,60 @@ function validateTransactionLabels(transaction: Transaction, index: StateIndex):
   }
 }
 
+/**
+ * The base-currency snapshot of an income, an expense or a refund, against the account it moves.
+ *
+ * On an account in the base currency there is none — the amount already is the figure, and a second
+ * copy of it could only disagree. On any other account all three fields are there, the snapshot is
+ * in this household's base currency, and the value is a positive amount: the budget adds it up as it
+ * stands and never looks at a rate table, which is what keeps a new rate from revaluing the past.
+ */
+function validateBaseSnapshot(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+  account: Account,
+  baseCurrency: CurrencyCode,
+): void {
+  const id = transaction.id;
+  const parts = [transaction.baseAmountMinor, transaction.baseCurrency, transaction.rate];
+  const present = parts.filter((part) => part !== undefined).length;
+  if (account.currency === baseCurrency) {
+    if (present > 0) throw new Error(`transaction ${id} is in the base currency and must not carry a base-currency snapshot`);
+    return;
+  }
+  if (present < parts.length) {
+    throw new Error(`transaction ${id} on an account in ${account.currency} must carry baseAmountMinor, baseCurrency and rate together`);
+  }
+  if (transaction.baseCurrency !== baseCurrency) {
+    throw new Error(`transaction ${id} snapshot must be in the base currency ${baseCurrency}`);
+  }
+  assertPositiveMinor(transaction.baseAmountMinor!, `transaction ${id} baseAmountMinor`);
+  assertRateValue(transaction.rate, `transaction ${id} rate`);
+}
+
+/**
+ * The amount that arrives on the other account of a transfer: in its own currency, and named only
+ * when that currency is not the one the money left in.
+ */
+function validateTransferAmounts(
+  transaction: Extract<Transaction, { readonly kind: "transfer" }>,
+  from: Account,
+  to: Account,
+): void {
+  const id = transaction.id;
+  if (from.currency === to.currency) {
+    if (transaction.toAmountMinor !== undefined) {
+      throw new Error(`transaction ${id} moves within one currency and must not carry toAmountMinor`);
+    }
+    return;
+  }
+  if (transaction.toAmountMinor === undefined) {
+    throw new Error(`transaction ${id} moves from ${from.currency} to ${to.currency} and must carry toAmountMinor`);
+  }
+  assertPositiveMinor(transaction.toAmountMinor, `transaction ${id} toAmountMinor`);
+}
+
 function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
-  const { accounts, categories, goals, transactions } = index;
+  const { accounts, categories, goals, transactions, baseCurrency } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
   assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
@@ -360,7 +479,8 @@ function validateTransactionReferences(transaction: Transaction, index: StateInd
 
   switch (transaction.kind) {
     case "income": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const categoryId = transaction.categoryId;
       // Optional, like memberId: absent in every income written before income had categories.
       if (categoryId !== undefined) {
@@ -373,7 +493,8 @@ function validateTransactionReferences(transaction: Transaction, index: StateInd
       return;
     }
     case "expense": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const category = requireEntity(
         categories,
         transaction.categoryId,
@@ -385,7 +506,8 @@ function validateTransactionReferences(transaction: Transaction, index: StateInd
       return;
     }
     case "refund": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const category = requireEntity(categories, transaction.categoryId, `transaction ${transaction.id}`);
       if (category.type !== "expense") throw new Error(`transaction ${transaction.id} must reference an expense category`);
       const original = requireEntity(transactions, transaction.originalTransactionId, `refund ${transaction.id} originalTransactionId`);
@@ -400,18 +522,24 @@ function validateTransactionReferences(transaction: Transaction, index: StateInd
       }
       return;
     }
-    case "transfer":
-      requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
-      requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
+    case "transfer": {
+      const from = requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
+      const to = requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
       if (transaction.fromAccountId === transaction.toAccountId) {
         throw new Error(`transaction ${transaction.id} must use two different accounts`);
       }
+      validateTransferAmounts(transaction, from, to);
       return;
+    }
     case "goal_contribution": {
-      requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
-      requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
+      const from = requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
+      const to = requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
       if (transaction.fromAccountId === transaction.toAccountId) {
         throw new Error(`transaction ${transaction.id} must use two different accounts`);
+      }
+      // A contribution carries one amount, so both accounts count it in one currency.
+      if (from.currency !== to.currency) {
+        throw new Error(`transaction ${transaction.id} must move between two accounts in one currency`);
       }
       const goal = requireEntity(goals, transaction.goalId, `transaction ${transaction.id}`);
       if (goal.linkedAccountId !== transaction.toAccountId) {
@@ -436,7 +564,7 @@ export function calculateBudget(
 
   for (const account of state.accounts) validateAccount(account);
   for (const category of state.categories) validateCategory(category);
-  for (const goal of state.goals) validateGoal(goal, index.accounts);
+  for (const goal of state.goals) validateGoal(goal, index.accounts, index.baseCurrency);
 
   const budget = requireEntity(index.budgets, budgetId, "calculateBudget");
   const availableByCategory = validateBudget(budget, index.categories);
@@ -477,38 +605,39 @@ export function calculateBudget(
     validateTransactionReferences(transaction, index);
     if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
 
+    // The budget's figures are counted in the base currency, the balances in each account's own:
+    // an operation on an account in another currency moves that account by its amount and the
+    // budget by the snapshot it carries, and no rate table is read on the way.
     switch (transaction.kind) {
       case "income":
-        incomeMinor = addMinor(incomeMinor, transaction.amountMinor, "incomeMinor");
+        incomeMinor = addMinor(incomeMinor, baseAmountOf(transaction), "incomeMinor");
         changeAccount(transaction.accountId, transaction.amountMinor);
         break;
       case "expense": {
-        grossExpensesMinor = addMinor(
-          grossExpensesMinor,
-          transaction.amountMinor,
-          "grossExpensesMinor",
-        );
+        const baseMinor = baseAmountOf(transaction);
+        grossExpensesMinor = addMinor(grossExpensesMinor, baseMinor, "grossExpensesMinor");
         const categoryAmount = expenseByCategory.get(transaction.categoryId) ?? 0;
         expenseByCategory.set(
           transaction.categoryId,
-          addMinor(categoryAmount, transaction.amountMinor, "category expenseMinor"),
+          addMinor(categoryAmount, baseMinor, "category expenseMinor"),
         );
         changeAccount(transaction.accountId, -transaction.amountMinor);
         break;
       }
       case "refund": {
-        refundsMinor = addMinor(refundsMinor, transaction.amountMinor, "refundsMinor");
+        const baseMinor = baseAmountOf(transaction);
+        refundsMinor = addMinor(refundsMinor, baseMinor, "refundsMinor");
         const categoryAmount = refundByCategory.get(transaction.categoryId) ?? 0;
         refundByCategory.set(
           transaction.categoryId,
-          addMinor(categoryAmount, transaction.amountMinor, "category refundMinor"),
+          addMinor(categoryAmount, baseMinor, "category refundMinor"),
         );
         changeAccount(transaction.accountId, transaction.amountMinor);
         break;
       }
       case "transfer":
         changeAccount(transaction.fromAccountId, -transaction.amountMinor);
-        changeAccount(transaction.toAccountId, transaction.amountMinor);
+        changeAccount(transaction.toAccountId, transaction.toAmountMinor ?? transaction.amountMinor);
         break;
       case "goal_contribution": {
         changeAccount(transaction.fromAccountId, -transaction.amountMinor);
@@ -561,10 +690,15 @@ export function calculateBudget(
   }
 
   const expensesMinor = addMinor(grossExpensesMinor, -refundsMinor, "expensesMinor");
-  const capitalMinor = [...accountBalances.values()].reduce(
-    (total, balance) => addMinor(total, balance, "capitalMinor"),
-    0,
-  );
+  // Capital adds up the accounts kept in the base currency and no other: a dollar balance added to
+  // a rouble one is a sum of cents and kopecks, which is no amount of anything. Every state written
+  // before currencies were more than a label keeps its accounts in roubles, so its capital is what
+  // it always was. The valuation of everything held, at a rate, is a metric of its own (holdings).
+  let capitalMinor = 0;
+  for (const account of state.accounts) {
+    if (account.currency !== index.baseCurrency) continue;
+    capitalMinor = addMinor(capitalMinor, accountBalances.get(account.id) ?? 0, "capitalMinor");
+  }
 
   return {
     budgetId: budget.id,
@@ -674,17 +808,19 @@ export function calculateMemberExpenses(
     if (transaction.kind !== "expense" && transaction.kind !== "refund") continue;
 
     const isRefund = transaction.kind === "refund";
+    // In the base currency, exactly as calculateBudget counts it, so the split adds up to its total.
+    const baseMinor = baseAmountOf(transaction);
     if (isRefund) {
-      refundsMinor = addMinor(refundsMinor, transaction.amountMinor, "refundsMinor");
+      refundsMinor = addMinor(refundsMinor, baseMinor, "refundsMinor");
     } else {
-      grossExpensesMinor = addMinor(grossExpensesMinor, transaction.amountMinor, "grossExpensesMinor");
+      grossExpensesMinor = addMinor(grossExpensesMinor, baseMinor, "grossExpensesMinor");
     }
 
     if (memberId === undefined) {
       if (isRefund) {
-        unattributedRefundMinor = addMinor(unattributedRefundMinor, transaction.amountMinor, "unattributed refundMinor");
+        unattributedRefundMinor = addMinor(unattributedRefundMinor, baseMinor, "unattributed refundMinor");
       } else {
-        unattributedExpenseMinor = addMinor(unattributedExpenseMinor, transaction.amountMinor, "unattributed expenseMinor");
+        unattributedExpenseMinor = addMinor(unattributedExpenseMinor, baseMinor, "unattributed expenseMinor");
       }
       unattributedCount += 1;
       continue;
@@ -692,7 +828,7 @@ export function calculateMemberExpenses(
 
     const bucket = isRefund ? refundByMember : expenseByMember;
     const label = isRefund ? "member refundMinor" : "member expenseMinor";
-    bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, transaction.amountMinor, label));
+    bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, baseMinor, label));
     countByMember.set(memberId, (countByMember.get(memberId) ?? 0) + 1);
   }
 
@@ -762,12 +898,14 @@ function validateAnnualCommitment(
   item: AnnualCommitment,
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
+  baseCurrency: CurrencyCode,
 ): void {
   assertEnum(item.recurrence, ["annual", "one_time"], `annual commitment ${item.id} recurrence`);
   assertLocalDate(item.dueDate, `annual commitment ${item.id} dueDate`);
   assertPositiveMinor(item.amountMinor, `annual commitment ${item.id} amountMinor`);
   assertNonNegativeMinor(item.reservedMinor, `annual commitment ${item.id} reservedMinor`);
-  requireEntity(accounts, item.accountId, `annual commitment ${item.id}`);
+  const account = requireEntity(accounts, item.accountId, `annual commitment ${item.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `annual commitment ${item.id}`);
   const category = requireEntity(categories, item.categoryId, `annual commitment ${item.id}`);
   if (category.type !== "expense") {
     throw new Error(`annual commitment ${item.id} must reference an expense category`);
@@ -778,13 +916,15 @@ function validateScheduledExpense(
   item: ScheduledExpense,
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
+  baseCurrency: CurrencyCode,
 ): void {
   assertEnum(item.mode, ["monthly", "selected_months"], `scheduled expense ${item.id} mode`);
   assertPositiveMinor(item.amountMinor, `scheduled expense ${item.id} amountMinor`);
   if (!Number.isSafeInteger(item.dueDay) || item.dueDay < 1 || item.dueDay > 31) {
     throw new Error(`scheduled expense ${item.id} dueDay must be from 1 to 31`);
   }
-  requireEntity(accounts, item.accountId, `scheduled expense ${item.id}`);
+  const account = requireEntity(accounts, item.accountId, `scheduled expense ${item.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `scheduled expense ${item.id}`);
   const category = requireEntity(categories, item.categoryId, `scheduled expense ${item.id}`);
   if (category.type !== "expense") {
     throw new Error(`scheduled expense ${item.id} must reference an expense category`);
@@ -826,14 +966,14 @@ export function calculateAnnualPlan(
   for (const category of categories.values()) validateCategory(category);
   const flexibleByCategory = validateBudget(budget, categories);
 
-  for (const goal of goals.values()) validateGoal(goal, accounts);
+  for (const goal of goals.values()) validateGoal(goal, accounts, index.baseCurrency);
   for (const transaction of index.transactions.values()) validateTransactionReferences(transaction, index);
 
   for (const item of annualCommitments.values()) {
-    validateAnnualCommitment(item, accounts, categories);
+    validateAnnualCommitment(item, accounts, categories, index.baseCurrency);
   }
   for (const item of scheduledExpenses.values()) {
-    validateScheduledExpense(item, accounts, categories);
+    validateScheduledExpense(item, accounts, categories, index.baseCurrency);
   }
 
   const flexiblePlanMinor = [...flexibleByCategory.values()].reduce(
