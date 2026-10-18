@@ -36,7 +36,8 @@ import { groupedCategoryOptions } from "./category-picker";
 import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "./CategorySheet";
 import { editAmount, evaluateAmount, settleAmount, type AmountSelection, type KeypadKey } from "./amount-expression";
 import { Keypad, useKeypadAvailable } from "./Keypad";
-import { kindLabels, rubles, transactionDetail } from "./transaction-words";
+import { amountText, draftCurrency, kindLabels, moneyIn, operationLabel, rubles, transactionDetail } from "./transaction-words";
+import { OperationAmount } from "./OperationAmount";
 
 /** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
@@ -76,10 +77,12 @@ interface OperationsScreenProps {
  * называет записанное и показывает число, которое от записи поехало, — одометром, чтобы движение
  * объяснило, что оно изменилось, и на сколько.
  */
-interface SaveReceipt {
+export interface SaveReceipt {
   readonly verb: "Записано" | "Изменено" | "Удалено";
   readonly kind: TransactionKind;
   readonly amountMinor: number;
+  /** Валюта суммы — валюта счёта операции, как в истории; конверты ниже — в рублях бюджета. */
+  readonly currency: string;
   /** Чьё число объявляем; `null` — объявлять нечего, и тогда квитанция называет только запись. */
   readonly target: EffectTarget | null;
   /** Значение до изменения: одометр едет от него, а подпись называет разницу. */
@@ -278,7 +281,7 @@ function FieldError({ message }: { readonly message: string | null }) {
  * Стоит в потоке под карточкой суммы, а не поверх экрана: плавающая плашка накрывает то, что под
  * ней. Квитанция занимает своё место и ничего не закрывает.
  */
-function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceipt; readonly afterMinor: number | null }) {
+export function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceipt; readonly afterMinor: number | null }) {
   const label = receipt.target ? effectLabel(receipt.target) : null;
   const changeMinor = afterMinor === null ? 0 : afterMinor - receipt.beforeMinor;
   const spokenValue = afterMinor === null
@@ -287,7 +290,7 @@ function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceip
   return <div className="save-receipt" id={SAVE_RECEIPT_ID} role="status" aria-live="polite" aria-atomic="true">
     <span className="save-receipt-mark" aria-hidden="true"><Icon name="circle-check" size={24} /></span>
     <div className="save-receipt-copy">
-      <strong>{receipt.verb}: {kindLabels[receipt.kind].toLowerCase()} <Money value={receipt.amountMinor} /></strong>
+      <strong>{receipt.verb}: {kindLabels[receipt.kind].toLowerCase()} <OperationAmount value={receipt.amountMinor} currency={receipt.currency} /></strong>
       {label !== null && afterMinor !== null ? <>
         <small>{label}</small>
         <span className="save-receipt-value">
@@ -345,7 +348,7 @@ function TransactionFields({ budget, draft, patch, onCustomCategory }: { budget:
     const derivedCategory = original ? budget.categories.find((item) => item.id === original.categoryId)?.name : undefined;
     return <>
       <AccountSelect id="operation-accountId" label="Счёт возврата" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
-      <div className="field"><label htmlFor="operation-originalTransactionId">Исходный расход</label><select id="operation-originalTransactionId" value={draft.originalTransactionId} onChange={(event) => patch("originalTransactionId", event.target.value)}><option value="">Выберите расход</option>{activeExpenses.map((item) => <option value={item.id} key={item.id}>{item.occurredOn} · {rubles(item.amountMinor)} · {transactionContext(item, budget)}</option>)}</select><small>Категория определяется исходным расходом: {derivedCategory ?? "выберите расход"}.</small></div>
+      <div className="field"><label htmlFor="operation-originalTransactionId">Исходный расход</label><select id="operation-originalTransactionId" value={draft.originalTransactionId} onChange={(event) => patch("originalTransactionId", event.target.value)}><option value="">Выберите расход</option>{activeExpenses.map((item) => <option value={item.id} key={item.id}>{item.occurredOn} · {amountText(item, budget)} · {transactionContext(item, budget)}</option>)}</select><small>Категория определяется исходным расходом: {derivedCategory ?? "выберите расход"}.</small></div>
     </>;
   }
   if (draft.kind === "transfer") return <>
@@ -589,6 +592,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       verb,
       kind: pending.kind,
       amountMinor: pendingMinor,
+      currency: draftCurrency(pending, budget),
       target,
       beforeMinor: target === null ? 0 : effectValueMinor(metrics, target),
     });
@@ -660,7 +664,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   };
   const editingTransaction = editingId === null ? undefined : budget.transactions.find((item) => item.id === editingId);
   const editingLabel = editingTransaction
-    ? `${kindLabels[editingTransaction.kind]} ${rubles(editingTransaction.amountMinor)} от ${editingTransaction.occurredOn}`
+    ? operationLabel(editingTransaction, budget)
     : "";
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -740,7 +744,8 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     amountRef.current?.setSelectionRange(caret, caret);
   });
   const requestDelete = (transaction: Transaction) => {
-    setConfirmation({ type: "delete", id: transaction.id, label: `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}` });
+    // В валюте счёта операции, как в истории: «Расход 40 $ от …», а не «40 ₽».
+    setConfirmation({ type: "delete", id: transaction.id, label: operationLabel(transaction, budget) });
     setError(null);
   };
 
@@ -748,7 +753,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const submitLabel = editingId
     ? "Проверить изменения"
     : draft.kind === "expense"
-      ? (selectedCategory ? `Записать ${amountMinor > 0 ? rubles(amountMinor) : "покупку"} в «${selectedCategory.name}»` : "Записать покупку")
+      ? (selectedCategory ? `Записать ${amountMinor > 0 ? moneyIn(amountMinor, draftCurrency(draft, budget)) : "покупку"} в «${selectedCategory.name}»` : "Записать покупку")
       : `Записать ${kindObjects[draft.kind]}`;
   const periodMonth = activeBudget ? monthGenitive(activeBudget.startDate) : "";
 

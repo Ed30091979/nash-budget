@@ -76,9 +76,33 @@ export function transactionCurrency(transaction: Transaction, budget: Pick<Budge
  * «40 $», а не «40 ₽». Рубли — тем же `formatMoney`, что и везде.
  */
 export function amountText(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
-  const currency = transactionCurrency(transaction, budget);
-  if (currency === "RUB") return formatMoney(transaction.amountMinor);
-  return formatCurrencyAmount(transaction.amountMinor, currency, isSupportedCurrency(currency) ? currencyExponent(currency) : 2);
+  return moneyIn(transaction.amountMinor, transactionCurrency(transaction, budget));
+}
+
+/**
+ * Операция одной строкой — «Расход 40,50 $ от 2026-07-10»: так её называют подтверждение удаления,
+ * правки и подпись строки истории, и сумма везде в валюте её счёта.
+ */
+export function operationLabel(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  return `${kindLabels[transaction.kind]} ${amountText(transaction, budget)} от ${transaction.occurredOn}`;
+}
+
+/** Сумма в минимальных единицах валюты `currency`, словами экрана: рубли — `formatMoney`, как везде. */
+export function moneyIn(minor: number, currency: string): string {
+  if (currency === "RUB") return formatMoney(minor);
+  return formatCurrencyAmount(minor, currency, isSupportedCurrency(currency) ? currencyExponent(currency) : 2);
+}
+
+/**
+ * Валюта суммы, набранной в форме: валюта счёта, с которого операция идёт, — того же счёта, по
+ * которому {@link transactionCurrency} назовёт её валюту, когда она будет записана.
+ */
+export function draftCurrency(
+  draft: { readonly kind: TransactionKind; readonly accountId?: string; readonly fromAccountId?: string },
+  budget: Pick<BudgetState, "accounts">,
+): string {
+  const accountId = draft.kind === "transfer" || draft.kind === "goal_contribution" ? draft.fromAccountId : draft.accountId;
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
 }
 
 /** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */

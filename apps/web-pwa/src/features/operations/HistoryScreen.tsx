@@ -10,6 +10,7 @@ import {
   kindIcons,
   kindLabels,
   kindSign,
+  operationLabel,
   operationsCount,
   transactionCategory,
   transactionCurrency,
@@ -73,7 +74,7 @@ export function HistoryScreen({ budget, onEdit, onAdd, onBack, busy = false }: H
       {filtered.length ? <ul className="transaction-list">{filtered.slice(0, visibleCount).map(({ transaction }) => {
         const category = transactionCategory(transaction, budget);
         const visual = category ? categoryVisual(category) : null;
-        const name = `${kindLabels[transaction.kind]} ${amountText(transaction, budget)} от ${transaction.occurredOn}`;
+        const name = operationLabel(transaction, budget);
         return <li className={`transaction-row history-row ${transaction.kind}`} key={transaction.id}>
           {/* Вся строка — одна цель нажатия: она открывает операцию в форме «Записать», где её и
               меняют, и удаляют. Разрушающее действие не стоит под пальцем при пролистывании. */}

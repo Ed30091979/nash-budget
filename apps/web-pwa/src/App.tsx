@@ -45,7 +45,7 @@ import {
 } from "./features/family";
 import { createImportMemory, ImportScreen } from "./features/import";
 import { OperationsScreen } from "./features/operations";
-import { HistoryScreen, operationsCount, TotalsFact, type EditRequest } from "./features/operations";
+import { HistoryScreen, OperationAmount, operationsCount, TotalsFact, transactionCurrency, type EditRequest } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
@@ -1048,7 +1048,7 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
           {memberOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </div> : null}
-      <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
+      <TransactionList transactions={recentTransactions} accounts={budget.accounts} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
     </section>
 
     {/* Холодный старт: пока записей нет, вторая дверь — выписка банка. Она стоит после пустого
@@ -1303,7 +1303,7 @@ function CategoryList({ rows, clock, onPlanning }: { rows: CategoryRow[]; clock:
   })}</ul>;
 }
 
-function TransactionList({ transactions, categoryById, memberById, showAuthor, onAdd, hiddenByMemberFilter = false, onShowEveryone }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean; onAdd?: () => void; hiddenByMemberFilter?: boolean; onShowEveryone?: () => void }) {
+function TransactionList({ transactions, accounts, categoryById, memberById, showAuthor, onAdd, hiddenByMemberFilter = false, onShowEveryone }: { transactions: Transaction[]; accounts: BudgetState["accounts"]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean; onAdd?: () => void; hiddenByMemberFilter?: boolean; onShowEveryone?: () => void }) {
   // §6 исследования, пункт 29: пустое состояние обязано сообщить состояние системы, объяснить,
   // что сюда попадает, и дать прямой путь к задаче. «Здесь появятся операции» отвечало только на
   // первый вопрос, и человек, только что создавший бюджет, оставался с ним один на один.
@@ -1341,7 +1341,8 @@ function TransactionList({ transactions, categoryById, memberById, showAuthor, o
         <strong>{title}</strong>
         <small>{note.join(" · ")}</small>
       </span>
-      <b><Money value={transaction.amountMinor} sign={transactionSign(transaction.kind)} /></b>
+      {/* В валюте счёта операции, как в «Вся история»: «₽» у покупки по счёту в долларах был бы неправдой. */}
+      <b><OperationAmount value={transaction.amountMinor} currency={transactionCurrency(transaction, { accounts })} sign={transactionSign(transaction.kind)} /></b>
     </li>;
   })}</ul>;
 }
