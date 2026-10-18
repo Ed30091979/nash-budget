@@ -439,3 +439,79 @@ describe("budget status boundaries", () => {
     }
   });
 });
+
+describe("правка операции не теряет того, чего форма не знает", () => {
+  const MEMBER = "99000000-0000-4000-8000-0000000000b1";
+  const TAG_HOME = "99000000-0000-4000-8000-0000000000c1";
+  const TAG_HOLIDAY = "99000000-0000-4000-8000-0000000000c2";
+
+  /** G-000 с участником и двумя метками; расход на продукты помечен всем сразу. */
+  function labelledState() {
+    const state = makeG000State();
+    return {
+      ...state,
+      members: [{ id: MEMBER, name: "Аня", role: "owner" as const, active: true }],
+      tags: [
+        { id: TAG_HOME, name: "Дом", active: true },
+        { id: TAG_HOLIDAY, name: "Отпуск", active: false },
+      ],
+      transactions: state.transactions.map((transaction) => (
+        transaction.id === ids.transactions.products
+          ? { ...transaction, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] }
+          : transaction
+      )),
+    };
+  }
+
+  it("сохраняет участника, заметку и метки, когда правится сумма", () => {
+    const state = labelledState();
+    const before = state.transactions.find((item) => item.id === ids.transactions.products)!;
+    const edited = editTransaction(state, ids.transactions.products, {
+      kind: "expense",
+      status: "posted",
+      occurredOn: before.occurredOn,
+      amount: "31000",
+      accountId: ids.accounts.main,
+      categoryId: ids.categories.products,
+    });
+    const after = edited.transactions.find((item) => item.id === ids.transactions.products)!;
+
+    expect(after).toMatchObject({ amountMinor: 3_100_000, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
+    expect(after).toEqual({ ...before, amountMinor: 3_100_000 });
+  });
+
+  it("сохраняет их и при смене вида операции, а у непомеченной ничего не появляется", () => {
+    const state = labelledState();
+    const edited = editTransaction(state, ids.transactions.products, {
+      kind: "transfer",
+      status: "posted",
+      occurredOn: "2026-07-05",
+      amount: "100",
+      fromAccountId: ids.accounts.main,
+      toAccountId: ids.accounts.savings,
+    });
+    expect(edited.transactions.find((item) => item.id === ids.transactions.products))
+      .toMatchObject({ kind: "transfer", memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
+
+    const income = state.transactions.find((item) => item.id === ids.transactions.income)!;
+    const plain = editTransaction(state, ids.transactions.income, {
+      kind: "income", categoryId: "", status: "posted", occurredOn: income.occurredOn, amount: "1", accountId: ids.accounts.main,
+    }).transactions.find((item) => item.id === ids.transactions.income)!;
+    for (const field of ["memberId", "note", "tagIds", "recurringRuleId"]) {
+      expect(Object.hasOwn(plain, field), field).toBe(false);
+    }
+  });
+
+  it("не выдумывает меток новой операции и считает метку занятым идентификатором", () => {
+    const state = labelledState();
+    const created = createTransaction(state, {
+      kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    }, fixedOperationId);
+    const added = created.transactions.at(-1)!;
+    expect(Object.hasOwn(added, "tagIds")).toBe(false);
+    expect(Object.hasOwn(added, "memberId")).toBe(false);
+    expect(() => createTransaction(state, {
+      kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    }, () => TAG_HOME)).toThrow("уникальный");
+  });
+});

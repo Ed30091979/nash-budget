@@ -111,7 +111,7 @@ JSON backup имеет versioned envelope:
   "app": "family-budget",
   "appVersion": "0.1.0",
   "formatVersion": 2,
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "createdAt": "2026-07-17T12:00:00.000Z",
   "integrity": {
     "algorithm": "sha256",
@@ -121,11 +121,11 @@ JSON backup имеет versioned envelope:
 }
 ```
 
-`app` не даёт импортировать файл другого продукта, `appVersion` фиксирует версию создавшего приложение, `formatVersion` версионирует envelope, а `schemaVersion` — модель внутри `payload`. В текущем контракте это соответственно `family-budget`, строка версии приложения, `2` и `1`. Backup `schemaVersion: 1` не равен `schemaVersion: 2` внутреннего IndexedDB `StoredDocument`: это разные уровни совместимости. `createdAt` — UTC ISO 8601. SHA-256 вычисляется по однозначно сериализованному payload и сверяется до restore. Эта проверка целостности обнаруживает случайное повреждение файла, но **не является шифрованием, электронной подписью или аутентификацией**: пользователь должен хранить backup как незашифрованные финансовые данные.
+`app` не даёт импортировать файл другого продукта, `appVersion` фиксирует версию создавшего приложение, `formatVersion` версионирует envelope, а `schemaVersion` — модель внутри `payload`. В текущем контракте это соответственно `family-budget`, строка версии приложения, `2` и `2`; читаются payload `schemaVersion` `1` и `2`, а номер выше `2` отклоняется как «новее поддерживаемой» (D-037). Payload версии `1` — это payload версии `2` без меток, заметок и полей оформления, поэтому переход `1 → 2` тождественный. Backup `schemaVersion` не равен `schemaVersion: 2` внутреннего IndexedDB `StoredDocument`: это разные уровни совместимости, и номер документа IndexedDB волна модели данных v3 не поднимает. `createdAt` — UTC ISO 8601. SHA-256 вычисляется по однозначно сериализованному payload и сверяется до restore. Эта проверка целостности обнаруживает случайное повреждение файла, но **не является шифрованием, электронной подписью или аутентификацией**: пользователь должен хранить backup как незашифрованные финансовые данные.
 
 Размер входного JSON ограничен `5 MiB` (`5 × 1024 × 1024` UTF-8 bytes) до разбора. После проверки размера envelope, integrity, schema и фактических `BudgetState`-ссылок restore записывает текущий активный документ одной IndexedDB-транзакцией. Чужой `app`, неподдерживаемый `formatVersion`/`schemaVersion`, duplicate UUID, опасный ключ, оборванная связь или превышение лимита отклоняются без записи.
 
-Единственный compatibility-path для Phase 0 принимает ровно legacy envelope `{ backupVersion: 1, createdAt, app, payload }`, где `app = "family-budget"` и `createdAt` — строгий UTC ISO timestamp. В legacy-файле нет checksum, и import не придумывает для него integrity: сначала остаются обязательными лимит `5 MiB`, точная проверка envelope и generic guard, затем тот же `BudgetState` application validator, и только после этого разрешён write. Современный export legacy-формат не создаёт и всегда пишет `formatVersion: 2`, payload `schemaVersion: 1` и SHA-256 checksum. Другие backup migrations не заявлены.
+Единственный compatibility-path для Phase 0 принимает ровно legacy envelope `{ backupVersion: 1, createdAt, app, payload }`, где `app = "family-budget"` и `createdAt` — строгий UTC ISO timestamp. В legacy-файле нет checksum, и import не придумывает для него integrity: сначала остаются обязательными лимит `5 MiB`, точная проверка envelope и generic guard, затем тот же `BudgetState` application validator, и только после этого разрешён write. Современный export legacy-формат не создаёт и всегда пишет `formatVersion: 2`, payload `schemaVersion: 2` и SHA-256 checksum. Кроме тождественного перехода payload `1 → 2`, других backup migrations нет.
 
 Metadata `lastSuccessfulBackup` хранится в IndexedDB, а не в `localStorage`, и содержит только точный UTC ISO timestamp последней успешно сформированной JSON-копии. Версии и checksum в metadata не дублируются. Вызывающий application layer записывает timestamp только после успешного формирования backup; ошибка не должна заменять прежнее значение. `clear()` в одной транзакции очищает пользовательские документы и эту metadata, оставляя пустую рабочую схему IndexedDB v2; отмена или ошибка не даёт частично очищенного состояния.
 

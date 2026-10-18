@@ -2,6 +2,12 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  isDisplayKey,
+  isNormalizedLabel,
+  isNormalizedNote,
+  MAX_TAGS_PER_TRANSACTION,
+  NOTE_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
   type BudgetState,
   type Transaction,
 } from "@family-budget/domain";
@@ -26,6 +32,9 @@ export const BACKUP_LIMITS = {
   idLength: 128,
   nameLength: 200,
   textLength: 500,
+  tags: 500,
+  tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
+  tagNameLength: TAG_NAME_MAX_LENGTH,
 } as const;
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,12 +53,28 @@ export interface PreparedBudgetBackup {
   readonly createdAt: string;
 }
 
-/** A repair the gate applied to the restored state, so that nothing changes silently. */
-export interface BackupRepair {
-  readonly kind: "unknown_member_attribution";
-  readonly transactionId: string;
-  readonly memberId: string;
-}
+/**
+ * A repair the gate applied to the restored state, so that nothing changes silently.
+ *
+ * Every repair takes a label off an operation and nothing else: the participant credited with it,
+ * a tag, or the recurring rule it came from. The operation and its money always stay.
+ */
+export type BackupRepair =
+  | {
+    readonly kind: "unknown_member_attribution";
+    readonly transactionId: string;
+    readonly memberId: string;
+  }
+  | {
+    readonly kind: "unknown_tag";
+    readonly transactionId: string;
+    readonly tagId: string;
+  }
+  | {
+    readonly kind: "unknown_recurring_rule";
+    readonly transactionId: string;
+    readonly recurringRuleId: string;
+  };
 
 export type BackupRepairReporter = (repair: BackupRepair) => void;
 
@@ -108,6 +133,21 @@ function requireOptionalBoolean(value: unknown, label: string): void {
   if (value !== undefined) requireBoolean(value, label);
 }
 
+/**
+ * A display field: absent, or the key of a design token. A copy carries a choice from the design
+ * system, never a colour or a file name of its own.
+ */
+function requireOptionalDisplayKey(value: unknown, label: string): void {
+  if (value === undefined) return;
+  requireString(value, label, true, BACKUP_LIMITS.idLength);
+  if (!isDisplayKey(value)) throw new Error(`${label}: недопустимый ключ оформления.`);
+}
+
+function requireOptionalSafeInteger(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`${label}: ожидалось целое число.`);
+}
+
 function requireLocalDate(value: string, label: string): void {
   if (!LOCAL_DATE_PATTERN.test(value)) throw new Error(`${label}: дата должна иметь формат YYYY-MM-DD.`);
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -123,6 +163,7 @@ function requireUuid(value: string, label: string): void {
 function validateBudgetStateUuids(state: BudgetState): void {
   requireUuid(state.activeBudgetId, "activeBudgetId");
   state.members?.forEach((item, index) => requireUuid(item.id, `members[${index}].id`));
+  state.tags?.forEach((item, index) => requireUuid(item.id, `tags[${index}].id`));
   state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
   state.categories.forEach((item, index) => requireUuid(item.id, `categories[${index}].id`));
   state.budgets.forEach((budget, budgetIndex) => {
@@ -138,6 +179,12 @@ function validateBudgetStateUuids(state: BudgetState): void {
     // identifier that is merely unknown is a different case, repaired by
     // clearUnknownMemberAttribution.
     if (item.memberId !== undefined) requireUuid(item.memberId, `transactions[${index}].memberId`);
+    // The same for the other two labels: malformed is refused, merely unknown is repaired — by
+    // clearUnresolvedLabels.
+    item.tagIds?.forEach((tagId, tagIndex) => requireUuid(tagId, `transactions[${index}].tagIds[${tagIndex}]`));
+    if (item.recurringRuleId !== undefined) {
+      requireUuid(item.recurringRuleId, `transactions[${index}].recurringRuleId`);
+    }
   });
 }
 
@@ -162,6 +209,19 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     });
   }
 
+  // Absent in every copy written before tags existed, exactly like the participants above.
+  if (state.tags !== undefined) {
+    requireArray(state.tags, "tags", BACKUP_LIMITS.tags).forEach((item, index) => {
+      const tag = requireRecord(item, `tags[${index}]`);
+      requireString(tag.id, `tags[${index}].id`, true, BACKUP_LIMITS.idLength);
+      const name = requireString(tag.name, `tags[${index}].name`, true, BACKUP_LIMITS.tagNameLength);
+      if (!isNormalizedLabel(name, TAG_NAME_MAX_LENGTH)) {
+        throw new Error(`tags[${index}].name: название метки с лишними пробелами, служебными символами или смесью алфавитов.`);
+      }
+      requireBoolean(tag.active, `tags[${index}].active`);
+    });
+  }
+
   requireArray(state.accounts, "accounts", BACKUP_LIMITS.accounts).forEach((item, index) => {
     const account = requireRecord(item, `accounts[${index}]`);
     requireString(account.id, `accounts[${index}].id`, true, BACKUP_LIMITS.idLength);
@@ -170,6 +230,11 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireEnum(account.currency, ["RUB"], `accounts[${index}].currency`);
     requireNumber(account.openingBalanceMinor, `accounts[${index}].openingBalanceMinor`);
     requireBoolean(account.active, `accounts[${index}].active`);
+    // Display fields: absent in every copy written before them, read by no figure.
+    requireOptionalSafeInteger(account.sortOrder, `accounts[${index}].sortOrder`);
+    requireOptionalDisplayKey(account.icon, `accounts[${index}].icon`);
+    requireOptionalDisplayKey(account.color, `accounts[${index}].color`);
+    requireOptionalBoolean(account.includeInTotal, `accounts[${index}].includeInTotal`);
   });
 
   requireArray(state.categories, "categories", BACKUP_LIMITS.categories).forEach((item, index) => {
@@ -180,6 +245,8 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireString(category.group, `categories[${index}].group`);
     requireBoolean(category.active, `categories[${index}].active`);
     requireNumber(category.sortOrder, `categories[${index}].sortOrder`);
+    requireOptionalDisplayKey(category.icon, `categories[${index}].icon`);
+    requireOptionalDisplayKey(category.color, `categories[${index}].color`);
   });
 
   let totalBudgetLines = 0;
@@ -216,6 +283,10 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireNumber(goal.openingContributedMinor, `goals[${index}].openingContributedMinor`);
     requireNumber(goal.plannedContributionMinor, `goals[${index}].plannedContributionMinor`);
     requireEnum(goal.status, ["active", "completed", "cancelled"], `goals[${index}].status`);
+    if (goal.deadline !== undefined) {
+      requireLocalDate(requireString(goal.deadline, `goals[${index}].deadline`, false, 10), `goals[${index}].deadline`);
+    }
+    requireOptionalDisplayKey(goal.icon, `goals[${index}].icon`);
   });
 
   requireArray(state.transactions, "transactions", BACKUP_LIMITS.transactions).forEach((item, index) => {
@@ -228,6 +299,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     if (transaction.memberId !== undefined) {
       requireString(transaction.memberId, `transactions[${index}].memberId`, true, BACKUP_LIMITS.idLength);
     }
+    requireTransactionLabels(transaction, index);
     if (kind === "income" || kind === "expense" || kind === "refund") {
       requireString(transaction.accountId, `transactions[${index}].accountId`, true, BACKUP_LIMITS.idLength);
     }
@@ -253,6 +325,36 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
 
   if (state.annualCommitments !== undefined) requireArray(state.annualCommitments, "annualCommitments", BACKUP_LIMITS.annualCommitments);
   if (state.scheduledExpenses !== undefined) requireArray(state.scheduledExpenses, "scheduledExpenses", BACKUP_LIMITS.scheduledExpenses);
+}
+
+/**
+ * The note, the tags and the recurring rule of one operation, in the shape the domain stores them.
+ *
+ * A note the domain would refuse is refused here, naming the field: there is no repair for text,
+ * because the gate cannot know which of two spellings the family meant. A list of tags is refused
+ * when it is empty, too long or repeats a tag — malformed data, judged as such — while a tag that
+ * is merely unknown is repaired later, by clearUnresolvedLabels.
+ */
+function requireTransactionLabels(transaction: Record<string, unknown>, index: number): void {
+  if (transaction.note !== undefined) {
+    const note = requireString(transaction.note, `transactions[${index}].note`, true, BACKUP_LIMITS.textLength);
+    if (!isNormalizedNote(note)) {
+      throw new Error(`transactions[${index}].note: заметка в несколько строк, с лишними пробелами или служебными символами.`);
+    }
+  }
+  if (transaction.tagIds !== undefined) {
+    const tagIds = requireArray(transaction.tagIds, `transactions[${index}].tagIds`, BACKUP_LIMITS.tagsPerTransaction);
+    if (tagIds.length === 0) throw new Error(`transactions[${index}].tagIds: ожидался непустой список.`);
+    const seen = new Set<string>();
+    tagIds.forEach((tagId, tagIndex) => {
+      const value = requireString(tagId, `transactions[${index}].tagIds[${tagIndex}]`, true, BACKUP_LIMITS.idLength);
+      if (seen.has(value)) throw new Error(`transactions[${index}].tagIds: метка повторяется.`);
+      seen.add(value);
+    });
+  }
+  if (transaction.recurringRuleId !== undefined) {
+    requireString(transaction.recurringRuleId, `transactions[${index}].recurringRuleId`, true, BACKUP_LIMITS.idLength);
+  }
 }
 
 function requirePlanningShape(state: BudgetState): void {
@@ -382,17 +484,54 @@ function clearUnknownMemberAttribution(state: BudgetState, report?: BackupRepair
 }
 
 /**
+ * Takes off every tag the copy does not carry, and the recurring rule an operation names when the
+ * copy has no such rule, and says so out loud — the same answer as for a participant, for the same
+ * reason: the domain refuses a label that names nothing, and the operation it is on is the
+ * family's money, which no label may cost.
+ *
+ * Recurring rules are not part of this version of the model, so every `recurringRuleId` names a
+ * rule the copy cannot carry and is cleared. An operation left without tags loses the field
+ * rather than keeping an empty list, because there is no empty list of tags.
+ */
+function clearUnresolvedLabels(state: BudgetState, report?: BackupRepairReporter): BudgetState {
+  const known = new Set((state.tags ?? []).map((tag) => tag.id));
+  let cleared = false;
+  // Read first, copied only where there is something to clear: almost no transaction needs it.
+  const transactions = state.transactions.map((transaction): Transaction => {
+    const unknownTags = (transaction.tagIds ?? []).filter((tagId) => !known.has(tagId));
+    const ruleId = transaction.recurringRuleId;
+    if (unknownTags.length === 0 && ruleId === undefined) return transaction;
+    cleared = true;
+    let repaired: Transaction = transaction;
+    if (unknownTags.length > 0) {
+      const { tagIds, ...untagged } = repaired;
+      const remaining = (tagIds ?? []).filter((tagId) => known.has(tagId));
+      repaired = remaining.length === 0 ? untagged : { ...untagged, tagIds: remaining };
+      for (const tagId of unknownTags) report?.({ kind: "unknown_tag", transactionId: transaction.id, tagId });
+    }
+    if (ruleId !== undefined) {
+      const { recurringRuleId: _unknown, ...unlinked } = repaired;
+      repaired = unlinked;
+      report?.({ kind: "unknown_recurring_rule", transactionId: transaction.id, recurringRuleId: ruleId });
+    }
+    return repaired;
+  });
+  return cleared ? { ...state, transactions } : state;
+}
+
+/**
  * Structural validation followed by all domain calculations that enforce model invariants.
  *
- * Returns the state to store: identical to the input except for attributions cleared by
- * {@link clearUnknownMemberAttribution}, each of them passed to `report`.
+ * Returns the state to store: identical to the input except for the labels cleared by
+ * {@link clearUnknownMemberAttribution} and {@link clearUnresolvedLabels}, each of them passed
+ * to `report`.
  */
 export function prepareBudgetState(value: unknown, report?: BackupRepairReporter): BudgetState {
   requireBaseShape(value);
   const normalized = normalizeBudgetState(value);
   requirePlanningShape(normalized);
   validateBudgetStateUuids(normalized);
-  const state = clearUnknownMemberAttribution(normalized, report);
+  const state = clearUnresolvedLabels(clearUnknownMemberAttribution(normalized, report), report);
 
   const activeBudget = state.budgets.find((budget) => budget.id === state.activeBudgetId);
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");

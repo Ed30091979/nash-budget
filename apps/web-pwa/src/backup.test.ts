@@ -1,10 +1,15 @@
 import {
   calculateAnnualPlan,
+  calculateBudget,
   calculateMemberExpenses,
   makePlanningSeed,
+  MAX_TAGS_PER_TRANSACTION,
+  NOTE_MAX_LENGTH,
   PLANNING_IDS,
+  TAG_NAME_MAX_LENGTH,
   type BudgetState,
   type Member,
+  type Tag,
   type Transaction,
 } from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
@@ -16,6 +21,7 @@ import {
   parseAndValidateBudgetBackup,
   prepareBudgetState,
   restoreBudgetBackup,
+  type BackupRepair,
 } from "./backup";
 
 function backupFile(payload: unknown, size?: number): { size: number; text(): Promise<string> } {
@@ -720,5 +726,190 @@ describe("категория дохода в резервной копии", () 
       .toThrow(/transactions\[\d+\]\.categoryId: ожидалась непустая строка/u);
     expect(() => prepareBudgetState(replace(42)))
       .toThrow(/transactions\[\d+\]\.categoryId: ожидалась непустая строка/u);
+  });
+});
+
+const TAG_HOME: Tag = { id: "c1111111-1111-4111-8111-111111111111", name: "Дом", active: true };
+const TAG_OLD: Tag = { id: "c2222222-2222-4222-8222-222222222222", name: "Старое", active: false };
+const DELETED_TAG_ID = "c3333333-3333-4333-8333-333333333333";
+const RULE_ID = "c4444444-4444-4444-8444-444444444444";
+
+/** Копия волны 1: метки, заметки и оформление на всём, что их принимает. */
+function withLabels(state: BudgetState): BudgetState {
+  const target = countedExpense(state);
+  return {
+    ...state,
+    tags: [TAG_HOME, TAG_OLD],
+    accounts: state.accounts.map((account, index) => ({
+      ...account,
+      sortOrder: (index + 1) * 10,
+      icon: "banknote",
+      color: "sage",
+      ...(index === 1 ? { includeInTotal: false } : {}),
+    })),
+    categories: state.categories.map((category) => ({ ...category, icon: "shopping-basket", color: "mint" })),
+    goals: state.goals.map((goal) => ({ ...goal, deadline: "2027-06-01", icon: "plane" })),
+    transactions: state.transactions.map((transaction) => (
+      transaction.id === target.id
+        ? { ...transaction, note: "Пятёрочка у дома", tagIds: [TAG_HOME.id, TAG_OLD.id] }
+        : transaction
+    )),
+  };
+}
+
+/** Меняет одно поле у одной сущности, не заботясь о типах: так выглядит чужой файл. */
+function mutate(state: BudgetState, collection: "accounts" | "categories" | "goals" | "transactions" | "tags", change: Record<string, unknown>): unknown {
+  const target = countedExpense(state);
+  const items = (state[collection] ?? []) as readonly { readonly id: string }[];
+  const index = collection === "transactions" ? items.findIndex((item) => item.id === target.id) : 0;
+  return { ...state, [collection]: items.map((item, position) => (position === index ? { ...item, ...change } : item)) };
+}
+
+describe("метки, заметки и оформление в резервной копии", () => {
+  it("держит пределы копии вровень с доменом", () => {
+    expect(BACKUP_LIMITS.textLength).toBe(NOTE_MAX_LENGTH);
+    expect(BACKUP_LIMITS.tagsPerTransaction).toBe(MAX_TAGS_PER_TRANSACTION);
+    expect(BACKUP_LIMITS.tagNameLength).toBe(TAG_NAME_MAX_LENGTH);
+  });
+
+  it("копия без новых полей их не приобретает: ни меток, ни пустых списков", () => {
+    const legacy = makePlanningSeed();
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(legacy));
+
+    expect(JSON.stringify(restored)).toBe(JSON.stringify(legacy));
+    expect("tags" in restored).toBe(false);
+    for (const transaction of restored.transactions) {
+      expect(Object.hasOwn(transaction, "note") || Object.hasOwn(transaction, "tagIds")).toBe(false);
+    }
+  });
+
+  it("сохраняет метки, заметки и оформление при round-trip и пишет копию версии 2", async () => {
+    const labelled = withLabels(makePlanningSeed());
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const repairs: BackupRepair[] = [];
+
+    const exported = await createBudgetBackup(labelled, vi.fn(async () => undefined), { createdAt: "2026-10-18T09:00:00.000Z" });
+    expect((JSON.parse(exported.text) as { schemaVersion: number }).schemaVersion).toBe(2);
+
+    const restored = parseAndValidateBudgetBackup(exported.text, (repair) => repairs.push(repair));
+    expect(repairs).toEqual([]);
+    expect(restored).toEqual(labelled);
+    await expect(restoreBudgetBackup(backupFile(labelled), save, publish)).resolves.toEqual(labelled);
+    expect(save).toHaveBeenCalledExactlyOnceWith(labelled);
+    // Ни одна цифра не сдвинулась оттого, что всё помечено.
+    expect(calculateBudget(restored)).toEqual(calculateBudget(makePlanningSeed()));
+  });
+
+  it.each([
+    ["заметка с пробелом в начале", "transactions", { note: " Пятёрочка" }, /transactions\[\d+\]\.note: заметка/u],
+    ["заметка в две строки", "transactions", { note: "Пятёрочка\nу дома" }, /transactions\[\d+\]\.note: заметка/u],
+    ["заметка с bidi-символом", "transactions", { note: "Пятёрочка\u202e" }, /transactions\[\d+\]\.note: заметка/u],
+    ["пустая заметка", "transactions", { note: "" }, /transactions\[\d+\]\.note: ожидалась непустая строка/u],
+    ["заметка длиннее 500", "transactions", { note: "я".repeat(501) }, /transactions\[\d+\]\.note: строка длиннее 500/u],
+    ["заметка не строка", "transactions", { note: 42 }, /transactions\[\d+\]\.note: ожидалась непустая строка/u],
+    ["пустой список меток", "transactions", { tagIds: [] }, /transactions\[\d+\]\.tagIds: ожидался непустой список/u],
+    ["больше десяти меток", "transactions", { tagIds: Array.from({ length: 11 }, () => TAG_HOME.id) }, /tagIds: допускается не более 10/u],
+    ["повтор метки", "transactions", { tagIds: [TAG_HOME.id, TAG_HOME.id] }, /tagIds: метка повторяется/u],
+    ["метка не UUID", "transactions", { tagIds: ["tag-1"] }, /tagIds\[0\]: некорректный UUID/u],
+    ["метки не список", "transactions", { tagIds: TAG_HOME.id }, /tagIds: ожидался список/u],
+    ["правило не UUID", "transactions", { recurringRuleId: "rule-1" }, /recurringRuleId: некорректный UUID/u],
+    ["название метки с пробелом", "tags", { name: "Дом " }, /tags\[0\]\.name: название метки/u],
+    ["название метки длиннее 40", "tags", { name: "я".repeat(41) }, /tags\[0\]\.name: строка длиннее 40/u],
+    ["название метки из двух алфавитов", "tags", { name: "Дом Home" }, /tags\[0\]\.name: название метки/u],
+    ["признак метки строкой", "tags", { active: "yes" }, /tags\[0\]\.active: ожидалось логическое значение/u],
+    ["метка не UUID в списке меток", "tags", { id: "tag-1" }, /tags\[0\]\.id: некорректный UUID/u],
+    ["иконка счёта цветом", "accounts", { icon: "#00ff00" }, /accounts\[0\]\.icon: недопустимый ключ оформления/u],
+    ["цвет счёта именем файла", "accounts", { color: "sage.png" }, /accounts\[0\]\.color: недопустимый ключ оформления/u],
+    ["дробный порядок счёта", "accounts", { sortOrder: 1.5 }, /accounts\[0\]\.sortOrder: ожидалось целое число/u],
+    ["includeInTotal строкой", "accounts", { includeInTotal: "yes" }, /accounts\[0\]\.includeInTotal: ожидалось логическое значение/u],
+    ["цвет категории с заглавной", "categories", { color: "Mint" }, /categories\[0\]\.color: недопустимый ключ оформления/u],
+    ["невозможный срок цели", "goals", { deadline: "2027-02-29" }, /goals\[0\]\.deadline: невозможная календарная дата/u],
+    ["иконка цели не строка", "goals", { icon: 7 }, /goals\[0\]\.icon: ожидалась непустая строка/u],
+  ] as const)("отклоняет копию: %s — до save/publish", async (_name, collection, change, expected) => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = mutate(withLabels(makePlanningSeed()), collection, change);
+
+    expect(() => prepareBudgetState(malformed)).toThrow(expected);
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(expected);
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("ограничивает число меток наравне с прочими коллекциями", async () => {
+    const tags = Array.from({ length: BACKUP_LIMITS.tags + 1 }, (_, index) => ({
+      id: `c0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      // Если лимит не сработает первым, проверка формы упадёт с другой ошибкой.
+      name: " ",
+      active: true,
+    }));
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    await expect(restoreBudgetBackup(backupFile({ ...makePlanningSeed(), tags }), save, publish)).rejects.toThrow(
+      `tags: допускается не более ${BACKUP_LIMITS.tags} элементов`,
+    );
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("снимает метку, которой в копии нет, оставляя операцию, её деньги и остальные метки", async () => {
+    const labelled = withLabels(makePlanningSeed());
+    const target = countedExpense(labelled);
+    const dangling = mutate(labelled, "transactions", { tagIds: [TAG_HOME.id, DELETED_TAG_ID] });
+    const repairs: BackupRepair[] = [];
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+
+    const restored = await restoreBudgetBackup(backupFile(dangling), save, publish, (repair) => repairs.push(repair));
+
+    expect(repairs).toEqual([{ kind: "unknown_tag", transactionId: target.id, tagId: DELETED_TAG_ID }]);
+    expect(restored.transactions.find((item) => item.id === target.id)).toEqual({
+      ...labelled.transactions.find((item) => item.id === target.id),
+      tagIds: [TAG_HOME.id],
+    });
+    expect(restored.transactions).toHaveLength(labelled.transactions.length);
+    expect(save).toHaveBeenCalledExactlyOnceWith(restored);
+    expect(calculateBudget(restored)).toEqual(calculateBudget(labelled));
+  });
+
+  it("снимает поле целиком, когда не осталось ни одной известной метки, и когда меток в копии нет вовсе", () => {
+    const seed = makePlanningSeed();
+    const target = countedExpense(seed);
+    const repairs: BackupRepair[] = [];
+
+    const restored = prepareBudgetState(
+      mutate(seed, "transactions", { tagIds: [DELETED_TAG_ID] }),
+      (repair) => repairs.push(repair),
+    );
+
+    expect(repairs).toEqual([{ kind: "unknown_tag", transactionId: target.id, tagId: DELETED_TAG_ID }]);
+    expect(restored).toEqual(seed);
+    expect(Object.hasOwn(restored.transactions.find((item) => item.id === target.id)!, "tagIds")).toBe(false);
+  });
+
+  it("снимает метку регулярной операции: правил в этой версии модели нет", () => {
+    const seed = makePlanningSeed();
+    const target = countedExpense(seed);
+    const repairs: BackupRepair[] = [];
+
+    const restored = prepareBudgetState(
+      mutate(seed, "transactions", { recurringRuleId: RULE_ID }),
+      (repair) => repairs.push(repair),
+    );
+
+    expect(repairs).toEqual([{ kind: "unknown_recurring_rule", transactionId: target.id, recurringRuleId: RULE_ID }]);
+    expect(restored).toEqual(seed);
+  });
+
+  it("не сохраняет висячую метку в созданной копии", async () => {
+    const labelled = withLabels(makePlanningSeed());
+    const dangling = mutate(labelled, "transactions", { tagIds: [DELETED_TAG_ID] }) as BudgetState;
+
+    const created = await createBudgetBackup(dangling, vi.fn(async () => undefined), { createdAt: "2026-07-17T12:00:00.000Z" });
+
+    expect(created.text).not.toContain(DELETED_TAG_ID);
+    expect(() => calculateBudget(parseAndValidateBudgetBackup(created.text))).not.toThrow();
   });
 });

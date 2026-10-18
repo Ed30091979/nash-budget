@@ -3,6 +3,7 @@ import {
   categoryNameKey,
   createCategory,
   CategoryValidationError,
+  documentIds,
   type BudgetLine,
   type BudgetMetrics,
   type BudgetState,
@@ -99,23 +100,19 @@ function assertIdentifier(id: string, field = "id"): string {
   return id;
 }
 
+/**
+ * Every identifier of the document, through the domain's one census (`documentIds`), so that a
+ * collection added to the model — participants, tags — is counted here the day it is added rather
+ * than the day somebody remembers this copy. A new operation must not take an identifier any
+ * entity of any kind already holds: a backup refuses such a file.
+ */
 function allDocumentIds(state: BudgetState): Set<string> {
   const ids = new Set<string>();
-  const accept = (id: string): void => {
+  for (const id of documentIds(state)) {
     assertIdentifier(id, "document");
     if (ids.has(id)) fail("document", "Документ содержит повторяющийся идентификатор.");
     ids.add(id);
-  };
-  state.accounts.forEach((item) => accept(item.id));
-  state.categories.forEach((item) => accept(item.id));
-  state.budgets.forEach((item) => {
-    accept(item.id);
-    item.lines.forEach((line) => accept(line.id));
-  });
-  state.goals.forEach((item) => accept(item.id));
-  state.annualCommitments.forEach((item) => accept(item.id));
-  state.scheduledExpenses.forEach((item) => accept(item.id));
-  state.transactions.forEach((item) => accept(item.id));
+  }
   return ids;
 }
 
@@ -238,6 +235,29 @@ function accountIds(transaction: Transaction): readonly string[] {
   return [transaction.fromAccountId, transaction.toAccountId];
 }
 
+type CarriedLabels = Pick<Transaction, "memberId" | "note" | "tagIds" | "recurringRuleId">;
+
+/**
+ * What an edit keeps from the operation it edits because the form never shows it.
+ *
+ * The form rebuilds an operation from its own fields, and a field it does not have was simply
+ * lost: every edit took off the participant the operation was credited to — the split by
+ * participant then counted it as unattributed, against D-021 and against the journal, whose codec
+ * carries the participant on the operation for exactly this reason. A note, tags and the recurring
+ * rule an operation came from would have gone the same way the first time anybody corrected an
+ * amount. They are labels: no figure reads them, so carrying them over cannot move a kopeck, and
+ * dropping them is a loss nobody asked for. Absent stays absent.
+ */
+function carriedLabels(current: Transaction | undefined): CarriedLabels {
+  if (current === undefined) return {};
+  return {
+    ...(current.memberId === undefined ? {} : { memberId: current.memberId }),
+    ...(current.note === undefined ? {} : { note: current.note }),
+    ...(current.tagIds === undefined ? {} : { tagIds: current.tagIds }),
+    ...(current.recurringRuleId === undefined ? {} : { recurringRuleId: current.recurringRuleId }),
+  };
+}
+
 function makeTransaction(
   state: BudgetState,
   id: string,
@@ -248,6 +268,7 @@ function makeTransaction(
   const status = assertStatus(draft.status);
   const amountMinor = parsePositiveMoney(draft.amount);
   const oldAccounts = current?.kind === draft.kind ? accountIds(current) : [];
+  const labels = carriedLabels(current);
 
   switch (draft.kind) {
     case "income": {
@@ -264,13 +285,14 @@ function makeTransaction(
         amountMinor,
         accountId: draft.accountId,
         ...(categoryId === undefined ? {} : { categoryId }),
+        ...labels,
       };
     }
     case "expense": {
       accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
       const oldCategoryId = current?.kind === "expense" ? current.categoryId : undefined;
       expenseCategoryFor(state, draft.categoryId, oldCategoryId);
-      return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId };
+      return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId, ...labels };
     }
     case "refund": {
       accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
@@ -291,13 +313,14 @@ function makeTransaction(
         accountId: draft.accountId,
         categoryId: original.categoryId,
         originalTransactionId: original.id,
+        ...labels,
       };
     }
     case "transfer":
       accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
       accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
-      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId };
+      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, ...labels };
     case "goal_contribution": {
       accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
       accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
@@ -316,6 +339,7 @@ function makeTransaction(
         fromAccountId: draft.fromAccountId,
         toAccountId: draft.toAccountId,
         goalId: draft.goalId,
+        ...labels,
       };
     }
     default:

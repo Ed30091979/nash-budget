@@ -1,5 +1,6 @@
 import {
   calculateAnnualPlan,
+  documentIds,
   type AnnualCommitment,
   type BudgetLine,
   type BudgetState,
@@ -133,16 +134,9 @@ function allDocumentIds(state: BudgetState): Set<string> {
     if (ids.has(id)) fail("id", "Документ содержит повторяющийся идентификатор.");
     ids.add(id);
   };
-  state.accounts.forEach((item) => accept(item.id));
-  state.categories.forEach((item) => accept(item.id));
-  state.budgets.forEach((item) => {
-    accept(item.id);
-    item.lines.forEach((line) => accept(line.id));
-  });
-  state.goals.forEach((item) => accept(item.id));
-  state.annualCommitments.forEach((item) => accept(item.id));
-  state.scheduledExpenses.forEach((item) => accept(item.id));
-  state.transactions.forEach((item) => accept(item.id));
+  // The domain's one census, so participants and tags are counted as well — see allDocumentIds in
+  // operations/model.ts.
+  documentIds(state).forEach(accept);
   return ids;
 }
 

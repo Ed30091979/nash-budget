@@ -3,7 +3,9 @@ import addFormats from "ajv-formats";
 import { describe, expect, it, vi } from "vitest";
 import backupSchema from "../../../contracts/schemas/storage-backup.schema.json";
 import {
+  BACKUP_SCHEMA_VERSION,
   MAX_BACKUP_BYTES,
+  SUPPORTED_BACKUP_SCHEMA_VERSIONS,
   ValidatedBackupCodec,
   parseBackup,
   serializeBackup,
@@ -132,5 +134,57 @@ describe("резервная копия v2", () => {
 
     expect(() => codec.parse(serializeBackup({ ...valid, id: "broken-uuid" }))).toThrow(/идентификатор/);
     expect(() => codec.parse(serializeBackup({ ...valid, accountId: "missing" }))).toThrow(/связь/);
+  });
+});
+
+/** Переписывает версию схемы готовой копии; контрольная сумма считается по payload и остаётся верной. */
+function withSchemaVersion(text: string, schemaVersion: unknown): string {
+  return JSON.stringify({ ...(JSON.parse(text) as Record<string, unknown>), schemaVersion }, null, 2);
+}
+
+describe("версия схемы payload", () => {
+  const payload = { name: "Моя семья", amountMinor: 12345 };
+
+  it("пишет версию 2 и ничего другого", () => {
+    const envelope = JSON.parse(serializeBackup(payload, { createdAt: "2026-07-17T12:00:00.000Z" })) as Record<string, unknown>;
+
+    expect(BACKUP_SCHEMA_VERSION).toBe(2);
+    expect(envelope.schemaVersion).toBe(2);
+    expect(Object.keys(envelope).sort()).toEqual(
+      ["app", "appVersion", "createdAt", "formatVersion", "integrity", "payload", "schemaVersion"],
+    );
+  });
+
+  it("читает версии 1 и 2 одинаково: переход 1 → 2 тождественный", () => {
+    const written = serializeBackup(payload, { createdAt: "2026-07-17T12:00:00.000Z" });
+
+    expect(SUPPORTED_BACKUP_SCHEMA_VERSIONS).toEqual([1, 2]);
+    for (const version of SUPPORTED_BACKUP_SCHEMA_VERSIONS) {
+      const text = withSchemaVersion(written, version);
+      expect(parseBackup<typeof payload>(text)).toEqual(payload);
+      expect(new ValidatedBackupCodec((value) => value).parse(text)).toEqual(payload);
+    }
+  });
+
+  it("называет версию 3 новее поддерживаемой, а 0, дробную и строку — неподдерживаемыми", () => {
+    const written = serializeBackup(payload);
+
+    expect(() => parseBackup(withSchemaVersion(written, 3))).toThrow("Версия схемы данных новее поддерживаемой.");
+    for (const version of [0, 1.5, "2", null]) {
+      expect(() => parseBackup(withSchemaVersion(written, version)), String(version))
+        .toThrow("Это не поддерживаемая версия схемы данных.");
+    }
+  });
+
+  it("описывает в контракте конверта ровно версии 1 и 2", () => {
+    const ajv = new Ajv2020({ strict: true });
+    addFormats(ajv);
+    const validate = ajv.compile(backupSchema);
+    const written = serializeBackup(payload, { createdAt: "2026-07-17T12:00:00.000Z" });
+
+    for (const version of [1, 2]) {
+      expect(validate(JSON.parse(withSchemaVersion(written, version))), JSON.stringify(validate.errors)).toBe(true);
+    }
+    expect(validate(JSON.parse(withSchemaVersion(written, 3)))).toBe(false);
   });
 });
