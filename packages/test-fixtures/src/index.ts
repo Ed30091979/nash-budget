@@ -2,10 +2,12 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.
 import addFormats from "ajv-formats";
 
 import budgetFixtureSchema from "../../../contracts/schemas/budget-fixture.schema.json";
+import ledgerFixtureSchema from "../../../contracts/schemas/ledger-fixture.schema.json";
 import planningFixtureSchema from "../../../contracts/schemas/planning-fixture.schema.json";
 import g000Json from "../../../contracts/fixtures/g-000.json";
 import g001Json from "../../../contracts/fixtures/g-001.json";
 import g002Json from "../../../contracts/fixtures/g-002.json";
+import g003Json from "../../../contracts/fixtures/g-003.json";
 
 type StableId = string;
 type MinorUnits = number;
@@ -91,7 +93,105 @@ export interface PlanningFixture {
   };
 }
 
-export type CanonicalFixture = CanonicalBudgetFixture | PlanningFixture;
+/*
+ * ─────────────────────────── G-003: the ledger of wave 1 ───────────────────────────
+ *
+ * The state of G-003 carries every collection and field wave 1 added. The types mirror the domain's
+ * field for field, so the state goes into a domain calculation as it is; they are declared here
+ * rather than imported because the domain depends on this package for its tests, not the other way.
+ */
+
+type LedgerRate = { readonly baseMinor: MinorUnits; readonly quoteMinor: MinorUnits };
+type LedgerLabels = { readonly memberId?: StableId; readonly note?: string; readonly tagIds?: readonly StableId[]; readonly recurringRuleId?: StableId };
+type LedgerSnapshot = { readonly baseAmountMinor?: MinorUnits; readonly baseCurrency?: string; readonly rate?: LedgerRate };
+type LedgerBase = { readonly id: StableId; readonly occurredOn: string; readonly status: TransactionStatus; readonly amountMinor: MinorUnits } & LedgerLabels;
+
+export type LedgerTransaction =
+  | (LedgerBase & LedgerSnapshot & { readonly kind: "income"; readonly accountId: StableId; readonly categoryId?: StableId })
+  | (LedgerBase & LedgerSnapshot & { readonly kind: "expense"; readonly accountId: StableId; readonly categoryId: StableId })
+  | (LedgerBase & LedgerSnapshot & { readonly kind: "refund"; readonly accountId: StableId; readonly categoryId: StableId; readonly originalTransactionId: StableId })
+  | (LedgerBase & { readonly kind: "transfer"; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly toAmountMinor?: MinorUnits })
+  | (LedgerBase & { readonly kind: "goal_contribution"; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly goalId: StableId })
+  | (LedgerBase & { readonly kind: "debt_out" | "debt_in"; readonly accountId: StableId; readonly debtId: StableId; readonly debtAmountMinor?: MinorUnits });
+
+type LedgerTemplateBase = { readonly amountMinor: MinorUnits; readonly note?: string; readonly tagIds?: readonly StableId[] };
+export type LedgerTemplate =
+  | (LedgerTemplateBase & { readonly kind: "expense"; readonly accountId: StableId; readonly categoryId: StableId })
+  | (LedgerTemplateBase & { readonly kind: "income"; readonly accountId: StableId; readonly categoryId?: StableId })
+  | (LedgerTemplateBase & { readonly kind: "transfer"; readonly fromAccountId: StableId; readonly toAccountId: StableId; readonly toAmountMinor?: MinorUnits });
+
+export interface LedgerBudgetState {
+  readonly activeBudgetId: StableId;
+  readonly members?: readonly DomainMember[];
+  readonly household?: { readonly id: StableId; readonly baseCurrency: string };
+  readonly tags?: readonly { readonly id: StableId; readonly name: string; readonly active: boolean }[];
+  readonly exchangeRates?: readonly { readonly id: StableId; readonly currency: string; readonly baseCurrency: string; readonly date: string; readonly rate: LedgerRate }[];
+  readonly debts?: readonly { readonly id: StableId; readonly counterparty: string; readonly direction: "i_owe" | "owed_to_me"; readonly currency: string; readonly openingMinor: MinorUnits; readonly dueDate?: string; readonly active: boolean }[];
+  readonly recurringRules?: readonly {
+    readonly id: StableId; readonly name?: string; readonly template: LedgerTemplate;
+    readonly frequency: "daily" | "weekly" | "monthly" | "yearly"; readonly interval: number;
+    readonly startDate: string; readonly endDate?: string; readonly materializedThrough?: string; readonly active: boolean;
+  }[];
+  readonly accounts: readonly (DomainBudgetState["accounts"][number] & { readonly sortOrder?: number; readonly icon?: string; readonly color?: string; readonly includeInTotal?: boolean })[];
+  readonly categories: readonly (DomainBudgetState["categories"][number] & { readonly icon?: string; readonly color?: string })[];
+  readonly budgets: DomainBudgetState["budgets"];
+  readonly goals: readonly (DomainBudgetState["goals"][number] & { readonly deadline?: string; readonly icon?: string })[];
+  readonly annualCommitments: DomainBudgetState["annualCommitments"];
+  readonly scheduledExpenses: DomainBudgetState["scheduledExpenses"];
+  readonly transactions: readonly LedgerTransaction[];
+}
+
+type CategoryStatus = "no_plan" | "normal" | "near_limit" | "exhausted" | "over_limit";
+
+export interface LedgerFixture {
+  readonly schemaVersion: "1.0.0";
+  readonly fixtureId: "G-003";
+  readonly title: string;
+  /** The day the debts and the holdings are asked about. */
+  readonly asOf: string;
+  /** The day the recurring rules are materialised through before anything is counted. */
+  readonly materializeThrough: string;
+  readonly currencies: readonly { readonly code: string; readonly exponent: 0 | 2 | 3 }[];
+  readonly state: LedgerBudgetState;
+  readonly expected: {
+    readonly materialization: {
+      readonly occurrences: readonly { readonly id: StableId; readonly recurringRuleId: StableId; readonly occurredOn: string }[];
+      readonly materializedThrough: readonly { readonly recurringRuleId: StableId; readonly date: string }[];
+      readonly skipped: readonly { readonly recurringRuleId: StableId; readonly date: string; readonly reason: "missing_rate" | "archived_account" | "archived_category" | "limit" }[];
+      /** How many occurrences a second call through the same day writes: none. */
+      readonly createdOnRepeat: number;
+    };
+    readonly budget: {
+      readonly budgetId: StableId;
+      readonly incomeMinor: MinorUnits;
+      readonly grossExpensesMinor: MinorUnits;
+      readonly refundsMinor: MinorUnits;
+      readonly expensesMinor: MinorUnits;
+      readonly plannedExpenseMinor: MinorUnits;
+      readonly executionBasisPoints: number | null;
+      readonly capitalMinor: MinorUnits;
+      readonly accountBalances: readonly { readonly accountId: StableId; readonly balanceMinor: MinorUnits }[];
+      readonly categories: readonly { readonly categoryId: StableId; readonly availableMinor: MinorUnits; readonly expenseMinor: MinorUnits; readonly refundMinor: MinorUnits; readonly actualMinor: MinorUnits; readonly remainingMinor: MinorUnits; readonly usageBasisPoints: number | null; readonly status: CategoryStatus }[];
+      readonly goalContributions: readonly { readonly goalId: StableId; readonly contributedMinor: MinorUnits }[];
+    };
+    readonly debts: {
+      readonly debts: readonly { readonly debtId: StableId; readonly outMinor: MinorUnits; readonly inMinor: MinorUnits; readonly balanceMinor: MinorUnits; readonly balanceInBaseMinor: MinorUnits | null; readonly overdue: boolean }[];
+      readonly receivableInBaseMinor: MinorUnits;
+      readonly payableInBaseMinor: MinorUnits;
+      readonly netInBaseMinor: MinorUnits;
+      readonly unvaluedDebtIds: readonly StableId[];
+    };
+    readonly holdings: {
+      readonly accounts: readonly { readonly accountId: StableId; readonly balanceMinor: MinorUnits | null; readonly balanceInBaseMinor: MinorUnits | null }[];
+      readonly totalInBaseMinor: MinorUnits;
+      readonly unvaluedAccountIds: readonly StableId[];
+      readonly netWorthInBaseMinor: MinorUnits | null;
+    };
+    readonly tags: readonly { readonly tagId: StableId; readonly incomeMinor: MinorUnits; readonly expenseMinor: MinorUnits; readonly refundMinor: MinorUnits; readonly actualMinor: MinorUnits; readonly transactionCount: number }[];
+  };
+}
+
+export type CanonicalFixture = CanonicalBudgetFixture | PlanningFixture | LedgerFixture;
 
 const ajv = new Ajv2020({
   allErrors: false,
@@ -103,6 +203,7 @@ const ajv = new Ajv2020({
 addFormats(ajv);
 const validateBudget = ajv.compile(budgetFixtureSchema) as ValidateFunction<CanonicalBudgetFixture>;
 const validatePlanning = ajv.compile(planningFixtureSchema) as ValidateFunction<PlanningFixture>;
+const validateLedger = ajv.compile(ledgerFixtureSchema) as ValidateFunction<LedgerFixture>;
 
 function validationMessage(errors: ErrorObject[] | null | undefined): string {
   const message = errors?.slice(0, 8).map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`).join("; ") ?? "unknown schema error";
@@ -276,8 +377,135 @@ function assertPlanningReferences(fixture: PlanningFixture): void {
   }
 }
 
+/**
+ * The references of G-003, which the schema cannot see: every identifier once across the whole state,
+ * every reference resolving, every currency listed in `currencies`, a snapshot exactly on an
+ * operation whose account is not in the base currency, the arrived amount exactly across currencies,
+ * and the debt amount exactly when the account and the debt differ.
+ */
+function assertLedgerReferences(fixture: LedgerFixture): void {
+  const state = fixture.state;
+  const label = "G-003";
+  const all = [
+    ...(state.members ?? []), ...(state.household === undefined ? [] : [state.household]), ...(state.tags ?? []),
+    ...(state.exchangeRates ?? []), ...(state.debts ?? []), ...(state.recurringRules ?? []), ...state.accounts,
+    ...state.categories, ...state.budgets, ...state.budgets.flatMap((budget) => budget.lines), ...state.goals, ...state.transactions,
+  ];
+  assertUniqueIds(all, `${label} state`);
+  const currencies = new Set(fixture.currencies.map((item) => item.code));
+  if (currencies.size !== fixture.currencies.length) throw new Error(`${label} currencies lists a code twice`);
+  const base = state.household?.baseCurrency ?? "RUB";
+  const requireCurrency = (code: string, where: string): void => {
+    if (!currencies.has(code)) throw new Error(`${where} uses currency ${code} the fixture does not list`);
+  };
+  requireCurrency(base, `${label} household`);
+  const accounts = new Map(state.accounts.map((account) => [account.id, account]));
+  const categories = new Map(state.categories.map((category) => [category.id, category]));
+  const tags = new Set((state.tags ?? []).map((tag) => tag.id));
+  const debts = new Map((state.debts ?? []).map((debt) => [debt.id, debt]));
+  const rules = new Set((state.recurringRules ?? []).map((rule) => rule.id));
+  const goals = new Map(state.goals.map((goal) => [goal.id, goal]));
+  const transactions = new Map(state.transactions.map((transaction) => [transaction.id, transaction]));
+  const budgets = new Set(state.budgets.map((budget) => budget.id));
+  requireReference(budgets, state.activeBudgetId, `${label} activeBudgetId`);
+  const account = (id: string, where: string) => {
+    requireReference(new Set(accounts.keys()), id, where);
+    return accounts.get(id)!;
+  };
+  const category = (id: string, type: "income" | "expense", where: string): void => {
+    requireReference(new Set(categories.keys()), id, where);
+    if (categories.get(id)!.type !== type) throw new Error(`${where} must reference an ${type} category`);
+  };
+  const tagList = (ids: readonly string[] | undefined, where: string): void => {
+    for (const id of ids ?? []) requireReference(tags, id, `${where} tagIds`);
+  };
+
+  for (const item of state.accounts) requireCurrency(item.currency, `account ${item.id}`);
+  for (const rate of state.exchangeRates ?? []) {
+    requireCurrency(rate.currency, `exchange rate ${rate.id}`);
+    requireCurrency(rate.baseCurrency, `exchange rate ${rate.id}`);
+    if (rate.currency === rate.baseCurrency) throw new Error(`exchange rate ${rate.id} must value one currency in another`);
+  }
+  for (const debt of state.debts ?? []) requireCurrency(debt.currency, `debt ${debt.id}`);
+  for (const budget of state.budgets) for (const line of budget.lines) category(line.categoryId, "expense", `budget line ${line.id}`);
+  for (const goal of state.goals) {
+    if (account(goal.linkedAccountId, `goal ${goal.id}`).currency !== base) throw new Error(`goal ${goal.id} must sit on an account in the base currency`);
+  }
+  for (const rule of state.recurringRules ?? []) {
+    const template = rule.template;
+    const where = `recurring rule ${rule.id} template`;
+    tagList(template.tagIds, where);
+    if (template.kind === "transfer") {
+      const from = account(template.fromAccountId, where);
+      const to = account(template.toAccountId, where);
+      if (from.id === to.id) throw new Error(`${where} must use two different accounts`);
+      if ((from.currency !== to.currency) !== (template.toAmountMinor !== undefined)) throw new Error(`${where} names what arrives exactly across currencies`);
+    } else {
+      account(template.accountId, where);
+      if (template.kind === "expense") category(template.categoryId, "expense", where);
+      else if (template.categoryId !== undefined) category(template.categoryId, "income", where);
+    }
+    if (rule.endDate !== undefined && rule.endDate < rule.startDate) throw new Error(`recurring rule ${rule.id} ends before it starts`);
+  }
+
+  for (const transaction of state.transactions) {
+    const where = `transaction ${transaction.id}`;
+    tagList(transaction.tagIds, where);
+    if (transaction.recurringRuleId !== undefined) requireReference(rules, transaction.recurringRuleId, `${where} recurringRuleId`);
+    switch (transaction.kind) {
+      case "income":
+      case "expense":
+      case "refund": {
+        const held = account(transaction.accountId, where);
+        if (transaction.kind === "income") {
+          if (transaction.categoryId !== undefined) category(transaction.categoryId, "income", where);
+        } else {
+          category(transaction.categoryId, "expense", where);
+        }
+        if (transaction.kind === "refund") {
+          const original = transactions.get(transaction.originalTransactionId);
+          if (original === undefined || original.kind !== "expense" || original.status !== "posted") throw new Error(`refund ${transaction.id} must reference a posted expense`);
+          if (original.categoryId !== transaction.categoryId) throw new Error(`refund ${transaction.id} must use the original expense category`);
+        }
+        const foreign = held.currency !== base;
+        if (foreign !== (transaction.baseAmountMinor !== undefined)) throw new Error(`${where} carries a base-currency snapshot exactly when its account is foreign`);
+        if (transaction.baseCurrency !== undefined && transaction.baseCurrency !== base) throw new Error(`${where} snapshot must be in the base currency`);
+        break;
+      }
+      case "transfer": {
+        const from = account(transaction.fromAccountId, where);
+        const to = account(transaction.toAccountId, where);
+        if (from.id === to.id) throw new Error(`${where} must use two different accounts`);
+        if ((from.currency !== to.currency) !== (transaction.toAmountMinor !== undefined)) throw new Error(`${where} names what arrives exactly across currencies`);
+        break;
+      }
+      case "goal_contribution": {
+        const from = account(transaction.fromAccountId, where);
+        const to = account(transaction.toAccountId, where);
+        const goal = goals.get(transaction.goalId);
+        if (goal === undefined) throw new Error(`${where} references unknown id ${transaction.goalId}`);
+        if (goal.linkedAccountId !== to.id || from.currency !== to.currency) throw new Error(`${where} must move money into its goal's account in one currency`);
+        break;
+      }
+      case "debt_out":
+      case "debt_in": {
+        const held = account(transaction.accountId, where);
+        const debt = debts.get(transaction.debtId);
+        if (debt === undefined) throw new Error(`${where} debtId references unknown id ${transaction.debtId}`);
+        if ((held.currency !== debt.currency) !== (transaction.debtAmountMinor !== undefined)) throw new Error(`${where} names the debt amount exactly across currencies`);
+        break;
+      }
+    }
+  }
+}
+
 export function parseCanonicalFixture(value: unknown): CanonicalFixture {
   const fixtureId = typeof value === "object" && value !== null && "fixtureId" in value ? value.fixtureId : null;
+  if (fixtureId === "G-003") {
+    if (!validateLedger(value)) throw new Error(`Fixture schema validation failed: ${validationMessage(validateLedger.errors)}`);
+    assertLedgerReferences(value);
+    return value;
+  }
   const validate = fixtureId === "G-002" ? validatePlanning : validateBudget;
   if (!validate(value)) throw new Error(`Fixture schema validation failed: ${validationMessage(validate.errors)}`);
   if (fixtureId === "G-002") {
@@ -333,8 +561,11 @@ function adaptTransaction(transaction: CanonicalTransaction): DomainTransaction 
   }
 }
 
-export function toDomainBudgetState(fixture: CanonicalFixture): DomainBudgetState {
-  if (fixture.fixtureId === "G-002") return structuredClone(fixture.state);
+export function toDomainBudgetState(fixture: LedgerFixture): LedgerBudgetState;
+export function toDomainBudgetState(fixture: CanonicalBudgetFixture | PlanningFixture): DomainBudgetState;
+export function toDomainBudgetState(fixture: CanonicalFixture): DomainBudgetState | LedgerBudgetState;
+export function toDomainBudgetState(fixture: CanonicalFixture): DomainBudgetState | LedgerBudgetState {
+  if (fixture.fixtureId === "G-002" || fixture.fixtureId === "G-003") return structuredClone(fixture.state);
   return {
     activeBudgetId: fixture.budgetPeriod.id,
     members: fixture.members.map(adaptMember),
@@ -362,3 +593,4 @@ export function toDomainBudgetState(fixture: CanonicalFixture): DomainBudgetStat
 export const G000 = parseCanonicalFixture(g000Json) as CanonicalBudgetFixture;
 export const G001 = parseCanonicalFixture(g001Json) as CanonicalBudgetFixture;
 export const G002 = parseCanonicalFixture(g002Json) as PlanningFixture;
+export const G003 = parseCanonicalFixture(g003Json) as LedgerFixture;

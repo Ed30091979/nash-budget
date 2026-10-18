@@ -20,7 +20,7 @@ import {
   type SyncedBudgetState,
   type TransactionFields,
 } from "@family-budget/sync-protocol";
-import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
+import { G002, toDomainBudgetState, type DomainBudgetState } from "@family-budget/test-fixtures";
 
 import { toBase64 } from "../src/base64.js";
 import type { CheckpointRecord } from "../src/checkpoint.js";
@@ -181,7 +181,8 @@ export async function sealCheckpoint(
   return { ...header, iv: toBase64(sealed.iv), ciphertext: toBase64(sealed.ciphertext) };
 }
 
-type FixtureState = ReturnType<typeof toDomainBudgetState>;
+// The state of G-002, named: the adapter's return type also covers G-003's ledger since step 15.
+type FixtureState = DomainBudgetState;
 type FixtureTransaction = FixtureState["transactions"][number];
 
 function withoutId<T extends { readonly id: string }>(entity: T): Omit<T, "id"> {

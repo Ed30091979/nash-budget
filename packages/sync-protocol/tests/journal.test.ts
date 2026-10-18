@@ -9,7 +9,7 @@ import {
   recurringOccurrenceId,
   type Transaction,
 } from "@family-budget/domain";
-import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
+import { G002, toDomainBudgetState, type DomainBudgetState } from "@family-budget/test-fixtures";
 import { describe, expect, it } from "vitest";
 
 import { sha256Hex } from "../src/digest.js";
@@ -81,7 +81,8 @@ const MEMBER_PETR = "member-petr";
 const GHOST_ID = "ghost-transaction";
 const LABELLED_EXPENSE_ID = "expense-anna-wrote-down-for-petr";
 
-type FixtureState = ReturnType<typeof toDomainBudgetState>;
+// The state of G-002, named: the adapter's return type also covers G-003's ledger since step 15.
+type FixtureState = DomainBudgetState;
 type FixtureTransaction = FixtureState["transactions"][number];
 
 function withoutId<T extends { readonly id: string }>(entity: T): Omit<T, "id"> {
