@@ -1,0 +1,163 @@
+import { describe, expect, it } from "vitest";
+import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
+
+import {
+  archiveTag,
+  calculateAnnualPlan,
+  calculateBudget,
+  calculateMemberExpenses,
+  createTag,
+  deleteTag,
+  findTagByName,
+  makeSeedBudget,
+  normalizeTagIds,
+  SEED_IDS,
+  TagValidationError,
+  type BudgetState,
+  type TagId,
+} from "../src/index.js";
+
+const HOLIDAY = "8a000000-0000-4000-8000-0000000000a1";
+const HOME = "8a000000-0000-4000-8000-0000000000a2";
+
+function sequentialIds(...ids: TagId[]): () => TagId {
+  let next = 0;
+  return () => ids[next++] ?? `tag-${next}`;
+}
+
+/** The seed with two tags, and the food expense carrying both. */
+function taggedSeed(): BudgetState {
+  const seed = makeSeedBudget();
+  return {
+    ...seed,
+    tags: [
+      { id: HOLIDAY, name: "Отпуск", active: true },
+      { id: HOME, name: "Дом", active: true },
+    ],
+    transactions: seed.transactions.map((transaction) =>
+      transaction.id === SEED_IDS.transactions.food ? { ...transaction, tagIds: [HOME, HOLIDAY] } : transaction),
+  };
+}
+
+function code(run: () => unknown): string | null {
+  try {
+    run();
+    return null;
+  } catch (error) {
+    if (error instanceof TagValidationError) return error.code;
+    throw error;
+  }
+}
+
+describe("createTag", () => {
+  it("creates an active tag and leaves every figure alone", () => {
+    const seed = makeSeedBudget();
+    const { state, tag } = createTag(seed, "  Отпуск ", sequentialIds(HOLIDAY));
+
+    expect(tag).toEqual({ id: HOLIDAY, name: "Отпуск", active: true });
+    expect(state.tags).toEqual([tag]);
+    expect(state.transactions).toBe(seed.transactions);
+    expect(calculateBudget(state)).toEqual(calculateBudget(seed));
+  });
+
+  it("refuses an empty name, an overlong one, hidden characters and mixed alphabets", () => {
+    const seed = makeSeedBudget();
+    expect(code(() => createTag(seed, "   "))).toBe("name_required");
+    expect(code(() => createTag(seed, "я".repeat(41)))).toBe("name_too_long");
+    expect(code(() => createTag(seed, "От\u200bпуск"))).toBe("name_forbidden_characters");
+    expect(code(() => createTag(seed, "Отпуск в Paris"))).toBe("name_mixed_scripts");
+    expect(createTag(seed, "я".repeat(40)).tag.name).toHaveLength(40);
+  });
+
+  it("refuses a duplicate of an active tag whatever the case, and lets an archived namesake be", () => {
+    const state = taggedSeed();
+    expect(code(() => createTag(state, "отпуск"))).toBe("duplicate_name");
+    expect(() => createTag(state, "ОТПУСК")).toThrow(/уже существует/);
+
+    const archived = archiveTag(state, HOLIDAY);
+    expect(findTagByName(archived, "отпуск")?.id).toBe(HOLIDAY);
+    const { tag } = createTag(archived, "Отпуск", sequentialIds("8a000000-0000-4000-8000-0000000000a3"));
+    expect(tag.active).toBe(true);
+  });
+
+  it("refuses an identifier that is empty or already taken anywhere in the document", () => {
+    const state = taggedSeed();
+    expect(code(() => createTag(state, "Ремонт", () => " "))).toBe("id_required");
+    expect(code(() => createTag(state, "Ремонт", () => HOME))).toBe("duplicate_id");
+    // A transaction's identifier is taken too: a backup refuses a file where two kinds share one.
+    expect(code(() => createTag(state, "Ремонт", () => SEED_IDS.transactions.food))).toBe("duplicate_id");
+  });
+});
+
+describe("archiveTag", () => {
+  it("keeps the tag on every operation that carries it", () => {
+    const state = taggedSeed();
+    const archived = archiveTag(state, HOLIDAY);
+
+    expect(archived.tags?.find((tag) => tag.id === HOLIDAY)?.active).toBe(false);
+    expect(archived.transactions).toBe(state.transactions);
+    expect(() => calculateBudget(archived)).not.toThrow();
+    expect(archiveTag(archived, HOLIDAY)).toBe(archived);
+    expect(code(() => archiveTag(state, "8a000000-0000-4000-8000-0000000000ff"))).toBe("unknown_tag");
+  });
+});
+
+describe("deleteTag", () => {
+  it("takes the tag off every operation in the same transition", () => {
+    const state = taggedSeed();
+    const withoutHoliday = deleteTag(state, HOLIDAY);
+    const food = withoutHoliday.transactions.find((item) => item.id === SEED_IDS.transactions.food);
+
+    expect(withoutHoliday.tags).toEqual([{ id: HOME, name: "Дом", active: true }]);
+    expect(food?.tagIds).toEqual([HOME]);
+    expect(() => calculateBudget(withoutHoliday)).not.toThrow();
+
+    // The last tag gone, the field goes with it rather than staying as an empty list.
+    const untagged = deleteTag(withoutHoliday, HOME);
+    const plain = untagged.transactions.find((item) => item.id === SEED_IDS.transactions.food);
+    expect(plain).toBeDefined();
+    expect(Object.hasOwn(plain!, "tagIds")).toBe(false);
+    expect(untagged.transactions).toEqual(makeSeedBudget().transactions);
+  });
+
+  it("moves no figure of any budget, plan or split", () => {
+    const state = taggedSeed();
+    const deleted = deleteTag(deleteTag(state, HOLIDAY), HOME);
+    expect(calculateBudget(deleted)).toEqual(calculateBudget(state));
+    expect(calculateAnnualPlan(deleted, "2026-07", 12)).toEqual(calculateAnnualPlan(state, "2026-07", 12));
+    expect(calculateMemberExpenses(deleted)).toEqual(calculateMemberExpenses(state));
+  });
+
+  it("refuses a tag the state does not hold", () => {
+    expect(code(() => deleteTag(makeSeedBudget(), HOLIDAY))).toBe("unknown_tag");
+  });
+});
+
+describe("normalizeTagIds", () => {
+  it("drops repeats and sorts, so one set of tags is one value however it was picked", () => {
+    expect(normalizeTagIds([HOME, HOLIDAY, HOME])).toEqual([HOLIDAY, HOME]);
+    expect(normalizeTagIds([HOLIDAY, HOME])).toEqual(normalizeTagIds([HOME, HOLIDAY]));
+  });
+
+  it("has no empty list: no tags is no field", () => {
+    expect(normalizeTagIds([])).toBeUndefined();
+  });
+});
+
+describe("tags on canonical G-002", () => {
+  it("leave the July reserve, the free amount and the split by participant where they were", () => {
+    const g002 = toDomainBudgetState(G002) as BudgetState;
+    const { state: withTag, tag } = createTag(g002, "Дача", sequentialIds(HOLIDAY));
+    const tagged: BudgetState = {
+      ...withTag,
+      transactions: withTag.transactions.map((transaction) => ({ ...transaction, tagIds: [tag.id] })),
+    };
+
+    expect(calculateAnnualPlan(tagged, G002.startMonth, 12).currentMonth).toMatchObject({
+      annualReserveMinor: 1_980_900,
+      spendableAfterPlanMinor: 4_419_100,
+    });
+    expect(calculateBudget(tagged)).toEqual(calculateBudget(g002));
+    expect(calculateMemberExpenses(tagged)).toEqual(calculateMemberExpenses(g002));
+  });
+});

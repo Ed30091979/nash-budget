@@ -216,4 +216,28 @@ describe("перенос месяца", () => {
     const april = carryBudgetForward(july, "2027-04");
     expect(april.budget.endDate).toBe("2027-04-30");
   });
+
+  it("не трогает метки и помеченные операции, а выведенное имя проверяет и против них", () => {
+    const july = makeSeedBudget();
+    const tagged: BudgetState = {
+      ...july,
+      tags: [{ id: "8a000000-0000-4000-8000-0000000000a1", name: "Отпуск", active: true }],
+      transactions: july.transactions.map((transaction) => ({
+        ...transaction,
+        note: "Заметка",
+        tagIds: ["8a000000-0000-4000-8000-0000000000a1"],
+      })),
+    };
+    const { state } = carryBudgetForward(tagged, "2026-08");
+    expect(state.tags).toEqual(tagged.tags);
+    expect(state.transactions).toEqual(tagged.transactions);
+
+    // Метка, занявшая имя будущего августа, — та же коллизия, что и любая другая сущность.
+    const clash: BudgetState = {
+      ...tagged,
+      tags: [{ id: carriedBudgetId(july.activeBudgetId, "2026-08"), name: "Совпадение", active: true }],
+      transactions: july.transactions,
+    };
+    expect(() => carryBudgetForward(clash, "2026-08")).toThrow(/is already used/);
+  });
 });

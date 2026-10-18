@@ -24,9 +24,19 @@ import type {
   PlanningMonthMetrics,
   ScheduledExpense,
   StableId,
+  Tag,
+  TagId,
   Transaction,
 } from "./types.js";
 import { daysInMonth, MAX_LOCAL_MONTH_INDEX, monthFromIndex, monthIndex } from "./calendar.js";
+import {
+  isDisplayKey,
+  isNormalizedLabel,
+  isNormalizedNote,
+  MAX_TAGS_PER_TRANSACTION,
+  NOTE_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
+} from "./text.js";
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -106,10 +116,14 @@ function indexById<T extends { readonly id: StableId }>(
  * The collections of a state indexed by identifier, each checked for a repeated id on the way.
  *
  * Every calculation used to build these maps itself, three times over, and three copies of one
- * index are three places a new collection can be forgotten in. Only indexing happens here, in the
- * order the copies indexed: what each calculation then validates is its own business, so that the
- * set of errors each one raises stays exactly what it was — participants are still checked only by
- * the split by participant, and large payments and schedules only by the annual plan.
+ * index are three places a new collection can be forgotten in. Indexing happens here, in the order
+ * the copies indexed: what each calculation then validates is its own business, so that the set of
+ * errors each one raises stays exactly what it was — participants are still checked only by the
+ * split by participant, and large payments and schedules only by the annual plan.
+ *
+ * Tags are the one collection validated here as well. Every calculation resolves the tags of every
+ * transaction it reads, so every calculation needs them whole, and no state written before tags
+ * existed carries one: checking them in all three adds no refusal to any state that was valid.
  */
 export interface StateIndex {
   readonly accounts: ReadonlyMap<StableId, Account>;
@@ -117,18 +131,38 @@ export interface StateIndex {
   readonly budgets: ReadonlyMap<StableId, Budget>;
   readonly goals: ReadonlyMap<StableId, Goal>;
   readonly transactions: ReadonlyMap<StableId, Transaction>;
+  readonly tags: ReadonlyMap<TagId, Tag>;
 }
 
 export function indexState(state: BudgetState): StateIndex {
   // Object literals evaluate in source order, so a duplicate is reported for the same collection
-  // the inlined copies reported it for.
-  return {
+  // the inlined copies reported it for; tags, which no older state has, come last.
+  const index: StateIndex = {
     accounts: indexById(state.accounts, "accounts"),
     categories: indexById(state.categories, "categories"),
     budgets: indexById(state.budgets, "budgets"),
     goals: indexById(state.goals, "goals"),
     transactions: indexById(state.transactions, "transactions"),
+    tags: indexById(state.tags ?? [], "tags"),
   };
+  for (const tag of index.tags.values()) validateTag(tag);
+  return index;
+}
+
+function validateTag(tag: Tag): void {
+  if (!isNormalizedLabel(tag.name, TAG_NAME_MAX_LENGTH)) {
+    throw new Error(`tag ${tag.id} name must be a normalized label of at most ${TAG_NAME_MAX_LENGTH} characters`);
+  }
+  if (typeof tag.active !== "boolean") {
+    throw new Error(`tag ${tag.id} active must be a boolean`);
+  }
+}
+
+/** A display field is optional; when present it names a design token. */
+function assertOptionalDisplayKey(value: unknown, label: string): void {
+  if (value !== undefined && !isDisplayKey(value)) {
+    throw new Error(`${label} must be a display key`);
+  }
 }
 
 function createIdRecord<Key extends StableId, Value>(): Record<Key, Value> {
@@ -184,6 +218,15 @@ function categoryStatus(
 function validateAccount(account: Account): void {
   assertEnum(account.type, ["current", "cash", "savings", "reserve"], `account ${account.id} type`);
   assertMinor(account.openingBalanceMinor, `account ${account.id} openingBalanceMinor`);
+  // Display fields: optional, read by no figure, and never allowed to be something else.
+  if (account.sortOrder !== undefined && !Number.isSafeInteger(account.sortOrder)) {
+    throw new Error(`account ${account.id} sortOrder must be an integer`);
+  }
+  assertOptionalDisplayKey(account.icon, `account ${account.id} icon`);
+  assertOptionalDisplayKey(account.color, `account ${account.id} color`);
+  if (account.includeInTotal !== undefined && typeof account.includeInTotal !== "boolean") {
+    throw new Error(`account ${account.id} includeInTotal must be a boolean when provided`);
+  }
 }
 
 function validateCategory(category: Category): void {
@@ -191,6 +234,8 @@ function validateCategory(category: Category): void {
   if (!Number.isSafeInteger(category.sortOrder)) {
     throw new Error(`category ${category.id} sortOrder must be an integer`);
   }
+  assertOptionalDisplayKey(category.icon, `category ${category.id} icon`);
+  assertOptionalDisplayKey(category.color, `category ${category.id} color`);
 }
 
 function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): void {
@@ -205,6 +250,8 @@ function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): voi
     `goal ${goal.id} plannedContributionMinor`,
   );
   requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
+  if (goal.deadline !== undefined) assertLocalDate(goal.deadline, `goal ${goal.id} deadline`);
+  assertOptionalDisplayKey(goal.icon, `goal ${goal.id} icon`);
 }
 
 function validateBudget(
@@ -267,12 +314,49 @@ function validateBudget(
   return availableByCategory;
 }
 
+/**
+ * The labels every operation may carry — a note, tags and the recurring rule it came from — checked
+ * on every transaction, whatever its status and whichever side of the budget window it falls on,
+ * for the reason `calculateMemberExpenses` gives for the participant: a label checked only where it
+ * is counted can sit dangling in a draft until the day the draft is posted.
+ *
+ * No figure reads any of them. They are strict all the same, because a stored label that names
+ * nothing is a broken reference whoever reads it next; the backup gate and the journal clear a
+ * dangling one and say so, and the domain never sees it.
+ */
+function validateTransactionLabels(transaction: Transaction, index: StateIndex): void {
+  const id = transaction.id;
+  if (transaction.note !== undefined && !isNormalizedNote(transaction.note)) {
+    throw new Error(`transaction ${id} note must be normalized text of at most ${NOTE_MAX_LENGTH} characters`);
+  }
+  const tagIds: unknown = transaction.tagIds;
+  if (tagIds !== undefined) {
+    if (!Array.isArray(tagIds) || tagIds.length === 0 || tagIds.length > MAX_TAGS_PER_TRANSACTION) {
+      throw new Error(`transaction ${id} tagIds must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
+    }
+    const seen = new Set<TagId>();
+    for (const tagId of tagIds as readonly unknown[]) {
+      if (typeof tagId !== "string") throw new Error(`transaction ${id} tagIds must list tag ids`);
+      assertStableId(tagId, `transaction ${id} tagIds`);
+      if (seen.has(tagId)) throw new Error(`transaction ${id} tagIds repeats tag ${tagId}`);
+      seen.add(tagId);
+      requireEntity(index.tags, tagId, `transaction ${id} tagIds`);
+    }
+  }
+  if (transaction.recurringRuleId !== undefined) {
+    // A label that must name an existing rule, and no rule can exist before recurring rules are
+    // part of the model, so every value names nothing.
+    throw new Error(`transaction ${id} recurringRuleId references unknown id ${String(transaction.recurringRuleId)}`);
+  }
+}
+
 function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
   const { accounts, categories, goals, transactions } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
   assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+  validateTransactionLabels(transaction, index);
 
   switch (transaction.kind) {
     case "income": {

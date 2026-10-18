@@ -974,3 +974,133 @@ describe("calculateMemberExpenses", () => {
     expect(breakdown.byMember["constructor"]?.actualMinor).toBe(800_000);
   });
 });
+
+const TAG_HOLIDAY = "8a000000-0000-4000-8000-0000000000a1";
+const TAG_HOME = "8a000000-0000-4000-8000-0000000000a2";
+const TAG_OLD = "8a000000-0000-4000-8000-0000000000a3";
+
+/** Every new optional field at once: display fields, tags, notes. None of them is money. */
+function withEverythingLabelled(state: BudgetState): BudgetState {
+  return {
+    ...state,
+    tags: [
+      { id: TAG_HOLIDAY, name: "Отпуск", active: true },
+      { id: TAG_HOME, name: "Дом", active: true },
+      { id: TAG_OLD, name: "Старое", active: false },
+    ],
+    accounts: state.accounts.map((account, index) => ({
+      ...account,
+      sortOrder: (index + 1) * 10,
+      icon: "banknote",
+      color: "sage",
+      includeInTotal: index === 0,
+    })),
+    categories: state.categories.map((category) => ({ ...category, icon: "shopping-basket", color: "mint" })),
+    goals: state.goals.map((goal) => ({ ...goal, deadline: "2027-06-01", icon: "plane" })),
+    transactions: state.transactions.map((transaction, index) => ({
+      ...transaction,
+      note: `Заметка ${index + 1}`,
+      tagIds: index % 2 === 0 ? [TAG_HOLIDAY, TAG_OLD] : [TAG_HOME],
+    })),
+  };
+}
+
+function withTransaction(state: BudgetState, change: (transaction: Transaction) => Transaction): BudgetState {
+  const labelled = withEverythingLabelled(state);
+  return { ...labelled, transactions: [change(labelled.transactions[0]!), ...labelled.transactions.slice(1)] };
+}
+
+describe("labels and display fields", () => {
+  it("leave every canonical G-000, G-001 and G-002 figure exactly where it was", () => {
+    for (const fixture of [G000, G001, G002]) {
+      const plain = toDomainBudgetState(fixture) as BudgetState;
+      const labelled = withEverythingLabelled(plain);
+      expect(calculateBudget(labelled), fixture.fixtureId).toEqual(calculateBudget(plain));
+      expect(calculateMemberExpenses(labelled), fixture.fixtureId).toEqual(calculateMemberExpenses(plain));
+    }
+    const g002 = toDomainBudgetState(G002) as BudgetState;
+    expect(calculateAnnualPlan(withEverythingLabelled(g002), G002.startMonth, 24))
+      .toEqual(calculateAnnualPlan(g002, G002.startMonth, 24));
+  });
+
+  it("does not let includeInTotal touch capital", () => {
+    const seed = makeSeedBudget();
+    const excluded: BudgetState = { ...seed, accounts: seed.accounts.map((account) => ({ ...account, includeInTotal: false })) };
+    expect(calculateBudget(excluded).capitalMinor).toBe(calculateBudget(seed).capitalMinor);
+  });
+
+  it("accepts an archived tag on an operation, as an archived category is accepted", () => {
+    const state = withTransaction(makeSeedBudget(), (transaction) => ({ ...transaction, tagIds: [TAG_OLD] }));
+    expect(() => calculateBudget(state)).not.toThrow();
+  });
+
+  it("refuses a dangling tag, a repeated one, an empty list and more than ten, on every operation", () => {
+    const seed = makeSeedBudget();
+    const tagged = (tagIds: readonly string[]) => withTransaction(seed, (transaction) => ({ ...transaction, tagIds }));
+    const many = Array.from({ length: 11 }, (_, index) => `8a000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`);
+    const manyTags: BudgetState = {
+      ...tagged(many),
+      tags: [...(withEverythingLabelled(seed).tags ?? []), ...many.map((id, index) => ({ id, name: `Метка ${index}`, active: true }))],
+    };
+    const firstId = seed.transactions[0]!.id;
+
+    expect(() => calculateBudget(tagged(["8a000000-0000-4000-8000-0000000000ff"])))
+      .toThrow(new RegExp(`transaction ${firstId} tagIds references unknown id`));
+    expect(() => calculateBudget(tagged([TAG_HOME, TAG_HOME]))).toThrow(/tagIds repeats tag/);
+    expect(() => calculateBudget(tagged([]))).toThrow(/tagIds must list from 1 to 10 tags/);
+    expect(() => calculateBudget(manyTags)).toThrow(/tagIds must list from 1 to 10 tags/);
+    expect(() => calculateBudget({ ...manyTags, transactions: [{ ...manyTags.transactions[0]!, tagIds: many.slice(0, 10) }, ...manyTags.transactions.slice(1)] }))
+      .not.toThrow();
+    // Checked on a draft outside the window too, by the plan and the split as much as the budget.
+    const draft: Transaction = { ...seed.transactions[1]!, id: "55555555-5555-4555-8555-5555555555ff", status: "draft", occurredOn: "2027-01-01", tagIds: ["8a000000-0000-4000-8000-0000000000ff"] };
+    const withDraft: BudgetState = { ...withEverythingLabelled(seed), transactions: [...withEverythingLabelled(seed).transactions, draft] };
+    expect(() => calculateBudget(withDraft)).toThrow(/tagIds references unknown id/);
+    expect(() => calculateAnnualPlan(withDraft, "2026-07", 12)).toThrow(/tagIds references unknown id/);
+    expect(() => calculateMemberExpenses(withDraft)).toThrow(/tagIds references unknown id/);
+  });
+
+  it("refuses a note that is not stored the way normalizeNote stores one", () => {
+    const seed = makeSeedBudget();
+    for (const note of ["", " Пятёрочка", "Пятёрочка\nу дома", "Пятёрочка\u202e", "я".repeat(501)]) {
+      const state = withTransaction(seed, (transaction) => ({ ...transaction, note }));
+      expect(() => calculateBudget(state), JSON.stringify(note)).toThrow(/note must be normalized text of at most 500 characters/);
+    }
+  });
+
+  it("refuses a recurring-rule label while no recurring rule can exist", () => {
+    const state = withTransaction(makeSeedBudget(), (transaction) => ({ ...transaction, recurringRuleId: "8b000000-0000-4000-8000-000000000001" }));
+    expect(() => calculateBudget(state)).toThrow(/recurringRuleId references unknown id 8b000000-0000-4000-8000-000000000001/);
+  });
+
+  it("refuses a tag with a malformed name, a non-boolean flag or a repeated identifier", () => {
+    const seed = withEverythingLabelled(makeSeedBudget());
+    const withTags = (tags: unknown): BudgetState => ({ ...seed, tags } as BudgetState);
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: " Отпуск", active: true }])))
+      .toThrow(new RegExp(`tag ${TAG_HOLIDAY} name must be a normalized label`));
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "я".repeat(41), active: true }])))
+      .toThrow(/name must be a normalized label of at most 40 characters/);
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "Отпуск", active: "yes" }])))
+      .toThrow(/active must be a boolean/);
+    expect(() => calculateBudget({ ...seed, tags: [...(seed.tags ?? []), seed.tags![0]!] }))
+      .toThrow(/tags contains duplicate id/);
+  });
+
+  it("refuses a display key that is not a design token and a sort order that is not an integer", () => {
+    const seed = makeSeedBudget();
+    const account = (change: Record<string, unknown>): BudgetState => ({
+      ...seed,
+      accounts: [{ ...seed.accounts[0]!, ...change } as BudgetState["accounts"][number], ...seed.accounts.slice(1)],
+    });
+    expect(() => calculateBudget(account({ icon: "#00ff00" }))).toThrow(/account .* icon must be a display key/);
+    expect(() => calculateBudget(account({ color: "Sage" }))).toThrow(/account .* color must be a display key/);
+    expect(() => calculateBudget(account({ sortOrder: 1.5 }))).toThrow(/account .* sortOrder must be an integer/);
+    expect(() => calculateBudget(account({ includeInTotal: "no" }))).toThrow(/includeInTotal must be a boolean/);
+    expect(() => calculateAnnualPlan(account({ icon: "icon.svg" }), "2026-07", 12)).toThrow(/icon must be a display key/);
+    expect(() => calculateBudget({ ...seed, categories: [{ ...seed.categories[0]!, color: "" }, ...seed.categories.slice(1)] }))
+      .toThrow(/category .* color must be a display key/);
+    expect(() => calculateBudget({ ...seed, goals: [{ ...seed.goals[0]!, icon: "Plane" }] }))
+      .toThrow(/goal .* icon must be a display key/);
+    expect(() => calculateBudget({ ...seed, goals: [{ ...seed.goals[0]!, deadline: "2027-02-29" }] }))
+      .toThrow(/goal .* deadline must be a valid calendar date/);
+  });
+});

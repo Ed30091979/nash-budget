@@ -41,6 +41,11 @@ describe("document identity", () => {
     expect(documentIds(repeated).filter((id) => id === state.transactions[0]!.id)).toHaveLength(2);
   });
 
+  it("counts tags, so nothing derived can land on one", () => {
+    const state: BudgetState = { ...makePlanningSeed(), tags: [{ id: "8a000000-0000-4000-8000-0000000000a1", name: "Отпуск", active: true }] };
+    expect(documentIds(state)).toContain("8a000000-0000-4000-8000-0000000000a1");
+  });
+
   it("keeps carriedId reachable where rollover always offered it", () => {
     expect(carriedIdFromRollover).toBe(carriedId);
   });

@@ -50,6 +50,28 @@ export {
 } from "./rollover.js";
 export type { CarriedBudget } from "./rollover.js";
 export { makePlanningSeed, makeSeedBudget, PLANNING_IDS, SEED_IDS } from "./seed.js";
-export { normalizeLabel, TextValidationError } from "./text.js";
+export {
+  archiveTag,
+  createTag,
+  deleteTag,
+  findTagByName,
+  normalizeTagIds,
+  normalizeTagName,
+  TagValidationError,
+} from "./tags.js";
+export type { TagCreation, TagErrorCode } from "./tags.js";
+export {
+  DISPLAY_KEY_MAX_LENGTH,
+  isDisplayKey,
+  isNormalizedLabel,
+  isNormalizedNote,
+  labelKey,
+  MAX_TAGS_PER_TRANSACTION,
+  normalizeLabel,
+  normalizeNote,
+  NOTE_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
+  TextValidationError,
+} from "./text.js";
 export type { TextErrorCode } from "./text.js";
 export type * from "./types.js";

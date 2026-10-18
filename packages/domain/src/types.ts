@@ -8,6 +8,15 @@ export type TransactionId = StableId;
 export type AnnualCommitmentId = StableId;
 export type ScheduledExpenseId = StableId;
 export type MemberId = StableId;
+export type TagId = StableId;
+export type RecurringRuleId = StableId;
+
+/**
+ * Key of a design token the interface draws an entity with: kebab-case, at most 40 characters,
+ * such as `shopping-basket` or `sage`. Never a hex colour and never a file name, so the journal
+ * carries a choice from the design system and not an arbitrary style or picture.
+ */
+export type DisplayKey = string;
 
 /** Money stored as an integer count of the currency's minor unit. */
 export type MinorUnits = number;
@@ -69,6 +78,18 @@ export interface Account {
   readonly currency: string;
   readonly openingBalanceMinor: MinorUnits;
   readonly active: boolean;
+  // Display fields. Each is optional on purpose, exactly like `BaseTransaction.memberId`: every
+  // account written before they existed omits them and stays valid without a single edit. No
+  // figure in BudgetMetrics or AnnualPlanMetrics reads any of them.
+  /** Position in the list of accounts; a safe integer. */
+  readonly sortOrder?: number;
+  readonly icon?: DisplayKey;
+  readonly color?: DisplayKey;
+  /**
+   * Whether the account counts towards the total of everything the household holds. Absent
+   * means it does. Only that total reads it: `capitalMinor` never does.
+   */
+  readonly includeInTotal?: boolean;
 }
 
 export interface Category {
@@ -79,6 +100,9 @@ export interface Category {
   readonly group: StoredCategoryGroup;
   readonly active: boolean;
   readonly sortOrder: number;
+  /** Display fields, optional for the same reason as on {@link Account}. Read by no figure. */
+  readonly icon?: DisplayKey;
+  readonly color?: DisplayKey;
 }
 
 /** One entry of a category catalogue: everything a category needs except its identity. */
@@ -126,6 +150,21 @@ export interface Goal {
   readonly openingContributedMinor: MinorUnits;
   readonly plannedContributionMinor: MinorUnits;
   readonly status: GoalStatus;
+  /** The date the family means to reach the goal by. Optional, and read by no figure. */
+  readonly deadline?: LocalDate;
+  readonly icon?: DisplayKey;
+}
+
+/**
+ * A label a family puts on operations: «Отпуск», «Дача», «Ремонт». Attribution only, like a
+ * {@link Member}: nothing in the money calculations reads a tag, so creating, renaming,
+ * archiving or deleting one never moves a single kopeck. An archived tag stays on the
+ * operations that carry it and is merely no longer offered for new ones.
+ */
+export interface Tag {
+  readonly id: TagId;
+  readonly name: string;
+  readonly active: boolean;
 }
 
 /** A large predictable payment with one next due date and a reserve built in advance. */
@@ -166,6 +205,22 @@ interface BaseTransaction {
    * only by {@link MemberExpenseBreakdown}; the budget and planning figures ignore it.
    */
   readonly memberId?: MemberId;
+  /**
+   * A one-line note, at most 500 characters, normalised by `normalizeNote`. There is no empty
+   * note: an operation without one omits the field.
+   */
+  readonly note?: string;
+  /**
+   * Tags on the operation: from one to ten, no repeats, each naming a tag of
+   * {@link BudgetState.tags}, archived ones included. There is no empty list: an operation
+   * without tags omits the field. Labels, read by no figure in {@link BudgetMetrics}.
+   */
+  readonly tagIds?: readonly TagId[];
+  /**
+   * The recurring rule this operation is an occurrence of. A label read by no figure. No rule can
+   * exist in this version of the model yet, so every value names nothing and is refused.
+   */
+  readonly recurringRuleId?: RecurringRuleId;
 }
 
 export interface IncomeTransaction extends BaseTransaction {
@@ -218,6 +273,8 @@ export interface BudgetState {
   readonly activeBudgetId: BudgetId;
   /** Absent in every budget written before members existed; such a state stays valid. */
   readonly members?: readonly Member[];
+  /** Absent in every budget written before tags existed, exactly like `members`. */
+  readonly tags?: readonly Tag[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];

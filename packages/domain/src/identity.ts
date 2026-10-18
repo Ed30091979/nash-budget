@@ -88,6 +88,7 @@ export function carriedId(...parts: readonly string[]): StableId {
 export function documentIds(state: BudgetState): StableId[] {
   return [
     ...(state.members ?? []).map((item) => item.id),
+    ...(state.tags ?? []).map((item) => item.id),
     ...state.accounts.map((item) => item.id),
     ...state.categories.map((item) => item.id),
     ...state.budgets.flatMap((item) => [item.id, ...item.lines.map((line) => line.id)]),

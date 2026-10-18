@@ -8,7 +8,7 @@ import type {
   CategoryType,
   StoredCategoryGroup,
 } from "./types.js";
-import { normalizeLabel, TextValidationError, type TextErrorCode } from "./text.js";
+import { labelKey, normalizeLabel, TextValidationError, type TextErrorCode } from "./text.js";
 
 /**
  * Groups are a closed set, not free text: the interface prints these titles as headings and
@@ -214,7 +214,7 @@ export function normalizeCategoryName(value: string): string {
 
 /** Comparison key for duplicate detection: case- and width-insensitive, Russian locale. */
 export function categoryNameKey(value: string): string {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
+  return labelKey(value);
 }
 
 /**
