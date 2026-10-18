@@ -3802,7 +3802,8 @@ describe("recurring rules through the journal", () => {
     );
     const result = materializeRecurring(snapshot.state, "2026-07-31", { deletedIds });
     expect(result.created.map((item) => item.occurredOn)).toEqual(["2026-07-21"]);
-    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-07-07", reason: "deleted" }]);
+    // One day passed over, reported as a run of one day (second review of wave 1, LOW-6).
+    expect(result.skipped).toEqual([{ ruleId: RULE, from: "2026-07-07", to: "2026-07-07", reason: "deleted" }]);
     // And what one call writes always fits one batch of the journal.
     expect(DEFAULT_MAX_OCCURRENCES_PER_CALL).toBeLessThan(MAX_BATCH_OPERATIONS);
   });
