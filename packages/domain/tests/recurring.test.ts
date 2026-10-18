@@ -7,6 +7,8 @@ import {
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  dayIndex,
+  DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL,
   DEFAULT_MAX_OCCURRENCES_PER_CALL,
   DEFAULT_MAX_OCCURRENCES_PER_RULE,
   deleteRecurringRule,
@@ -273,7 +275,7 @@ describe("materializeRecurring", () => {
     const early = withRules([rule], { exchangeRates: [rate(RATE_AUGUST, "2026-08-15", 9_250)] });
     const stopped = materializeRecurring(early, "2026-08-31");
     expect(stopped.created).toEqual([]);
-    expect(stopped.skipped).toEqual([{ ruleId: RULE, date: "2026-08-04", reason: "missing_rate" }]);
+    expect(stopped.skipped).toEqual([{ ruleId: RULE, from: "2026-08-04", to: "2026-08-04", reason: "missing_rate" }]);
     expect(stopped.state).toBe(early);
 
     // Once the rate is entered the same call writes every day, the stopped one included.
@@ -286,7 +288,7 @@ describe("materializeRecurring", () => {
     });
     const middle = materializeRecurring(worthless, "2026-08-31");
     expect(datesOf(middle.created)).toEqual(["2026-08-04", "2026-08-11"]);
-    expect(middle.skipped).toEqual([{ ruleId: RULE, date: "2026-08-18", reason: "missing_rate" }]);
+    expect(middle.skipped).toEqual([{ ruleId: RULE, from: "2026-08-18", to: "2026-08-18", reason: "missing_rate" }]);
     expect(ruleOf(middle.state).materializedThrough).toBe("2026-08-17");
   });
 
@@ -302,21 +304,19 @@ describe("materializeRecurring", () => {
     const archivedAccount = { ...seed, accounts: seed.accounts.map((item) => (item.id === SEED_IDS.accounts.main ? { ...item, active: false } : item)) };
     const onAccount = materializeRecurring(archivedAccount, "2026-08-31");
     expect(onAccount.created).toEqual([]);
-    expect(onAccount.skipped).toEqual([
-      { ruleId: RULE, date: "2026-08-04", reason: "archived_account" },
-      { ruleId: RULE, date: "2026-08-18", reason: "archived_account" },
-    ]);
+    // Two days of the rule, passed over for one reason with nothing written between them: one run.
+    expect(onAccount.skipped).toEqual([{ ruleId: RULE, from: "2026-08-04", to: "2026-08-18", reason: "archived_account" }]);
     expect(ruleOf(onAccount.state).materializedThrough).toBe("2026-08-31");
     expect(onAccount.state.transactions).toBe(archivedAccount.transactions);
 
     const archivedCategory = { ...seed, categories: seed.categories.map((item) => (item.id === SEED_IDS.categories.food ? { ...item, active: false } : item)) };
-    expect(materializeRecurring(archivedCategory, "2026-08-31").skipped.map((item) => item.reason)).toEqual(["archived_category", "archived_category"]);
+    expect(materializeRecurring(archivedCategory, "2026-08-31").skipped).toEqual([{ ruleId: RULE, from: "2026-08-04", to: "2026-08-18", reason: "archived_category" }]);
 
     const transfer = waterRule({ template: { kind: "transfer", amountMinor: 100_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings } });
     const archivedTarget = withRules([transfer], {
       accounts: withRules([]).accounts.map((item) => (item.id === SEED_IDS.accounts.savings ? { ...item, active: false } : item)),
     });
-    expect(materializeRecurring(archivedTarget, "2026-08-31").skipped.map((item) => item.reason)).toEqual(["archived_account", "archived_account"]);
+    expect(materializeRecurring(archivedTarget, "2026-08-31").skipped.map((item) => item.reason)).toEqual(["archived_account"]);
   });
 
   it("writes at most maxPerRule occurrences of a rule in one call and the rest in the next", () => {
@@ -325,7 +325,7 @@ describe("materializeRecurring", () => {
     const first = materializeRecurring(state, "2026-12-31", { maxPerRule: 100 });
     expect(first.created).toHaveLength(100);
     expect(first.created.at(-1)!.occurredOn).toBe("2026-04-10");
-    expect(first.skipped).toEqual([{ ruleId: RULE, date: "2026-04-11", reason: "limit" }]);
+    expect(first.skipped).toEqual([{ ruleId: RULE, from: "2026-04-11", to: "2026-04-11", reason: "limit" }]);
     expect(ruleOf(first.state).materializedThrough).toBe("2026-04-10");
     const second = materializeRecurring(first.state, "2026-12-31", { maxPerRule: 100 });
     expect(second.created[0]!.occurredOn).toBe("2026-04-11");
@@ -351,7 +351,7 @@ describe("materializeRecurring", () => {
     const taken = { ...state, tags: [...state.tags!, { id, name: "Совпадение", active: true }] };
     const result = materializeRecurring(taken, "2026-08-31");
     expect(datesOf(result.created)).toEqual(["2026-08-04"]);
-    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-08-18", reason: "id_conflict" }]);
+    expect(result.skipped).toEqual([{ ruleId: RULE, from: "2026-08-18", to: "2026-08-18", reason: "id_conflict" }]);
     // The day can never be written, so it is closed like an archived one, and nothing is overwritten.
     expect(ruleOf(result.state).materializedThrough).toBe("2026-08-31");
     expect(result.state.tags).toEqual(taken.tags);
@@ -365,7 +365,7 @@ describe("materializeRecurring", () => {
     const deleted = new Set([recurringOccurrenceId(RULE, "2026-08-04")]);
     const result = materializeRecurring(withRules([waterRule()]), "2026-08-31", { deletedIds: deleted });
     expect(datesOf(result.created)).toEqual(["2026-08-18"]);
-    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-08-04", reason: "deleted" }]);
+    expect(result.skipped).toEqual([{ ruleId: RULE, from: "2026-08-04", to: "2026-08-04", reason: "deleted" }]);
     expect(ruleOf(result.state).materializedThrough).toBe("2026-08-31");
   });
 
@@ -381,7 +381,7 @@ describe("materializeRecurring", () => {
 
     const first = materializeRecurring(state, "2026-01-30", { maxPerRule: 5 });
     expect(datesOf(first.created)).toEqual(["2026-01-11", "2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15"]);
-    expect(first.skipped).toEqual([{ ruleId: RULE, date: "2026-01-16", reason: "limit" }]);
+    expect(first.skipped).toEqual([{ ruleId: RULE, from: "2026-01-16", to: "2026-01-16", reason: "limit" }]);
     expect(ruleOf(first.state).materializedThrough).toBe("2026-01-15");
 
     let current = first.state;
@@ -397,8 +397,8 @@ describe("materializeRecurring", () => {
     const first = materializeRecurring(state, "2026-01-31", { maxTotal: 50 });
     expect(first.created).toHaveLength(50);
     expect(first.skipped).toEqual([
-      { ruleId: daily(2).id, date: "2026-01-20", reason: "limit" },
-      { ruleId: daily(3).id, date: "2026-01-01", reason: "limit" },
+      { ruleId: daily(2).id, from: "2026-01-20", to: "2026-01-20", reason: "limit" },
+      { ruleId: daily(3).id, from: "2026-01-01", to: "2026-01-01", reason: "limit" },
     ]);
     const marks = (value: BudgetState) => (value.recurringRules ?? []).map((rule) => rule.materializedThrough);
     // The first rule is done, the second stopped after nineteen days, the third did not start.
@@ -424,6 +424,75 @@ describe("materializeRecurring", () => {
     // 400, 400 and 200 written, the rest not started: each watermark on the day before its stop.
     expect((result.state.recurringRules ?? []).slice(0, 4).map((rule) => rule.materializedThrough))
       .toEqual([addDays("1900-01-01", 399), addDays("1900-01-01", 399), addDays("1900-01-01", 199), undefined]);
+  });
+
+  it("considers at most twenty thousand days in one call, and reports days passed over as runs", () => {
+    // Second review of wave 1, LOW-6, the exact case: ten daily rules from 1900 on an archived
+    // account, one occurrence per rule and per call. Days passed over counted toward no bound, so the
+    // call walked every day of every rule — 2.7 s and 462 640 entries, one per day.
+    const rules = Array.from({ length: 10 }, (_, index) =>
+      waterRule({ id: `8b300000-0000-4000-8000-${String(index).padStart(12, "0")}`, frequency: "daily", interval: 1, startDate: "1900-01-01" }));
+    const seed = withRules(rules);
+    const archived = { ...seed, accounts: seed.accounts.map((item) => (item.id === SEED_IDS.accounts.main ? { ...item, active: false } : item)) };
+
+    const started = performance.now();
+    const first = materializeRecurring(archived, "2026-08-31", { maxPerRule: 1, maxTotal: 1 });
+    const elapsed = performance.now() - started;
+    expect(first.created).toEqual([]);
+    // One run for the first rule's twenty thousand archived days, then the bound: the first rule on
+    // the day after, and every other rule on its first day.
+    expect(first.skipped).toEqual([
+      { ruleId: rules[0]!.id, from: "1900-01-01", to: addDays("1900-01-01", DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL - 1), reason: "archived_account" },
+      { ruleId: rules[0]!.id, from: addDays("1900-01-01", DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL), to: addDays("1900-01-01", DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL), reason: "limit" },
+      ...rules.slice(1).map((rule) => ({ ruleId: rule.id, from: "1900-01-01", to: "1900-01-01", reason: "limit" })),
+    ]);
+    const marks = (value: BudgetState) => (value.recurringRules ?? []).map((rule) => rule.materializedThrough);
+    // The watermark is the last day considered, so the next call goes on from there.
+    expect(marks(first.state)).toEqual([addDays("1900-01-01", DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL - 1), ...rules.slice(1).map(() => undefined)]);
+    // Bounded in time: the old walk took 2.7 s on the reviewer's machine; this is a fifth of a run.
+    expect(elapsed).toBeLessThan(1_500);
+
+    // Call after call, every rule is walked to the end, and no day is skipped twice or left out.
+    let current = first.state;
+    let calls = 1;
+    while ((current.recurringRules ?? []).some((rule) => rule.materializedThrough !== "2026-08-31")) {
+      const next = materializeRecurring(current, "2026-08-31", { maxPerRule: 1, maxTotal: 1 });
+      expect(next.skipped.length).toBeLessThanOrEqual(rules.length + 1);
+      current = next.state;
+      calls += 1;
+      expect(calls).toBeLessThan(40);
+    }
+    const days = rules.length * (dayIndex("2026-08-31") - dayIndex("1900-01-01") + 1);
+    expect(calls).toBe(Math.ceil(days / DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL));
+    expect(current.transactions).toBe(archived.transactions);
+
+    // The bound is an option like the other two, and a day already written counts toward it too.
+    const daily = waterRule({ frequency: "daily", interval: 1, startDate: "2026-01-01" });
+    const written = materializeRecurring(withRules([daily]), "2026-01-10").created;
+    const partly = withRules([daily], { transactions: [...makeSeedBudget().transactions, ...written] });
+    const bounded = materializeRecurring(partly, "2026-01-31", { maxConsidered: 12 });
+    expect(datesOf(bounded.created)).toEqual(["2026-01-11", "2026-01-12"]);
+    expect(bounded.skipped).toEqual([{ ruleId: RULE, from: "2026-01-13", to: "2026-01-13", reason: "limit" }]);
+    expect(ruleOf(bounded.state).materializedThrough).toBe("2026-01-12");
+    for (const maxConsidered of [0, -1, 1.5, Number.NaN]) {
+      expect(() => materializeRecurring(partly, "2026-01-31", { maxConsidered }), String(maxConsidered)).toThrow(/maxConsidered must be a positive integer/);
+    }
+  }, 60_000);
+
+  it("closes a run of days passed over at a day written or found written, and at a change of reason", () => {
+    const daily = waterRule({ frequency: "daily", interval: 1, startDate: "2026-01-01" });
+    // 3 and 4 January deleted, 5 January written already, 6 and 7 deleted, 8 January taken by a tag.
+    const deletedIds = new Set(["2026-01-03", "2026-01-04", "2026-01-06", "2026-01-07"].map((date) => recurringOccurrenceId(RULE, date)));
+    const written = materializeRecurring(withRules([daily]), "2026-01-05").created.filter((item) => item.occurredOn === "2026-01-05");
+    const base = withRules([daily], { transactions: [...makeSeedBudget().transactions, ...written] });
+    const state = { ...base, tags: [...base.tags!, { id: recurringOccurrenceId(RULE, "2026-01-08"), name: "Совпадение", active: true }] };
+    const result = materializeRecurring(state, "2026-01-09", { deletedIds });
+    expect(datesOf(result.created)).toEqual(["2026-01-01", "2026-01-02", "2026-01-09"]);
+    expect(result.skipped).toEqual([
+      { ruleId: RULE, from: "2026-01-03", to: "2026-01-04", reason: "deleted" },
+      { ruleId: RULE, from: "2026-01-06", to: "2026-01-07", reason: "deleted" },
+      { ruleId: RULE, from: "2026-01-08", to: "2026-01-08", reason: "id_conflict" },
+    ]);
   });
 
   it("writes no occurrence past the last day the journal carries", () => {

@@ -26,7 +26,8 @@ import type {
 /**
  * Why a day of a rule was passed over. Reported, never silent.
  *
- * - `missing_rate`, `limit` — the rule stops on that day, and the next call starts from it.
+ * - `missing_rate`, `limit` — the rule stops on that day, and the next call starts from it. `limit`
+ *   is any bound of one call: occurrences of one rule, occurrences of all rules, or days considered.
  * - `archived_account`, `archived_category` — the family closed what the rule writes to; the day is
  *   passed over for good.
  * - `id_conflict` — another entity, not an operation, already holds the identifier the day's
@@ -43,9 +44,19 @@ export type RecurringSkipReason =
   | "id_conflict"
   | "deleted";
 
+/**
+ * Days of one rule passed over for one reason: `from` and `to` are its first and last day, the same
+ * day when the run is one day long.
+ *
+ * A run is consecutive days of the rule — no day of it written or found written in between — passed
+ * over for the same reason. One entry per run rather than per day, because a rule on an archived
+ * account from 1900 is forty-six thousand days passed over for one reason, and an entry each made the
+ * report the largest thing the call produced (second review of wave 1).
+ */
 export interface RecurringSkip {
   readonly ruleId: RecurringRuleId;
-  readonly date: LocalDate;
+  readonly from: LocalDate;
+  readonly to: LocalDate;
   readonly reason: RecurringSkipReason;
 }
 
@@ -73,6 +84,14 @@ export interface MaterializeOptions {
    * journal, and an occurrence written over its tombstone would show on this device alone.
    */
   readonly deletedIds?: ReadonlySet<StableId>;
+  /**
+   * How many days one call may consider in all, across every rule — written, found written, or
+   * passed over alike. The other two bounds count occurrences written, so days passed over (on an
+   * archived account, a deleted occurrence, one already written) cost nothing against them, and ten
+   * daily rules from 1900 on an archived account made one call walk four hundred and sixty thousand
+   * days. The watermark stops on the last day considered, so the next call goes on from there.
+   */
+  readonly maxConsidered?: number;
 }
 
 /** The default bound of {@link MaterializeOptions.maxPerRule}: more than a year of daily occurrences. */
@@ -83,6 +102,12 @@ export const DEFAULT_MAX_OCCURRENCES_PER_RULE = 400;
  * 100 000 operations and the backup's 50 000, and still a year of a family's regular payments.
  */
 export const DEFAULT_MAX_OCCURRENCES_PER_CALL = 1_000;
+
+/**
+ * The default bound of {@link MaterializeOptions.maxConsidered}: fifty-five years of one daily rule,
+ * twenty times the occurrences a call may write, and a few milliseconds of work.
+ */
+export const DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL = 20_000;
 
 /**
  * The days a rule falls on after `after` and on or before `through`, within its own start and end,
@@ -176,11 +201,16 @@ function snapshotFor(
  *
  * Two reasons stop a rule instead of passing a day over: a foreign occurrence with no usable rate
  * for its day (`missing_rate`), and the bounds of one call (`limit`) — `maxPerRule` occurrences of
- * one rule, `maxTotal` of all rules together. The watermark then stops on the day before, so the
- * next call — after a rate is entered, or simply the next one — writes the rest. The days are
- * produced one at a time and the watermark is the last day actually considered, so a stop never
- * closes a day nobody looked at: days already written do not count toward the bound, and a rule
- * whose first hundred days exist goes on past them to the days that do not.
+ * one rule, `maxTotal` of all rules together, `maxConsidered` days of all rules together, whatever
+ * became of them. The watermark then stops on the day before, so the next call — after a rate is
+ * entered, or simply the next one — writes the rest. The days are produced one at a time and the
+ * watermark is the last day actually considered, so a stop never closes a day nobody looked at:
+ * days already written do not count toward the bounds of occurrences, and a rule whose first
+ * hundred days exist goes on past them to the days that do not — but every day counts toward the
+ * days considered, so no call walks further than that, whatever its days turn out to be.
+ *
+ * Days passed over are reported in runs ({@link RecurringSkip}): consecutive days of a rule passed
+ * over for one reason are one entry.
  *
  * Writing the occurrence without its value in the base currency is not an option: the budget counts
  * that value, and the rate of a later day would revalue the past.
@@ -199,6 +229,8 @@ export function materializeRecurring(
   if (!Number.isSafeInteger(maxPerRule) || maxPerRule < 1) throw new Error("maxPerRule must be a positive integer");
   const maxTotal = options.maxTotal ?? DEFAULT_MAX_OCCURRENCES_PER_CALL;
   if (!Number.isSafeInteger(maxTotal) || maxTotal < 1) throw new Error("maxTotal must be a positive integer");
+  const maxConsidered = options.maxConsidered ?? DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL;
+  if (!Number.isSafeInteger(maxConsidered) || maxConsidered < 1) throw new Error("maxConsidered must be a positive integer");
   const index = indexState(state);
   dayIndex(through, "through");
   // An occurrence past the last day the journal carries could not reach the family.
@@ -211,6 +243,19 @@ export function materializeRecurring(
   const created: Transaction[] = [];
   const skipped: RecurringSkip[] = [];
   const watermarks = new Map<RecurringRuleId, LocalDate>();
+  let considered = 0;
+  // Whether the last entry of `skipped` is a run still open: the day considered before this one was
+  // passed over too. Any day written or found written closes it.
+  let open = false;
+  const skip = (ruleId: RecurringRuleId, date: LocalDate, reason: RecurringSkipReason): void => {
+    const last = skipped[skipped.length - 1];
+    if (open && last !== undefined && last.ruleId === ruleId && last.reason === reason) {
+      skipped[skipped.length - 1] = { ...last, to: date };
+    } else {
+      skipped.push({ ruleId, from: date, to: date, reason });
+    }
+    open = true;
+  };
 
   for (const rule of index.recurringRules.values()) {
     if (!rule.active) continue;
@@ -218,32 +263,42 @@ export function materializeRecurring(
     const end = rule.endDate !== undefined && rule.endDate < horizon ? rule.endDate : horizon;
     let watermark = end;
     let written = 0;
+    open = false;
 
     for (const date of occurrenceDays(rule, closed, end)) {
+      if (considered === maxConsidered) {
+        skip(rule.id, date, "limit");
+        watermark = addDays(date, -1);
+        break;
+      }
+      considered += 1;
       const id = recurringOccurrenceId(rule.id, date);
-      if (transactionIds.has(id)) continue;
+      if (transactionIds.has(id)) {
+        open = false;
+        continue;
+      }
       if (otherIds.has(id)) {
-        skipped.push({ ruleId: rule.id, date, reason: "id_conflict" });
+        skip(rule.id, date, "id_conflict");
         continue;
       }
       if (deleted.has(id)) {
-        skipped.push({ ruleId: rule.id, date, reason: "deleted" });
+        skip(rule.id, date, "deleted");
         continue;
       }
 
       const template = rule.template;
       const accounts = template.kind === "transfer" ? [template.fromAccountId, template.toAccountId] : [template.accountId];
       if (accounts.some((accountId) => index.accounts.get(accountId)?.active === false)) {
-        skipped.push({ ruleId: rule.id, date, reason: "archived_account" });
+        skip(rule.id, date, "archived_account");
         continue;
       }
       const categoryId = template.kind === "transfer" ? undefined : template.categoryId;
       if (categoryId !== undefined && index.categories.get(categoryId)?.active === false) {
-        skipped.push({ ruleId: rule.id, date, reason: "archived_category" });
+        skip(rule.id, date, "archived_category");
         continue;
       }
       if (written === maxPerRule || created.length === maxTotal) {
-        skipped.push({ ruleId: rule.id, date, reason: "limit" });
+        skip(rule.id, date, "limit");
         watermark = addDays(date, -1);
         break;
       }
@@ -269,7 +324,7 @@ export function materializeRecurring(
         if (currency !== index.baseCurrency) {
           const value = snapshotFor(template.amountMinor, currency, index.baseCurrency, rates, date);
           if (value === null) {
-            skipped.push({ ruleId: rule.id, date, reason: "missing_rate" });
+            skip(rule.id, date, "missing_rate");
             watermark = addDays(date, -1);
             break;
           }
@@ -288,6 +343,7 @@ export function materializeRecurring(
       created.push(occurrence);
       transactionIds.add(id);
       written += 1;
+      open = false;
     }
 
     // The watermark only ever moves forward, and only when it moves: an unchanged rule is not

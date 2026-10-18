@@ -8,11 +8,14 @@ import {
   calculateMemberExpenses,
   calculateTagExpenses,
   currencyExponent,
+  addDays,
   HOUSEHOLD_ID,
   materializeRecurring,
+  occurrenceDates,
   recurringOccurrenceId,
   type BudgetState,
   type ExchangeRate,
+  type RecurringMaterialization,
 } from "../src/index.js";
 
 /**
@@ -24,6 +27,18 @@ const expected = G003.expected;
 
 function initial(): BudgetState {
   return toDomainBudgetState(G003);
+}
+
+/**
+ * The days a materialisation passed over, one entry per day — the shape the contract lists them in.
+ * The domain reports runs of days (`from`…`to`, second review of wave 1); a run is every day of its
+ * rule from its first to its last, so it is spelled out here by the rule's own calendar.
+ */
+function skippedDays(state: BudgetState, result: RecurringMaterialization) {
+  return result.skipped.flatMap((run) => {
+    const rule = (state.recurringRules ?? []).find((item) => item.id === run.ruleId)!;
+    return occurrenceDates(rule, addDays(run.from, -1), run.to).map((date) => ({ recurringRuleId: run.ruleId, date, reason: run.reason }));
+  });
 }
 
 function materialized(): BudgetState {
@@ -53,8 +68,7 @@ describe("G-003 ledger fixture", () => {
     for (const occurrence of expected.materialization.occurrences) {
       expect(occurrence.id).toBe(recurringOccurrenceId(occurrence.recurringRuleId, occurrence.occurredOn));
     }
-    expect(result.skipped.map((item) => ({ recurringRuleId: item.ruleId, date: item.date, reason: item.reason })))
-      .toEqual(expected.materialization.skipped);
+    expect(skippedDays(initial(), result)).toEqual(expected.materialization.skipped);
     expect((result.state.recurringRules ?? []).map((rule) => ({ recurringRuleId: rule.id, date: rule.materializedThrough })))
       .toEqual(expected.materialization.materializedThrough);
     // Every occurrence is the template's operation: posted, on the rule's account and category, labelled.

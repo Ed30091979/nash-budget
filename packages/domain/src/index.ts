@@ -73,6 +73,7 @@ export { carriedId, documentIds, HOUSEHOLD_ID, isUuid, recurringOccurrenceId } f
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
 export {
   archiveRecurringRule,
+  DEFAULT_MAX_CONSIDERED_DAYS_PER_CALL,
   DEFAULT_MAX_OCCURRENCES_PER_CALL,
   DEFAULT_MAX_OCCURRENCES_PER_RULE,
   deleteRecurringRule,
