@@ -102,6 +102,35 @@ function indexById<T extends { readonly id: StableId }>(
   return result;
 }
 
+/**
+ * The collections of a state indexed by identifier, each checked for a repeated id on the way.
+ *
+ * Every calculation used to build these maps itself, three times over, and three copies of one
+ * index are three places a new collection can be forgotten in. Only indexing happens here, in the
+ * order the copies indexed: what each calculation then validates is its own business, so that the
+ * set of errors each one raises stays exactly what it was — participants are still checked only by
+ * the split by participant, and large payments and schedules only by the annual plan.
+ */
+export interface StateIndex {
+  readonly accounts: ReadonlyMap<StableId, Account>;
+  readonly categories: ReadonlyMap<StableId, Category>;
+  readonly budgets: ReadonlyMap<StableId, Budget>;
+  readonly goals: ReadonlyMap<StableId, Goal>;
+  readonly transactions: ReadonlyMap<StableId, Transaction>;
+}
+
+export function indexState(state: BudgetState): StateIndex {
+  // Object literals evaluate in source order, so a duplicate is reported for the same collection
+  // the inlined copies reported it for.
+  return {
+    accounts: indexById(state.accounts, "accounts"),
+    categories: indexById(state.categories, "categories"),
+    budgets: indexById(state.budgets, "budgets"),
+    goals: indexById(state.goals, "goals"),
+    transactions: indexById(state.transactions, "transactions"),
+  };
+}
+
 function createIdRecord<Key extends StableId, Value>(): Record<Key, Value> {
   return Object.create(null) as Record<Key, Value>;
 }
@@ -238,13 +267,8 @@ function validateBudget(
   return availableByCategory;
 }
 
-function validateTransactionReferences(
-  transaction: Transaction,
-  accounts: ReadonlyMap<StableId, Account>,
-  categories: ReadonlyMap<StableId, Category>,
-  goals: ReadonlyMap<StableId, Goal>,
-  transactions: ReadonlyMap<StableId, Transaction>,
-): void {
+function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
+  const { accounts, categories, goals, transactions } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
   assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
@@ -324,18 +348,14 @@ export function calculateBudget(
   state: BudgetState,
   budgetId: string = state.activeBudgetId,
 ): BudgetMetrics {
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
+  const index = indexState(state);
 
   for (const account of state.accounts) validateAccount(account);
   for (const category of state.categories) validateCategory(category);
-  for (const goal of state.goals) validateGoal(goal, accounts);
+  for (const goal of state.goals) validateGoal(goal, index.accounts);
 
-  const budget = requireEntity(budgets, budgetId, "calculateBudget");
-  const availableByCategory = validateBudget(budget, categories);
+  const budget = requireEntity(index.budgets, budgetId, "calculateBudget");
+  const availableByCategory = validateBudget(budget, index.categories);
 
   const accountBalances = new Map<AccountId, MinorUnits>();
   for (const account of state.accounts) {
@@ -370,7 +390,7 @@ export function calculateBudget(
   };
 
   for (const transaction of state.transactions) {
-    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+    validateTransactionReferences(transaction, index);
     if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
 
     switch (transaction.kind) {
@@ -533,12 +553,8 @@ export function calculateMemberExpenses(
   state: BudgetState,
   budgetId: string = state.activeBudgetId,
 ): MemberExpenseBreakdown {
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
-  const budget = requireEntity(budgets, budgetId, "calculateMemberExpenses");
+  const index = indexState(state);
+  const budget = requireEntity(index.budgets, budgetId, "calculateMemberExpenses");
   assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
   assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
 
@@ -562,7 +578,7 @@ export function calculateMemberExpenses(
   let refundsMinor = 0;
 
   for (const transaction of state.transactions) {
-    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+    validateTransactionReferences(transaction, index);
     // The label is a reference like any other and is checked here, before the status and
     // window filter, so no dangling one can hide in an operation this budget does not count.
     const memberId = transaction.memberId;
@@ -717,20 +733,17 @@ export function calculateAnnualPlan(
     throw new Error("planning horizon exceeds supported calendar range");
   }
 
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
+  const index = indexState(state);
+  const { accounts, categories, goals } = index;
   const annualCommitments = indexById(state.annualCommitments ?? [], "annualCommitments");
   const scheduledExpenses = indexById(state.scheduledExpenses ?? [], "scheduledExpenses");
-  const budget = requireEntity(budgets, state.activeBudgetId, "calculateAnnualPlan");
+  const budget = requireEntity(index.budgets, state.activeBudgetId, "calculateAnnualPlan");
   for (const account of accounts.values()) validateAccount(account);
   for (const category of categories.values()) validateCategory(category);
   const flexibleByCategory = validateBudget(budget, categories);
 
   for (const goal of goals.values()) validateGoal(goal, accounts);
-  for (const transaction of transactions.values()) validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+  for (const transaction of index.transactions.values()) validateTransactionReferences(transaction, index);
 
   for (const item of annualCommitments.values()) {
     validateAnnualCommitment(item, accounts, categories);

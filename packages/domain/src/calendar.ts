@@ -85,3 +85,56 @@ export function shiftDate(date: LocalDate, monthOffset: number, label = "date"):
   const day = Math.min(Number(date.slice(8, 10)), daysInMonth(month, label));
   return `${month}-${String(day).padStart(2, "0")}`;
 }
+
+const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Day index of 0000-01-01 and of 9999-12-31: the range the four-digit calendar can name. */
+const MIN_DAY_INDEX = -719_528;
+const MAX_DAY_INDEX = 2_932_896;
+
+/**
+ * Count of days since 1970-01-01, so that day arithmetic is integer arithmetic.
+ *
+ * Days from civil, the proleptic Gregorian count — the same arithmetic a `Date` performs, done
+ * here without one, for the reason the top of this file gives: a `Date` carries a time zone, and a
+ * payment due on the 31st must not move to the 30th because the device is in Vladivostok.
+ */
+export function dayIndex(date: LocalDate, label = "date"): number {
+  if (!LOCAL_DATE_PATTERN.test(date)) throw new Error(`${label} must use YYYY-MM-DD`);
+  const month = monthOfDate(date);
+  const day = Number(date.slice(8, 10));
+  if (day < 1 || day > daysInMonth(month, label)) throw new Error(`${label} must be a valid calendar date`);
+  const calendarMonth = Number(date.slice(5, 7));
+  // The year is counted from March, so the leap day is the last day of the year it belongs to.
+  const year = Number(date.slice(0, 4)) - (calendarMonth <= 2 ? 1 : 0);
+  const era = Math.floor(year / 400);
+  const yearOfEra = year - era * 400;
+  const dayOfYear = Math.floor((153 * (calendarMonth + (calendarMonth > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra = yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
+  return era * 146_097 + dayOfEra - 719_468;
+}
+
+/** The date `index` days after 1970-01-01; the inverse of {@link dayIndex}. */
+export function dateFromDayIndex(index: number, label = "date"): LocalDate {
+  if (!Number.isSafeInteger(index) || index < MIN_DAY_INDEX || index > MAX_DAY_INDEX) {
+    throw new Error(`${label} moves outside the supported calendar range`);
+  }
+  const shifted = index + 719_468;
+  const era = Math.floor(shifted / 146_097);
+  const dayOfEra = shifted - era * 146_097;
+  const yearOfEra = Math.floor(
+    (dayOfEra - Math.floor(dayOfEra / 1_460) + Math.floor(dayOfEra / 36_524) - Math.floor(dayOfEra / 146_096)) / 365,
+  );
+  const dayOfYear = dayOfEra - (365 * yearOfEra + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100));
+  const monthFromMarch = Math.floor((5 * dayOfYear + 2) / 153);
+  const day = dayOfYear - Math.floor((153 * monthFromMarch + 2) / 5) + 1;
+  const calendarMonth = monthFromMarch < 10 ? monthFromMarch + 3 : monthFromMarch - 9;
+  const year = yearOfEra + era * 400 + (calendarMonth <= 2 ? 1 : 0);
+  return `${String(year).padStart(4, "0")}-${String(calendarMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** The date `days` days later; a negative count moves back. */
+export function addDays(date: LocalDate, days: number, label = "date"): LocalDate {
+  if (!Number.isSafeInteger(days)) throw new Error(`${label} offset must be an integer number of days`);
+  return dateFromDayIndex(dayIndex(date, label) + days, label);
+}

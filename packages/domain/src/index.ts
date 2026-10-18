@@ -19,6 +19,9 @@ export {
 } from "./categories.js";
 export type { CategoryCreation, CategoryDraft, CategoryErrorCode } from "./categories.js";
 export {
+  addDays,
+  dateFromDayIndex,
+  dayIndex,
   daysInMonth,
   MAX_LOCAL_MONTH_INDEX,
   monthEndDate,
@@ -36,15 +39,17 @@ export {
   formatMinor,
   normalizeScheduledDueDate,
 } from "./calculate.js";
+export { carriedId, documentIds } from "./identity.js";
 export {
   budgetMonth,
   carriedBudgetId,
   carriedBudgetLineId,
-  carriedId,
   carryBudgetForward,
   findBudgetForMonth,
   monthAfterPeriod,
 } from "./rollover.js";
 export type { CarriedBudget } from "./rollover.js";
 export { makePlanningSeed, makeSeedBudget, PLANNING_IDS, SEED_IDS } from "./seed.js";
+export { normalizeLabel, TextValidationError } from "./text.js";
+export type { TextErrorCode } from "./text.js";
 export type * from "./types.js";
