@@ -81,6 +81,18 @@ describe("createTag", () => {
     expect(tag.active).toBe(true);
   });
 
+  it("refuses a name nobody can read: no letter or digit, a leading mark, a braille blank", () => {
+    // Security review L1: the input rule of a name, on top of the text rule of every label.
+    const seed = makeSeedBudget();
+    for (const name of ["!!!", "…", "—", "\u0301Дом", "Дом\u2800", "\u2800", "\ufffc", "Дом\ufffc"]) {
+      expect(code(() => createTag(seed, name, sequentialIds(HOLIDAY))), JSON.stringify(name)).toBe("name_unreadable");
+    }
+    expect(() => createTag(seed, "!!!", sequentialIds(HOLIDAY))).toThrow(/нужны буквы или цифры/);
+    for (const name of ["2027", "Дом", "Отпуск 2027", "Дом!"]) {
+      expect(createTag(seed, name, sequentialIds(HOLIDAY)).tag.name, name).toBe(name);
+    }
+  });
+
   it("refuses the tag past the limit a backup holds a document to, archived tags counted", () => {
     const seed = makeSeedBudget();
     const full: BudgetState = {
@@ -120,29 +132,35 @@ describe("archiveTag", () => {
 });
 
 describe("deleteTag", () => {
-  it("takes the tag off every operation in the same transition", () => {
+  // Security review L3 (orchestrator decision): deleting a tag that operations carry used to take it
+  // off every one of them, which through the journal is one whole-entity update per operation and
+  // can silently undo a concurrent edit of that operation elsewhere. Such a tag is archived instead.
+  it("refuses a tag an operation carries and points to the archive, moving nothing", () => {
     const state = taggedSeed();
-    const withoutHoliday = deleteTag(state, HOLIDAY);
-    const food = withoutHoliday.transactions.find((item) => item.id === SEED_IDS.transactions.food);
+    expect(code(() => deleteTag(state, HOLIDAY))).toBe("tag_in_use");
+    expect(() => deleteTag(state, HOME)).toThrow(/Её можно убрать в архив/);
+    // An archived tag is still on its operations, so it is still in use.
+    expect(code(() => deleteTag(archiveTag(state, HOLIDAY), HOLIDAY))).toBe("tag_in_use");
+  });
 
-    expect(withoutHoliday.tags).toEqual([{ id: HOME, name: "Дом", active: true }]);
-    expect(food?.tagIds).toEqual([HOME]);
-    expect(() => calculateBudget(withoutHoliday)).not.toThrow();
+  it("deletes a tag no operation carries, and touches nothing else", () => {
+    const state = taggedSeed();
+    const { state: withSpare, tag } = createTag(state, "Ремонт", sequentialIds("8a000000-0000-4000-8000-0000000000a3"));
+    const deleted = deleteTag(withSpare, tag.id);
 
-    // The last tag gone, the field goes with it rather than staying as an empty list.
-    const untagged = deleteTag(withoutHoliday, HOME);
-    const plain = untagged.transactions.find((item) => item.id === SEED_IDS.transactions.food);
-    expect(plain).toBeDefined();
-    expect(Object.hasOwn(plain!, "tagIds")).toBe(false);
-    expect(untagged.transactions).toEqual(makeSeedBudget().transactions);
+    expect(deleted.tags).toEqual(state.tags);
+    expect(deleted.transactions).toBe(withSpare.transactions);
+    expect(() => calculateBudget(deleted)).not.toThrow();
   });
 
   it("moves no figure of any budget, plan or split", () => {
-    const state = taggedSeed();
-    const deleted = deleteTag(deleteTag(state, HOLIDAY), HOME);
-    expect(calculateBudget(deleted)).toEqual(calculateBudget(state));
-    expect(calculateAnnualPlan(deleted, "2026-07", 12)).toEqual(calculateAnnualPlan(state, "2026-07", 12));
-    expect(calculateMemberExpenses(deleted)).toEqual(calculateMemberExpenses(state));
+    const seed = makeSeedBudget();
+    const unused: BudgetState = { ...seed, tags: taggedSeed().tags! };
+    const deleted = deleteTag(deleteTag(unused, HOLIDAY), HOME);
+    expect(deleted.tags).toEqual([]);
+    expect(calculateBudget(deleted)).toEqual(calculateBudget(unused));
+    expect(calculateAnnualPlan(deleted, "2026-07", 12)).toEqual(calculateAnnualPlan(unused, "2026-07", 12));
+    expect(calculateMemberExpenses(deleted)).toEqual(calculateMemberExpenses(unused));
   });
 
   it("refuses a tag the state does not hold", () => {

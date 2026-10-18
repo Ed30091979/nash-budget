@@ -193,6 +193,17 @@ export interface SyncEngineOptions {
   readonly inheritedGaps?: readonly number[];
   /** This device's clock, for the once-in-ten-minutes floor of 3.6. Injected so tests can move it. */
   readonly now?: () => number;
+  /**
+   * The application's own gate over a materialised state, asked before the state replaces the
+   * document. `false` is treated exactly like a snapshot that is not ready: the document keeps the
+   * last state that passed, and the journal is saved so a later operation can repair it.
+   *
+   * The journal's integrity gate guarantees a state the domain accepts; the application may demand
+   * more of a state it stores — a UUID for every identifier, for one — and a state the journal calls
+   * ready but the application refuses would otherwise be written to the document and then refused
+   * on every load and every write of every device. Absent, every ready state is accepted, as before.
+   */
+  readonly acceptsState?: (state: SyncedBudgetState) => boolean;
 }
 
 /** What one pass over the queue moved to the epoch in hand, and what it could not move. */
@@ -385,6 +396,7 @@ export class SyncEngine {
   private readonly skipped: readonly string[];
   private readonly inheritedGaps: readonly number[];
   private readonly now: () => number;
+  private readonly acceptsState: (state: SyncedBudgetState) => boolean;
 
   constructor(options: SyncEngineOptions) {
     this.repository = options.repository;
@@ -406,6 +418,7 @@ export class SyncEngine {
     this.skipped = [...new Set(options.skipped ?? [])].sort();
     this.inheritedGaps = [...new Set(options.inheritedGaps ?? [])].sort((a, b) => a - b);
     this.now = options.now ?? (() => Date.now());
+    this.acceptsState = options.acceptsState ?? (() => true);
   }
 
   private async readJournal(): Promise<JournalSnapshot> {
@@ -685,9 +698,10 @@ export class SyncEngine {
    * One write of everything a step produced.
    *
    * The materialised state is only handed to the document when the integrity gate says it can be
-   * shown. When it cannot — no active budget, or one the journal does not hold — the document
-   * keeps the last state that could, exactly as decision 19 asks, and the journal is still saved
-   * so the missing operation repairs it when it arrives.
+   * shown and the application's own gate accepts it. When it cannot — no active budget, one the
+   * journal does not hold, or a state the application refuses to store — the document keeps the
+   * last state that could, exactly as decision 19 asks, and the journal is still saved so the
+   * missing operation repairs it when it arrives.
    */
   private async commit(
     document: { readonly value: SyncedBudgetState; readonly revision: string } | null,
@@ -695,8 +709,8 @@ export class SyncEngine {
     outbox: readonly OutboxAppend[],
     syncState: readonly { readonly key: string; readonly value: unknown }[],
   ): Promise<SaveIfRevisionResult<SyncedBudgetState>> {
-    const value =
-      snapshot.integrity.ready || document === null ? snapshot.state : document.value;
+    const showable = snapshot.integrity.ready && this.acceptsState(snapshot.state);
+    const value = showable || document === null ? snapshot.state : document.value;
     return this.repository.commitWithSync({
       expectedRevision: document?.revision ?? null,
       value,

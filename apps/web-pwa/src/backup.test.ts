@@ -818,7 +818,7 @@ describe("метки, заметки и оформление в резервно
     ["правило не UUID", "transactions", { recurringRuleId: "rule-1" }, /recurringRuleId: некорректный UUID/u],
     ["название метки с пробелом", "tags", { name: "Дом " }, /tags\[0\]\.name: название метки/u],
     ["название метки длиннее 40", "tags", { name: "я".repeat(41) }, /tags\[0\]\.name: строка длиннее 40/u],
-    ["название метки из двух алфавитов", "tags", { name: "Дом Home" }, /tags\[0\]\.name: название метки/u],
+    ["название метки с мягким переносом", "tags", { name: "Д\u00adом" }, /tags\[0\]\.name: название метки/u],
     ["признак метки строкой", "tags", { active: "yes" }, /tags\[0\]\.active: ожидалось логическое значение/u],
     ["метка не UUID в списке меток", "tags", { id: "tag-1" }, /tags\[0\]\.id: некорректный UUID/u],
     ["иконка счёта цветом", "accounts", { icon: "#00ff00" }, /accounts\[0\]\.icon: недопустимый ключ оформления/u],
@@ -841,6 +841,17 @@ describe("метки, заметки и оформление в резервно
     await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(expected);
     expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("принимает хранимую метку, которую правило ввода отвергло бы: алфавиты и новые буквы — дело ввода", () => {
+    // Ревью безопасности HIGH-1: копия держится правила хранения, которое не спрашивает движок о
+    // Unicode, — иначе копия, сделанная вчера, после обновления браузера перестала бы читаться.
+    for (const name of ["Дом Home", "Дача\ua7cd", "\u0378"]) {
+      const state = mutate(withLabels(makePlanningSeed()), "tags", { name });
+      expect(() => prepareBudgetState(state), JSON.stringify(name)).not.toThrow();
+    }
+    const noted = mutate(withLabels(makePlanningSeed()), "transactions", { note: "кофе \u{16d67}\u{16d67}" });
+    expect(() => prepareBudgetState(noted)).not.toThrow();
   });
 
   it("ограничивает число участников и меток в файле, но не в документе, который приложение уже держит", async () => {

@@ -1,22 +1,22 @@
 import { documentIds } from "./identity.js";
 import { COLLECTION_LIMITS } from "./limits.js";
 import {
+  isReadableName,
   labelKey,
   normalizeLabel,
   TAG_NAME_MAX_LENGTH,
   TextValidationError,
   type TextErrorCode,
 } from "./text.js";
-import type { BudgetState, Tag, TagId, Transaction } from "./types.js";
+import type { BudgetState, Tag, TagId } from "./types.js";
 
 /**
  * Tags: labels a family puts on operations, and the transitions that keep every label resolvable.
  *
  * A tag is attribution in the sense a participant is (`Member`): no figure of the budget reads it.
  * What this module guarantees is the one thing the domain is strict about — every `tagIds` entry
- * of every operation names a tag the state holds — and it guarantees it by construction: deleting a
- * tag takes it off every operation in the same transition, so there is never a state in between
- * that `calculateBudget` would refuse.
+ * of every operation names a tag the state holds — and it guarantees it by refusal: a tag that is
+ * on an operation is archived, never deleted, so there is never a state `calculateBudget` refuses.
  */
 
 export type TagErrorCode =
@@ -24,11 +24,13 @@ export type TagErrorCode =
   | "name_too_long"
   | "name_forbidden_characters"
   | "name_mixed_scripts"
+  | "name_unreadable"
   | "duplicate_name"
   | "limit_reached"
   | "id_required"
   | "duplicate_id"
-  | "unknown_tag";
+  | "unknown_tag"
+  | "tag_in_use";
 
 /** Refusal a person is meant to read: `code` for the caller, `message` for the screen. */
 export class TagValidationError extends Error {
@@ -54,15 +56,22 @@ const NAME_REFUSALS: Readonly<Record<TextErrorCode, readonly [TagErrorCode, stri
   mixed_scripts: ["name_mixed_scripts", "Не смешивайте похожие символы разных алфавитов."],
 };
 
-/** Trims and normalises a tag name the way it will be stored, or refuses it. */
+/**
+ * Trims and normalises a tag name the way it will be stored, or refuses it: the text rule of every
+ * label, and a name someone can read — a letter or a digit, no combining mark first, no blank that
+ * only looks like text (`isReadableName`).
+ */
 export function normalizeTagName(value: string): string {
+  let normalized: string;
   try {
-    return normalizeLabel(value, TAG_NAME_MAX_LENGTH);
+    normalized = normalizeLabel(value, TAG_NAME_MAX_LENGTH);
   } catch (error) {
     if (!(error instanceof TextValidationError)) throw error;
     const [code, message] = NAME_REFUSALS[error.code];
     return fail(code, "name", message);
   }
+  if (!isReadableName(normalized)) fail("name_unreadable", "name", "В названии метки нужны буквы или цифры.");
+  return normalized;
 }
 
 /**
@@ -147,24 +156,20 @@ export function archiveTag(state: BudgetState, id: TagId): BudgetState {
 }
 
 /**
- * Deletes a tag and takes it off every operation in the same transition.
+ * Deletes a tag no operation carries, and refuses one that is on any operation: that one is
+ * archived instead ({@link archiveTag}).
  *
- * One transition and not two, because the state between them — an operation naming a tag that
- * no longer exists — is one the domain refuses. An operation left with no tags loses the field
- * rather than keeping an empty list. Only labels change: no amount, date or account moves, so no
- * figure of any budget does either.
+ * Deleting a tag used to take it off every operation in the same transition. On one device that is
+ * one tidy change; through the journal it is one whole-entity update per tagged operation, and the
+ * journal settles each entity by last writer wins — so a family member correcting the amount of one
+ * of those operations on another device at the same moment could have the correction silently
+ * replaced by the copy that only lost its tag. A refusal moves no operation at all, and the archive
+ * keeps every history labelled.
  */
 export function deleteTag(state: BudgetState, id: TagId): BudgetState {
   requireTag(state, id);
-  return {
-    ...state,
-    tags: (state.tags ?? []).filter((item) => item.id !== id),
-    transactions: state.transactions.map((transaction): Transaction => {
-      const tagIds = transaction.tagIds;
-      if (tagIds === undefined || !tagIds.includes(id)) return transaction;
-      const { tagIds: _removed, ...untagged } = transaction;
-      const remaining = tagIds.filter((tagId) => tagId !== id);
-      return remaining.length === 0 ? untagged : { ...untagged, tagIds: remaining };
-    }),
-  };
+  if (state.transactions.some((transaction) => transaction.tagIds?.includes(id) === true)) {
+    fail("tag_in_use", "id", "Метка стоит на операциях. Её можно убрать в архив: на операциях она останется.");
+  }
+  return { ...state, tags: (state.tags ?? []).filter((item) => item.id !== id) };
 }

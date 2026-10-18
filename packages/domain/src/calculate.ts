@@ -50,10 +50,9 @@ import {
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
 import { MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
+import { isStorableLabel, isStorableNote } from "./stored-text.js";
 import {
   isDisplayKey,
-  isNormalizedLabel,
-  isNormalizedNote,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
@@ -225,9 +224,13 @@ function validateExchangeRate(rate: ExchangeRate): void {
   assertRateValue(rate.rate, `exchange rate ${rate.id} rate`);
 }
 
+/**
+ * Stored text is held to the stored-text rule, which asks the engine nothing (stored-text.ts): a
+ * label the input rule accepted on one engine must not become a state this engine refuses.
+ */
 function validateTag(tag: Tag): void {
-  if (!isNormalizedLabel(tag.name, TAG_NAME_MAX_LENGTH)) {
-    throw new Error(`tag ${tag.id} name must be a normalized label of at most ${TAG_NAME_MAX_LENGTH} characters`);
+  if (!isStorableLabel(tag.name, TAG_NAME_MAX_LENGTH)) {
+    throw new Error(`tag ${tag.id} name must be stored text of at most ${TAG_NAME_MAX_LENGTH} characters`);
   }
   if (typeof tag.active !== "boolean") {
     throw new Error(`tag ${tag.id} active must be a boolean`);
@@ -421,8 +424,8 @@ function validateBudget(
  */
 function validateTransactionLabels(transaction: Transaction, index: StateIndex): void {
   const id = transaction.id;
-  if (transaction.note !== undefined && !isNormalizedNote(transaction.note)) {
-    throw new Error(`transaction ${id} note must be normalized text of at most ${NOTE_MAX_LENGTH} characters`);
+  if (transaction.note !== undefined && !isStorableNote(transaction.note)) {
+    throw new Error(`transaction ${id} note must be one trimmed line of stored text of at most ${NOTE_MAX_LENGTH} characters`);
   }
   const tagIds: unknown = transaction.tagIds;
   if (tagIds !== undefined) {

@@ -15,10 +15,11 @@ import {
   parseOperation,
   parseUuid,
   SyncProtocolError,
+  type EntityKind,
   type Operation,
   type TransactionFields,
 } from "../src/index.js";
-import { DEVICE_A, opUuid, SAMPLE_FIELDS } from "./samples.js";
+import { DEVICE_A, opUuid, SAMPLE_FIELDS, SAMPLE_TARGET_IDS, sampleTargetId, tagUuid, testUuid } from "./samples.js";
 
 const ACCOUNT_OPERATION = {
   opId: opUuid(1),
@@ -75,6 +76,8 @@ function incomeCategoryOf(operation: Operation): string | null {
 
 describe("parseOperation", () => {
   it("accepts a create, an update and a delete for every entity kind", () => {
+    // Each kind under its own sample target: the kinds of wave 1 are identified by UUIDs (plan 4.5,
+    // SAMPLE_TARGET_IDS; security review MEDIUM-1).
     for (const entity of ENTITY_KINDS) {
       for (const action of ["create", "update"] as const) {
         const operation = parseOperation({
@@ -84,7 +87,7 @@ describe("parseOperation", () => {
           memberId: "member-1",
           entity,
           action,
-          targetId: `${entity}-1`,
+          targetId: SAMPLE_TARGET_IDS[entity],
           fields: SAMPLE_FIELDS[entity],
         });
         expect(operation.action).toBe(action);
@@ -96,7 +99,7 @@ describe("parseOperation", () => {
           memberId: "member-1",
           entity,
           action,
-          targetId: `${entity}-1`,
+          targetId: SAMPLE_TARGET_IDS[entity],
           fields: SAMPLE_FIELDS[entity],
         });
       }
@@ -106,7 +109,7 @@ describe("parseOperation", () => {
         lamport: 8,
         entity,
         action: "delete",
-        targetId: `${entity}-1`,
+        targetId: SAMPLE_TARGET_IDS[entity],
       });
       expect(removal).toEqual({
         opId: opUuid(2),
@@ -114,7 +117,7 @@ describe("parseOperation", () => {
         lamport: 8,
         entity,
         action: "delete",
-        targetId: `${entity}-1`,
+        targetId: SAMPLE_TARGET_IDS[entity],
       });
     }
   });
@@ -641,11 +644,12 @@ describe("display fields, notes and tags", () => {
   const TAGGED_EXPENSE = {
     ...UNLABELLED_EXPENSE,
     note: "Пятёрочка у дома",
-    tagIds: ["tag-home", "tag-holiday"],
+    tagIds: [tagUuid(1), tagUuid(2)],
   } satisfies TransactionFields;
+  const RULE_ID = testUuid(0x7b0, 1);
 
-  function write(entity: string, fields: unknown, lamport = 9): unknown {
-    return { opId: opUuid(lamport), deviceId: DEVICE_A, lamport, entity, action: "create", targetId: `${entity}-1`, fields };
+  function write(entity: EntityKind, fields: unknown, lamport = 9): unknown {
+    return { opId: opUuid(lamport), deviceId: DEVICE_A, lamport, entity, action: "create", targetId: sampleTargetId(entity), fields };
   }
 
   function fieldsOf(operation: Operation): unknown {
@@ -653,12 +657,12 @@ describe("display fields, notes and tags", () => {
   }
 
   it("carries every new field through a round trip, and invents none", () => {
-    const written: readonly (readonly [string, Record<string, unknown>])[] = [
+    const written: readonly (readonly [EntityKind, Record<string, unknown>])[] = [
       ["account", { ...SAMPLE_FIELDS.account, sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false }],
       ["category", { ...SAMPLE_FIELDS.category, icon: "shopping-basket", color: "mint" }],
       ["goal", { ...SAMPLE_FIELDS.goal, deadline: "2027-06-01", icon: "plane" }],
-      ["transaction", { ...TAGGED_EXPENSE, recurringRuleId: "rule-water" }],
-      ["transaction", { ...CATEGORISED_INCOME, memberId: "member-petr", note: "Аванс за август", tagIds: ["tag-old"] }],
+      ["transaction", { ...TAGGED_EXPENSE, recurringRuleId: RULE_ID }],
+      ["transaction", { ...CATEGORISED_INCOME, memberId: "member-petr", note: "Аванс за август", tagIds: [tagUuid(3)] }],
       ["tag", { name: "Отпуск", active: false }],
     ];
     for (const [entity, fields] of written) {
@@ -685,7 +689,7 @@ describe("display fields, notes and tags", () => {
   });
 
   it("puts the labels on every kind of transaction and keeps the lists strict otherwise", () => {
-    const base = { occurredOn: "2026-07-09", status: "posted", amountMinor: 400_000, note: "Заметка", tagIds: ["tag-1"], recurringRuleId: "rule-1" };
+    const base = { occurredOn: "2026-07-09", status: "posted", amountMinor: 400_000, note: "Заметка", tagIds: [tagUuid(1)], recurringRuleId: RULE_ID };
     const kinds = [
       { ...base, kind: "income", accountId: "account-1" },
       { ...base, kind: "expense", accountId: "account-1", categoryId: "category-1" },
@@ -711,14 +715,17 @@ describe("display fields, notes and tags", () => {
     ["a note with a bidi override", "transaction", { ...UNLABELLED_EXPENSE, note: "Пятёрочка\u202e" }, /transaction note must be one trimmed line/],
     ["a note longer than 500", "transaction", { ...UNLABELLED_EXPENSE, note: "я".repeat(501) }, /transaction note must be at most 500 characters/],
     ["an empty list of tags", "transaction", { ...UNLABELLED_EXPENSE, tagIds: [] }, /transaction tagIds must list from 1 to 10 tags/],
-    ["eleven tags", "transaction", { ...UNLABELLED_EXPENSE, tagIds: Array.from({ length: 11 }, (_, index) => `tag-${index}`) }, /transaction tagIds must list from 1 to 10 tags/],
-    ["a repeated tag", "transaction", { ...UNLABELLED_EXPENSE, tagIds: ["tag-1", "tag-1"] }, /transaction tagIds must not repeat a tag/],
+    ["eleven tags", "transaction", { ...UNLABELLED_EXPENSE, tagIds: Array.from({ length: 11 }, (_, index) => tagUuid(index)) }, /transaction tagIds must list from 1 to 10 tags/],
+    ["a repeated tag", "transaction", { ...UNLABELLED_EXPENSE, tagIds: [tagUuid(1), tagUuid(1)] }, /transaction tagIds must not repeat a tag/],
+    ["a tag that is not a UUID", "transaction", { ...UNLABELLED_EXPENSE, tagIds: ["tag-1"] }, /transaction tagIds\[0\] must be a UUID/],
+    ["a recurring rule that is not a UUID", "transaction", { ...UNLABELLED_EXPENSE, recurringRuleId: "rule-1" }, /transaction recurringRuleId must be a UUID/],
     ["a tag that is not a string", "transaction", { ...UNLABELLED_EXPENSE, tagIds: [7] }, /transaction tagIds\[0\] must be a string/],
     ["a blank tag", "transaction", { ...UNLABELLED_EXPENSE, tagIds: ["  "] }, /transaction tagIds\[0\] must not be empty/],
     ["tags that are not a list", "transaction", { ...UNLABELLED_EXPENSE, tagIds: "tag-1" }, /transaction tagIds must list from 1 to 10 tags/],
     ["a blank recurring rule", "transaction", { ...UNLABELLED_EXPENSE, recurringRuleId: " " }, /transaction recurringRuleId must not be empty/],
-    ["a tag name with a trailing space", "tag", { name: "Отпуск ", active: true }, /tag name must be trimmed, normalized text/],
-    ["a tag name in two alphabets", "tag", { name: "Отпуск Paris", active: true }, /tag name must be trimmed, normalized text/],
+    ["a tag name with a trailing space", "tag", { name: "Отпуск ", active: true }, /tag name must be trimmed text without hidden characters/],
+    ["a tag name with a soft hyphen", "tag", { name: "От\u00adпуск", active: true }, /tag name must be trimmed text without hidden characters/],
+    ["a tag name with a zero-width space", "tag", { name: "От\u200bпуск", active: true }, /tag name must not contain control or formatting characters/],
     ["a tag name longer than 40", "tag", { name: "я".repeat(41), active: true }, /tag name must be at most 40 characters/],
     ["a tag without a flag", "tag", { name: "Отпуск" }, /tag fields is missing field active/],
     ["a colour for an icon", "account", { ...SAMPLE_FIELDS.account, icon: "#00ff00" }, /account icon must be a design-token key/],
@@ -731,6 +738,28 @@ describe("display fields, notes and tags", () => {
     ["an icon that is a number", "goal", { ...SAMPLE_FIELDS.goal, icon: 7 }, /goal icon must be a design-token key/],
   ] as const)("refuses %s", (_name, entity, fields, message) => {
     expect(() => parseOperation(write(entity, fields))).toThrow(message);
+  });
+
+  it("identifies a tag by a UUID, as the backup gate does", () => {
+    expect(() => parseOperation({ ...(write("tag", { name: "Отпуск", active: true }) as Record<string, unknown>), targetId: "x" }))
+      .toThrow(/operation targetId must be a UUID/);
+    expect(() => parseOperation({ ...(write("tag", { name: "Отпуск", active: true }) as Record<string, unknown>), targetId: "tag-1" }))
+      .toThrow(/operation targetId must be a UUID/);
+    // Upper case too, exactly what the gate accepts: a stricter codec would strand a state the gate let in.
+    expect(() => parseOperation({ ...(write("tag", { name: "Отпуск", active: true }) as Record<string, unknown>), targetId: tagUuid(1).toUpperCase() }))
+      .not.toThrow();
+    expect(() => parseOperation({ opId: opUuid(5), deviceId: DEVICE_A, lamport: 5, entity: "tag", action: "delete", targetId: "x" }))
+      .toThrow(/operation targetId must be a UUID/);
+  });
+
+  it("carries a stored label the input rule would now refuse: the alphabet rule is for typing", () => {
+    // Security review HIGH-1: what a device stored is held to the stored-text rule, which asks the
+    // engine nothing; mixing alphabets and a later Unicode's letters are the input rule's business.
+    for (const name of ["Отпуск Paris", "Дача\ua7cd", "\u0378"]) {
+      expect(fieldsOf(parseOperation(write("tag", { name, active: true }))), JSON.stringify(name)).toEqual({ name, active: true });
+    }
+    const note = "кофе \u{16d67}\u{16d67}";
+    expect(fieldsOf(parseOperation(write("transaction", { ...UNLABELLED_EXPENSE, note })))).toEqual({ ...UNLABELLED_EXPENSE, note });
   });
 
   it("accepts every note normalizeNote stores and every tag name normalizeLabel stores", () => {
@@ -779,10 +808,10 @@ describe("display fields, notes and tags", () => {
       accountId: "a".repeat(128),
       categoryId: "c".repeat(128),
       memberId: "m".repeat(128),
-      recurringRuleId: "r".repeat(128),
+      recurringRuleId: RULE_ID,
       // Three UTF-8 bytes per character, the widest a character of the plane takes.
       note: "中".repeat(500),
-      tagIds: Array.from({ length: 10 }, (_, index) => `${index}`.padEnd(128, "t")),
+      tagIds: Array.from({ length: 10 }, (_, index) => tagUuid(index)),
     };
     const operation = { ...(write("transaction", largest) as Record<string, unknown>), memberId: "w".repeat(128), targetId: "x".repeat(128) };
     const encoded = encodeOperation(parseOperation(operation));

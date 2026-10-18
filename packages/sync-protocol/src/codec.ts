@@ -1,7 +1,8 @@
 import {
   isDisplayKey,
-  isNormalizedLabel,
-  isNormalizedNote,
+  isStorableLabel,
+  isUuid,
+  isStorableNote,
   MAX_LOCAL_DATE,
   MAX_MONEY_MINOR,
   MAX_SORT_ORDER,
@@ -340,42 +341,61 @@ function readLocalDate(record: Record<string, unknown>, key: string, label: stri
 }
 
 /**
- * A name stored the way the domain stores one (`normalizeLabel`): trimmed, NFC, free of hidden
- * characters and written in one alphabet.
+ * A label the domain may store (`isStorableLabel`): trimmed, without a control or a hidden
+ * character, at most `maxLength`.
  *
- * Held to the domain's own predicate rather than to {@link readString} alone, because the domain
- * checks a tag's name on every calculation, and a journal that accepted a name the domain refuses
- * would hand every device of the family a state whose every calculation throws.
+ * Held to the domain's own stored-text predicate rather than to {@link readString} alone, because the
+ * domain checks a tag's name on every calculation, and a journal that accepted a name the domain
+ * refuses would hand every device of the family a state whose every calculation throws. And to the
+ * stored-text rule, not to the rule a person's typing is held to: that one asks the engine about
+ * Unicode, and an entry it accepted on one engine would stop decoding after a browser update — on
+ * every device, for good, because `restoreJournal` refuses a journal with an entry it cannot read.
  */
 function readLabel(record: Record<string, unknown>, key: string, label: string, maxLength: number): string {
   const value = readString(record, key, label);
   if (value.length > maxLength) fail(`${label} must be at most ${maxLength} characters`);
-  if (!isNormalizedLabel(value, maxLength)) {
-    fail(`${label} must be trimmed, normalized text in one alphabet`);
-  }
+  if (!isStorableLabel(value, maxLength)) fail(`${label} must be trimmed text without hidden characters`);
   return value;
 }
 
 /**
- * A note on an operation: one line of up to {@link NOTE_MAX_LENGTH} characters, exactly as the
- * domain's `normalizeNote` stores it.
+ * A note on an operation: one line of up to {@link NOTE_MAX_LENGTH} characters, held to the
+ * domain's `isStorableNote` for the reason {@link readLabel} gives.
  *
- * Longer than any other text the codec carries ({@link MAX_TEXT_LENGTH} is for names), and held to
- * the domain's predicate instead of {@link UNSAFE_TEXT}: the domain's rule is the wider of the two,
- * so whatever a device stored, every other device accepts — and nothing else.
+ * Longer than any other text the codec carries ({@link MAX_TEXT_LENGTH} is for names). The
+ * stored-text rule refuses everything {@link UNSAFE_TEXT} refuses and a little more, and accepts
+ * everything `normalizeNote` produces, so whatever a device stored, every other device accepts.
  */
 function readNote(record: Record<string, unknown>, key: string, label: string): string {
   const value = record[key];
   if (typeof value !== "string") fail(`${label} must be a string`);
   if (value.length > NOTE_MAX_LENGTH) fail(`${label} must be at most ${NOTE_MAX_LENGTH} characters`);
-  if (!isNormalizedNote(value)) fail(`${label} must be one trimmed line of normalized text`);
+  if (!isStorableNote(value)) fail(`${label} must be one trimmed line without hidden characters`);
   return value;
 }
 
 /**
- * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice.
- * An empty list is refused rather than read as "no tags", because no tags is no field; whether
- * each tag exists is the integrity gate's question, not the codec's.
+ * An identifier of an entity kind added in wave 1, or a reference to one: a UUID, as the backup gate
+ * and the domain's census demand of every identifier (`isUuid` in the domain).
+ *
+ * The kinds that existed before carry whatever identifier `readId` accepts, and the gate demands a
+ * UUID of them too; that older gap is not closed here, because the journals of their tests name
+ * entities "account-1". For the new kinds there is no such history, and a journal that accepted a
+ * tag called "x" handed the family a state the app refused on every write.
+ */
+function parseEntityUuid(value: unknown, label: string): string {
+  const id = parseId(value, label);
+  if (!isUuid(id)) fail(`${label} must be a UUID`);
+  return id;
+}
+
+/** Entity kinds whose identifiers are UUIDs on the wire. See {@link parseEntityUuid}. */
+const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag"]);
+
+/**
+ * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice,
+ * each a UUID. An empty list is refused rather than read as "no tags", because no tags is no field;
+ * whether each tag exists is the integrity gate's question, not the codec's.
  */
 function readTagIds(record: Record<string, unknown>, key: string, label: string): string[] {
   const value = record[key];
@@ -384,7 +404,7 @@ function readTagIds(record: Record<string, unknown>, key: string, label: string)
   }
   const ids: string[] = [];
   for (let index = 0; index < value.length; index += 1) {
-    ids.push(parseId(value[index], `${label}[${index}]`));
+    ids.push(parseEntityUuid(value[index], `${label}[${index}]`));
   }
   if (new Set(ids).size !== ids.length) fail(`${label} must not repeat a tag`);
   return ids;
@@ -625,7 +645,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
     ...(record.tagIds === undefined ? {} : { tagIds: readTagIds(record, "tagIds", "transaction tagIds") }),
     ...(record.recurringRuleId === undefined
       ? {}
-      : { recurringRuleId: readId(record, "recurringRuleId", "transaction recurringRuleId") }),
+      : { recurringRuleId: parseEntityUuid(record.recurringRuleId, "transaction recurringRuleId") }),
   };
 
   switch (kind) {
@@ -796,7 +816,9 @@ export function parseOperation(value: unknown): Operation {
     lamport,
     ...(record.memberId === undefined ? {} : { memberId: readId(record, "memberId", "operation memberId") }),
   };
-  const targetId = readId(record, "targetId", "operation targetId");
+  const targetId = UUID_KINDS.has(entity)
+    ? parseEntityUuid(record.targetId, "operation targetId")
+    : readId(record, "targetId", "operation targetId");
 
   if (action === "delete") return sized({ ...header, entity, action, targetId });
   if (action === "activate") {

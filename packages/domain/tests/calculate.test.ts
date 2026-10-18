@@ -1070,7 +1070,7 @@ describe("labels and display fields", () => {
     const seed = makeSeedBudget();
     for (const note of ["", " Пятёрочка", "Пятёрочка\nу дома", "Пятёрочка\u202e", "я".repeat(501)]) {
       const state = withTransaction(seed, (transaction) => ({ ...transaction, note }));
-      expect(() => calculateBudget(state), JSON.stringify(note)).toThrow(/note must be normalized text of at most 500 characters/);
+      expect(() => calculateBudget(state), JSON.stringify(note)).toThrow(/note must be one trimmed line of stored text of at most 500 characters/);
     }
   });
 
@@ -1083,9 +1083,9 @@ describe("labels and display fields", () => {
     const seed = withEverythingLabelled(makeSeedBudget());
     const withTags = (tags: unknown): BudgetState => ({ ...seed, tags } as BudgetState);
     expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: " Отпуск", active: true }])))
-      .toThrow(new RegExp(`tag ${TAG_HOLIDAY} name must be a normalized label`));
+      .toThrow(new RegExp(`tag ${TAG_HOLIDAY} name must be stored text`));
     expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "я".repeat(41), active: true }])))
-      .toThrow(/name must be a normalized label of at most 40 characters/);
+      .toThrow(/name must be stored text of at most 40 characters/);
     expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "Отпуск", active: "yes" }])))
       .toThrow(/active must be a boolean/);
     expect(() => calculateBudget({ ...seed, tags: [...(seed.tags ?? []), seed.tags![0]!] }))

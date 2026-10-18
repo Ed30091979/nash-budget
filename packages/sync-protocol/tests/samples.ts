@@ -1,4 +1,5 @@
 import type { EntityFieldsByKind, EntityKind } from "../src/index.js";
+import { ENTITY_KINDS } from "../src/index.js";
 
 /**
  * A UUID v4 built from two numbers, so a test can say which identifier must win a tie:
@@ -98,3 +99,31 @@ export const UPDATED_FIELDS: FieldsSample = {
   member: { ...SAMPLE_FIELDS.member, active: false },
   tag: { ...SAMPLE_FIELDS.tag, name: "Отпуск 2027", active: false },
 };
+
+/**
+ * Kinds whose identifiers the codec demands as UUIDs: the kinds of wave 1, which have no history of
+ * readable names. The older kinds keep the readable identifiers their tests always used.
+ */
+const UUID_KINDS: readonly EntityKind[] = ["tag"];
+
+/**
+ * A target identifier for `entity`, readable where the codec allows it: `${entity}-${name}` for the
+ * older kinds, a UUID derived from the kind and the name for the kinds of wave 1, so a test can still
+ * name its targets and get the same identifier for the same name.
+ */
+export function sampleTargetId(entity: EntityKind, name = "1"): string {
+  if (!UUID_KINDS.includes(entity)) return `${entity}-${name}`;
+  let hash = 0;
+  for (const character of name) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
+  return testUuid(0x7e000 + ENTITY_KINDS.indexOf(entity), hash);
+}
+
+/** One target identifier per kind, the one every closed-set test writes under. */
+export const SAMPLE_TARGET_IDS: { readonly [K in EntityKind]: string } = Object.fromEntries(
+  ENTITY_KINDS.map((entity) => [entity, sampleTargetId(entity)]),
+) as { readonly [K in EntityKind]: string };
+
+/** Tag identifiers for tests that put tags on operations. */
+export function tagUuid(index: number): string {
+  return testUuid(0x7a6, index);
+}

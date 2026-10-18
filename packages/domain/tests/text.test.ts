@@ -180,7 +180,9 @@ describe("stored-text predicates", () => {
     for (const key of ["sage", "shopping-basket", "plane", "a1", "x".repeat(40)]) {
       expect(isDisplayKey(key), key).toBe(true);
     }
-    for (const value of ["", "#00ff00", "Sage", "icon.svg", "-sage", "sage-", "sage--mint", "1st", "x".repeat(41), 7]) {
+    // "constructor" and "prototype" have the shape of a key and name what every object inherits
+    // (security review L5); "__proto__" never had the shape.
+    for (const value of ["", "#00ff00", "Sage", "icon.svg", "-sage", "sage-", "sage--mint", "1st", "x".repeat(41), 7, "constructor", "prototype", "__proto__"]) {
       expect(isDisplayKey(value), String(value)).toBe(false);
     }
   });

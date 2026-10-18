@@ -42,6 +42,7 @@ async function rig(
   deviceId: string,
   label: string,
   name = databaseName(label),
+  acceptsState?: (state: SyncedBudgetState) => boolean,
 ): Promise<Rig> {
   const repository = new IndexedDbBudgetRepository<SyncedBudgetState>({ databaseName: name });
   return {
@@ -55,6 +56,7 @@ async function rig(
       familyKey,
       keyEpoch: FIRST_EPOCH,
       keyDigest,
+      ...(acceptsState === undefined ? {} : { acceptsState }),
     }),
   };
 }
@@ -311,6 +313,45 @@ describe("движок синхронизации", () => {
     // And the journal did move: the deletion is folded, and the cursor with it, so the operation
     // that repairs the state will land on top of it rather than be fetched again.
     expect((await beta.engine.status()).cursor.seq).toBe(server.stored.length);
+  });
+
+  it("состояние, которое шлюз приложения не принял бы, в документ не попадает", async () => {
+    // The journal calls a state ready that the application refuses to store — an identifier of an
+    // older kind that is not a UUID, for one. Written to the document, it would be refused on every
+    // load and every write; kept out, the family goes on seeing the last state that passed.
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const accepts = (state: SyncedBudgetState) => state.accounts.every((account) => account.id !== "account-not-a-uuid");
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "accept-a");
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "accept-b", undefined, accepts);
+
+    await alpha.engine.enqueue(g002Drafts());
+    await alpha.engine.push();
+    await beta.engine.pull();
+    const shown = (await beta.repository.load())!;
+    expect(shown.transactions).toHaveLength(4);
+
+    const [account] = stampDrafts(
+      DEVICE_A,
+      [{
+        entity: "account",
+        action: "create",
+        targetId: "account-not-a-uuid",
+        fields: { name: "Чужой", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
+      }],
+      100_000,
+    );
+    server.seed(await sealOperation(family.key, account!));
+    const pulled = await beta.engine.pull();
+
+    expect(pulled.stop).toBeNull();
+    expect(pulled.applied).toBe(1);
+    expect(await beta.repository.load()).toEqual(shown);
+    expect((await beta.engine.status()).cursor.seq).toBe(server.stored.length);
+    // Without the gate the same delivery reaches the document, as it always did.
+    const gamma = await rig(server, family.key, family.digest, "0000000c-0000-4000-8000-000000000003", "accept-c");
+    await gamma.engine.pull();
+    expect((await gamma.repository.load())!.accounts.map((item) => item.id)).toContain("account-not-a-uuid");
   });
 
   it("упёршийся в потолок страниц отличим от вычитанного до конца журнала", async () => {

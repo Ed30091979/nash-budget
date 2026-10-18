@@ -78,7 +78,10 @@ export function resolveCategoryGroup(
   if (category.type === "income") return INCOME_GROUP;
   const raw = String(category.group ?? "");
   if (isCategoryGroup(raw) && categoryGroupDefinition(raw).type === "expense") return raw;
-  const legacy = LEGACY_GROUP_LABELS[raw.normalize("NFKC").trim().toLocaleLowerCase("ru-RU")];
+  // An own key or nothing: a group written as "constructor" or "__proto__" would otherwise find
+  // Object or Object.prototype in the plain table, and the definition lookup below would throw.
+  const key = raw.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
+  const legacy = Object.hasOwn(LEGACY_GROUP_LABELS, key) ? LEGACY_GROUP_LABELS[key] : undefined;
   if (legacy !== undefined && categoryGroupDefinition(legacy).type === "expense") return legacy;
   return FALLBACK_EXPENSE_GROUP;
 }

@@ -55,6 +55,8 @@ import {
   mintedDevice,
   opUuid,
   SAMPLE_FIELDS,
+  sampleTargetId,
+  tagUuid,
   testUuid,
   UPDATED_FIELDS,
 } from "./samples.js";
@@ -446,7 +448,7 @@ describe("applyJournal", () => {
 
   it("creates, updates and deletes every entity kind", () => {
     for (const entity of ENTITY_KINDS) {
-      const targetId = `${entity}-under-test`;
+      const targetId = sampleTargetId(entity, "under-test");
       const stamp = (opId: string, action: "create" | "update" | "delete", lamport: number, updated: boolean) =>
         parseOperation({
           opId,
@@ -486,7 +488,7 @@ describe("applyJournal", () => {
     // reference and a tombstone is final, so the gate withholds the entity instead of
     // handing the domain a state it would refuse; the journal keeps it for when the parent lands.
     for (const entity of REFERENCING_KINDS) {
-      const targetId = `${entity}-under-test`;
+      const targetId = sampleTargetId(entity, "under-test");
       const orphan = applyJournal([
         parseOperation({
           opId: opUuid(1),
@@ -3009,8 +3011,9 @@ describe("withheld entities", () => {
 });
 
 describe("tags and labels through the journal", () => {
-  const TAG_HOME = "tag-home";
-  const TAG_HOLIDAY = "tag-holiday";
+  // UUIDs, as the codec demands of a tag (security review MEDIUM-1).
+  const TAG_HOME = tagUuid(0x401);
+  const TAG_HOLIDAY = tagUuid(0x402);
   const TAGGED_EXPENSE_ID = "expense-tagged-for-the-dacha";
 
   function tag(targetId: string, name: string, lamport: number, opIndex: number): Operation {
@@ -3133,7 +3136,7 @@ describe("tags and labels through the journal", () => {
 
   it("takes off a recurring-rule label, which names nothing while rules are not part of the model", () => {
     const journal = buildFixtureJournal();
-    const snapshot = applyJournal([...journal, taggedExpense(["tag-never-written"], { recurringRuleId: "rule-water" })]);
+    const snapshot = applyJournal([...journal, taggedExpense([tagUuid(0x4ff)], { recurringRuleId: testUuid(0x7b0, 0x4ff) })]);
     const kept = found(snapshot);
 
     expect(kept?.amountMinor).toBe(150_000);

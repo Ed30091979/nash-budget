@@ -4,8 +4,9 @@ import {
   calculateMemberExpenses,
   COLLECTION_LIMITS,
   isDisplayKey,
-  isNormalizedLabel,
-  isNormalizedNote,
+  isStorableLabel,
+  isStorableNote,
+  isUuid,
   isWithinDateWindow,
   MAX_LOCAL_DATE,
   MAX_SORT_ORDER,
@@ -43,7 +44,6 @@ export const BACKUP_LIMITS = {
 } as const;
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type LegacyBudgetState = Omit<BudgetState, "annualCommitments" | "scheduledExpenses"> &
   Partial<Pick<BudgetState, "annualCommitments" | "scheduledExpenses">>;
@@ -226,8 +226,9 @@ function requireOptionalSortOrder(value: unknown, label: string): void {
   }
 }
 
+/** The shape of every identifier, by the domain's one rule — the same `isUuid` the journal codec reads. */
 function requireUuid(value: string, label: string): void {
-  if (!UUID_PATTERN.test(value)) throw new Error(`${label}: некорректный UUID.`);
+  if (!isUuid(value)) throw new Error(`${label}: некорректный UUID.`);
 }
 
 function validateBudgetStateUuids(state: BudgetState): void {
@@ -287,8 +288,10 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
       const tag = requireRecord(item, `tags[${index}]`);
       requireString(tag.id, `tags[${index}].id`, true, BACKUP_LIMITS.idLength);
       const name = requireString(tag.name, `tags[${index}].name`, true, BACKUP_LIMITS.tagNameLength);
-      if (!isNormalizedLabel(name, TAG_NAME_MAX_LENGTH)) {
-        throw new Error(`tags[${index}].name: название метки с лишними пробелами, служебными символами или смесью алфавитов.`);
+      // The stored-text rule, which asks the engine nothing: a name the input rule accepted on one
+      // engine must keep restoring after a browser update (stored-text.ts in the domain).
+      if (!isStorableLabel(name, TAG_NAME_MAX_LENGTH)) {
+        throw new Error(`tags[${index}].name: название метки с лишними пробелами или служебными символами.`);
       }
       requireBoolean(tag.active, `tags[${index}].active`);
     });
@@ -408,7 +411,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
 function requireTransactionLabels(transaction: Record<string, unknown>, index: number): void {
   if (transaction.note !== undefined) {
     const note = requireString(transaction.note, `transactions[${index}].note`, true, BACKUP_LIMITS.textLength);
-    if (!isNormalizedNote(note)) {
+    if (!isStorableNote(note)) {
       throw new Error(`transactions[${index}].note: заметка в несколько строк, с лишними пробелами или служебными символами.`);
     }
   }

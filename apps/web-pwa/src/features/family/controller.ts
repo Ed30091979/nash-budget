@@ -57,6 +57,7 @@ import {
   type MembershipSnapshot,
 } from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
+import { prepareBudgetState } from "../../backup";
 import { budgetJournalDrafts } from "./journal";
 import { authorsOfTransactions, type TransactionAuthor } from "./news";
 import {
@@ -73,6 +74,16 @@ import {
   persistSession,
   type FamilySession,
 } from "./session";
+
+/** Принимает ли шлюз приложения состояние журнала: документ хранит только такие (см. SyncEngine). */
+function acceptsJournalState(state: BudgetState): boolean {
+  try {
+    prepareBudgetState(state);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** The device's own ECDH pair, kept where the family key is kept and nowhere else. */
 const DEVICE_KEY_STATE_KEY = "device-key";
@@ -967,6 +978,10 @@ export function useFamily(
         retired === undefined || retired.keyEpoch >= stored.keyEpoch
           ? []
           : [{ keyEpoch: retired.keyEpoch, key: retired.key }],
+      // Шлюз документа — тот же, через который приложение читает и пишет бюджет. Состояние журнала,
+      // которое он не принял бы, в документ не попадает: иначе каждое открытие и каждая запись
+      // падали бы на нём на всех устройствах семьи.
+      acceptsState: acceptsJournalState,
     });
   }, [refreshAccess, repository, serverUrl, store]);
 

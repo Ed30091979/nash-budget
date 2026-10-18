@@ -55,7 +55,7 @@ export {
   RATE_PART_MIN,
   SUPPORTED_CURRENCIES,
 } from "./currency.js";
-export { carriedId, documentIds, HOUSEHOLD_ID } from "./identity.js";
+export { carriedId, documentIds, HOUSEHOLD_ID, isUuid } from "./identity.js";
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
 export {
   budgetMonth,
@@ -78,10 +78,18 @@ export {
 } from "./tags.js";
 export type { TagCreation, TagErrorCode } from "./tags.js";
 export {
+  isStorableLabel,
+  isStorableNote,
+  STORED_TEXT_EDGE_WHITESPACE,
+  STORED_TEXT_FORBIDDEN,
+} from "./stored-text.js";
+export type { CodePointRange } from "./stored-text.js";
+export {
   DISPLAY_KEY_MAX_LENGTH,
   isDisplayKey,
   isNormalizedLabel,
   isNormalizedNote,
+  isReadableName,
   labelKey,
   MAX_TAGS_PER_TRANSACTION,
   normalizeLabel,

@@ -6,6 +6,12 @@
  * rules the moment one of them is edited. This is the domain's copy, and the domain's callers use
  * it; each keeps its own codes and its own words for the screen, because a refusal a person reads
  * belongs to the screen that shows it.
+ *
+ * It is the rule for input, and only for input. It asks the engine about Unicode — properties, NFC,
+ * alphabets — and the engine's answers move with its Unicode version, so text it accepted on one
+ * engine may be text it refuses on the next. What the model stores and the journal carries is held
+ * to `isStorableLabel` and `isStorableNote` (stored-text.ts) instead, which ask the engine nothing,
+ * and everything this rule produces passes them.
  */
 
 import type { DisplayKey } from "./types.js";
@@ -59,6 +65,23 @@ const PRESENTATION_SELECTORS = /[\ufe0e\ufe0f]/gu;
 const DISPLAY_KEY_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /**
+ * Keys an object inherits. A display key is looked up in a table of tokens, and a key like these
+ * finds a function of `Object.prototype` instead of a token in a plain object; they are refused
+ * outright, and every table of tokens is read through `Map` or `Object.hasOwn` all the same.
+ */
+const INHERITED_KEYS = new Set(["constructor", "prototype"]);
+
+/**
+ * A name needs something to read: a letter or a digit somewhere, and not a combining mark first —
+ * that one would attach to whatever the screen draws before the name. The braille blank (U+2800)
+ * and the object replacement character (U+FFFC) are refused as well: neither is hidden to the text
+ * rule, both are a blank or a placeholder to the eye.
+ */
+const NAME_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+const NAME_LEADING_MARK = /^\p{M}/u;
+const NAME_BLANKS = /[\u2800\ufffc]/u;
+
+/**
  * Alphabets whose letters look alike. A name that mixes them — a Latin `a` inside a Cyrillic word —
  * reads as one name and compares as another, which is how a duplicate slips past a duplicate check.
  */
@@ -94,10 +117,11 @@ export function normalizeLabel(value: string, maxLength: number): string {
 }
 
 /**
- * Whether `value` is a label exactly as {@link normalizeLabel} would store it.
+ * Whether `value` is a label exactly as {@link normalizeLabel} would produce it, on this engine.
  *
- * The check a stored label is held to: a backup, a journal entry and the domain all ask this one
- * question, so a label one of them accepts the others accept too.
+ * For input only — a form deciding whether to show what it has. Never for stored or transmitted
+ * text: the answer depends on the engine's Unicode version, so a stored label held to it could turn
+ * invalid after a browser update. Stored text is checked by `isStorableLabel` (stored-text.ts).
  */
 export function isNormalizedLabel(value: unknown, maxLength: number): value is string {
   if (typeof value !== "string") return false;
@@ -136,7 +160,11 @@ export function normalizeNote(value: string): string | undefined {
   return normalized;
 }
 
-/** Whether `value` is a non-empty note exactly as {@link normalizeNote} would store it. */
+/**
+ * Whether `value` is a non-empty note exactly as {@link normalizeNote} would produce it, on this
+ * engine. For input only, for the reason {@link isNormalizedLabel} gives; stored notes are checked by
+ * `isStorableNote` (stored-text.ts).
+ */
 export function isNormalizedNote(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try {
@@ -147,9 +175,23 @@ export function isNormalizedNote(value: unknown): value is string {
   }
 }
 
-/** Whether `value` names a design token: kebab-case, at most {@link DISPLAY_KEY_MAX_LENGTH}. */
+/**
+ * Whether `value` names a design token: kebab-case, at most {@link DISPLAY_KEY_MAX_LENGTH}, and not
+ * a key every object inherits. Engine-independent, so it is the rule for stored keys as well.
+ */
 export function isDisplayKey(value: unknown): value is DisplayKey {
-  return typeof value === "string" && value.length <= DISPLAY_KEY_MAX_LENGTH && DISPLAY_KEY_PATTERN.test(value);
+  return typeof value === "string" && value.length <= DISPLAY_KEY_MAX_LENGTH && DISPLAY_KEY_PATTERN.test(value)
+    && !INHERITED_KEYS.has(value);
+}
+
+/**
+ * Whether a label {@link normalizeLabel} already accepted is a name someone can read: it carries a
+ * letter or a digit, does not begin with a combining mark, and holds no braille blank and no object
+ * replacement character. For input only, like the rest of this file; each caller refuses with its
+ * own code and words. Tag names, counterparties and the names of rules are held to it.
+ */
+export function isReadableName(label: string): boolean {
+  return NAME_LETTER_OR_DIGIT.test(label) && !NAME_LEADING_MARK.test(label) && !NAME_BLANKS.test(label);
 }
 
 /**

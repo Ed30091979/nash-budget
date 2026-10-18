@@ -77,6 +77,23 @@ export function carriedId(...parts: readonly string[]): StableId {
 }
 
 /**
+ * The shape of an identifier a backup accepts: a UUID of version 1 to 8, in either case. Drawn
+ * identifiers are version 4 and derived ones ({@link carriedId}) version 8.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether `value` has the shape every identifier of a document must have.
+ *
+ * One rule for the backup gate and for the journal codec. A gate that refused what the codec let
+ * through used to hand the family a journal whose state no device could save: one entity under an
+ * identifier like "x" was ready in the journal and refused by the app on every write.
+ */
+export function isUuid(value: unknown): value is StableId {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+/**
  * The identifier of the household: one name every device derives, so that two devices that set the
  * base currency without having met write one entity rather than two households.
  */
