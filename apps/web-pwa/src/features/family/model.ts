@@ -254,6 +254,7 @@ const WITHHOLDING_LABELS = {
   duplicate_budget_line: "категория запланирована в бюджете дважды",
   unknown_active_budget: "выбранный бюджет в семью ещё не пришёл",
   currency_mismatch: "валюта записи не сходится с валютой счёта или семьи",
+  snapshot_mismatch: "сумма в базовой валюте не сходится с суммой операции по её курсу",
 } as const satisfies Readonly<Record<WithheldEntity["reason"], string>>;
 
 export interface WithheldRow {

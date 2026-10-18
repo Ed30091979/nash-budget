@@ -1,4 +1,5 @@
 import {
+  baseAmountOf,
   calculateAnnualPlan,
   normalizeScheduledDueDate,
   type BudgetState,
@@ -117,19 +118,21 @@ function monthFacts(
   let totalIncomeFactMinor = 0;
   let totalExpenseFactMinor = 0;
 
+  // In the base currency, as the budget counts them: an operation on an account in another currency
+  // adds the value it carries in the base one, never its own amount read as roubles.
   for (const transaction of state.transactions) {
     if (transaction.status !== "posted" || transaction.occurredOn.slice(0, 7) !== month) continue;
     if (transaction.kind === "income") {
-      totalIncomeFactMinor = addMinor(totalIncomeFactMinor, transaction.amountMinor);
+      totalIncomeFactMinor = addMinor(totalIncomeFactMinor, baseAmountOf(transaction));
     } else if (transaction.kind === "expense") {
-      totalExpenseFactMinor = addMinor(totalExpenseFactMinor, transaction.amountMinor);
+      totalExpenseFactMinor = addMinor(totalExpenseFactMinor, baseAmountOf(transaction));
       if (activeFlexibleCategoryIds.has(transaction.categoryId)) {
-        flexibleFactMinor = addMinor(flexibleFactMinor, transaction.amountMinor);
+        flexibleFactMinor = addMinor(flexibleFactMinor, baseAmountOf(transaction));
       }
     } else if (transaction.kind === "refund") {
-      totalExpenseFactMinor = addMinor(totalExpenseFactMinor, -transaction.amountMinor);
+      totalExpenseFactMinor = addMinor(totalExpenseFactMinor, -baseAmountOf(transaction));
       if (activeFlexibleCategoryIds.has(transaction.categoryId)) {
-        flexibleFactMinor = addMinor(flexibleFactMinor, -transaction.amountMinor);
+        flexibleFactMinor = addMinor(flexibleFactMinor, -baseAmountOf(transaction));
       }
     }
   }

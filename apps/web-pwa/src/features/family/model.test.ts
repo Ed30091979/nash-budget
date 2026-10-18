@@ -250,6 +250,15 @@ describe("перечень удержанных сущностей", () => {
     expect(rows[2]?.reasonLabel).toBe("валюта записи не сходится с валютой счёта или семьи");
   });
 
+  it("называет снимок, не равный сумме по курсу, своими словами", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "transaction", id: "55555555-5555-4555-8555-555555555559", reason: "snapshot_mismatch" }],
+    });
+    expect(rows[0]).toMatchObject({ entityLabel: "Операция", reasonLabel: "сумма в базовой валюте не сходится с суммой операции по её курсу" });
+  });
+
   it("молчит только когда удерживать нечего", () => {
     expect(withheldRows({ ready: true, problems: [], withheld: [] })).toEqual([]);
     expect(withheldRows(null)).toEqual([]);

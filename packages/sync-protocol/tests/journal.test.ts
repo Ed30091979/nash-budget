@@ -2829,6 +2829,7 @@ describe("withheld entities", () => {
   const STRAY_CONTRIBUTION_ID = "contribution-to-an-unlinked-account";
   const DOLLAR_ACCOUNT_ID = "account-kept-in-dollars";
   const UNVALUED_EXPENSE_ID = "dollar-expense-without-its-rouble-value";
+  const INEXACT_EXPENSE_ID = "dollar-expense-off-its-rate";
 
   function journalWithEveryWithholding(): Operation[] {
     const write = (draft: Record<string, unknown>): Operation => parseOperation(draft);
@@ -2859,6 +2860,27 @@ describe("withheld entities", () => {
           amountMinor: 4_000,
           accountId: DOLLAR_ACCOUNT_ID,
           categoryId: PRODUCTS_CATEGORY_ID,
+        },
+      }),
+      // A dollar purchase whose rouble value is not its amount at its own rate: 40 $ at 90 ₽ said to
+      // be 3 700 ₽, so the budget would add one figure and the row would show another.
+      write({
+        opId: opUuid(980),
+        deviceId: DEVICE_B,
+        lamport: 699,
+        entity: "transaction",
+        action: "create",
+        targetId: INEXACT_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-11",
+          status: "posted",
+          amountMinor: 4_000,
+          accountId: DOLLAR_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+          baseAmountMinor: 370_000,
+          baseCurrency: "RUB",
+          rate: { baseMinor: 9_000, quoteMinor: 100 },
         },
       }),
       // Two kinds claim one identifier: the category outranks the account, so the account goes.
@@ -2978,6 +3000,7 @@ describe("withheld entities", () => {
     { entity: "goal", id: ORPHAN_GOAL_ID, reason: "unknown_reference" },
     { entity: "scheduledExpense", id: INCOME_EXPENSE_ID, reason: "wrong_category_type" },
     { entity: "transaction", id: STRAY_CONTRIBUTION_ID, reason: "goal_account_mismatch" },
+    { entity: "transaction", id: INEXACT_EXPENSE_ID, reason: "snapshot_mismatch" },
     { entity: "transaction", id: UNVALUED_EXPENSE_ID, reason: "currency_mismatch" },
     { entity: "transaction", id: EARLY_REFUND_ID, reason: "invalid_refund" },
   ];
@@ -3360,6 +3383,27 @@ describe("several currencies through the journal", () => {
       expect(() => calculateBudget(snapshot.state), label).not.toThrow();
       expect(() => calculateMemberExpenses(snapshot.state), label).not.toThrow();
     }
+  });
+
+  it("withholds a snapshot that is not the amount at its rate, and shows it again once it is", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    for (const [label, baseAmountMinor] of [["a kopeck too much", 360_001], ["a kopeck too little", 359_999], ["another figure", 1]] as const) {
+      const inexact = expense({ baseAmountMinor });
+      const snapshot = applyJournal([...journal, inexact]);
+      expect(withheldOf(snapshot), label).toEqual([{ entity: "transaction", id: inexact.targetId, reason: "snapshot_mismatch" }]);
+      expect(snapshot.integrity.problems, label).toEqual([{ code: "snapshot_mismatch", entity: "transaction", id: inexact.targetId }]);
+      expect(snapshot.integrity.ready, label).toBe(true);
+      expect(() => calculateBudget(snapshot.state), label).not.toThrow();
+    }
+    // An edit that makes the two agree brings the purchase back; a hand-entered rouble value is a
+    // rate of its own and agrees exactly.
+    const corrected = write("transaction", expense({ baseAmountMinor: 1 }).targetId, {
+      kind: "expense", occurredOn: "2026-07-10", status: "posted", amountMinor: 4_000, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID,
+      baseAmountMinor: 365_000, baseCurrency: "RUB", rate: { baseMinor: 365_000, quoteMinor: 4_000 },
+    }, 5_000, "update");
+    const repaired = applyJournal([...journal, expense({ baseAmountMinor: 1 }), corrected]);
+    expect(withheldOf(repaired)).toEqual([]);
+    expect(calculateBudget(repaired.state).grossExpensesMinor).toBe(calculateBudget(applyJournal(journal).state).grossExpensesMinor + 365_000);
   });
 
   it("withholds a plan on an account outside the base currency", () => {

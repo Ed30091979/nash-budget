@@ -250,6 +250,14 @@ export const JOURNAL_PROBLEM_CODES = [
    * everything around it stays correct.
    */
   "currency_mismatch",
+  /**
+   * The base-currency snapshot of an income, expense or refund is not its amount at its own rate:
+   * `baseAmountMinor !== convertMinor(amountMinor, rate)`. The budget adds the snapshot and a row
+   * shows the amount, so the two would be two different figures for one operation. Written only by
+   * a device that bypassed the domain, which refuses such a snapshot; withheld, and back as soon as
+   * an edit makes the two agree.
+   */
+  "snapshot_mismatch",
 ] as const;
 
 export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
@@ -274,6 +282,8 @@ export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
  *   the same code appears as a problem instead, and then the state cannot be shown at all.
  * - `currency_mismatch` — the currencies of the entity do not fit together; the domain throws on
  *   such a state, and reachable concurrent edits produce it (see the problem code).
+ * - `snapshot_mismatch` — the snapshot of an operation is not its amount at its rate; the domain
+ *   throws on such a state.
  */
 export const WITHHOLDING_REASONS = [
   "identifier_claimed_twice",
@@ -284,6 +294,7 @@ export const WITHHOLDING_REASONS = [
   "duplicate_budget_line",
   "unknown_active_budget",
   "currency_mismatch",
+  "snapshot_mismatch",
 ] as const satisfies readonly JournalProblemCode[];
 
 export type WithholdingReason = (typeof WITHHOLDING_REASONS)[number];

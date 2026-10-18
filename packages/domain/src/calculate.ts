@@ -47,6 +47,8 @@ import {
 import {
   baseAmountOf,
   baseCurrencyOf,
+  convertMinor,
+  DEFAULT_BASE_CURRENCY,
   indexRates,
   isExchangeRateValue,
   isSupportedCurrency,
@@ -588,6 +590,52 @@ function validateBaseSnapshot(
   }
   assertFieldMinor(transaction.baseAmountMinor!, `transaction ${id} baseAmountMinor`);
   assertRateValue(transaction.rate, `transaction ${id} rate`);
+  // The snapshot is the amount at its rate, exactly, so that what the budget adds up and what a row
+  // shows in the account's currency are one figure seen twice. A base sum entered by hand is written
+  // as the rate {baseMinor: base, quoteMinor: amount}, at which the equality is exact.
+  let converted: MinorUnits | null;
+  try {
+    converted = convertMinor(transaction.amountMinor, transaction.rate!);
+  } catch {
+    converted = null;
+  }
+  if (converted !== transaction.baseAmountMinor) {
+    throw new Error(`transaction ${id} baseAmountMinor must be amountMinor at its rate, ${converted ?? "beyond the safe range"}`);
+  }
+}
+
+/**
+ * Whether an operation belongs to the model as it has been since the journal existed: a debt
+ * movement, one that carries a base-currency snapshot or an amount that arrived in another currency,
+ * or one that touches an account in a currency other than roubles — which no state written by 1.0.0
+ * holds, because 1.0.0 knew roubles only.
+ *
+ * Such an operation is held to the bounds the journal's codec carries — an amount at most the field
+ * ceiling, a date inside the window — by the domain itself, as every field added since is. Held only
+ * by the codec, a value the domain and the backup gate accepted was refused at the first sync, which
+ * then threw on every write and stranded the value on the device that wrote it. An older operation
+ * keeps the unbounded fields it always had: a 1.0.0 document may hold one, and it must keep opening.
+ */
+function isWaveOneOperation(transaction: Transaction, accounts: ReadonlyMap<StableId, Account>): boolean {
+  const foreign = (accountId: AccountId): boolean => {
+    const currency = accounts.get(accountId)?.currency;
+    return currency !== undefined && currency !== DEFAULT_BASE_CURRENCY;
+  };
+  switch (transaction.kind) {
+    case "debt_out":
+    case "debt_in":
+      return true;
+    case "income":
+    case "expense":
+    case "refund":
+      return transaction.baseAmountMinor !== undefined || foreign(transaction.accountId);
+    case "transfer":
+      return transaction.toAmountMinor !== undefined || foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+    case "goal_contribution":
+      return foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+    default:
+      return false;
+  }
 }
 
 /**
@@ -653,6 +701,10 @@ export function validateTransactionReferences(transaction: Transaction, index: S
   );
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+  if (isWaveOneOperation(transaction, accounts)) {
+    assertFieldMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+    assertWindowDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
+  }
   validateTransactionLabels(transaction, index);
 
   switch (transaction.kind) {

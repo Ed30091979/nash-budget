@@ -12,7 +12,8 @@ import {
 import { describe, expect, it, vi } from "vitest";
 import { HistoryScreen, TotalsFact } from "./HistoryScreen";
 import { archiveCategory, createTransaction } from "./model";
-import { debtVerb, kindSign, transactionDetail } from "./transaction-words";
+import { amountText, debtVerb, kindSign, transactionCurrency, transactionDetail } from "./transaction-words";
+import { formatMoney } from "../../money";
 
 const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
 const historySource = readFileSync(new URL("./HistoryScreen.tsx", import.meta.url), "utf8");
@@ -196,3 +197,39 @@ describe("слова о движении по долгу", () => {
     expect(transactionDetail({ ...movement, kind: "debt_in", debtId: "missing" }, budget)).toBe("Неизвестный долг → Основной");
   });
 });
+
+describe("строка истории по счёту в другой валюте", () => {
+  const DOLLARS = "c5555555-5555-4555-8555-555555555551";
+  const withDollarExpense = (): BudgetState => {
+    const seed = makeSeedBudget();
+    return {
+      ...seed,
+      accounts: [...seed.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [...seed.transactions, {
+        id: "c5555555-5555-4555-8555-555555555552", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_050,
+        accountId: DOLLARS, categoryId: SEED_IDS.categories.food, baseAmountMinor: 364_500, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+      }],
+    };
+  };
+
+  it("подписана валютой своего счёта, а не рублями", () => {
+    const markup = plainText(renderToStaticMarkup(<HistoryScreen budget={withDollarExpense()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />));
+    expect(markup).toContain("−40,50 $");
+    expect(markup).toContain("Изменить операцию «Расход 40,50 $ от 2026-07-10»");
+    expect(markup).not.toContain("40,50 ₽");
+    // A rouble row next to it is drawn exactly as before.
+    expect(markup).toContain(`Изменить операцию «Расход ${plainText(formatMoney(makeSeedBudget().transactions.find((item) => item.kind === "expense")!.amountMinor))}`);
+  });
+
+  it("называет сумму с её валютой и в словах экрана", () => {
+    const state = withDollarExpense();
+    const dollar = state.transactions.at(-1)!;
+    expect(plainText(amountText(dollar, state))).toBe("40,50 $");
+    expect(transactionCurrency(dollar, state)).toBe("USD");
+    expect(plainText(amountText({ ...dollar, amountMinor: 4_000 }, state))).toBe("40 $");
+    const rouble = state.transactions[0]!;
+    expect(amountText(rouble, state)).toBe(formatMoney(rouble.amountMinor));
+    expect(transactionCurrency(rouble, state)).toBe("RUB");
+  });
+});
+

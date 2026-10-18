@@ -1342,9 +1342,12 @@ describe("bounds shared with the journal", () => {
     const state = withDollars();
     const rateOn = (date: string): BudgetState => ({ ...state, exchangeRates: [{ ...USD_RATES[0]!, date }] });
     expect(() => calculateBudget(rateOn("2200-01-01"))).toThrow(/exchange rate .* date must be from 1900-01-01 to 2199-12-31/);
-    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor: MAX_MONEY_MINOR }))))
-      .not.toThrow();
-    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor: MAX_MONEY_MINOR + 1 }))))
+    // A base sum is always the amount at its rate, so a sum entered by hand is written as the rate
+    // {baseMinor: sum, quoteMinor: amount}; at the ceiling and past it.
+    const valuedAt = (baseAmountMinor: number) => (item: Transaction): Transaction =>
+      ({ ...item, baseAmountMinor, rate: { baseMinor: baseAmountMinor, quoteMinor: item.amountMinor } }) as Transaction;
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, valuedAt(MAX_MONEY_MINOR)))).not.toThrow();
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, valuedAt(MAX_MONEY_MINOR + 1))))
       .toThrow(/baseAmountMinor must be at most 10000000000/);
     const transfer: Transaction = {
       id: "8d000000-0000-4000-8000-000000000006", occurredOn: "2026-07-05", status: "posted", kind: "transfer",
@@ -1352,6 +1355,62 @@ describe("bounds shared with the journal", () => {
     };
     expect(() => calculateBudget({ ...state, transactions: [...state.transactions, transfer] }))
       .toThrow(/toAmountMinor must be at most 10000000000/);
+  });
+
+  it("holds every operation of the new model to the codec's amount and window, and only those", () => {
+    // A debt movement, a foreign purchase, a transfer between currencies and one between two dollar
+    // accounts: none of them can be in a 1.0.0 document, so the domain bounds them itself instead of
+    // leaving the bound to the codec, which refused them at the first sync and stranded the value.
+    const state = withDollars();
+    const other: Account = { id: "8c000000-0000-4000-8000-0000000000a3", name: "Доллары 2", type: "cash", currency: "USD", openingBalanceMinor: 0, active: true };
+    const debt = { id: "8f000000-0000-4000-8000-0000000000d1", counterparty: "Петя", direction: "owed_to_me" as const, currency: "RUB", openingMinor: 0, active: true };
+    const base: BudgetState = { ...state, accounts: [...state.accounts, other], debts: [debt] };
+    const operations: readonly (readonly [string, Transaction])[] = [
+      ["a debt movement", { id: "8d000000-0000-4000-8000-0000000000e1", occurredOn: "2026-07-09", status: "posted", kind: "debt_out", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId: debt.id }],
+      ["a transfer between currencies", { id: "8d000000-0000-4000-8000-0000000000e2", occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_800_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: USD_ACCOUNT, toAmountMinor: 20_000 }],
+      ["a transfer between dollar accounts", { id: "8d000000-0000-4000-8000-0000000000e3", occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_000, fromAccountId: USD_ACCOUNT, toAccountId: other.id }],
+      ["a foreign purchase", { id: "8d000000-0000-4000-8000-0000000000e4", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 100, accountId: USD_ACCOUNT, categoryId: SEED_IDS.categories.food, baseAmountMinor: 9_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+    ];
+    for (const [label, operation] of operations) {
+      const withOperation = (change: Partial<Transaction>): BudgetState =>
+        ({ ...base, transactions: [...base.transactions, { ...operation, ...change } as Transaction] });
+      expect(() => calculateBudget(withOperation({})), label).not.toThrow();
+      expect(() => calculateBudget(withOperation({ occurredOn: MIN_LOCAL_DATE })), label).not.toThrow();
+      expect(() => calculateBudget(withOperation({ occurredOn: MAX_LOCAL_DATE })), label).not.toThrow();
+      for (const occurredOn of ["1899-12-31", "2200-01-01"]) {
+        expect(() => calculateMemberExpenses(withOperation({ occurredOn })), `${label} ${occurredOn}`).toThrow(/occurredOn must be from 1900-01-01 to 2199-12-31/);
+      }
+      // The snapshot of the purchase would move with its amount; the bound is reached first.
+      const huge = operation.kind === "expense"
+        ? { amountMinor: MAX_MONEY_MINOR + 1, baseAmountMinor: 1, rate: { baseMinor: 1, quoteMinor: MAX_MONEY_MINOR + 1 } }
+        : { amountMinor: MAX_MONEY_MINOR + 1 };
+      expect(() => calculateBudget(withOperation(huge as Partial<Transaction>)), label).toThrow(/amountMinor must be at most 10000000000/);
+    }
+    // A rouble purchase of 1.0.0 keeps the fields it always had: an amount past the ceiling is still read.
+    const legacy = { ...base.transactions[0]!, id: "8d000000-0000-4000-8000-0000000000e5", amountMinor: MAX_MONEY_MINOR * 3 } as Transaction;
+    expect(() => calculateBudget({ ...base, transactions: [...base.transactions, legacy] })).not.toThrow();
+  });
+
+  it("refuses a snapshot that is not the amount at its rate, and accepts a sum entered by hand as its own rate", () => {
+    const state = withDollars();
+    const snapshot = (baseAmountMinor: number, rate: { baseMinor: number; quoteMinor: number }) =>
+      replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor, rate }) as Transaction);
+    // 40,00 $ at 90 ₽ is 3 600 ₽, not a kopeck more or less.
+    for (const wrong of [359_999, 360_001, 1]) {
+      expect(() => calculateBudget(snapshot(wrong, { baseMinor: 9_000, quoteMinor: 100 })), String(wrong))
+        .toThrow(/baseAmountMinor must be amountMinor at its rate, 360000/);
+    }
+    // Rounded half-up once, as the contracts round: 25,55 $ at 92,50 ₽ is 2 363,375 ₽ → 2 363,38 ₽.
+    const rounded = replaceTransaction(state, USD_EXPENSE, (item) =>
+      ({ ...item, amountMinor: 2_555, baseAmountMinor: 236_338, rate: { baseMinor: 9_250, quoteMinor: 100 } }) as Transaction);
+    expect(() => calculateBudget(rounded)).not.toThrow();
+    // A family that paid 3 650 ₽ for its 40 $ writes the rate it paid at, and the equality holds.
+    expect(() => calculateBudget(snapshot(365_000, { baseMinor: 365_000, quoteMinor: 4_000 }))).not.toThrow();
+    // A rate at which the amount leaves the safe range is no rate for any snapshot: 100,00 $ at a
+    // trillion kopecks a cent is 10^16 kopecks.
+    const runaway = replaceTransaction(state, USD_EXPENSE, (item) =>
+      ({ ...item, amountMinor: 10_000, baseAmountMinor: 1, rate: { baseMinor: 10 ** 12, quoteMinor: 1 } }) as Transaction);
+    expect(() => calculateBudget(runaway)).toThrow(/baseAmountMinor must be amountMinor at its rate, beyond the safe range/);
   });
 
   it("leaves the fields that existed before the window as they were, so an old document still opens", () => {

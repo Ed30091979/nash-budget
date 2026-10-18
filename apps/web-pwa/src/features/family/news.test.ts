@@ -248,3 +248,35 @@ describe("семейная новость о регулярных операци
     expect(familyNewsSince(transactionIds(seed), state, authors, ANNA)).toEqual([]);
   });
 });
+
+describe("семейная новость о деньгах в другой валюте", () => {
+  const seed = makeSeedBudget();
+  const DOLLARS = "0000000d-0000-4000-8000-00000000d0a1";
+  const withDollars: BudgetState = {
+    ...seed,
+    accounts: [...seed.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+  };
+
+  it("складывает покупки по их цене в рублях, а перевод долларами называет без суммы", () => {
+    const dollarExpense: Transaction = {
+      ...expense("t-usd", 4_000), accountId: DOLLARS, baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+    } as Transaction;
+    const dollarTransfer = {
+      id: "t-usd-move", occurredOn: "2026-07-11", status: "posted", kind: "transfer", amountMinor: 1_000, fromAccountId: DOLLARS, toAccountId: SEED_IDS.accounts.main, toAmountMinor: 90_000,
+    } as Transaction;
+    const roubleTransfer = {
+      id: "t-rub-move", occurredOn: "2026-07-11", status: "posted", kind: "transfer", amountMinor: 500_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings,
+    } as Transaction;
+    const state = withMembers(withDollars, [expense("t-rub", 100_000), dollarExpense, dollarTransfer]);
+    const authors = authorsOfTransactions(["t-rub", "t-usd", "t-usd-move"].map((id) => entry(id, DEVICE_BORIS, MEMBER_BORIS)));
+    const news = familyNewsSince(transactionIds(seed), state, authors, ANNA);
+    // 1 000 ₽ and 40 $ at 90 ₽ are 4 600 ₽; the 10 $ transfer has no rouble value, so no sum is invented.
+    expect(familyNewsLines(news, membersById(state), state)).toEqual([
+      `Борис: 2 покупки на ${formatMoney(460_000)} и 1 перевод`,
+    ]);
+    const rouble = withMembers(withDollars, [roubleTransfer]);
+    const roubleNews = familyNewsSince(transactionIds(seed), rouble, authorsOfTransactions([entry("t-rub-move", DEVICE_BORIS, MEMBER_BORIS)]), ANNA);
+    expect(familyNewsLines(roubleNews, membersById(rouble), rouble)).toEqual([`Борис: 1 перевод на ${formatMoney(500_000)}`]);
+  });
+});
+

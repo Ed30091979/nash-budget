@@ -16,7 +16,7 @@ import type {
   Tag,
   Transaction,
 } from "@family-budget/domain";
-import { COLLECTION_LIMITS, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID } from "@family-budget/domain";
+import { COLLECTION_LIMITS, convertMinor, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID } from "@family-budget/domain";
 
 import {
   canonicalOperationText,
@@ -712,6 +712,24 @@ function snapshotFits(
   return transaction.baseAmountMinor !== undefined && transaction.baseCurrency === baseCurrency;
 }
 
+/**
+ * Why the snapshot of an income, an expense or a refund cannot stand although it fits its account:
+ * it is not the operation's amount at the operation's own rate, the rule the domain enforces. Null
+ * when there is no snapshot, or when it is exact.
+ */
+function snapshotProblem(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+): WithheldEntity | null {
+  if (transaction.baseAmountMinor === undefined || transaction.rate === undefined) return null;
+  let converted: number | null;
+  try {
+    converted = convertMinor(transaction.amountMinor, transaction.rate);
+  } catch {
+    converted = null;
+  }
+  return converted === transaction.baseAmountMinor ? null : withheldFor("transaction", transaction.id, "snapshot_mismatch");
+}
+
 function goalProblem(live: LiveEntities, goal: Goal): WithheldEntity | null {
   return planAccountProblem(live, "goal", goal.id, goal.linkedAccountId);
 }
@@ -743,18 +761,20 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
       // withheld — see clearUnresolvedLabels for why the money may not go down with it.
       const account = live.accounts.get(transaction.accountId);
       if (account === undefined) return missing;
-      return snapshotFits(transaction, account, base) ? null : mismatch;
+      return snapshotFits(transaction, account, base) ? snapshotProblem(transaction) : mismatch;
     }
     case "expense": {
       const account = live.accounts.get(transaction.accountId);
       if (account === undefined) return missing;
       if (!snapshotFits(transaction, account, base)) return mismatch;
-      return expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
+      return snapshotProblem(transaction) ?? expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
     }
     case "refund": {
       const account = live.accounts.get(transaction.accountId);
       if (account === undefined) return missing;
       if (!snapshotFits(transaction, account, base)) return mismatch;
+      const inexact = snapshotProblem(transaction);
+      if (inexact !== null) return inexact;
       const categoryProblem = expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
       if (categoryProblem !== null) return categoryProblem;
       const original = live.transactions.get(transaction.originalTransactionId);

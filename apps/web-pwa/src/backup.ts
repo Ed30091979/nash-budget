@@ -7,7 +7,9 @@ import {
   calculateMemberExpenses,
   calculateTagExpenses,
   COLLECTION_LIMITS,
+  convertMinor,
   COUNTERPARTY_MAX_LENGTH,
+  DEFAULT_BASE_CURRENCY,
   HOUSEHOLD_ID,
   isExchangeRateValue,
   isSupportedCurrency,
@@ -682,17 +684,49 @@ function requireTransactionAmounts(transaction: Record<string, unknown>, kind: s
 }
 
 /**
+ * Операция модели, какой она стала вместе с журналом: движение по долгу, операция со снимком в
+ * базовой валюте или с суммой зачисления, операция по счёту не в рублях — копия 1.0.0 таких не
+ * несёт, потому что 1.0.0 знала только рубли. То же правило, что в домене.
+ */
+function isWaveOneOperation(transaction: Transaction, currencies: ReadonlyMap<string, string>): boolean {
+  const foreign = (accountId: string): boolean => {
+    const currency = currencies.get(accountId);
+    return currency !== undefined && currency !== DEFAULT_BASE_CURRENCY;
+  };
+  switch (transaction.kind) {
+    case "debt_out":
+    case "debt_in":
+      return true;
+    case "income":
+    case "expense":
+    case "refund":
+      return transaction.baseAmountMinor !== undefined || foreign(transaction.accountId);
+    case "transfer":
+      return transaction.toAmountMinor !== undefined || foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+    case "goal_contribution":
+      return foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+  }
+}
+
+/**
  * Валюты операций: сумма в базовой валюте есть ровно у дохода, расхода и возврата по счёту в другой
- * валюте, а сумма зачисления — ровно у перевода между счетами разных валют.
+ * валюте и равна сумме операции по её курсу, а сумма зачисления — ровно у перевода между счетами
+ * разных валют. Операция модели волны 1 держит сумму и дату в пределах, которые несёт журнал.
  *
  * Проверка стоит здесь, а не оставлена расчёту, по той же причине, что и проверка категории дохода:
  * отказ восстановления обязан называть операцию файла, а не всплывать изнутри `calculateBudget`.
+ * Пределы стоят здесь, а не только в кодеке журнала, потому что значение, которое приняла копия, а
+ * отверг кодек, застревало на устройстве: первая же синхронизация бросала на каждой записи.
  */
 function validateCurrencies(state: BudgetState): void {
   const base = baseCurrencyOf(state);
   const currencies = new Map(state.accounts.map((account) => [account.id, account.currency]));
   const debts = new Map((state.debts ?? []).map((debt) => [debt.id, debt]));
   state.transactions.forEach((transaction, index) => {
+    if (isWaveOneOperation(transaction, currencies)) {
+      requireFieldAmount(transaction.amountMinor, `transactions[${index}].amountMinor`);
+      requireWindowDate(transaction.occurredOn, `transactions[${index}].occurredOn`);
+    }
     // Долг — не метка: операция по долгу, которого в копии нет, не ремонтируется снятием, а
     // отвергается, потому что её деньгам не к чему относиться (D-033).
     if (transaction.kind === "debt_out" || transaction.kind === "debt_in") {
@@ -719,6 +753,17 @@ function validateCurrencies(state: BudgetState): void {
       }
       if (currency !== base && transaction.baseCurrency !== base) {
         throw new Error(`transactions[${index}].baseCurrency: сумма записана не в базовой валюте ${base}.`);
+      }
+      if (currency !== base && transaction.rate !== undefined) {
+        let expected: number | null;
+        try {
+          expected = convertMinor(transaction.amountMinor, transaction.rate);
+        } catch {
+          expected = null;
+        }
+        if (expected !== transaction.baseAmountMinor) {
+          throw new Error(`transactions[${index}].baseAmountMinor: сумма в базовой валюте не равна сумме операции по её курсу${expected === null ? "" : ` — ${expected}`}.`);
+        }
       }
     }
     if (transaction.kind === "transfer") {

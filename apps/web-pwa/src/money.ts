@@ -97,6 +97,40 @@ export function formatMoney(minor: number): string {
   return `${parts.sign}${parts.value}${parts.currency}`;
 }
 
+/**
+ * Сумма в валюте, которая не рубли: «40,50 $», «1 500 ¥». Только для строки одной операции по
+ * счёту в другой валюте — подпись «₽» у неё была бы неправдой, а итоги, которые складывают такие
+ * операции, считаются в базовой валюте и показываются через {@link formatMoney}.
+ *
+ * Число знаков — у самой валюты; целая часть и дробь разделяются в `BigInt`, поэтому ни одна сумма
+ * не округляется на пути к экрану.
+ */
+export function formatCurrencyAmount(minor: number, currency: string, exponent: number): string {
+  if (!Number.isSafeInteger(minor)) {
+    throw new Error("Денежная сумма должна храниться целым числом минимальных единиц.");
+  }
+  const exact = BigInt(minor);
+  const absolute = exact < 0n ? -exact : exact;
+  const scale = 10n ** BigInt(exponent);
+  const formatter = new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+  const parts = formatter.formatToParts(absolute / scale);
+  const rest = absolute % scale;
+  // As formatMoney drops zero kopecks, a whole amount drops its zero cents: «40 $», «40,50 $».
+  const fraction = rest === 0n ? "" : `${decimalSeparator}${rest.toString().padStart(exponent, "0")}`;
+  // The fraction goes after the last digit group, before the currency and its spacing.
+  let lastInteger = -1;
+  parts.forEach((part, index) => {
+    if (part.type === "integer") lastInteger = index;
+  });
+  const text = parts.map((part, index) => (index === lastInteger ? `${part.value}${fraction}` : part.value)).join("");
+  return exact < 0n ? `${MINUS_SIGN}${text}` : text;
+}
+
 export function parseMoney(value: string): number {
   if (value.length > maxRawMoneyLength) {
     throw new Error(moneyOverflowMessage);

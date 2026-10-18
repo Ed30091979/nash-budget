@@ -1,6 +1,13 @@
-import type { BudgetState, DebtDirection, Transaction, TransactionKind } from "@family-budget/domain";
+import {
+  currencyExponent,
+  isSupportedCurrency,
+  type BudgetState,
+  type DebtDirection,
+  type Transaction,
+  type TransactionKind,
+} from "@family-budget/domain";
 import type { IconName } from "../../components/Icon";
-import { formatMoney } from "../../money";
+import { formatCurrencyAmount, formatMoney } from "../../money";
 import { plural } from "../../plural";
 
 /**
@@ -51,6 +58,27 @@ export function operationsCount(count: number): string {
 
 export function rubles(minor: number): string {
   return formatMoney(minor);
+}
+
+/**
+ * Валюта, в которой записана сумма операции: валюта счёта, с которого она идёт. Счёт, которого в
+ * бюджете нет, читается рублёвым — так писала каждая версия до валют.
+ */
+export function transactionCurrency(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  const accountId = transaction.kind === "transfer" || transaction.kind === "goal_contribution"
+    ? transaction.fromAccountId
+    : transaction.accountId;
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
+}
+
+/**
+ * Сумма одной операции с её настоящей валютой: «4 000 ₽», а у покупки по счёту в долларах —
+ * «40 $», а не «40 ₽». Рубли — тем же `formatMoney`, что и везде.
+ */
+export function amountText(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  const currency = transactionCurrency(transaction, budget);
+  if (currency === "RUB") return formatMoney(transaction.amountMinor);
+  return formatCurrencyAmount(transaction.amountMinor, currency, isSupportedCurrency(currency) ? currencyExponent(currency) : 2);
 }
 
 /** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
