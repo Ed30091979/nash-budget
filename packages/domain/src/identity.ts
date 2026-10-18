@@ -100,6 +100,14 @@ export function isUuid(value: unknown): value is StableId {
 export const HOUSEHOLD_ID: StableId = carriedId("household");
 
 /**
+ * The identifier of the occurrence of a recurring rule on a day: derived, so two devices that
+ * write the same day of the same rule offline write one operation and the merge meets it once.
+ */
+export function recurringOccurrenceId(ruleId: StableId, date: string): StableId {
+  return carriedId("recurringOccurrence", ruleId, date);
+}
+
+/**
  * Every identifier the document holds, budget lines included, in one census.
  *
  * Identifiers are unique across the whole document, not only inside each collection: a backup
@@ -115,6 +123,7 @@ export function documentIds(state: BudgetState): StableId[] {
     ...(state.household === undefined ? [] : [state.household.id]),
     ...(state.exchangeRates ?? []).map((item) => item.id),
     ...(state.debts ?? []).map((item) => item.id),
+    ...(state.recurringRules ?? []).map((item) => item.id),
     ...state.accounts.map((item) => item.id),
     ...state.categories.map((item) => item.id),
     ...state.budgets.flatMap((item) => [item.id, ...item.lines.map((line) => line.id)]),

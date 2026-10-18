@@ -143,6 +143,24 @@ describe("deleteTag", () => {
     expect(code(() => deleteTag(archiveTag(state, HOLIDAY), HOLIDAY))).toBe("tag_in_use");
   });
 
+  it("refuses a tag a recurring rule writes onto its occurrences", () => {
+    const seed = makeSeedBudget();
+    const state: BudgetState = {
+      ...seed,
+      tags: [{ id: HOME, name: "Дом", active: true }],
+      recurringRules: [{
+        id: "8b000000-0000-4000-8000-000000000001",
+        template: { kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food, tagIds: [HOME] },
+        frequency: "weekly",
+        interval: 2,
+        startDate: "2026-08-04",
+        active: true,
+      }],
+    };
+    expect(code(() => deleteTag(state, HOME))).toBe("tag_in_use");
+    expect(() => deleteTag(state, HOME)).toThrow(/стоит в регулярной операции/);
+  });
+
   it("deletes a tag no operation carries, and touches nothing else", () => {
     const state = taggedSeed();
     const { state: withSpare, tag } = createTag(state, "Ремонт", sequentialIds("8a000000-0000-4000-8000-0000000000a3"));

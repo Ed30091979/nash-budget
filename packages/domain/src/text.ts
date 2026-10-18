@@ -21,6 +21,8 @@ export const NOTE_MAX_LENGTH = 500;
 export const TAG_NAME_MAX_LENGTH = 40;
 /** The name of whoever a debt is with. */
 export const COUNTERPARTY_MAX_LENGTH = 80;
+/** The name a family may give a recurring rule. */
+export const RULE_NAME_MAX_LENGTH = 80;
 export const MAX_TAGS_PER_TRANSACTION = 10;
 export const DISPLAY_KEY_MAX_LENGTH = 40;
 

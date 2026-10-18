@@ -290,8 +290,8 @@ interface BaseTransaction {
    */
   readonly tagIds?: readonly TagId[];
   /**
-   * The recurring rule this operation is an occurrence of. A label read by no figure. No rule can
-   * exist in this version of the model yet, so every value names nothing and is refused.
+   * The recurring rule this operation is an occurrence of. A label read by no figure; when present
+   * it names a rule of {@link BudgetState.recurringRules}.
    */
   readonly recurringRuleId?: RecurringRuleId;
 }
@@ -390,6 +390,68 @@ export type Transaction =
   | DebtOutTransaction
   | DebtInTransaction;
 
+export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
+interface RecurringTemplateBase {
+  /** In the currency of the account the template moves money from. */
+  readonly amountMinor: MinorUnits;
+  readonly note?: string;
+  readonly tagIds?: readonly TagId[];
+}
+
+export interface RecurringExpenseTemplate extends RecurringTemplateBase {
+  readonly kind: "expense";
+  readonly accountId: AccountId;
+  readonly categoryId: CategoryId;
+}
+
+export interface RecurringIncomeTemplate extends RecurringTemplateBase {
+  readonly kind: "income";
+  readonly accountId: AccountId;
+  readonly categoryId?: CategoryId;
+}
+
+export interface RecurringTransferTemplate extends RecurringTemplateBase {
+  readonly kind: "transfer";
+  readonly fromAccountId: AccountId;
+  readonly toAccountId: AccountId;
+  /** What arrives, in the receiving account's currency; present exactly when the currencies differ. */
+  readonly toAmountMinor?: MinorUnits;
+}
+
+/**
+ * The operation a rule writes on each of its days. No `id` and no date — every occurrence gets
+ * both — and no base-currency snapshot: the value of a foreign occurrence is fixed by the rate of
+ * its own day, when it is written.
+ */
+export type RecurringTemplate = RecurringExpenseTemplate | RecurringIncomeTemplate | RecurringTransferTemplate;
+
+/**
+ * An operation that repeats: «доставка воды каждые две недели», «зарплата 5-го».
+ *
+ * Its occurrences are ordinary posted operations, written with derived identifiers
+ * (`recurringOccurrenceId`) and labelled with the rule, so they are in the history, the backup and
+ * the journal like any other and can be edited or deleted like any other (D-035). The rule only
+ * remembers how far it has written: every day on or before `materializedThrough` is closed, and an
+ * occurrence deleted there does not come back.
+ */
+export interface RecurringRule {
+  readonly id: RecurringRuleId;
+  /** A label the family may give the rule, at most 80 characters. */
+  readonly name?: string;
+  readonly template: RecurringTemplate;
+  readonly frequency: RecurrenceFrequency;
+  /** Every `interval` days, weeks, months or years: an integer from 1 to 999. */
+  readonly interval: number;
+  readonly startDate: LocalDate;
+  /** The last day an occurrence may fall on, included; not before `startDate`. */
+  readonly endDate?: LocalDate;
+  /** The watermark: occurrences on or before this day are never written again, even deleted ones. */
+  readonly materializedThrough?: LocalDate;
+  /** An inactive rule writes nothing; its occurrences stay. */
+  readonly active: boolean;
+}
+
 export interface BudgetState {
   readonly activeBudgetId: BudgetId;
   /** Absent in every budget written before members existed; such a state stays valid. */
@@ -402,6 +464,8 @@ export interface BudgetState {
   readonly exchangeRates?: readonly ExchangeRate[];
   /** Absent in every budget written before debts existed, exactly like `members`. */
   readonly debts?: readonly Debt[];
+  /** Absent in every budget written before recurring rules existed, exactly like `members`. */
+  readonly recurringRules?: readonly RecurringRule[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];

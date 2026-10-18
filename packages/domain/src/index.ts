@@ -64,8 +64,21 @@ export {
   normalizeCounterparty,
 } from "./debts.js";
 export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
-export { carriedId, documentIds, HOUSEHOLD_ID, isUuid } from "./identity.js";
-export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
+export { carriedId, documentIds, HOUSEHOLD_ID, isUuid, recurringOccurrenceId } from "./identity.js";
+export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
+export {
+  archiveRecurringRule,
+  DEFAULT_MAX_OCCURRENCES_PER_RULE,
+  deleteRecurringRule,
+  materializeRecurring,
+  occurrenceDates,
+} from "./recurring.js";
+export type {
+  MaterializeOptions,
+  RecurringMaterialization,
+  RecurringSkip,
+  RecurringSkipReason,
+} from "./recurring.js";
 export {
   budgetMonth,
   carriedBudgetId,
@@ -105,6 +118,7 @@ export {
   normalizeLabel,
   normalizeNote,
   NOTE_MAX_LENGTH,
+  RULE_NAME_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
   TextValidationError,
 } from "./text.js";

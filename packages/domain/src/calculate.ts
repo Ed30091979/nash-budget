@@ -26,6 +26,7 @@ import type {
   MemberId,
   MinorUnits,
   PlanningMonthMetrics,
+  RecurringRule,
   ScheduledExpense,
   StableId,
   Tag,
@@ -50,13 +51,14 @@ import {
   RATE_PART_MIN,
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
-import { MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
+import { MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
 import { isStorableLabel, isStorableNote } from "./stored-text.js";
 import {
   COUNTERPARTY_MAX_LENGTH,
   isDisplayKey,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
+  RULE_NAME_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
 } from "./text.js";
 
@@ -175,6 +177,7 @@ export interface StateIndex {
   readonly tags: ReadonlyMap<TagId, Tag>;
   readonly exchangeRates: ReadonlyMap<StableId, ExchangeRate>;
   readonly debts: ReadonlyMap<StableId, Debt>;
+  readonly recurringRules: ReadonlyMap<StableId, RecurringRule>;
   /** The currency every budget figure is counted in: the household's, or roubles. */
   readonly baseCurrency: CurrencyCode;
 }
@@ -191,13 +194,85 @@ export function indexState(state: BudgetState): StateIndex {
     tags: indexById(state.tags ?? [], "tags"),
     exchangeRates: indexById(state.exchangeRates ?? [], "exchangeRates"),
     debts: indexById(state.debts ?? [], "debts"),
+    recurringRules: indexById(state.recurringRules ?? [], "recurringRules"),
     baseCurrency: baseCurrencyOf(state),
   };
   for (const tag of index.tags.values()) validateTag(tag);
   if (state.household !== undefined) validateHousehold(state.household);
   for (const rate of index.exchangeRates.values()) validateExchangeRate(rate);
   for (const debt of index.debts.values()) validateDebt(debt);
+  // Last: a rule's template names accounts, categories and tags, so it is checked against them all.
+  for (const rule of index.recurringRules.values()) validateRecurringRule(rule, index);
   return index;
+}
+
+/**
+ * A recurring rule: its schedule by the bounds every new field is held to, and its template by the
+ * rules of the operation it writes — the same references, category types, labels and currencies —
+ * so that every occurrence it writes is one the domain accepts.
+ */
+function validateRecurringRule(rule: RecurringRule, index: StateIndex): void {
+  const label = `recurring rule ${rule.id}`;
+  if (rule.name !== undefined && !isStorableLabel(rule.name, RULE_NAME_MAX_LENGTH)) {
+    throw new Error(`${label} name must be stored text of at most ${RULE_NAME_MAX_LENGTH} characters`);
+  }
+  assertEnum(rule.frequency, ["daily", "weekly", "monthly", "yearly"], `${label} frequency`);
+  if (!Number.isSafeInteger(rule.interval) || rule.interval < 1 || rule.interval > MAX_RECURRENCE_INTERVAL) {
+    throw new Error(`${label} interval must be an integer from 1 to ${MAX_RECURRENCE_INTERVAL}`);
+  }
+  assertWindowDate(rule.startDate, `${label} startDate`);
+  if (rule.endDate !== undefined) {
+    assertWindowDate(rule.endDate, `${label} endDate`);
+    if (rule.endDate < rule.startDate) throw new Error(`${label} endDate must not be before startDate`);
+  }
+  if (rule.materializedThrough !== undefined) assertWindowDate(rule.materializedThrough, `${label} materializedThrough`);
+  if (typeof rule.active !== "boolean") throw new Error(`${label} active must be a boolean`);
+  validateRecurringTemplate(rule, index);
+}
+
+function validateRecurringTemplate(rule: RecurringRule, index: StateIndex): void {
+  const label = `recurring rule ${rule.id} template`;
+  const template: unknown = rule.template;
+  if (typeof template !== "object" || template === null || Array.isArray(template)) {
+    throw new Error(`${label} must be an operation template`);
+  }
+  const value = rule.template;
+  assertEnum(value.kind, ["expense", "income", "transfer"], `${label} kind`);
+  assertFieldMinor(value.amountMinor, `${label} amountMinor`);
+  if (value.note !== undefined && !isStorableNote(value.note)) {
+    throw new Error(`${label} note must be one trimmed line of stored text of at most ${NOTE_MAX_LENGTH} characters`);
+  }
+  validateTagIds(value.tagIds, index, label);
+  switch (value.kind) {
+    case "expense": {
+      requireEntity(index.accounts, value.accountId, label);
+      const category = requireEntity(index.categories, value.categoryId, label);
+      if (category.type !== "expense") throw new Error(`${label} must reference an expense category`);
+      return;
+    }
+    case "income": {
+      requireEntity(index.accounts, value.accountId, label);
+      if (value.categoryId !== undefined) {
+        const category = requireEntity(index.categories, value.categoryId, label);
+        if (category.type !== "income") throw new Error(`${label} must reference an income category`);
+      }
+      return;
+    }
+    case "transfer": {
+      const from = requireEntity(index.accounts, value.fromAccountId, label);
+      const to = requireEntity(index.accounts, value.toAccountId, label);
+      if (value.fromAccountId === value.toAccountId) throw new Error(`${label} must use two different accounts`);
+      if (from.currency === to.currency) {
+        if (value.toAmountMinor !== undefined) throw new Error(`${label} moves within one currency and must not carry toAmountMinor`);
+        return;
+      }
+      if (value.toAmountMinor === undefined) {
+        throw new Error(`${label} moves from ${from.currency} to ${to.currency} and must carry toAmountMinor`);
+      }
+      assertFieldMinor(value.toAmountMinor, `${label} toAmountMinor`);
+      return;
+    }
+  }
 }
 
 /**
@@ -451,24 +526,27 @@ function validateTransactionLabels(transaction: Transaction, index: StateIndex):
   if (transaction.note !== undefined && !isStorableNote(transaction.note)) {
     throw new Error(`transaction ${id} note must be one trimmed line of stored text of at most ${NOTE_MAX_LENGTH} characters`);
   }
-  const tagIds: unknown = transaction.tagIds;
-  if (tagIds !== undefined) {
-    if (!Array.isArray(tagIds) || tagIds.length === 0 || tagIds.length > MAX_TAGS_PER_TRANSACTION) {
-      throw new Error(`transaction ${id} tagIds must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
-    }
-    const seen = new Set<TagId>();
-    for (const tagId of tagIds as readonly unknown[]) {
-      if (typeof tagId !== "string") throw new Error(`transaction ${id} tagIds must list tag ids`);
-      assertStableId(tagId, `transaction ${id} tagIds`);
-      if (seen.has(tagId)) throw new Error(`transaction ${id} tagIds repeats tag ${tagId}`);
-      seen.add(tagId);
-      requireEntity(index.tags, tagId, `transaction ${id} tagIds`);
-    }
-  }
+  validateTagIds(transaction.tagIds, index, `transaction ${id}`);
   if (transaction.recurringRuleId !== undefined) {
-    // A label that must name an existing rule, and no rule can exist before recurring rules are
-    // part of the model, so every value names nothing.
-    throw new Error(`transaction ${id} recurringRuleId references unknown id ${String(transaction.recurringRuleId)}`);
+    // A label, and strict all the same: it names a rule the state holds.
+    assertStableId(transaction.recurringRuleId, `transaction ${id} recurringRuleId`);
+    requireEntity(index.recurringRules, transaction.recurringRuleId, `transaction ${id} recurringRuleId`);
+  }
+}
+
+/** Tags on an operation or a template: from one to ten, no repeats, each a tag the state holds. */
+function validateTagIds(value: unknown, index: StateIndex, label: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TAGS_PER_TRANSACTION) {
+    throw new Error(`${label} tagIds must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
+  }
+  const seen = new Set<TagId>();
+  for (const tagId of value as readonly unknown[]) {
+    if (typeof tagId !== "string") throw new Error(`${label} tagIds must list tag ids`);
+    assertStableId(tagId, `${label} tagIds`);
+    if (seen.has(tagId)) throw new Error(`${label} tagIds repeats tag ${tagId}`);
+    seen.add(tagId);
+    requireEntity(index.tags, tagId, `${label} tagIds`);
   }
 }
 

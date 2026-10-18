@@ -47,6 +47,7 @@ export const BACKUP_LIMITS = {
   tags: COLLECTION_LIMITS.tags,
   exchangeRates: COLLECTION_LIMITS.exchangeRates,
   debts: COLLECTION_LIMITS.debts,
+  recurringRules: COLLECTION_LIMITS.recurringRules,
   counterpartyLength: COUNTERPARTY_MAX_LENGTH,
   tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
   tagNameLength: TAG_NAME_MAX_LENGTH,
@@ -347,6 +348,15 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
       }
       if (debt.dueDate !== undefined) requireWindowDate(debt.dueDate, `debts[${index}].dueDate`);
       requireBoolean(debt.active, `debts[${index}].active`);
+    });
+  }
+
+  // Absent in every copy written before recurring rules existed. Only the outline is read here; the
+  // domain holds every field of a rule to its rules when the gate calculates the state.
+  if (state.recurringRules !== undefined) {
+    requireArray(state.recurringRules, "recurringRules", grown(BACKUP_LIMITS.recurringRules)).forEach((item, index) => {
+      const rule = requireRecord(item, `recurringRules[${index}]`);
+      requireString(rule.id, `recurringRules[${index}].id`, true, BACKUP_LIMITS.idLength);
     });
   }
 
@@ -729,17 +739,20 @@ function clearUnknownMemberAttribution(state: BudgetState, report?: BackupRepair
  * reason: the domain refuses a label that names nothing, and the operation it is on is the
  * family's money, which no label may cost.
  *
- * Recurring rules are not part of this version of the model, so every `recurringRuleId` names a
- * rule the copy cannot carry and is cleared. An operation left without tags loses the field
- * rather than keeping an empty list, because there is no empty list of tags.
+ * An operation left without tags loses the field rather than keeping an empty list, because there
+ * is no empty list of tags. A rule label stays when the copy carries the rule: the occurrence is
+ * still the occurrence of that rule.
  */
 function clearUnresolvedLabels(state: BudgetState, report?: BackupRepairReporter): BudgetState {
   const known = new Set((state.tags ?? []).map((tag) => tag.id));
+  const rules = new Set((state.recurringRules ?? []).map((rule) => rule.id));
   let cleared = false;
   // Read first, copied only where there is something to clear: almost no transaction needs it.
   const transactions = state.transactions.map((transaction): Transaction => {
     const unknownTags = (transaction.tagIds ?? []).filter((tagId) => !known.has(tagId));
-    const ruleId = transaction.recurringRuleId;
+    const ruleId = transaction.recurringRuleId !== undefined && !rules.has(transaction.recurringRuleId)
+      ? transaction.recurringRuleId
+      : undefined;
     if (unknownTags.length === 0 && ruleId === undefined) return transaction;
     cleared = true;
     let repaired: Transaction = transaction;

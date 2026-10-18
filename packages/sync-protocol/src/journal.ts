@@ -814,9 +814,9 @@ function incomeCategoryCode(live: LiveEntities, categoryId: StableId): JournalPr
  * income is filed under, its tags, and the recurring rule it is an occurrence of — and all of them
  * are governed by the one rule written here rather than by a rule each, because the case is the
  * same case. Tags are cleared one by one: a transaction keeps every tag that resolves, and loses
- * the field only when none does, because there is no empty list of tags. Recurring rules are not
- * part of this version of the model, so a rule label names nothing on any replica and is cleared
- * wherever it appears — the same answer the backup gate gives it.
+ * the field only when none does, because there is no empty list of tags. A rule label is cleared
+ * when the journal holds no such rule — the same answer the backup gate gives it — and until rules
+ * travel through the journal as entities of their own, it holds none.
  *
  * The state has to be one the domain accepts, and it refuses all four: `calculateMemberExpenses`
  * refuses a transaction whose `memberId` names nobody, and `calculateBudget` refuses an income
@@ -865,6 +865,7 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
       cleared = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
       report(problem("unknown_reference", "transaction", id));
     }
+    // No entity kind carries a recurring rule yet, so no rule label resolves.
     if (cleared.recurringRuleId !== undefined) {
       const { recurringRuleId: _unresolved, ...unlinked } = cleared;
       cleared = unlinked;

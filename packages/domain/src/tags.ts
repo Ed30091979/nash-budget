@@ -156,8 +156,8 @@ export function archiveTag(state: BudgetState, id: TagId): BudgetState {
 }
 
 /**
- * Deletes a tag no operation carries, and refuses one that is on any operation: that one is
- * archived instead ({@link archiveTag}).
+ * Deletes a tag no operation and no recurring rule carries, and refuses one that is on any of them:
+ * that one is archived instead ({@link archiveTag}).
  *
  * Deleting a tag used to take it off every operation in the same transition. On one device that is
  * one tidy change; through the journal it is one whole-entity update per tagged operation, and the
@@ -170,6 +170,10 @@ export function deleteTag(state: BudgetState, id: TagId): BudgetState {
   requireTag(state, id);
   if (state.transactions.some((transaction) => transaction.tagIds?.includes(id) === true)) {
     fail("tag_in_use", "id", "Метка стоит на операциях. Её можно убрать в архив: на операциях она останется.");
+  }
+  // A rule writes its tags onto every occurrence, so a tag a rule carries is in use as well.
+  if ((state.recurringRules ?? []).some((rule) => rule.template.tagIds?.includes(id) === true)) {
+    fail("tag_in_use", "id", "Метка стоит в регулярной операции. Её можно убрать в архив: в правиле она останется.");
   }
   return { ...state, tags: (state.tags ?? []).filter((item) => item.id !== id) };
 }

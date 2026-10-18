@@ -1074,7 +1074,9 @@ describe("labels and display fields", () => {
     }
   });
 
-  it("refuses a recurring-rule label while no recurring rule can exist", () => {
+  // Orchestrator step 12: rules are part of the model now, so the label is refused when it names a
+  // rule the state does not carry, not always; tests/recurring.test.ts accepts one that it does.
+  it("refuses a recurring-rule label that names no rule of the state", () => {
     const state = withTransaction(makeSeedBudget(), (transaction) => ({ ...transaction, recurringRuleId: "8b000000-0000-4000-8000-000000000001" }));
     expect(() => calculateBudget(state)).toThrow(/recurringRuleId references unknown id 8b000000-0000-4000-8000-000000000001/);
   });

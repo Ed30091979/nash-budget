@@ -995,7 +995,9 @@ describe("метки, заметки и оформление в резервно
     expect(Object.hasOwn(restored.transactions.find((item) => item.id === target.id)!, "tagIds")).toBe(false);
   });
 
-  it("снимает метку регулярной операции: правил в этой версии модели нет", () => {
+  // Orchestrator step 12: rules are part of the model now, so the label is taken off only when the
+  // copy does not carry the rule; the next test keeps one that it does.
+  it("снимает метку регулярной операции, правила которой в копии нет", () => {
     const seed = makePlanningSeed();
     const target = countedExpense(seed);
     const repairs: BackupRepair[] = [];
@@ -1007,6 +1009,27 @@ describe("метки, заметки и оформление в резервно
 
     expect(repairs).toEqual([{ kind: "unknown_recurring_rule", transactionId: target.id, recurringRuleId: RULE_ID }]);
     expect(restored).toEqual(seed);
+  });
+
+  it("оставляет метку регулярной операции, правило которой копия несёт", () => {
+    const seed = makePlanningSeed();
+    const target = countedExpense(seed);
+    if (target.kind !== "expense") throw new Error("Test fixture expense is not an expense.");
+    const rule = {
+      id: RULE_ID,
+      template: { kind: "expense", amountMinor: 150_000, accountId: target.accountId, categoryId: target.categoryId },
+      frequency: "weekly",
+      interval: 2,
+      startDate: "2026-08-04",
+      active: true,
+    };
+    const labelled = mutate({ ...seed, recurringRules: [rule] } as BudgetState, "transactions", { recurringRuleId: RULE_ID });
+    const repairs: BackupRepair[] = [];
+
+    const restored = parseAndValidateBudgetBackup(serializeBackup(labelled as BudgetState), (repair) => repairs.push(repair));
+
+    expect(repairs).toEqual([]);
+    expect(restored).toEqual(labelled);
   });
 
   it("не сохраняет висячую метку в созданной копии", async () => {

@@ -41,4 +41,8 @@ export const COLLECTION_LIMITS = {
   tags: 500,
   exchangeRates: 10_000,
   debts: 500,
+  recurringRules: 1_000,
 } as const;
+
+/** How often a recurring rule may repeat: every 1 to 999 days, weeks, months or years. */
+export const MAX_RECURRENCE_INTERVAL = 999;
