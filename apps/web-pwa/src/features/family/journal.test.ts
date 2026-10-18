@@ -7,7 +7,7 @@
  * набросок, который кодек отвергнет, — это операция, которая никогда не дойдёт до семьи, и узнать
  * об этом на экране пользователя было бы поздно.
  */
-import { makePlanningSeed, makeSeedBudget, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import { calculateBudget, HOUSEHOLD_ID, makePlanningSeed, makeSeedBudget, SEED_IDS, type BudgetState } from "@family-budget/domain";
 import { applyJournal, createClock, createLocalOperation, type Operation } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
@@ -290,5 +290,78 @@ describe("метки, заметки и оформление как операц
     ]);
     // И каждый набросок проходит настоящий кодек.
     expect(() => stamp(untagged, state)).not.toThrow();
+  });
+});
+
+describe("валюты как операции журнала", () => {
+  const DOLLARS = "0000000a-0000-4000-8000-0000000000e1";
+  const DOLLAR_EXPENSE = "0000000a-0000-4000-8000-0000000000e2";
+  const TRANSFER = "0000000a-0000-4000-8000-0000000000e3";
+  const RATE = "0000000a-0000-4000-8000-0000000000e4";
+
+  /** Посевной бюджет с хозяйством, курсом, долларовым счётом, покупкой и переводом в доллары. */
+  function dollars(): BudgetState {
+    const state = makeSeedBudget();
+    return {
+      ...state,
+      household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" },
+      exchangeRates: [{ id: RATE, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+      accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [
+        ...state.transactions,
+        {
+          id: DOLLAR_EXPENSE, occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_000,
+          accountId: DOLLARS, categoryId: SEED_IDS.categories.food,
+          baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+        {
+          id: TRANSFER, occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_800_000,
+          fromAccountId: SEED_IDS.accounts.main, toAccountId: DOLLARS, toAmountMinor: 20_000,
+        },
+      ],
+    };
+  }
+
+  it("посев переносит хозяйство, курс, снимок и сумму зачисления, и журнал собирает то же состояние", () => {
+    const state = dollars();
+    const snapshot = applyJournal(stamp(state));
+
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.household).toEqual(state.household);
+    expect(snapshot.state.exchangeRates).toEqual(state.exchangeRates);
+    for (const id of [DOLLAR_EXPENSE, TRANSFER]) {
+      expect(snapshot.state.transactions.find((entry) => entry.id === id)).toEqual(state.transactions.find((entry) => entry.id === id));
+    }
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(state));
+  });
+
+  it("порядок ключей вложенного курса — не изменение, а новый курс — update одной записи", () => {
+    const state = dollars();
+    const reordered: BudgetState = {
+      ...state,
+      exchangeRates: state.exchangeRates!.map((rate) => ({ ...rate, rate: { quoteMinor: rate.rate.quoteMinor, baseMinor: rate.rate.baseMinor } })),
+      transactions: state.transactions.map((entry) =>
+        entry.kind === "expense" && entry.rate !== undefined
+          ? { ...entry, rate: { quoteMinor: entry.rate.quoteMinor, baseMinor: entry.rate.baseMinor } }
+          : entry),
+    };
+    expect(budgetJournalDrafts(state, reordered, MEMBER)).toEqual([]);
+
+    const revalued: BudgetState = {
+      ...state,
+      exchangeRates: state.exchangeRates!.map((rate) => ({ ...rate, rate: { baseMinor: 9_250, quoteMinor: 100 } })),
+    };
+    expect(budgetJournalDrafts(state, revalued, MEMBER)).toEqual([
+      {
+        memberId: MEMBER, entity: "exchangeRate", action: "update", targetId: RATE,
+        fields: { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_250, quoteMinor: 100 } },
+      },
+    ]);
+  });
+
+  it("не удаляет хозяйство, даже если его нет в следующем состоянии", () => {
+    const state = dollars();
+    const { household: _household, ...without } = state;
+    expect(budgetJournalDrafts(state, without, MEMBER)).toEqual([]);
   });
 });

@@ -5,13 +5,16 @@ import type {
   BudgetId,
   BudgetLine,
   Category,
+  CurrencyCode,
+  ExchangeRate,
   Goal,
+  Household,
   ScheduledExpense,
   StableId,
   Tag,
   Transaction,
 } from "@family-budget/domain";
-import { COLLECTION_LIMITS } from "@family-budget/domain";
+import { COLLECTION_LIMITS, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID } from "@family-budget/domain";
 
 import {
   canonicalOperationText,
@@ -487,6 +490,9 @@ interface LiveEntities {
   readonly transactions: Map<StableId, Transaction>;
   readonly members: Map<StableId, Member>;
   readonly tags: Map<StableId, Tag>;
+  readonly exchangeRates: Map<StableId, ExchangeRate>;
+  /** At most one entry, under `HOUSEHOLD_ID`: the codec refuses any other target. */
+  readonly households: Map<StableId, Household>;
 }
 
 function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
@@ -501,6 +507,8 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
     transactions: new Map(),
     members: new Map(),
     tags: new Map(),
+    exchangeRates: new Map(),
+    households: new Map(),
   };
 
   for (const entry of ordered) {
@@ -538,6 +546,12 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
       case "tag":
         live.tags.set(entry.targetId, { id: entry.targetId, ...entry.fields });
         break;
+      case "exchangeRate":
+        live.exchangeRates.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
+      case "household":
+        live.households.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
     }
   }
 
@@ -556,6 +570,8 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
     ["transaction", live.transactions],
     ["member", live.members],
     ["tag", live.tags],
+    ["exchangeRate", live.exchangeRates],
+    ["household", live.households],
   ];
 }
 
@@ -650,9 +666,40 @@ function expenseCategoryProblem(
   return null;
 }
 
-function goalProblem(live: LiveEntities, goal: Goal): WithheldEntity | null {
-  if (!live.accounts.has(goal.linkedAccountId)) return withheldFor("goal", goal.id, "unknown_reference");
+/** The currency the household counts in: its own, or roubles while no household has arrived. */
+function baseCurrencyOf(live: LiveEntities): CurrencyCode {
+  return live.households.get(HOUSEHOLD_ID)?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+}
+
+/**
+ * Why a plan — a goal, a large payment, a schedule — cannot sit on this account: it is kept in a
+ * currency other than the base one, and the annual plan adds plans up without a rate (D-032). The
+ * account's currency, or the household's base, may have changed on another device after the plan
+ * was written; the plan is withheld and comes back if the currencies agree again.
+ */
+function planAccountProblem(live: LiveEntities, entity: EntityKind, id: StableId, accountId: StableId): WithheldEntity | null {
+  const account = live.accounts.get(accountId);
+  if (account === undefined) return withheldFor(entity, id, "unknown_reference");
+  if (account.currency !== baseCurrencyOf(live)) return withheldFor(entity, id, "currency_mismatch");
   return null;
+}
+
+/**
+ * Whether the base-currency snapshot of an income, an expense or a refund fits its account, by the
+ * rule the domain enforces: none on an account in the base currency, all three fields in the base
+ * currency on any other. The codec has already made sure a snapshot is whole when it is there.
+ */
+function snapshotFits(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+  account: Account,
+  baseCurrency: CurrencyCode,
+): boolean {
+  if (account.currency === baseCurrency) return transaction.baseAmountMinor === undefined;
+  return transaction.baseAmountMinor !== undefined && transaction.baseCurrency === baseCurrency;
+}
+
+function goalProblem(live: LiveEntities, goal: Goal): WithheldEntity | null {
+  return planAccountProblem(live, "goal", goal.id, goal.linkedAccountId);
 }
 
 function budgetLineProblem(live: LiveEntities, id: StableId, entry: JournalLine): WithheldEntity | null {
@@ -661,29 +708,39 @@ function budgetLineProblem(live: LiveEntities, id: StableId, entry: JournalLine)
 }
 
 function annualCommitmentProblem(live: LiveEntities, item: AnnualCommitment): WithheldEntity | null {
-  if (!live.accounts.has(item.accountId)) return withheldFor("annualCommitment", item.id, "unknown_reference");
-  return expenseCategoryProblem(live, "annualCommitment", item.id, item.categoryId);
+  return planAccountProblem(live, "annualCommitment", item.id, item.accountId)
+    ?? expenseCategoryProblem(live, "annualCommitment", item.id, item.categoryId);
 }
 
 function scheduledExpenseProblem(live: LiveEntities, item: ScheduledExpense): WithheldEntity | null {
-  if (!live.accounts.has(item.accountId)) return withheldFor("scheduledExpense", item.id, "unknown_reference");
-  return expenseCategoryProblem(live, "scheduledExpense", item.id, item.categoryId);
+  return planAccountProblem(live, "scheduledExpense", item.id, item.accountId)
+    ?? expenseCategoryProblem(live, "scheduledExpense", item.id, item.categoryId);
 }
 
 function transactionProblem(live: LiveEntities, transaction: Transaction): WithheldEntity | null {
   const id = transaction.id;
   const missing = withheldFor("transaction", id, "unknown_reference");
+  const mismatch = withheldFor("transaction", id, "currency_mismatch");
+  const base = baseCurrencyOf(live);
   switch (transaction.kind) {
-    case "income":
+    case "income": {
       // The account decides whether an income can be shown at all; its category never does.
       // A category on an income is a label, and an unresolved label is cleared rather than
       // withheld — see clearUnresolvedLabels for why the money may not go down with it.
-      return live.accounts.has(transaction.accountId) ? null : missing;
-    case "expense":
-      if (!live.accounts.has(transaction.accountId)) return missing;
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      return snapshotFits(transaction, account, base) ? null : mismatch;
+    }
+    case "expense": {
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      if (!snapshotFits(transaction, account, base)) return mismatch;
       return expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
+    }
     case "refund": {
-      if (!live.accounts.has(transaction.accountId)) return missing;
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      if (!snapshotFits(transaction, account, base)) return mismatch;
       const categoryProblem = expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
       if (categoryProblem !== null) return categoryProblem;
       const original = live.transactions.get(transaction.originalTransactionId);
@@ -694,12 +751,18 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
       if (transaction.occurredOn < original.occurredOn) return invalid;
       return null;
     }
-    case "transfer":
-      if (!live.accounts.has(transaction.fromAccountId)) return missing;
-      return live.accounts.has(transaction.toAccountId) ? null : missing;
+    case "transfer": {
+      const from = live.accounts.get(transaction.fromAccountId);
+      const to = live.accounts.get(transaction.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      // The amount that arrived is named exactly when the currencies differ.
+      return (from.currency === to.currency) === (transaction.toAmountMinor === undefined) ? null : mismatch;
+    }
     case "goal_contribution": {
-      if (!live.accounts.has(transaction.fromAccountId)) return missing;
-      if (!live.accounts.has(transaction.toAccountId)) return missing;
+      const from = live.accounts.get(transaction.fromAccountId);
+      const to = live.accounts.get(transaction.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      if (from.currency !== to.currency) return mismatch;
       const goal = live.goals.get(transaction.goalId);
       if (goal === undefined) return missing;
       if (goal.linkedAccountId !== transaction.toAccountId) {
@@ -885,6 +948,11 @@ function beyondBound(value: number): boolean {
 /** Where one transaction lands: the running total of its kind and the balances it moves. */
 type Contribution = readonly [Map<string, number>, string, number];
 
+/**
+ * Where one transaction lands, the way the domain counts it: the totals in the base currency — the
+ * snapshot of an operation in another currency, its amount otherwise — and each balance in its own
+ * account's currency, the receiving side of a transfer between currencies by what arrived.
+ */
 function transactionContributions(
   totals: Map<string, number>,
   balances: Map<string, number>,
@@ -894,23 +962,23 @@ function transactionContributions(
   switch (transaction.kind) {
     case "income":
       return [
-        [totals, "income", amount],
+        [totals, "income", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, amount],
       ];
     case "expense":
       return [
-        [totals, "grossExpenses", amount],
+        [totals, "grossExpenses", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, -amount],
       ];
     case "refund":
       return [
-        [totals, "refunds", amount],
+        [totals, "refunds", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, amount],
       ];
     case "transfer":
       return [
         [balances, transaction.fromAccountId, -amount],
-        [balances, transaction.toAccountId, amount],
+        [balances, transaction.toAccountId, transaction.toAmountMinor ?? amount],
       ];
     case "goal_contribution":
       return [
@@ -954,9 +1022,13 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
     }
   }
 
-  // Capital is the sum of the balances above, so it needs a pass of its own.
+  // Capital is the sum of the balances of the accounts in the base currency, as the domain builds
+  // it, so it needs a pass of its own.
   let capital = 0;
-  for (const balance of balances.values()) capital = addSaturating(capital, balance);
+  const base = baseCurrencyOf(live);
+  for (const [id, balance] of balances) {
+    if (live.accounts.get(id)?.currency === base) capital = addSaturating(capital, balance);
+  }
 
   // Planned expenses are summed per budget, both by calculateBudget and by the annual plan.
   const plannedByBudget = new Map<BudgetId, number>();
@@ -997,8 +1069,8 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 }
 
 /**
- * Says out loud that the state holds more participants or tags than a document may. Withholds
- * nothing.
+ * Says out loud that the state holds more participants, tags or exchange rates than a document
+ * may. Withholds nothing.
  *
  * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
  * stays under it when it creates. Several devices creating offline can still pass it together, and
@@ -1009,6 +1081,7 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 function reportCollectionLimits(live: LiveEntities, report: (problem: JournalProblem) => void): void {
   if (live.members.size > COLLECTION_LIMITS.members) report(problem("collection_limit", "member", ""));
   if (live.tags.size > COLLECTION_LIMITS.tags) report(problem("collection_limit", "tag", ""));
+  if (live.exchangeRates.size > COLLECTION_LIMITS.exchangeRates) report(problem("collection_limit", "exchangeRate", ""));
 }
 
 /**
@@ -1230,6 +1303,9 @@ function buildView(
     transactions: [...live.transactions.values()],
     members: [...live.members.values()],
     tags: [...live.tags.values()],
+    exchangeRates: [...live.exchangeRates.values()],
+    // Absent stays absent: a journal without a household is counted in roubles, like a backup.
+    ...(live.households.has(HOUSEHOLD_ID) ? { household: live.households.get(HOUSEHOLD_ID)! } : {}),
   };
 
   const unique = new Map<string, JournalProblem>();

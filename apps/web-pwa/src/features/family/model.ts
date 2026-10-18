@@ -203,6 +203,8 @@ const ENTITY_LABELS = {
   transaction: "Операция",
   member: "Участник",
   tag: "Метка",
+  exchangeRate: "Курс валюты",
+  household: "Хозяйство",
 } as const satisfies Readonly<Record<WithheldEntity["entity"], string>>;
 
 const WITHHOLDING_LABELS = {
@@ -213,6 +215,7 @@ const WITHHOLDING_LABELS = {
   goal_account_mismatch: "взнос попал не на тот счёт, что привязан к цели",
   duplicate_budget_line: "категория запланирована в бюджете дважды",
   unknown_active_budget: "выбранный бюджет в семью ещё не пришёл",
+  currency_mismatch: "валюта записи не сходится с валютой счёта или семьи",
 } as const satisfies Readonly<Record<WithheldEntity["reason"], string>>;
 
 export interface WithheldRow {

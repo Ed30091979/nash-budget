@@ -3,6 +3,7 @@ import {
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  HOUSEHOLD_ID,
   makePlanningSeed,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
@@ -28,6 +29,39 @@ import {
 function backupFile(payload: unknown, size?: number): { size: number; text(): Promise<string> } {
   const text = serializeBackup(payload);
   return { size: size ?? text.length, text: async () => text };
+}
+
+const DOLLAR_ACCOUNT_ID = "c5555555-5555-4555-8555-555555555551";
+const DOLLAR_EXPENSE_ID = "c5555555-5555-4555-8555-555555555552";
+const DOLLAR_RATE_ID = "c5555555-5555-4555-8555-555555555553";
+
+/** Копия волны 1 с долларовым счётом, курсом и покупкой на 40 $ по 90 ₽ — 3 600 ₽. */
+function withDollars(state: BudgetState): BudgetState {
+  return {
+    ...state,
+    household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" },
+    exchangeRates: [{ id: DOLLAR_RATE_ID, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+    accounts: [...state.accounts, { id: DOLLAR_ACCOUNT_ID, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+    transactions: [
+      ...state.transactions,
+      {
+        id: DOLLAR_EXPENSE_ID, occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_000,
+        accountId: DOLLAR_ACCOUNT_ID, categoryId: PLANNING_IDS.categories.food,
+        baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+      },
+    ],
+  };
+}
+
+function withoutSnapshot(state: BudgetState): BudgetState {
+  return {
+    ...state,
+    transactions: state.transactions.map((transaction) => {
+      if (transaction.id !== DOLLAR_EXPENSE_ID || transaction.kind !== "expense") return transaction;
+      const { baseAmountMinor: _amount, baseCurrency: _currency, rate: _rate, ...plain } = transaction;
+      return plain;
+    }),
+  };
 }
 
 function withCrossCollectionDuplicate(state: BudgetState): BudgetState {
@@ -185,20 +219,22 @@ describe("восстановление бюджета", () => {
     },
   );
 
-  it("отклоняет modern backup с USD и корректной checksum до save/publish", async () => {
+  // План §6: тест «USD отвергается» стал тремя — валюта вне таблицы отвергается, USD без суммы в
+  // рублях отвергается, USD с ней принимается. Счёт в долларах теперь законен (D-031).
+  it("отклоняет modern backup со счётом в неизвестной валюте и корректной checksum до save/publish", async () => {
     const previous = makePlanningSeed();
     let stored = previous;
     let published = previous;
     const save = vi.fn(async (next: BudgetState) => { stored = next; });
     const publish = vi.fn((next: BudgetState) => { published = next; });
     const candidate = makePlanningSeed();
-    const usd = {
+    const unknown = {
       ...candidate,
       accounts: candidate.accounts.map((account, index) => (
-        index === 0 ? { ...account, currency: "USD" } : account
+        index === 0 ? { ...account, currency: "XYZ" } : account
       )),
     };
-    const text = serializeBackup(usd);
+    const text = serializeBackup(unknown);
     const envelope = JSON.parse(text) as {
       formatVersion: number;
       integrity: { algorithm: string; checksum: string };
@@ -221,6 +257,32 @@ describe("восстановление бюджета", () => {
     expect(publish).not.toHaveBeenCalled();
     expect(stored).toBe(previous);
     expect(published).toBe(previous);
+  });
+
+  it("отклоняет операцию по счёту в USD без суммы в рублях до save/publish", async () => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const plain = withoutSnapshot(withDollars(makePlanningSeed()));
+
+    expect(() => prepareBudgetState(plain)).toThrow(/transactions\[\d+\]: операция по счёту в USD без суммы в базовой валюте RUB/u);
+    await expect(restoreBudgetBackup(backupFile(plain), save, publish)).rejects.toThrow(/без суммы в базовой валюте/u);
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("принимает счёт в USD с суммой в рублях: копия восстанавливается байт в байт", async () => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const dollars = withDollars(makePlanningSeed());
+
+    await expect(restoreBudgetBackup(backupFile(dollars), save, publish)).resolves.toEqual(dollars);
+    expect(save).toHaveBeenCalledExactlyOnceWith(dollars);
+    const exported = await createBudgetBackup(dollars, vi.fn(async () => undefined));
+    expect(parseAndValidateBudgetBackup(exported.text)).toEqual(dollars);
+    // Расход в долларах попал в рубли по своей сумме в рублях, а капитал — только рубли.
+    const metrics = calculateBudget(dollars);
+    expect(metrics.grossExpensesMinor).toBe(calculateBudget(makePlanningSeed()).grossExpensesMinor + 360_000);
+    expect(metrics.capitalMinor).toBe(calculateBudget(makePlanningSeed()).capitalMinor);
   });
 
   it.each([
@@ -953,5 +1015,80 @@ describe("метки, заметки и оформление в резервно
 
     expect(created.text).not.toContain(DELETED_TAG_ID);
     expect(() => calculateBudget(parseAndValidateBudgetBackup(created.text))).not.toThrow();
+  });
+});
+
+describe("валюты в резервной копии", () => {
+  const dollarExpense = (state: BudgetState, change: Record<string, unknown>): unknown => ({
+    ...state,
+    transactions: state.transactions.map((item) => (item.id === DOLLAR_EXPENSE_ID ? { ...item, ...change } : item)),
+  });
+  const transfer = (toAccountId: string, extra: Record<string, unknown> = {}) => (state: BudgetState): unknown => ({
+    ...state,
+    transactions: [...state.transactions, {
+      id: "c5555555-5555-4555-8555-555555555559", occurredOn: "2026-07-05", status: "posted", kind: "transfer",
+      amountMinor: 1_800_000, fromAccountId: state.accounts[0]!.id, toAccountId, ...extra,
+    }],
+  });
+  const rate = (change: Record<string, unknown>) => (state: BudgetState): unknown => ({
+    ...state,
+    exchangeRates: [{ ...state.exchangeRates![0]!, ...change }],
+  });
+
+  it.each([
+    ["хозяйство под чужим идентификатором", (state: BudgetState) => ({ ...state, household: { id: "c5555555-5555-4555-8555-5555555555ff", baseCurrency: "RUB" } }), /household\.id: хозяйство записывается под выведенным идентификатором/u],
+    ["база в неизвестной валюте", (state: BudgetState) => ({ ...state, household: { id: HOUSEHOLD_ID, baseCurrency: "XYZ" } }), /household\.baseCurrency: недопустимое значение/u],
+    ["курс валюты к ней самой", rate({ currency: "RUB" }), /exchangeRates\[0\]: курс валюты к ней самой/u],
+    ["курс неизвестной валюты", rate({ currency: "XAU" }), /exchangeRates\[0\]\.currency: недопустимое значение/u],
+    ["курс за окном журнала", rate({ date: "2200-01-01" }), /exchangeRates\[0\]\.date: дата вне диапазона/u],
+    ["курс с нулевой частью", rate({ rate: { baseMinor: 0, quoteMinor: 100 } }), /exchangeRates\[0\]\.rate: части курса/u],
+    ["курс с лишним полем", rate({ rate: { baseMinor: 9_000, quoteMinor: 100, scale: 2 } }), /exchangeRates\[0\]\.rate: лишнее поле scale/u],
+    ["курс не UUID", rate({ id: "rate-1" }), /exchangeRates\[0\]\.id: некорректный UUID/u],
+    ["полснимка", (state: BudgetState) => ({
+      ...state,
+      transactions: state.transactions.map((item) => {
+        if (item.id !== DOLLAR_EXPENSE_ID || item.kind !== "expense") return item;
+        const { rate: _rate, ...partial } = item;
+        return partial;
+      }),
+    }), /сумма в базовой валюте записывается тремя полями/u],
+    ["снимок вне потолка поля", (state: BudgetState) => dollarExpense(state, { baseAmountMinor: 10 ** 10 + 1 }), /baseAmountMinor: сумма от 1 до 10000000000/u],
+    ["снимок в другой базе", (state: BudgetState) => dollarExpense(state, { baseCurrency: "EUR" }), /baseCurrency: сумма записана не в базовой валюте RUB/u],
+    ["снимок у рублёвой операции", (state: BudgetState) => ({ ...state, transactions: state.transactions.map((item, index) => (index === 1 ? { ...item, baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } } : item)) }), /операция в базовой валюте RUB не несёт второй суммы/u],
+    ["сумма зачисления у расхода", (state: BudgetState) => dollarExpense(state, { toAmountMinor: 100 }), /toAmountMinor: сумма зачисления бывает только у перевода/u],
+    ["перевод в доллары без суммы зачисления", transfer(DOLLAR_ACCOUNT_ID), /перевод из RUB в USD без суммы зачисления/u],
+    ["перевод в рублях с суммой зачисления", (state: BudgetState) => transfer(state.accounts[1]!.id, { toAmountMinor: 100 })(state), /toAmountMinor: перевод в одной валюте/u],
+  ] as const)("отклоняет копию: %s — до save/publish", async (_name, mutate, expected) => {
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const malformed = mutate(withDollars(makePlanningSeed()));
+
+    expect(() => prepareBudgetState(malformed)).toThrow(expected);
+    await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(expected);
+    expect(save).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("принимает перевод в доллары с суммой зачисления", () => {
+    const state = transfer(DOLLAR_ACCOUNT_ID, { toAmountMinor: 20_000 })(withDollars(makePlanningSeed())) as BudgetState;
+    expect(prepareBudgetState(state)).toEqual(state);
+  });
+
+  it("копия без хозяйства и курсов их не приобретает", () => {
+    const legacy = makePlanningSeed();
+    const restored = parseAndValidateBudgetBackup(serializeBackup(legacy));
+    expect("household" in restored || "exchangeRates" in restored).toBe(false);
+  });
+
+  it("ограничивает число курсов в файле, но не в документе", () => {
+    const base = withDollars(makePlanningSeed());
+    const exchangeRates = Array.from({ length: BACKUP_LIMITS.exchangeRates + 1 }, (_, index) => ({
+      ...base.exchangeRates![0]!,
+      id: `c6000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    const many: BudgetState = { ...base, exchangeRates };
+    expect(BACKUP_LIMITS.exchangeRates).toBe(COLLECTION_LIMITS.exchangeRates);
+    expect(prepareBudgetState(many)).toEqual(many);
+    expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`exchangeRates: допускается не более ${BACKUP_LIMITS.exchangeRates} элементов`);
   });
 });

@@ -39,4 +39,5 @@ export const MAX_SORT_ORDER = 1_000_000;
 export const COLLECTION_LIMITS = {
   members: 100,
   tags: 500,
+  exchangeRates: 10_000,
 } as const;

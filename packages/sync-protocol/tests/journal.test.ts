@@ -3,6 +3,7 @@ import {
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  HOUSEHOLD_ID,
   type Transaction,
 } from "@family-budget/domain";
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
@@ -268,6 +269,10 @@ function entityIds(state: SyncedBudgetState, entity: EntityKind): string[] {
       return state.members.map((item) => item.id);
     case "tag":
       return state.tags.map((item) => item.id);
+    case "exchangeRate":
+      return state.exchangeRates.map((item) => item.id);
+    case "household":
+      return state.household === undefined ? [] : [state.household.id];
   }
 }
 
@@ -277,6 +282,8 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
       return state.budgets.flatMap((budget) => budget.lines).find((line) => line.id === targetId);
     case "budget":
       return state.budgets.find((budget) => budget.id === targetId);
+    case "household":
+      return state.household?.id === targetId ? state.household : undefined;
     default: {
       const collections: readonly (readonly { readonly id: string }[])[] = [
         state.accounts,
@@ -287,6 +294,7 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
         state.transactions,
         state.members,
         state.tags,
+        state.exchangeRates,
       ];
       return collections.flat().find((item) => item.id === targetId);
     }
@@ -309,6 +317,8 @@ const SEED_PARENTS: { readonly [K in EntityKind]: readonly ("account" | "categor
   transaction: ["account", "category"],
   member: [],
   tag: [],
+  exchangeRate: [],
+  household: [],
 };
 
 const SEED_TARGET = { account: SEED_ACCOUNT_ID, category: SEED_CATEGORY_ID, budget: SEED_BUDGET_ID } as const;
@@ -476,6 +486,12 @@ describe("applyJournal", () => {
             : { id: targetId, ...UPDATED_FIELDS[entity] },
       );
 
+      // The household is never deleted: the codec refuses the operation (plan 4.2), so the
+      // household stays what the update made it.
+      if (entity === "household") {
+        expect(() => stamp(opUuid(3), "delete", 4, false)).toThrow(/the household cannot be deleted/);
+        continue;
+      }
       const removed = applyOperations(updated, [stamp(opUuid(3), "delete", 4, false)]);
       expect(entityIds(removed.state, entity)).toEqual([]);
       expect(removed.entries).toHaveLength(seed.length + 1);
@@ -2797,11 +2813,40 @@ describe("withheld entities", () => {
   const INCOME_EXPENSE_ID = "expense-planned-on-an-income-category";
   const EARLY_REFUND_ID = "refund-dated-before-its-expense";
   const STRAY_CONTRIBUTION_ID = "contribution-to-an-unlinked-account";
+  const DOLLAR_ACCOUNT_ID = "account-kept-in-dollars";
+  const UNVALUED_EXPENSE_ID = "dollar-expense-without-its-rouble-value";
 
   function journalWithEveryWithholding(): Operation[] {
     const write = (draft: Record<string, unknown>): Operation => parseOperation(draft);
     return [
       ...buildFixtureJournal(),
+      // A dollar account, and a purchase on it that carries no value in roubles: the budget could
+      // not count it, so it is withheld for its currencies (plan 4.5, currency_mismatch).
+      write({
+        opId: opUuid(978),
+        deviceId: DEVICE_B,
+        lamport: 698,
+        entity: "account",
+        action: "create",
+        targetId: DOLLAR_ACCOUNT_ID,
+        fields: { ...SAMPLE_FIELDS.account, name: "Доллары", currency: "USD" },
+      }),
+      write({
+        opId: opUuid(979),
+        deviceId: DEVICE_B,
+        lamport: 699,
+        entity: "transaction",
+        action: "create",
+        targetId: UNVALUED_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-11",
+          status: "posted",
+          amountMinor: 4_000,
+          accountId: DOLLAR_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+        },
+      }),
       // Two kinds claim one identifier: the category outranks the account, so the account goes.
       write({
         opId: opUuid(981),
@@ -2919,6 +2964,7 @@ describe("withheld entities", () => {
     { entity: "goal", id: ORPHAN_GOAL_ID, reason: "unknown_reference" },
     { entity: "scheduledExpense", id: INCOME_EXPENSE_ID, reason: "wrong_category_type" },
     { entity: "transaction", id: STRAY_CONTRIBUTION_ID, reason: "goal_account_mismatch" },
+    { entity: "transaction", id: UNVALUED_EXPENSE_ID, reason: "currency_mismatch" },
     { entity: "transaction", id: EARLY_REFUND_ID, reason: "invalid_refund" },
   ];
 
@@ -2946,7 +2992,7 @@ describe("withheld entities", () => {
   it("goes on showing the family its budget while it withholds", () => {
     const snapshot = applyJournal(journalWithEveryWithholding());
 
-    // The point of decision 40: seven withheld entities, and the family still sees the budget
+    // The point of decision 40: eight withheld entities, and the family still sees the budget
     // it planned, to the kopeck. A resolved conflict freezes nobody.
     expect(snapshot.integrity.ready).toBe(true);
     expect(snapshot.state.activeBudgetId).toBe(BUDGET_ID);
@@ -3054,7 +3100,7 @@ describe("tags and labels through the journal", () => {
     snapshot.state.transactions.find((item) => item.id === TAGGED_EXPENSE_ID);
 
   it("leaves the canonical text of the G-002 journal exactly what it was", () => {
-    // Pinned before the codec learned a single new field: the kind is appended at the end of
+    // Pinned before the codec learned a single new field: the kinds are appended at the end of
     // ENTITY_KINDS, every new field is optional and absent stays absent, so a journal that uses
     // none of them encodes, orders and converges byte for byte as before.
     const snapshot = applyJournal(buildFixtureJournal());
@@ -3065,7 +3111,12 @@ describe("tags and labels through the journal", () => {
       .toBe("9df5e0a45dec26f541167505314af91cd8796324281a839dff50ba62f768cb12");
     // And the state promises the new list the way it promises participants: empty, not absent.
     expect(snapshot.state.tags).toEqual([]);
-    expect(ENTITY_KINDS.at(-1)).toBe("tag");
+    // The kinds of 1.0.0 in their order, and every later one after them (plan 4.1): the order
+    // sorts the entries, so a kind inserted among them would reorder this very listing.
+    expect(ENTITY_KINDS.slice(0, 9)).toEqual([
+      "account", "category", "budget", "budgetLine", "goal", "annualCommitment", "scheduledExpense", "transaction", "member",
+    ]);
+    expect(ENTITY_KINDS.slice(9, 12)).toEqual(["tag", "exchangeRate", "household"]);
   });
 
   it("carries tags and a note across devices and through storage, without moving the money", () => {
@@ -3198,5 +3249,197 @@ describe("tags and labels through the journal", () => {
     expect(snapshot.state.accounts.find((item) => item.id === MAIN_ACCOUNT_ID))
       .toMatchObject({ sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false });
     expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(applyJournal(journal).state));
+  });
+});
+
+describe("several currencies through the journal", () => {
+  const DOLLARS = "7c000000-0000-4000-8000-0000000000d1";
+  const DOLLAR_EXPENSE = "7c000000-0000-4000-8000-0000000000d2";
+  const TRANSFER = "7c000000-0000-4000-8000-0000000000d3";
+  const RATE_JULY = "7c000000-0000-4000-8000-0000000000e1";
+  const RATE = { baseMinor: 9_000, quoteMinor: 100 };
+  let nextOp = 30_000;
+
+  function write(entity: string, targetId: string, fields: unknown, lamport = 950, action: "create" | "update" = "create"): Operation {
+    nextOp += 1;
+    return parseOperation({ opId: opUuid(nextOp), deviceId: DEVICE_B, lamport, entity, action, targetId, fields });
+  }
+
+  const dollarAccount = (lamport = 950, currency = "USD"): Operation =>
+    write("account", DOLLARS, { name: "Доллары", type: "savings", currency, openingBalanceMinor: 50_000, active: true }, lamport, lamport === 950 ? "create" : "update");
+
+  function expense(extra: Record<string, unknown> = {}, accountId = DOLLARS): Operation {
+    return write("transaction", DOLLAR_EXPENSE, {
+      kind: "expense",
+      occurredOn: "2026-07-10",
+      status: "posted",
+      amountMinor: 4_000,
+      accountId,
+      categoryId: PRODUCTS_CATEGORY_ID,
+      baseAmountMinor: 360_000,
+      baseCurrency: "RUB",
+      rate: RATE,
+      ...extra,
+    });
+  }
+
+  function withoutSnapshot(operation: Operation): Operation {
+    if (operation.action !== "create" || operation.entity !== "transaction") throw new Error("not a transaction write");
+    const { baseAmountMinor: _amount, baseCurrency: _currency, rate: _rate, ...plain } = operation.fields as Record<string, unknown>;
+    return parseOperation({ ...operation, fields: plain });
+  }
+
+  function transfer(extra: Record<string, unknown> = {}, toAccountId = DOLLARS): Operation {
+    return write("transaction", TRANSFER, {
+      kind: "transfer",
+      occurredOn: "2026-07-05",
+      status: "posted",
+      amountMinor: 1_800_000,
+      fromAccountId: MAIN_ACCOUNT_ID,
+      toAccountId,
+      ...extra,
+    });
+  }
+
+  const withheldOf = (snapshot: JournalSnapshot) => snapshot.integrity.withheld;
+
+  it("shows a dollar account, its purchase at the rouble value it carries, and the rates", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const snapshot = applyJournal([
+      ...journal,
+      dollarAccount(),
+      expense(),
+      transfer({ toAmountMinor: 20_000 }),
+      write("exchangeRate", RATE_JULY, { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE }),
+    ]);
+
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.exchangeRates).toEqual([{ id: RATE_JULY, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE }]);
+    expect("household" in snapshot.state).toBe(false);
+    const metrics = calculateBudget(snapshot.state);
+    expect(metrics.grossExpensesMinor).toBe(calculateBudget(plain.state).grossExpensesMinor + 360_000);
+    expect(metrics.accountBalancesMinor[DOLLARS]).toBe(50_000 - 4_000 + 20_000);
+    // Capital stays the roubles: the dollars are not added to it as kopecks.
+    expect(metrics.capitalMinor).toBe(calculateBudget(plain.state).capitalMinor - 1_800_000);
+    expect(() => calculateAnnualPlan(snapshot.state, G002.startMonth, 12)).not.toThrow();
+    expect(() => calculateMemberExpenses(snapshot.state)).not.toThrow();
+  });
+
+  it("withholds an operation whose currencies do not fit, and nothing else", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    const cases: readonly (readonly [string, Operation])[] = [
+      ["a dollar purchase without its rouble value", withoutSnapshot(expense())],
+      ["a rouble purchase with a snapshot", expense({}, MAIN_ACCOUNT_ID)],
+      ["a snapshot in another base", expense({ baseCurrency: "EUR" })],
+      ["a transfer between currencies without what arrived", transfer()],
+      ["a transfer within roubles that names what arrived", transfer({ toAmountMinor: 100 }, RESERVE_ACCOUNT_ID)],
+      ["a contribution from dollars to a rouble goal", write("transaction", TRANSFER, { kind: "goal_contribution", occurredOn: "2026-07-06", status: "posted", amountMinor: 100, fromAccountId: DOLLARS, toAccountId: RESERVE_ACCOUNT_ID, goalId: GOAL_ID })],
+    ];
+    for (const [label, operation] of cases) {
+      const snapshot = applyJournal([...journal, operation]);
+      expect(withheldOf(snapshot), label).toEqual([{ entity: "transaction", id: operation.targetId, reason: "currency_mismatch" }]);
+      expect(snapshot.integrity.problems, label).toEqual([{ code: "currency_mismatch", entity: "transaction", id: operation.targetId }]);
+      expect(snapshot.integrity.ready, label).toBe(true);
+      expect(() => calculateBudget(snapshot.state), label).not.toThrow();
+      expect(() => calculateMemberExpenses(snapshot.state), label).not.toThrow();
+    }
+  });
+
+  it("withholds a plan on an account outside the base currency", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    const goal = write("goal", "7c000000-0000-4000-8000-0000000000f1", { ...SAMPLE_FIELDS.goal, linkedAccountId: DOLLARS });
+    const commitment = write("annualCommitment", "7c000000-0000-4000-8000-0000000000f2", { ...SAMPLE_FIELDS.annualCommitment, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID });
+    const schedule = write("scheduledExpense", "7c000000-0000-4000-8000-0000000000f3", { ...SAMPLE_FIELDS.scheduledExpense, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID });
+    const snapshot = applyJournal([...journal, goal, commitment, schedule]);
+
+    expect(withheldOf(snapshot)).toEqual([
+      { entity: "goal", id: goal.targetId, reason: "currency_mismatch" },
+      { entity: "annualCommitment", id: commitment.targetId, reason: "currency_mismatch" },
+      { entity: "scheduledExpense", id: schedule.targetId, reason: "currency_mismatch" },
+    ]);
+    const plan = calculateAnnualPlan(snapshot.state, G002.startMonth, 12);
+    expect(plan.currentMonth.annualReserveMinor).toBe(1_980_900);
+    expect(plan.currentMonth.spendableAfterPlanMinor).toBe(4_419_100);
+  });
+
+  it("settles a change of currency made while another device wrote against the old one", () => {
+    // Device B writes a rouble purchase on the account; device C turns the account into dollars at
+    // the same time. Whatever the order, every replica withholds the purchase, and turning the
+    // account back brings it back by itself.
+    const journal = buildFixtureJournal();
+    const roubles = dollarAccount(950, "RUB");
+    const purchase = withoutSnapshot(expense());
+    const toDollars = dollarAccount(960, "USD");
+    const all = [...journal, roubles, purchase, toDollars];
+    const reference = applyJournal(all);
+
+    expect(withheldOf(reference)).toEqual([{ entity: "transaction", id: DOLLAR_EXPENSE, reason: "currency_mismatch" }]);
+    const random = mulberry32(31);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const shuffled = applyJournal(shuffle(all, random));
+      expect(shuffled.state).toEqual(reference.state);
+      expect(shuffled.integrity).toEqual(reference.integrity);
+    }
+    expect(restoreJournal(JSON.parse(JSON.stringify(reference)) as unknown).integrity).toEqual(reference.integrity);
+    const back = applyOperations(reference, [dollarAccount(970, "RUB")]);
+    expect(withheldOf(back)).toEqual([]);
+    expect(back.state.transactions.map((item) => item.id)).toContain(DOLLAR_EXPENSE);
+  });
+
+  it("counts in the household's base currency when the household names one", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const roubles = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "RUB" })]);
+    expect(roubles.state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB" });
+    expect(calculateBudget(roubles.state)).toEqual(calculateBudget(plain.state));
+
+    // A base changed under operations already written is the case the plan does not support: the
+    // rouble operations no longer fit, and they are withheld rather than counted as dollars.
+    const dollars = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "USD" })]);
+    expect(withheldOf(dollars).map((item) => item.reason)).toContain("currency_mismatch");
+    expect(dollars.state.transactions).toEqual([]);
+    expect(dollars.state.goals).toEqual([]);
+    expect(dollars.integrity.ready).toBe(true);
+    expect(() => calculateBudget(dollars.state)).not.toThrow();
+  });
+
+  it("measures the totals in the base currency, the way the domain adds them", () => {
+    // A thousand and one purchases of one cent, each worth the field ceiling in roubles: the gross
+    // expenses the domain builds pass the totals ceiling, although the amounts on the wire are tiny.
+    const count = MAX_AGGREGATE_MINOR / MAX_MONEY_MINOR + 1;
+    const purchases = Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(40_000 + index),
+      deviceId: DEVICE_B,
+      lamport: 2_000 + index,
+      entity: "transaction",
+      action: "create",
+      targetId: `7c100000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { kind: "expense", occurredOn: "2026-07-10", status: "posted", amountMinor: 1, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID, baseAmountMinor: MAX_MONEY_MINOR, baseCurrency: "RUB", rate: { baseMinor: 10 ** 10, quoteMinor: 1 } },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), dollarAccount(), ...purchases]);
+    expect(snapshot.integrity.problems).toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+    // And dollar balances are not part of capital: a thousand and one of them at the ceiling pass
+    // the totals ceiling together only if they are added to the roubles, which the domain never does.
+    const accounts = (currency: string) => Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(50_000 + index),
+      deviceId: DEVICE_B,
+      lamport: 3_000 + index,
+      entity: "account",
+      action: "create",
+      targetId: `7c200000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { name: "Счёт", type: "savings", currency, openingBalanceMinor: MAX_MONEY_MINOR, active: true },
+    }));
+    expect(applyJournal([...buildFixtureJournal(), ...accounts("USD")]).integrity.problems).toEqual([]);
+    expect(applyJournal([...buildFixtureJournal(), ...accounts("RUB")]).integrity.problems)
+      .toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+  });
+
+  it("keeps a deleted rate harmless: nothing refers to one", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount(), expense(), write("exchangeRate", RATE_JULY, { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE })];
+    const deleted = applyOperations(applyJournal(journal), [parseOperation({ opId: opUuid(39_999), deviceId: DEVICE_C, lamport: 990, entity: "exchangeRate", action: "delete", targetId: RATE_JULY })]);
+    expect(deleted.state.exchangeRates).toEqual([]);
+    expect(deleted.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(calculateBudget(deleted.state)).toEqual(calculateBudget(applyJournal(journal).state));
   });
 });

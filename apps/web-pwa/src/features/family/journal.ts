@@ -22,7 +22,9 @@ import type {
   BudgetLine,
   BudgetState,
   Category,
+  ExchangeRate,
   Goal,
+  Household,
   Member,
   MemberId,
   ScheduledExpense,
@@ -86,6 +88,20 @@ function memberFields(member: Member): Record<string, unknown> {
 
 function tagFields(tag: Tag): Record<string, unknown> {
   return { name: tag.name, active: tag.active };
+}
+
+/** Курс копируется целиком, вместе с вложенной парой чисел, а не ссылкой на объект состояния. */
+function exchangeRateFields(rate: ExchangeRate): Record<string, unknown> {
+  return {
+    currency: rate.currency,
+    baseCurrency: rate.baseCurrency,
+    date: rate.date,
+    rate: { baseMinor: rate.rate.baseMinor, quoteMinor: rate.rate.quoteMinor },
+  };
+}
+
+function householdFields(household: Household): Record<string, unknown> {
+  return { baseCurrency: household.baseCurrency };
 }
 
 /**
@@ -199,24 +215,34 @@ function transactionFields(transaction: Transaction): Record<string, unknown> {
     tagIds: transaction.tagIds === undefined ? undefined : [...transaction.tagIds],
     recurringRuleId: transaction.recurringRuleId,
   };
+  // Сумма в базовой валюте у операции по счёту в другой валюте — три поля вместе или ни одного;
+  // отсутствующие остаются отсутствующими, курс копируется, а не передаётся ссылкой.
+  const snapshot = (item: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>) => ({
+    baseAmountMinor: item.baseAmountMinor,
+    baseCurrency: item.baseCurrency,
+    rate: item.rate === undefined ? undefined : { baseMinor: item.rate.baseMinor, quoteMinor: item.rate.quoteMinor },
+  });
   switch (transaction.kind) {
     case "income":
       // Категория дохода — вторая необязательная метка операции, и переносится как первая:
       // отсутствующая остаётся отсутствующей, а не превращается в пустое поле.
       return defined({
         ...base,
+        ...snapshot(transaction),
         accountId: transaction.accountId,
         categoryId: transaction.categoryId,
       });
     case "expense":
       return defined({
         ...base,
+        ...snapshot(transaction),
         accountId: transaction.accountId,
         categoryId: transaction.categoryId,
       });
     case "refund":
       return defined({
         ...base,
+        ...snapshot(transaction),
         accountId: transaction.accountId,
         categoryId: transaction.categoryId,
         originalTransactionId: transaction.originalTransactionId,
@@ -226,6 +252,7 @@ function transactionFields(transaction: Transaction): Record<string, unknown> {
         ...base,
         fromAccountId: transaction.fromAccountId,
         toAccountId: transaction.toAccountId,
+        toAmountMinor: transaction.toAmountMinor,
       });
     case "goal_contribution":
       return defined({
@@ -246,6 +273,8 @@ export function budgetEntityRows(state: BudgetState): ReadonlyMap<string, Entity
 
   for (const member of state.members ?? []) add("member", member.id, memberFields(member));
   for (const tag of state.tags ?? []) add("tag", tag.id, tagFields(tag));
+  if (state.household !== undefined) add("household", state.household.id, householdFields(state.household));
+  for (const rate of state.exchangeRates ?? []) add("exchangeRate", rate.id, exchangeRateFields(rate));
   for (const account of state.accounts) add("account", account.id, accountFields(account));
   for (const category of state.categories) add("category", category.id, categoryFields(category));
   for (const budget of state.budgets) {
@@ -299,6 +328,8 @@ export function budgetJournalDrafts(
 
   for (const [key, row] of before) {
     if (after.has(key)) continue;
+    // Хозяйство не удаляется — кодек отвергает такую операцию; база остаётся той, что в журнале.
+    if (row.entity === "household") continue;
     drafts.push({
       ...author,
       entity: row.entity,

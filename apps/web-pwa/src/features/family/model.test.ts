@@ -213,6 +213,20 @@ describe("перечень удержанных сущностей", () => {
     expect(rows[0]).toMatchObject({ entity: "tag", entityLabel: "Метка" });
   });
 
+  it("называет удержанный курс, хозяйство и расхождение валют своими словами", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [
+        { entity: "exchangeRate", id: "55555555-5555-4555-8555-555555555556", reason: "identifier_claimed_twice" },
+        { entity: "household", id: "55555555-5555-4555-8555-555555555557", reason: "identifier_claimed_twice" },
+        { entity: "transaction", id: "55555555-5555-4555-8555-555555555558", reason: "currency_mismatch" },
+      ],
+    });
+    expect(rows.map((row) => row.entityLabel)).toEqual(["Курс валюты", "Хозяйство", "Операция"]);
+    expect(rows[2]?.reasonLabel).toBe("валюта записи не сходится с валютой счёта или семьи");
+  });
+
   it("молчит только когда удерживать нечего", () => {
     expect(withheldRows({ ready: true, problems: [], withheld: [] })).toEqual([]);
     expect(withheldRows(null)).toEqual([]);

@@ -1,4 +1,5 @@
 import {
+  baseCurrencyOf,
   calculateBudget,
   categoryNameKey,
   createCategory,
@@ -187,10 +188,27 @@ function accountFor(
   id: string,
   field: string,
   allowedArchivedId?: string,
-): void {
+): BudgetState["accounts"][number] {
   assertIdentifier(id, field);
   const account = state.accounts.find((item) => item.id === id);
-  if (!account || (!account.active && id !== allowedArchivedId)) fail(field, "Выберите активный счёт.");
+  if (!account || (!account.active && id !== allowedArchivedId)) return fail(field, "Выберите активный счёт.");
+  return account;
+}
+
+/**
+ * Эта форма записывает суммы в базовой валюте семьи и ничего больше: суммы в другой валюте, курса и
+ * суммы зачисления у неё нет. Счёт в другой валюте приходит из копии или от другого устройства, и
+ * операцию по нему форма отвергает понятными словами, а не повреждённым документом.
+ */
+const FOREIGN_ACCOUNT_MESSAGE = "Операции по счёту в другой валюте эта форма пока не записывает.";
+const FOREIGN_TRANSFER_MESSAGE = "Перевод между счетами в разных валютах эта форма пока не записывает.";
+
+function assertBaseCurrencyAccount(state: BudgetState, account: BudgetState["accounts"][number], field: string): void {
+  if (account.currency !== baseCurrencyOf(state)) fail(field, FOREIGN_ACCOUNT_MESSAGE);
+}
+
+function assertOneCurrency(from: BudgetState["accounts"][number], to: BudgetState["accounts"][number]): void {
+  if (from.currency !== to.currency) fail("toAccountId", FOREIGN_TRANSFER_MESSAGE);
 }
 
 function expenseCategoryFor(
@@ -280,7 +298,7 @@ function makeTransaction(
 
   switch (draft.kind) {
     case "income": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       const oldCategoryId = current?.kind === "income" ? current.categoryId : undefined;
       const categoryId = incomeCategoryFor(state, draft.categoryId, oldCategoryId);
       // Отсутствующая категория остаётся отсутствующей: `categoryId: undefined` — это не то же
@@ -297,13 +315,13 @@ function makeTransaction(
       };
     }
     case "expense": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       const oldCategoryId = current?.kind === "expense" ? current.categoryId : undefined;
       expenseCategoryFor(state, draft.categoryId, oldCategoryId);
       return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId, ...labels };
     }
     case "refund": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       assertIdentifier(draft.originalTransactionId, "originalTransactionId");
       const original = state.transactions.find((item) => item.id === draft.originalTransactionId);
       if (!original || original.kind !== "expense" || original.status !== "posted") {
@@ -324,15 +342,18 @@ function makeTransaction(
         ...labels,
       };
     }
-    case "transfer":
-      accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
-      accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
+    case "transfer": {
+      const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
+      const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
+      assertOneCurrency(from, to);
       return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, ...labels };
+    }
     case "goal_contribution": {
-      accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
-      accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
+      const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
+      const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
+      assertOneCurrency(from, to);
       const oldGoalId = current?.kind === "goal_contribution" ? current.goalId : undefined;
       const goal = goalFor(state, draft.goalId, oldGoalId);
       if (goal.linkedAccountId !== draft.toAccountId) {
@@ -442,11 +463,26 @@ export function deleteTransactions(state: BudgetState, ids: readonly string[]): 
   return validateResult({ ...state, transactions: state.transactions.filter((item) => !removing.has(item.id)) });
 }
 
+/**
+ * Операция, которую эта форма не умеет показать целиком, — правке ею не подлежит (план, §3.4): форма
+ * пересобрала бы операцию из своих полей и потеряла бы то, чего у неё нет, — сумму в базовой
+ * валюте, курс, сумму зачисления. До волны интерфейса такую операцию правят только там, где её
+ * записали.
+ */
+function assertEditableByForm(state: BudgetState, current: Transaction): void {
+  const foreign = (accountId: string) => state.accounts.find((item) => item.id === accountId)?.currency !== baseCurrencyOf(state);
+  const accounts = current.kind === "income" || current.kind === "expense" || current.kind === "refund"
+    ? [current.accountId]
+    : [current.fromAccountId, current.toAccountId];
+  if (accounts.some(foreign)) fail("kind", "Операцию в другой валюте эта форма пока не изменяет.");
+}
+
 export function editTransaction(state: BudgetState, id: string, draft: TransactionDraft): BudgetState {
   validateState(state);
   assertIdentifier(id);
   const current = state.transactions.find((item) => item.id === id);
   if (!current) fail("id", "Операция не найдена.");
+  assertEditableByForm(state, current);
   const dependentRefunds = state.transactions.filter(
     (item) => item.kind === "refund" && item.originalTransactionId === id,
   );

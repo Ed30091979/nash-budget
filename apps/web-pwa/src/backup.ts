@@ -1,14 +1,19 @@
 import {
+  baseCurrencyOf,
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  HOUSEHOLD_ID,
+  isExchangeRateValue,
+  isSupportedCurrency,
   isDisplayKey,
   isStorableLabel,
   isStorableNote,
   isUuid,
   isWithinDateWindow,
   MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
   MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
   MIN_LOCAL_DATE,
@@ -39,6 +44,7 @@ export const BACKUP_LIMITS = {
   nameLength: 200,
   textLength: 500,
   tags: COLLECTION_LIMITS.tags,
+  exchangeRates: COLLECTION_LIMITS.exchangeRates,
   tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
   tagNameLength: TAG_NAME_MAX_LENGTH,
 } as const;
@@ -233,6 +239,8 @@ function requireUuid(value: string, label: string): void {
 
 function validateBudgetStateUuids(state: BudgetState): void {
   requireUuid(state.activeBudgetId, "activeBudgetId");
+  if (state.household !== undefined) requireUuid(state.household.id, "household.id");
+  state.exchangeRates?.forEach((item, index) => requireUuid(item.id, `exchangeRates[${index}].id`));
   state.members?.forEach((item, index) => requireUuid(item.id, `members[${index}].id`));
   state.tags?.forEach((item, index) => requireUuid(item.id, `tags[${index}].id`));
   state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
@@ -297,12 +305,33 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     });
   }
 
+  // Absent in every copy written before it existed: such a copy is counted in roubles.
+  if (state.household !== undefined) {
+    const household = requireRecord(state.household, "household");
+    requireString(household.id, "household.id", true, BACKUP_LIMITS.idLength);
+    if (household.id !== HOUSEHOLD_ID) throw new Error("household.id: хозяйство записывается под выведенным идентификатором.");
+    requireCurrency(household.baseCurrency, "household.baseCurrency");
+  }
+
+  // Absent in every copy written before rates existed, exactly like the participants above.
+  if (state.exchangeRates !== undefined) {
+    requireArray(state.exchangeRates, "exchangeRates", grown(BACKUP_LIMITS.exchangeRates)).forEach((item, index) => {
+      const rate = requireRecord(item, `exchangeRates[${index}]`);
+      requireString(rate.id, `exchangeRates[${index}].id`, true, BACKUP_LIMITS.idLength);
+      const currency = requireCurrency(rate.currency, `exchangeRates[${index}].currency`);
+      const base = requireCurrency(rate.baseCurrency, `exchangeRates[${index}].baseCurrency`);
+      if (currency === base) throw new Error(`exchangeRates[${index}]: курс валюты к ней самой.`);
+      requireWindowDate(rate.date, `exchangeRates[${index}].date`);
+      requireRate(rate.rate, `exchangeRates[${index}].rate`);
+    });
+  }
+
   requireArray(state.accounts, "accounts", BACKUP_LIMITS.accounts).forEach((item, index) => {
     const account = requireRecord(item, `accounts[${index}]`);
     requireString(account.id, `accounts[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(account.name, `accounts[${index}].name`, false, BACKUP_LIMITS.nameLength);
     requireEnum(account.type, ["current", "cash", "savings", "reserve"], `accounts[${index}].type`);
-    requireEnum(account.currency, ["RUB"], `accounts[${index}].currency`);
+    requireCurrency(account.currency, `accounts[${index}].currency`);
     requireNumber(account.openingBalanceMinor, `accounts[${index}].openingBalanceMinor`);
     requireBoolean(account.active, `accounts[${index}].active`);
     // Display fields: absent in every copy written before them, read by no figure.
@@ -373,6 +402,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
       requireString(transaction.memberId, `transactions[${index}].memberId`, true, BACKUP_LIMITS.idLength);
     }
     requireTransactionLabels(transaction, index);
+    requireTransactionAmounts(transaction, kind, index);
     if (kind === "income" || kind === "expense" || kind === "refund") {
       requireString(transaction.accountId, `transactions[${index}].accountId`, true, BACKUP_LIMITS.idLength);
     }
@@ -428,6 +458,92 @@ function requireTransactionLabels(transaction: Record<string, unknown>, index: n
   if (transaction.recurringRuleId !== undefined) {
     requireString(transaction.recurringRuleId, `transactions[${index}].recurringRuleId`, true, BACKUP_LIMITS.idLength);
   }
+}
+
+/** A currency of the domain's table; anything else is a currency this build cannot count. */
+function requireCurrency(value: unknown, label: string): string {
+  if (!isSupportedCurrency(value)) throw new Error(`${label}: недопустимое значение.`);
+  return value;
+}
+
+/** A rate as the domain stores one: two integers from one minor unit to a trillion. */
+function requireRate(value: unknown, label: string): void {
+  const rate = requireRecord(value, label);
+  for (const key of Object.keys(rate)) {
+    if (key !== "baseMinor" && key !== "quoteMinor") throw new Error(`${label}: лишнее поле ${key.slice(0, 32)}.`);
+  }
+  if (!isExchangeRateValue(rate)) throw new Error(`${label}: части курса — целые числа от 1 до 10¹².`);
+}
+
+/** An amount of a field added since the journal existed: positive and at most a field's ceiling. */
+function requireFieldAmount(value: unknown, label: string): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_MONEY_MINOR) {
+    throw new Error(`${label}: сумма от 1 до ${MAX_MONEY_MINOR} minor units.`);
+  }
+}
+
+/**
+ * The amounts of an operation in another currency, in the shape the domain stores them: the
+ * snapshot of an income, an expense or a refund — the three fields together or none of them — and
+ * what arrived on the other side of a transfer. Whether the account needs them is decided with the
+ * whole state in hand, by {@link validateCurrencies}.
+ */
+function requireTransactionAmounts(transaction: Record<string, unknown>, kind: string, index: number): void {
+  const label = `transactions[${index}]`;
+  const snapshot = ["baseAmountMinor", "baseCurrency", "rate"].filter((key) => transaction[key] !== undefined);
+  if (snapshot.length > 0 && kind !== "income" && kind !== "expense" && kind !== "refund") {
+    throw new Error(`${label}.${snapshot[0]}: у такой операции нет суммы в базовой валюте.`);
+  }
+  if (snapshot.length > 0 && snapshot.length < 3) {
+    throw new Error(`${label}: сумма в базовой валюте записывается тремя полями — baseAmountMinor, baseCurrency и rate.`);
+  }
+  if (snapshot.length === 3) {
+    requireFieldAmount(transaction.baseAmountMinor, `${label}.baseAmountMinor`);
+    requireCurrency(transaction.baseCurrency, `${label}.baseCurrency`);
+    requireRate(transaction.rate, `${label}.rate`);
+  }
+  if (transaction.toAmountMinor !== undefined) {
+    if (kind !== "transfer") throw new Error(`${label}.toAmountMinor: сумма зачисления бывает только у перевода.`);
+    requireFieldAmount(transaction.toAmountMinor, `${label}.toAmountMinor`);
+  }
+}
+
+/**
+ * Валюты операций: сумма в базовой валюте есть ровно у дохода, расхода и возврата по счёту в другой
+ * валюте, а сумма зачисления — ровно у перевода между счетами разных валют.
+ *
+ * Проверка стоит здесь, а не оставлена расчёту, по той же причине, что и проверка категории дохода:
+ * отказ восстановления обязан называть операцию файла, а не всплывать изнутри `calculateBudget`.
+ */
+function validateCurrencies(state: BudgetState): void {
+  const base = baseCurrencyOf(state);
+  const currencies = new Map(state.accounts.map((account) => [account.id, account.currency]));
+  state.transactions.forEach((transaction, index) => {
+    if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
+      const currency = currencies.get(transaction.accountId);
+      if (currency === undefined) return;
+      if (currency === base && transaction.baseAmountMinor !== undefined) {
+        throw new Error(`transactions[${index}]: операция в базовой валюте ${base} не несёт второй суммы в ней же.`);
+      }
+      if (currency !== base && transaction.baseAmountMinor === undefined) {
+        throw new Error(`transactions[${index}]: операция по счёту в ${currency} без суммы в базовой валюте ${base}.`);
+      }
+      if (currency !== base && transaction.baseCurrency !== base) {
+        throw new Error(`transactions[${index}].baseCurrency: сумма записана не в базовой валюте ${base}.`);
+      }
+    }
+    if (transaction.kind === "transfer") {
+      const from = currencies.get(transaction.fromAccountId);
+      const to = currencies.get(transaction.toAccountId);
+      if (from === undefined || to === undefined) return;
+      if (from !== to && transaction.toAmountMinor === undefined) {
+        throw new Error(`transactions[${index}]: перевод из ${from} в ${to} без суммы зачисления.`);
+      }
+      if (from === to && transaction.toAmountMinor !== undefined) {
+        throw new Error(`transactions[${index}].toAmountMinor: перевод в одной валюте без отдельной суммы зачисления.`);
+      }
+    }
+  });
 }
 
 function requirePlanningShape(state: BudgetState): void {
@@ -614,6 +730,7 @@ export function prepareBudgetState(
   if (!activeBudget) throw new Error("activeBudgetId ссылается на неизвестный бюджет.");
   validateAllBudgets(state);
   validateIncomeCategories(state);
+  validateCurrencies(state);
   calculateBudget(state);
   calculateAnnualPlan(
     state,

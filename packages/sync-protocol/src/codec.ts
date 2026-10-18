@@ -1,15 +1,20 @@
 import {
+  HOUSEHOLD_ID,
   isDisplayKey,
   isStorableLabel,
-  isUuid,
   isStorableNote,
+  isSupportedCurrency,
+  isUuid,
   MAX_LOCAL_DATE,
   MAX_MONEY_MINOR,
   MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
   MIN_LOCAL_DATE,
   NOTE_MAX_LENGTH,
+  RATE_PART_MAX,
+  RATE_PART_MIN,
   TAG_NAME_MAX_LENGTH,
+  type ExchangeRateValue,
 } from "@family-budget/domain";
 
 import type {
@@ -19,7 +24,9 @@ import type {
   BudgetLineFields,
   CategoryFields,
   EntityKind,
+  ExchangeRateFields,
   GoalFields,
+  HouseholdFields,
   MemberFields,
   Operation,
   OperationHeader,
@@ -316,10 +323,48 @@ function readRatio(record: Record<string, unknown>, key: string, label: string):
   return value;
 }
 
+/**
+ * A currency of the domain's table (`SUPPORTED_CURRENCIES`). An unknown code is refused rather than
+ * carried: an account in a currency this build cannot count is an operation it cannot apply, and the
+ * sync client answers that with «update the application», which for a code added in a later version
+ * is the truth.
+ */
 function readCurrency(record: Record<string, unknown>, key: string, label: string): string {
   const value = readString(record, key, label);
   if (!CURRENCY_PATTERN.test(value)) fail(`${label} must be a three-letter currency code`);
+  if (!isSupportedCurrency(value)) fail(`${label} must be a supported currency, not ${echo(value)}`);
   return value;
+}
+
+/** A rate as the domain stores one: two integers from one minor unit to a trillion, nothing else. */
+function readRate(record: Record<string, unknown>, key: string, label: string): ExchangeRateValue {
+  const rate = requireRecord(record[key], label);
+  requireFieldNames(rate, ["baseMinor", "quoteMinor"], [], label);
+  return {
+    baseMinor: readInteger(rate, "baseMinor", `${label} baseMinor`, RATE_PART_MIN, RATE_PART_MAX),
+    quoteMinor: readInteger(rate, "quoteMinor", `${label} quoteMinor`, RATE_PART_MIN, RATE_PART_MAX),
+  };
+}
+
+/**
+ * The base-currency snapshot of an income, an expense or a refund: all three fields or none, as the
+ * domain demands. Whether the account needs one is the integrity gate's question — the account may
+ * be in another entry, or change its currency on another device — so the codec only refuses a
+ * snapshot that is not one.
+ */
+function readSnapshot(record: Record<string, unknown>): {
+  baseAmountMinor?: number;
+  baseCurrency?: string;
+  rate?: ExchangeRateValue;
+} {
+  const present = ["baseAmountMinor", "baseCurrency", "rate"].filter((key) => record[key] !== undefined);
+  if (present.length === 0) return {};
+  if (present.length < 3) fail("transaction baseAmountMinor, baseCurrency and rate must come together");
+  return {
+    baseAmountMinor: readMinor(record, "baseAmountMinor", "transaction baseAmountMinor", 1),
+    baseCurrency: readCurrency(record, "baseCurrency", "transaction baseCurrency"),
+    rate: readRate(record, "rate", "transaction rate"),
+  };
 }
 
 /**
@@ -390,7 +435,7 @@ function parseEntityUuid(value: unknown, label: string): string {
 }
 
 /** Entity kinds whose identifiers are UUIDs on the wire. See {@link parseEntityUuid}. */
-const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag"]);
+const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate"]);
 
 /**
  * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice,
@@ -634,6 +679,8 @@ function parseTransactionFields(value: unknown): TransactionFields {
    */
   const labels = ["note", "tagIds", "recurringRuleId"];
   const optional = [...attribution, ...labels];
+  /** The snapshot of an operation on an account in another currency; see {@link readSnapshot}. */
+  const snapshot = ["baseAmountMinor", "baseCurrency", "rate"];
   const base = {
     occurredOn: readLocalDate(record, "occurredOn", "transaction occurredOn"),
     status: readEnum(record, "status", TRANSACTION_STATUSES, "transaction status"),
@@ -663,9 +710,10 @@ function parseTransactionFields(value: unknown): TransactionFields {
        * omits it and stays valid for ever. Only an income carries it — the other kinds either
        * require a category or have none at all, and their lists are unchanged.
        */
-      requireFieldNames(record, [...shared, "accountId"], [...optional, "categoryId"], label);
+      requireFieldNames(record, [...shared, "accountId"], [...optional, ...snapshot, "categoryId"], label);
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         // Absent stays absent, exactly as for the label above: `categoryId: undefined` is a
@@ -676,9 +724,10 @@ function parseTransactionFields(value: unknown): TransactionFields {
       };
     }
     case "expense":
-      requireFieldNames(record, [...shared, "accountId", "categoryId"], optional, label);
+      requireFieldNames(record, [...shared, "accountId", "categoryId"], [...optional, ...snapshot], label);
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         categoryId: readId(record, "categoryId", "transaction categoryId"),
@@ -687,23 +736,34 @@ function parseTransactionFields(value: unknown): TransactionFields {
       requireFieldNames(
         record,
         [...shared, "accountId", "categoryId", "originalTransactionId"],
-        optional,
+        [...optional, ...snapshot],
         label,
       );
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         categoryId: readId(record, "categoryId", "transaction categoryId"),
         originalTransactionId: readId(record, "originalTransactionId", "transaction originalTransactionId"),
       };
     case "transfer": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], optional, label);
+      // What arrived, in the currency of the receiving account: there exactly when the currencies
+      // differ, which is the integrity gate's question, not the codec's.
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], [...optional, "toAmountMinor"], label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       // The domain refuses a movement inside one account, so it never reaches a journal.
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");
-      return { ...base, kind, fromAccountId, toAccountId };
+      return {
+        ...base,
+        kind,
+        fromAccountId,
+        toAccountId,
+        ...(record.toAmountMinor === undefined
+          ? {}
+          : { toAmountMinor: readMinor(record, "toAmountMinor", "transaction toAmountMinor", 1) }),
+      };
     }
     case "goal_contribution": {
       requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], optional, label);
@@ -736,6 +796,29 @@ function parseTagFields(value: unknown): TagFields {
   };
 }
 
+function parseExchangeRateFields(value: unknown): ExchangeRateFields {
+  const label = "exchange rate fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["currency", "baseCurrency", "date", "rate"], [], label);
+  const currency = readCurrency(record, "currency", "exchange rate currency");
+  const baseCurrency = readCurrency(record, "baseCurrency", "exchange rate baseCurrency");
+  // The domain refuses a rate of a currency in itself, so it never reaches a journal.
+  if (currency === baseCurrency) fail("exchange rate must value one currency in another");
+  return {
+    currency,
+    baseCurrency,
+    date: readLocalDate(record, "date", "exchange rate date"),
+    rate: readRate(record, "rate", "exchange rate rate"),
+  };
+}
+
+function parseHouseholdFields(value: unknown): HouseholdFields {
+  const label = "household fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["baseCurrency"], [], label);
+  return { baseCurrency: readCurrency(record, "baseCurrency", "household baseCurrency") };
+}
+
 function parseWrite(
   entity: EntityKind,
   action: "create" | "update",
@@ -764,6 +847,10 @@ function parseWrite(
       return { ...header, entity, action, targetId, fields: parseMemberFields(fields) };
     case "tag":
       return { ...header, entity, action, targetId, fields: parseTagFields(fields) };
+    case "exchangeRate":
+      return { ...header, entity, action, targetId, fields: parseExchangeRateFields(fields) };
+    case "household":
+      return { ...header, entity, action, targetId, fields: parseHouseholdFields(fields) };
   }
 }
 
@@ -819,6 +906,13 @@ export function parseOperation(value: unknown): Operation {
   const targetId = UUID_KINDS.has(entity)
     ? parseEntityUuid(record.targetId, "operation targetId")
     : readId(record, "targetId", "operation targetId");
+  // One household per family, under the identifier every device derives, and never deleted: two
+  // households would be two base currencies, and a deleted one could never be written again, because
+  // a tombstone is final and the identifier cannot change.
+  if (entity === "household") {
+    if (targetId !== HOUSEHOLD_ID) fail("household targetId must be the household identifier");
+    if (action === "delete") fail("the household cannot be deleted");
+  }
 
   if (action === "delete") return sized({ ...header, entity, action, targetId });
   if (action === "activate") {

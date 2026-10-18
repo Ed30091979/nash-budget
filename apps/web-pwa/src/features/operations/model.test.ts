@@ -529,3 +529,44 @@ describe("operation date window", () => {
     }
   });
 });
+
+describe("operations in another currency", () => {
+  const DOLLARS = "8c000000-0000-4000-8000-0000000000a2";
+  const DOLLAR_EXPENSE = "8d000000-0000-4000-8000-000000000003";
+
+  /** G-000 with a dollar account and one purchase on it, as a backup or another device brings them. */
+  function withDollars() {
+    const state = makeG000State();
+    return {
+      ...state,
+      accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "savings" as const, currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [...state.transactions, {
+        id: DOLLAR_EXPENSE, occurredOn: "2026-07-10", status: "posted" as const, kind: "expense" as const, amountMinor: 4_000,
+        accountId: DOLLARS, categoryId: ids.categories.products,
+        baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+      }],
+    };
+  }
+
+  it("refuses to record on a dollar account with words, not a damaged document", () => {
+    const state = withDollars();
+    const expense: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "10", accountId: DOLLARS, categoryId: ids.categories.products };
+    expect(() => createTransaction(state, expense, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "accountId", message: "Операции по счёту в другой валюте эта форма пока не записывает." }),
+    );
+    expect(() => createTransaction(state, { ...transferDraft("100"), toAccountId: DOLLARS }, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "toAccountId", message: "Перевод между счетами в разных валютах эта форма пока не записывает." }),
+    );
+    // A rouble operation beside it records as before.
+    expect(() => createTransaction(state, transferDraft("100"), fixedOperationId)).not.toThrow();
+  });
+
+  it("refuses to edit an operation in another currency rather than lose its rouble value", () => {
+    const state = withDollars();
+    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-10", amount: "50", accountId: ids.accounts.main, categoryId: ids.categories.products };
+    expect(() => editTransaction(state, DOLLAR_EXPENSE, draft)).toThrow(
+      expect.objectContaining({ field: "kind", message: "Операцию в другой валюте эта форма пока не изменяет." }),
+    );
+    expect(state.transactions.find((item) => item.id === DOLLAR_EXPENSE)).toMatchObject({ baseAmountMinor: 360_000 });
+  });
+});

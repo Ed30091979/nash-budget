@@ -1,3 +1,5 @@
+import { HOUSEHOLD_ID } from "@family-budget/domain";
+
 import type { EntityFieldsByKind, EntityKind } from "../src/index.js";
 import { ENTITY_KINDS } from "../src/index.js";
 
@@ -84,6 +86,8 @@ export const SAMPLE_FIELDS: FieldsSample = {
   },
   member: { name: "Мария", role: "owner", active: true },
   tag: { name: "Отпуск", active: true },
+  exchangeRate: { currency: "USD", baseCurrency: "RUB", date: "2026-07-31", rate: { baseMinor: 9_000, quoteMinor: 100 } },
+  household: { baseCurrency: "RUB" },
 };
 
 /** The same entities after one edit each, used to prove that update replaces the winner. */
@@ -98,20 +102,25 @@ export const UPDATED_FIELDS: FieldsSample = {
   transaction: { ...SAMPLE_FIELDS.transaction, amountMinor: 2_400_000 },
   member: { ...SAMPLE_FIELDS.member, active: false },
   tag: { ...SAMPLE_FIELDS.tag, name: "Отпуск 2027", active: false },
+  exchangeRate: { ...SAMPLE_FIELDS.exchangeRate, rate: { baseMinor: 9_250, quoteMinor: 100 } },
+  household: { baseCurrency: "EUR" },
 };
 
 /**
  * Kinds whose identifiers the codec demands as UUIDs: the kinds of wave 1, which have no history of
  * readable names. The older kinds keep the readable identifiers their tests always used.
  */
-const UUID_KINDS: readonly EntityKind[] = ["tag"];
+const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate"];
 
 /**
  * A target identifier for `entity`, readable where the codec allows it: `${entity}-${name}` for the
  * older kinds, a UUID derived from the kind and the name for the kinds of wave 1, so a test can still
- * name its targets and get the same identifier for the same name.
+ * name its targets and get the same identifier for the same name, and `HOUSEHOLD_ID` for the
+ * household whatever the name.
  */
 export function sampleTargetId(entity: EntityKind, name = "1"): string {
+  // One household per family, always under the identifier every device derives.
+  if (entity === "household") return HOUSEHOLD_ID;
   if (!UUID_KINDS.includes(entity)) return `${entity}-${name}`;
   let hash = 0;
   for (const character of name) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;

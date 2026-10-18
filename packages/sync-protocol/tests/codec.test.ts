@@ -1,4 +1,5 @@
 import * as domain from "@family-budget/domain";
+import { HOUSEHOLD_ID } from "@family-budget/domain";
 import { isNormalizedLabel, normalizeNote } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 
@@ -103,14 +104,20 @@ describe("parseOperation", () => {
           fields: SAMPLE_FIELDS[entity],
         });
       }
-      const removal = parseOperation({
+      const deletion = {
         opId: opUuid(2),
         deviceId: DEVICE_A,
         lamport: 8,
         entity,
         action: "delete",
         targetId: SAMPLE_TARGET_IDS[entity],
-      });
+      };
+      // The one exception, by the plan (4.2): the household is never deleted.
+      if (entity === "household") {
+        expect(() => parseOperation(deletion)).toThrow(/the household cannot be deleted/);
+        continue;
+      }
+      const removal = parseOperation(deletion);
       expect(removal).toEqual({
         opId: opUuid(2),
         deviceId: DEVICE_A,
@@ -120,6 +127,19 @@ describe("parseOperation", () => {
         targetId: SAMPLE_TARGET_IDS[entity],
       });
     }
+  });
+
+  it("names the household by the derived identifier only, and never deletes it", () => {
+    const household = { opId: opUuid(3), deviceId: DEVICE_A, lamport: 3, entity: "household", action: "create", fields: { baseCurrency: "RUB" } };
+    expect(parseOperation({ ...household, targetId: HOUSEHOLD_ID })).toMatchObject({ targetId: HOUSEHOLD_ID });
+    expect(() => parseOperation({ ...household, targetId: testUuid(0xbad) })).toThrow(/household targetId must be the household identifier/);
+    expect(() => parseOperation({ ...household, targetId: "household-1" })).toThrow(/household targetId must be the household identifier/);
+    expect(() => parseOperation({ ...household, targetId: HOUSEHOLD_ID, fields: { baseCurrency: "XYZ" } }))
+      .toThrow(/household baseCurrency must be a supported currency/);
+    expect(() => parseOperation({ ...household, targetId: HOUSEHOLD_ID, fields: { baseCurrency: "RUB", name: "Мы" } }))
+      .toThrow(/household fields contains unknown field name/);
+    expect(() => parseOperation({ opId: opUuid(4), deviceId: DEVICE_A, lamport: 4, entity: "household", action: "delete", targetId: HOUSEHOLD_ID }))
+      .toThrow(/the household cannot be deleted/);
   });
 
   it("accepts every transaction kind", () => {
@@ -816,5 +836,86 @@ describe("display fields, notes and tags", () => {
     const operation = { ...(write("transaction", largest) as Record<string, unknown>), memberId: "w".repeat(128), targetId: "x".repeat(128) };
     const encoded = encodeOperation(parseOperation(operation));
     expect(new TextEncoder().encode(encoded).byteLength).toBeLessThan(MAX_OPERATION_BYTES);
+  });
+});
+
+describe("currencies on the wire", () => {
+  const RATE = { baseMinor: 9_000, quoteMinor: 100 };
+  const DOLLAR_EXPENSE = { ...UNLABELLED_EXPENSE, amountMinor: 4_000, baseAmountMinor: 360_000, baseCurrency: "RUB", rate: RATE } satisfies TransactionFields;
+  const RATE_ID = testUuid(0x7e5, 1);
+
+  function write(entity: EntityKind, fields: unknown, targetId = sampleTargetId(entity)): unknown {
+    return { opId: opUuid(11), deviceId: DEVICE_A, lamport: 11, entity, action: "create", targetId, fields };
+  }
+
+  function fieldsOf(operation: Operation): unknown {
+    return operation.action === "create" || operation.action === "update" ? operation.fields : null;
+  }
+
+  it("carries a snapshot, the amount that arrived, a rate and a household through a round trip", () => {
+    const written: readonly (readonly [EntityKind, Record<string, unknown>])[] = [
+      ["transaction", DOLLAR_EXPENSE],
+      ["transaction", { ...CATEGORISED_INCOME, amountMinor: 10_000, baseAmountMinor: 925_000, baseCurrency: "RUB", rate: { baseMinor: 9_250, quoteMinor: 100 } }],
+      ["transaction", { kind: "refund", occurredOn: "2026-07-12", status: "posted", amountMinor: 1_000, accountId: "account-1", categoryId: "category-1", originalTransactionId: "tx-1", baseAmountMinor: 90_000, baseCurrency: "RUB", rate: RATE }],
+      ["transaction", { kind: "transfer", occurredOn: "2026-07-05", status: "posted", amountMinor: 1_800_000, fromAccountId: "account-1", toAccountId: "account-2", toAmountMinor: 20_000 }],
+      ["exchangeRate", SAMPLE_FIELDS.exchangeRate],
+      ["account", { ...SAMPLE_FIELDS.account, currency: "JPY" }],
+      ["household", { baseCurrency: "EUR" }],
+    ];
+    for (const [entity, fields] of written) {
+      const operation = parseOperation(write(entity, fields, entity === "exchangeRate" ? RATE_ID : sampleTargetId(entity)));
+      const decoded = decodeOperation(encodeOperation(operation));
+      expect(fieldsOf(decoded), entity).toEqual(fields);
+      expect(encodeOperation(decoded)).toBe(encodeOperation(operation));
+    }
+    // A transaction without them carries none of them after the trip, as before.
+    const plain = fieldsOf(decodeOperation(encodeOperation(parseOperation(write("transaction", UNLABELLED_EXPENSE))))) as object;
+    for (const field of ["baseAmountMinor", "baseCurrency", "rate", "toAmountMinor"]) expect(Object.hasOwn(plain, field), field).toBe(false);
+  });
+
+  it.each([
+    ["an account in a currency this build does not know", "account", { ...SAMPLE_FIELDS.account, currency: "XYZ" }, /account currency must be a supported currency/],
+    ["half a snapshot", "transaction", { ...UNLABELLED_EXPENSE, baseAmountMinor: 360_000, baseCurrency: "RUB" }, /baseAmountMinor, baseCurrency and rate must come together/],
+    ["a snapshot without its amount", "transaction", { ...UNLABELLED_EXPENSE, baseCurrency: "RUB", rate: RATE }, /must come together/],
+    ["a snapshot of nothing", "transaction", { ...DOLLAR_EXPENSE, baseAmountMinor: 0 }, /transaction baseAmountMinor must be at least 1/],
+    ["a snapshot past the field ceiling", "transaction", { ...DOLLAR_EXPENSE, baseAmountMinor: MAX_MONEY_MINOR + 1 }, /transaction baseAmountMinor must be at most 10000000000/],
+    ["a snapshot in an unknown currency", "transaction", { ...DOLLAR_EXPENSE, baseCurrency: "XYZ" }, /transaction baseCurrency must be a supported currency/],
+    ["a rate part of zero", "transaction", { ...DOLLAR_EXPENSE, rate: { baseMinor: 0, quoteMinor: 100 } }, /transaction rate baseMinor must be from 1 to 1000000000000/],
+    ["a rate part past a trillion", "transaction", { ...DOLLAR_EXPENSE, rate: { baseMinor: 9_000, quoteMinor: 10 ** 12 + 1 } }, /transaction rate quoteMinor must be from 1 to 1000000000000/],
+    ["a fractional rate part", "transaction", { ...DOLLAR_EXPENSE, rate: { baseMinor: 90.5, quoteMinor: 1 } }, /transaction rate baseMinor must be an integer/],
+    ["a rate with a third part", "transaction", { ...DOLLAR_EXPENSE, rate: { ...RATE, date: "2026-07-31" } }, /transaction rate contains unknown field date/],
+    ["a rate that is a number", "transaction", { ...DOLLAR_EXPENSE, rate: 90 }, /transaction rate must be an object/],
+    ["a snapshot on a transfer", "transaction", { kind: "transfer", occurredOn: "2026-07-05", status: "posted", amountMinor: 100, fromAccountId: "a", toAccountId: "b", baseAmountMinor: 1, baseCurrency: "RUB", rate: RATE }, /transaction fields contains unknown field baseAmountMinor/],
+    ["an arrived amount on an expense", "transaction", { ...UNLABELLED_EXPENSE, toAmountMinor: 100 }, /transaction fields contains unknown field toAmountMinor/],
+    ["an arrived amount of nothing", "transaction", { kind: "transfer", occurredOn: "2026-07-05", status: "posted", amountMinor: 100, fromAccountId: "a", toAccountId: "b", toAmountMinor: 0 }, /transaction toAmountMinor must be at least 1/],
+    ["a snapshot on a goal contribution", "transaction", { kind: "goal_contribution", occurredOn: "2026-07-05", status: "posted", amountMinor: 100, fromAccountId: "a", toAccountId: "b", goalId: "g", toAmountMinor: 100 }, /transaction fields contains unknown field toAmountMinor/],
+    ["a rate of a currency in itself", "exchangeRate", { ...SAMPLE_FIELDS.exchangeRate, currency: "RUB" }, /exchange rate must value one currency in another/],
+    ["a rate of an unknown currency", "exchangeRate", { ...SAMPLE_FIELDS.exchangeRate, currency: "XAU" }, /exchange rate currency must be a supported currency/],
+    ["a rate on an impossible day", "exchangeRate", { ...SAMPLE_FIELDS.exchangeRate, date: "2026-02-30" }, /exchange rate date must be a valid calendar date/],
+    ["a rate past the calendar", "exchangeRate", { ...SAMPLE_FIELDS.exchangeRate, date: "2200-01-01" }, /exchange rate date must be from 1900-01-01 to 2199-12-31/],
+    ["a rate without its value", "exchangeRate", { currency: "USD", baseCurrency: "RUB", date: "2026-07-31" }, /exchange rate fields is missing field rate/],
+  ] as const)("refuses %s", (_name, entity, fields, message) => {
+    expect(() => parseOperation(write(entity, fields, entity === "exchangeRate" ? RATE_ID : sampleTargetId(entity)))).toThrow(message);
+  });
+
+  it("identifies a rate by a UUID", () => {
+    expect(() => parseOperation(write("exchangeRate", SAMPLE_FIELDS.exchangeRate, "rate-usd-july"))).toThrow(/operation targetId must be a UUID/);
+    expect(parseOperation(write("exchangeRate", SAMPLE_FIELDS.exchangeRate, RATE_ID))).toMatchObject({ targetId: RATE_ID });
+  });
+
+  it("fits the largest foreign operation into one envelope", () => {
+    const largest = {
+      ...DOLLAR_EXPENSE,
+      accountId: "a".repeat(128),
+      categoryId: "c".repeat(128),
+      memberId: "m".repeat(128),
+      recurringRuleId: RATE_ID,
+      note: "\u4e2d".repeat(500),
+      tagIds: Array.from({ length: 10 }, (_, index) => tagUuid(index)),
+      baseAmountMinor: MAX_MONEY_MINOR,
+      rate: { baseMinor: 10 ** 12, quoteMinor: 10 ** 12 },
+    };
+    const operation = { ...(write("transaction", largest) as Record<string, unknown>), memberId: "w".repeat(128), targetId: "x".repeat(128) };
+    expect(new TextEncoder().encode(encodeOperation(parseOperation(operation))).byteLength).toBeLessThan(MAX_OPERATION_BYTES);
   });
 });
