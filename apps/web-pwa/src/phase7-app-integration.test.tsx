@@ -400,7 +400,8 @@ describe("phase 7 App composition", () => {
     const prepared = prepareOperationsCsvDownload(state, new Date(2026, 6, 24, 23, 55));
 
     expect(rows).toHaveLength(7);
-    expect(rows[0]).toBe("Дата,Тип,Статус,\"Сумма, ₽\",Счёт,Категория или цель,Связь с исходной операцией");
+    // Plan 6: the seven columns of 1.0.0 stay first and unchanged; wave 1 appends its own after them.
+    expect(rows[0]!.startsWith("Дата,Тип,Статус,\"Сумма, ₽\",Счёт,Категория или цель,Связь с исходной операцией,")).toBe(true);
     expect(rows.filter((row) => row.includes("Продукты"))).toHaveLength(2);
     expect(prepared).toMatchObject({
       filename: "family-budget-operations-2026-07-24.csv",

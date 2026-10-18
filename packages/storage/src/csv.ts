@@ -4,7 +4,14 @@ export const MAX_CSV_ROWS = 50_000;
 export const MAX_CSV_COLUMNS = 100;
 export const MAX_CSV_FIELD_LENGTH = 10_000;
 
-const FORMULA_AFTER_BOUNDED_PREFIX = /^(?:[\t\r]|[\u0000-\u0020\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202f\u2060-\u2069\ufeff]*[=+\-@])/u;
+/**
+ * A formula a spreadsheet would run: `=`, `+`, `-` or `@` after any run of what a reader cannot see
+ * — C0 and C1 controls, the bidi and zero-width marks, the byte-order mark — or of any space
+ * separator (`\p{Zs}`: the no-break space, the ideographic space, the em and en spaces), all of which
+ * a spreadsheet may skip before it reads the first character. Such a field is written with a
+ * leading apostrophe and read as text.
+ */
+const FORMULA_AFTER_BOUNDED_PREFIX = /^(?:[\t\r]|[\u0000-\u0020\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202f\u2060-\u2069\ufeff\p{Zs}]*[=+\-@])/u;
 
 function encodeField(value: unknown): string {
   if (typeof value === "number") {
