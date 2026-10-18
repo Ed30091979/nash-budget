@@ -98,6 +98,7 @@ const stoppedStatus: SyncStatusReport = {
     attempts: 10,
   },
   hold: null,
+  familyDocument: true,
 };
 
 /**
@@ -627,6 +628,7 @@ describe("доступность экрана семьи", () => {
         epoch: { keyEpoch: 1, keyDigest: "a".repeat(64), live: true },
         stop: null,
         hold: null,
+        familyDocument: true,
       },
     });
     expect(markup).toContain('role="status"');

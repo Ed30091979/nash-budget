@@ -55,7 +55,9 @@ describe("приложение с экраном семьи", () => {
 
   it("экран семьи добавлен как маршрут и не трогает нижнюю навигацию", () => {
     expect(source).toContain('| "family"');
-    expect(source).toContain('{screen === "family" ? <FamilyScreen');
+    // Один и тот же экран «Семья» — маршрут оболочки и дверь с экрана ожидания документа семьи.
+    expect(source).toContain('{screen === "family" ? familyScreen(() => navigate("more")) : null}');
+    expect(source).toContain("const familyScreen = (onBack: () => void) => (\n    <FamilyScreen");
     // Кнопок в нижней навигации по-прежнему четыре, и порядок прежний.
     const navButtons = source.match(/<NavButton /gu) ?? [];
     expect(navButtons).toHaveLength(4);
@@ -91,8 +93,34 @@ describe("приложение с экраном семьи", () => {
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 
+  it("в семье без документа семьи на месте бюджета стоит экран ожидания, а не онбординг", () => {
+    // Второе ревью, LOW-5: онбординг создавал личный бюджет, который следующий приём выдавал за
+    // семейный. Решение — до онбординга и до оболочки.
+    const gate = source.indexOf('if (showsFamilyHoldScreen(family.inFamily, loadState !== "empty", family.status)) {');
+    const onboarding = source.indexOf('if (loadState === "empty") return <AppFrame className="onboarding-route"');
+    const shell = source.indexOf('<AppFrame className="app-shell"');
+    expect(gate).toBeGreaterThan(0);
+    expect(gate).toBeLessThan(onboarding);
+    expect(gate).toBeLessThan(shell);
+    const branch = source.slice(gate, onboarding);
+    expect(branch).toContain("notice={familyDocumentNotice(family.status?.hold ?? null)}");
+    expect(branch).toContain("onBackup={createBackup}");
+    expect(branch).not.toContain("<Onboarding");
+  });
+
+  it("задержанный документ виден плашкой на каждом экране, кроме «Семьи», без кнопки «закрыть»", () => {
+    expect(source).toContain("const holdNotice = family.inFamily ? documentHoldNotice(family.status?.hold ?? null) : null;");
+    expect(source).toContain("{holdNotice && screen !== \"family\" ? (");
+    const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && screen !== \"family\" ? ("));
+    expect(banner).toContain("{WRITE_REFUSAL_TEXT.held}");
+    expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
+  });
+
   it("предупреждение о смене бюджета получает и бюджет, и дату копии, и саму копию", () => {
-    expect(source).toContain("localBudget={budget}");
+    // Без бюджета (экран ожидания документа семьи) предупреждать о замене нечего — и это сказано
+    // явно, а не подставлено молча.
+    expect(source).toContain("localBudget={budget ?? NO_LOCAL_BUDGET}");
+    expect(source).toContain("const NO_LOCAL_BUDGET = { transactions: [] } as const;");
     expect(source).toContain("lastBackupAt={lastSuccessfulBackup}");
     expect(source).toContain("onCreateBackup={createBackup}");
     // Копия, сделанная перед вступлением, — та же копия, что и на экране «Данные»: один путь,
@@ -152,10 +180,12 @@ describe("запись бюджета подключена к журналу", (
   it("чужие операции доходят до экрана, а не только до базы", () => {
     expect(source).toContain("publishRemoteBudget: (value, revision) => {");
     // Пока идёт своя запись, показ откладывается: её сравнение ревизии — источник истины.
+    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,700}if \(budgetSave\.locked\) return;/u);
+    // Без бюджета показ идёт только на экран ожидания семьи — не поверх онбординга.
     expect(source).toMatch(
-      /publishRemoteBudget[\s\S]{0,500}if \(budgetRef\.current === null \|\| budgetSave\.locked\) return;/u,
+      /publishRemoteBudget[\s\S]{0,900}const waiting = budgetRef\.current === null && loadStateRef\.current === "empty" && inFamilyRef\.current;\s*if \(budgetRef\.current === null && !waiting\) return;/u,
     );
-    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,700}prepareBudgetState\(value\)/u);
+    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,1100}prepareBudgetState\(value\)/u);
   });
 });
 

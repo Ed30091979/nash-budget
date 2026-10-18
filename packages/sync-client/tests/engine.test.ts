@@ -43,6 +43,7 @@ async function rig(
   label: string,
   name = databaseName(label),
   acceptsState?: (state: SyncedBudgetState) => boolean,
+  foundedDocument?: boolean,
 ): Promise<Rig> {
   const repository = new IndexedDbBudgetRepository<SyncedBudgetState>({ databaseName: name });
   return {
@@ -57,6 +58,7 @@ async function rig(
       keyEpoch: FIRST_EPOCH,
       keyDigest,
       ...(acceptsState === undefined ? {} : { acceptsState }),
+      ...(foundedDocument === undefined ? {} : { foundedDocument }),
     }),
   };
 }
@@ -315,15 +317,45 @@ describe("движок синхронизации", () => {
     expect((await beta.engine.status()).cursor.seq).toBe(server.stored.length);
   });
 
-  it("состояние, которое шлюз приложения не принял бы, в документ не попадает", async () => {
-    // The journal calls a state ready that the application refuses to store — an identifier of an
-    // older kind that is not a UUID, for one. Written to the document, it would be refused on every
-    // load and every write; kept out, the family goes on seeing the last state that passed.
+  /**
+   * A peer's account that this test's application refuses to open — the stand-in for a newer
+   * build's record that an older one does not understand. The identifier is a UUID on purpose:
+   * the hold is a version skew, and everything the journal itself can tell is wrong it withholds.
+   */
+  const STRANGER = "7bbbbbbb-bbbb-4bbb-8bbb-000000000001";
+  const refusesStranger = (state: SyncedBudgetState) => state.accounts.every((account) => account.id !== STRANGER);
+  const strangerDraft = {
+    entity: "account" as const,
+    action: "create" as const,
+    targetId: STRANGER,
+    fields: { name: "Чужой", type: "cash" as const, currency: "RUB", openingBalanceMinor: 0, active: true },
+  };
+  const strangerAccount = (lamport: number) => stampDrafts(DEVICE_A, [strangerDraft], lamport)[0]!;
+  const strangerGone = (lamport: number) =>
+    stampDrafts(DEVICE_A, [{ entity: "account", action: "delete", targetId: STRANGER }], lamport)[0]!;
+
+  /** Beta has the family's budget, then a peer's state its application refuses arrives. */
+  async function heldBeta(label: string, accepts: (state: SyncedBudgetState) => boolean = refusesStranger) {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();
-    const accepts = (state: SyncedBudgetState) => state.accounts.every((account) => account.id !== "account-not-a-uuid");
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, `${label}-a`);
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, `${label}-b`, undefined, accepts);
+    await alpha.engine.enqueue(g002Drafts());
+    await alpha.engine.push();
+    await beta.engine.pull();
+    server.seed(await sealOperation(family.key, strangerAccount(100_000)));
+    await beta.engine.pull();
+    return { server, family, alpha, beta };
+  }
+
+  it("состояние, которое шлюз приложения не принял бы, в документ не попадает", async () => {
+    // The journal calls a state ready that the application refuses to store. Written to the
+    // document, it would be refused on every load and every write; kept out, the family goes on
+    // seeing the last state that passed.
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
     const alpha = await rig(server, family.key, family.digest, DEVICE_A, "accept-a");
-    const beta = await rig(server, family.key, family.digest, DEVICE_B, "accept-b", undefined, accepts);
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "accept-b", undefined, refusesStranger);
 
     await alpha.engine.enqueue(g002Drafts());
     await alpha.engine.push();
@@ -331,17 +363,7 @@ describe("движок синхронизации", () => {
     const shown = (await beta.repository.load())!;
     expect(shown.transactions).toHaveLength(4);
 
-    const [account] = stampDrafts(
-      DEVICE_A,
-      [{
-        entity: "account",
-        action: "create",
-        targetId: "account-not-a-uuid",
-        fields: { name: "Чужой", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
-      }],
-      100_000,
-    );
-    server.seed(await sealOperation(family.key, account!));
+    server.seed(await sealOperation(family.key, strangerAccount(100_000)));
     const pulled = await beta.engine.pull();
 
     expect(pulled.stop).toBeNull();
@@ -351,24 +373,8 @@ describe("движок синхронизации", () => {
     // Without the gate the same delivery reaches the document, as it always did.
     const gamma = await rig(server, family.key, family.digest, "0000000c-0000-4000-8000-000000000003", "accept-c");
     await gamma.engine.pull();
-    expect((await gamma.repository.load())!.accounts.map((item) => item.id)).toContain("account-not-a-uuid");
+    expect((await gamma.repository.load())!.accounts.map((item) => item.id)).toContain(STRANGER);
   });
-
-  /** The state of the gate test above: a peer's account under an identifier that is not a UUID. */
-  const STRANGER = "account-not-a-uuid";
-  const refusesStranger = (state: SyncedBudgetState) => state.accounts.every((account) => account.id !== STRANGER);
-  const strangerAccount = (lamport: number) => stampDrafts(
-    DEVICE_A,
-    [{
-      entity: "account",
-      action: "create",
-      targetId: STRANGER,
-      fields: { name: "Чужой", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
-    }],
-    lamport,
-  )[0]!;
-  const strangerGone = (lamport: number) =>
-    stampDrafts(DEVICE_A, [{ entity: "account", action: "delete", targetId: STRANGER }], lamport)[0]!;
 
   it("отказ шлюза приложения записан и виден, переживает перезапуск и снимается исправлением", async () => {
     const server = new FakeSyncServer();
@@ -398,41 +404,78 @@ describe("движок синхронизации", () => {
     expect((await restarted.repository.load())!.accounts.map((account) => account.id)).not.toContain(STRANGER);
   });
 
-  it("своя запись при отказе шлюза ложится в документ, а не пропадает с экрана", async () => {
+  it("пока документ задержан, устройство только читает: запись отклонена, очередь и документ не тронуты", async () => {
+    // Second review, MEDIUM-2 and MEDIUM-3: a write made on the held document is a write made on a
+    // state that is not the journal's, and an update carries its entity whole under a stamp that
+    // outranks the family's — a peer's rename would be undone by an edit of the balance. So the
+    // device writes nothing until the journal's state opens again.
+    const { server, family, alpha, beta } = await heldBeta("ro");
+    const document = await beta.repository.loadVersioned();
+    const journal = await beta.repository.readSyncState("journal");
+    const queued = await beta.repository.countOutbox();
+
+    const refusal = await beta.engine.enqueue([extraExpense(1)]).catch((failure: unknown) => failure);
+    expect(refusal).toBeInstanceOf(SyncClientError);
+    expect((refusal as SyncClientError).code).toBe("document_held");
+    expect(await beta.repository.countOutbox()).toBe(queued);
+    expect(await beta.repository.loadVersioned()).toEqual(document);
+    expect(await beta.repository.readSyncState("journal")).toEqual(journal);
+    // Nothing reaches the family either.
+    await beta.engine.push();
+    expect(server.stored.filter((envelope) => envelope.deviceId === DEVICE_B)).toHaveLength(0);
+
+    // Once the state opens again the device writes as before, on the journal's own state.
+    server.seed(await sealOperation(family.key, strangerGone(100_001)));
+    await beta.engine.pull();
+    const written = await beta.engine.enqueue([extraExpense(2)]);
+    expect(written.queued).toBe(1);
+    expect((await beta.repository.load())!.transactions.map((transaction) => transaction.id)).toContain(extraExpense(2).targetId);
+    await beta.engine.push();
+    await alpha.engine.pull();
+    expect((await alpha.repository.load())!.transactions.map((transaction) => transaction.id)).toContain(extraExpense(2).targetId);
+    expect((await alpha.repository.load())!.transactions.map((transaction) => transaction.id)).not.toContain(extraExpense(1).targetId);
+  });
+
+  it("запись, которая сама дала бы непринятое состояние, не уходит семье", async () => {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();
-    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "own-a");
-    const beta = await rig(server, family.key, family.digest, DEVICE_B, "own-b", undefined, refusesStranger);
-    await alpha.engine.enqueue(g002Drafts());
-    await alpha.engine.push();
-    await beta.engine.pull();
-    server.seed(await sealOperation(family.key, strangerAccount(100_000)));
-    await beta.engine.pull();
-    const shown = (await beta.repository.load())!;
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "self-refused", undefined, refusesStranger);
+    await beta.engine.enqueue(g002Drafts());
+    const document = await beta.repository.loadVersioned();
+    const queued = await beta.repository.countOutbox();
 
-    // The device records an expense on what it is shown. The application validated that state, so
-    // it is the document's next value; the old one, without the expense, is not written back.
-    const expense = extraExpense(1);
-    const next: SyncedBudgetState = {
-      ...shown,
-      transactions: [...shown.transactions, { id: expense.targetId, ...expense.fields }],
-    };
-    const result = await beta.engine.enqueue([expense], { document: next });
-
-    expect(await beta.repository.load()).toEqual(next);
-    expect(result.revision).toBe((await beta.repository.loadVersioned())!.revision);
-    expect(result.queued).toBe(1);
-    expect((await beta.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
-
-    // The expense travels like any other write, and is in the family's state once it is accepted.
-    await beta.engine.push();
-    server.seed(await sealOperation(family.key, strangerGone(200_000)));
-    await beta.engine.pull();
-    const repaired = (await beta.repository.load())!;
-    expect(repaired.transactions.map((transaction) => transaction.id)).toContain(expense.targetId);
+    const refusal = await beta.engine.enqueue([strangerDraft]).catch((failure: unknown) => failure);
+    expect((refusal as SyncClientError).code).toBe("state_refused");
+    expect(await beta.repository.countOutbox()).toBe(queued);
+    expect(await beta.repository.loadVersioned()).toEqual(document);
     expect((await beta.engine.status()).hold).toBeNull();
-    await alpha.engine.pull();
-    expect((await alpha.repository.load())!.transactions.map((transaction) => transaction.id)).toContain(expense.targetId);
+  });
+
+  it("сборка, которая открывает состояние, снимает задержку сама — без новых операций и без сети", async () => {
+    // Second review, LOW-4: the fix for a version skew arrives as a new build, not as an
+    // operation, and a pull with nothing to fetch used to write nothing — the hold stayed for ever.
+    const { server, family, beta } = await heldBeta("fixed");
+    expect((await beta.engine.status()).hold).not.toBeNull();
+    const fixed = await rig(server, family.key, family.digest, DEVICE_B, "fixed-b", beta.name, () => true);
+
+    // Offline: the round fails on the network, and the hold is lifted before it does.
+    server.offline = true;
+    await expect(fixed.engine.sync()).rejects.toThrow(SyncClientError);
+    const status = await fixed.engine.status();
+    expect(status.hold).toBeNull();
+    expect(status.familyDocument).toBe(true);
+    expect((await fixed.repository.load())!.accounts.map((account) => account.id)).toContain(STRANGER);
+
+    // And the plain pull: nothing to fetch, the document rewritten, and the pull says so.
+    const again = await heldBeta("fixed-pull");
+    const repaired = await rig(again.server, again.family.key, again.family.digest, DEVICE_B, "fixed-pull-b", again.beta.name, () => true);
+    const pulled = await repaired.engine.pull();
+    expect(pulled.applied).toBe(0);
+    expect(pulled.settled).toBe(true);
+    expect((await repaired.engine.status()).hold).toBeNull();
+    expect((await repaired.repository.load())!.accounts.map((account) => account.id)).toContain(STRANGER);
+    // Settled once: the next pull has nothing to say.
+    expect((await repaired.engine.pull()).settled).toBe(false);
   });
 
   it("устройство без документа не получает отвергнутое состояние и говорит об этом", async () => {
@@ -452,6 +495,7 @@ describe("движок синхронизации", () => {
     expect(await fresh.repository.loadVersioned()).toBeNull();
     const status = await fresh.engine.status();
     expect(status.hold).toEqual({ reason: "rejected_by_app", document: "empty" });
+    expect(status.familyDocument).toBe(false);
     expect(status.cursor.seq).toBe(server.stored.length);
     // Nor does the bookkeeping that follows invent one: a checkpoint is anchored, the document is not.
     expect(await fresh.engine.writeCheckpoint({ force: true })).toBe(true);
@@ -462,6 +506,50 @@ describe("движок синхронизации", () => {
     await fresh.engine.pull();
     expect(plan((await fresh.repository.load())!).annualReserveMinor).toBe(JULY_RESERVE_MINOR);
     expect((await fresh.engine.status()).hold).toBeNull();
+    expect((await fresh.engine.status()).familyDocument).toBe(true);
+  });
+
+  it("личный бюджет вступившего устройства не выдаётся за семейный, а бюджет основателя — семейный с начала", async () => {
+    // Second review, MEDIUM-3 (b): a device that joined holds the budget it had before, and a hold
+    // used to call that budget «kept» — the family's, shown and written from as the family's.
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "own-a");
+    await alpha.engine.enqueue([...g002Drafts()]);
+    await alpha.engine.push();
+    server.seed(await sealOperation(family.key, strangerAccount(100_000)));
+
+    const personal = await rig(server, family.key, family.digest, DEVICE_B, "own-personal", undefined, refusesStranger);
+    const own = (await alpha.repository.load())!;
+    await personal.repository.save({ ...own, accounts: own.accounts.map((account) => ({ ...account, name: "Личный" })) });
+    const before = await personal.repository.loadVersioned();
+    expect((await personal.engine.status()).familyDocument).toBe(false);
+    await personal.engine.pull();
+    const status = await personal.engine.status();
+    expect(status.hold).toEqual({ reason: "rejected_by_app", document: "empty" });
+    expect(status.familyDocument).toBe(false);
+    // The personal budget is not replaced by a refused state — and not promoted to the family's either.
+    expect((await personal.repository.loadVersioned())!.value).toEqual(before!.value);
+
+    // The founder's own budget is the family's from the start: its hold keeps it.
+    const founder = await rig(server, family.key, family.digest, "0000000c-0000-4000-8000-000000000003", "own-founder", undefined, refusesStranger, true);
+    await founder.repository.save(own);
+    expect((await founder.engine.status()).familyDocument).toBe(true);
+    await founder.engine.pull();
+    expect((await founder.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
+  });
+
+  it("запись о семейном документе, которой эта сборка не писала, — порча", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const { engine, repository } = await rig(server, family.key, family.digest, DEVICE_A, "family-document-corrupt");
+    for (const value of ["семья", { familyId: 7 }, []]) {
+      await repository.writeSyncState([{ key: "family-document", value }]);
+      await expect(engine.status(), JSON.stringify(value)).rejects.toThrow(/the stored family document is not a record of one/);
+    }
+    // A record of another family is not this family's document — a family this device left.
+    await repository.writeSyncState([{ key: "family-document", value: { familyId: "11111111-1111-4111-8111-111111111111" } }]);
+    expect((await engine.status()).familyDocument).toBe(false);
   });
 
   it("запись о задержке, которой эта сборка не писала, — порча, а не задержка", async () => {

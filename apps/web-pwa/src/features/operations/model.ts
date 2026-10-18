@@ -18,6 +18,7 @@ import {
 } from "@family-budget/domain";
 import { BACKUP_LIMITS } from "../../backup";
 import { parseMoney } from "../../money";
+import { BudgetWriteRefusal } from "../../write-refusal";
 
 export const OPERATIONS_LIMITS = {
   accounts: BACKUP_LIMITS.accounts,
@@ -667,6 +668,9 @@ export function toOperationsErrorView(error: unknown): OperationsErrorView {
   if (error instanceof OperationsValidationError) {
     return { field: error.field, message: error.message };
   }
+  // Записи недоступны, пока документ семьи задержан или не пришёл: это не сбой, и человек должен
+  // знать, почему и когда записи откроются.
+  if (error instanceof BudgetWriteRefusal) return { field: "form", message: error.userMessage };
   return { field: "form", message: "Не удалось сохранить операцию." };
 }
 

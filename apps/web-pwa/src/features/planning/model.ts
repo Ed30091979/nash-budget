@@ -13,6 +13,7 @@ import {
   type ScheduledExpense,
 } from "@family-budget/domain";
 import { parseMoney } from "../../money";
+import { BudgetWriteRefusal } from "../../write-refusal";
 
 /**
  * Пределы, которыми план ограничивает рост: сколько крупных платежей, расписаний, категорий и
@@ -460,5 +461,6 @@ export function planningError(error: unknown): PlanningErrorView {
   if (error instanceof PlanningValidationError) {
     return { field: error.field, message: error.message };
   }
+  if (error instanceof BudgetWriteRefusal) return { field: "form", message: error.userMessage };
   return { field: "form", message: "Не удалось сохранить изменение." };
 }

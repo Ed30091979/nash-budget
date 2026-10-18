@@ -11,6 +11,7 @@ import type { BudgetState } from "@family-budget/domain";
 import type { IndexedDbBudgetRepository } from "@family-budget/storage";
 import {
   SYNC_STATE_KEYS,
+  SyncClientError,
   SyncEngine,
   SyncServerError,
   createHttpTransport,
@@ -36,7 +37,7 @@ import {
   toHex,
   verifyBindProof,
 } from "@family-budget/sync-crypto";
-import { restoreJournal, type JournalIntegrity, type SyncedBudgetState } from "@family-budget/sync-protocol";
+import { restoreJournal, type JournalIntegrity } from "@family-budget/sync-protocol";
 
 import { EPOCH_REFUSAL_TEXT, takeIncomingEpoch } from "./epoch-intake";
 import {
@@ -58,6 +59,7 @@ import {
 } from "./api";
 import type { ActiveInvite, FamilyActions } from "./FamilyScreen";
 import { prepareBudgetState } from "../../backup";
+import { BudgetWriteRefusal } from "../../write-refusal";
 import { budgetJournalDrafts } from "./journal";
 import { authorsOfTransactions, type TransactionAuthor } from "./news";
 import {
@@ -445,15 +447,24 @@ export interface JournalWriterOptions {
  * читается с диска, а не собирается из намерения — иначе экран показывал бы изменение, которого
  * перезапуск не найдёт.
  *
- * Когда снимок журнала показать нельзя — он не готов или шлюз приложения его отверг, — движку
- * передаётся `next`: состояние, которое приложение само собрало из показанного и проверило тем же
- * шлюзом. Оно и ложится в документ. Прежде документ сохранял значение, на котором правку сделали,
- * и своя запись человека исчезала с экрана, уходя при этом семье.
+ * Только чтение — пока документ задержан (`SyncStatusReport.hold`: семья записала то, что эта
+ * версия не открывает) и пока на устройстве нет документа семьи (`familyDocument`: вступившее
+ * устройство всё ещё держит бюджет, который был у него до вступления). В обоих случаях показанное
+ * — не состояние журнала, и правка, собранная из него, ушла бы семье целыми сущностями под
+ * меткой, перебивающей чужие правки, — а из личного бюджета ещё и чужими семье счетами (второе
+ * ревью, MEDIUM-2 и MEDIUM-3). Запись отклоняется {@link BudgetWriteRefusal} раньше, чем что-либо
+ * ляжет в очередь или в документ, и форма показывает, почему.
  */
 export function createBudgetJournalWriter(options: JournalWriterOptions): BudgetJournalWrite {
   return async ({ expectedRevision, previous, next }) => {
     const engine = await options.engineFor();
     if (engine === null) return null;
+    // Сборка, которая теперь открывает состояние журнала, снимает задержку до того, как о записи
+    // будет решено, — иначе первая запись после обновления отклонялась бы зря.
+    await engine.settleDocument();
+    const report = await engine.documentStatus();
+    if (report.hold !== null) throw new BudgetWriteRefusal("held");
+    if (!report.familyDocument) throw new BudgetWriteRefusal("pending");
     const origin = await options.store
       .readSyncState<JournalOrigin>(JOURNAL_ORIGIN_KEY)
       .catch(() => undefined);
@@ -467,14 +478,20 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
       // чтобы форма состояния на диске всё равно догнала показанную.
       return options.saveIfRevision(expectedRevision, next);
     }
-    // Тип документа движка — состояние журнала; `next` — состояние приложения, прошедшее его шлюз.
-    // Документ хранит оба вида и всегда хранил: приложение пишет в него своё состояние напрямую.
-    const committed = await engine.enqueue(drafts, { document: next as SyncedBudgetState });
+    let committed: Awaited<ReturnType<SyncEngine["enqueue"]>>;
+    try {
+      committed = await engine.enqueue(drafts);
+    } catch (failure) {
+      // Задержка могла начаться между проверкой выше и записью — приёмом в другой вкладке.
+      if (failure instanceof SyncClientError && failure.code === "document_held") throw new BudgetWriteRefusal("held");
+      if (failure instanceof SyncClientError && failure.code === "state_refused") throw new BudgetWriteRefusal("refused");
+      throw failure;
+    }
     const document = await options.store.loadVersioned().catch(() => null);
     options.afterWrite?.(engine);
     if (document !== null) return { status: "saved", value: document.value, revision: document.revision };
-    // Документ не прочитался после записи. В нём лежит либо `next`, либо принятый снимок журнала,
-    // который несёт ту же правку, — показывается `next`: его приложение уже проверило.
+    // Документ не прочитался после записи. Принятый снимок журнала несёт ту же правку, что и
+    // `next`, — показывается `next`: его приложение уже проверило.
     if (committed.revision === null) return { status: "conflict", current: null };
     return { status: "saved", value: next, revision: committed.revision };
   };
@@ -491,6 +508,12 @@ export function memberNameFromEmail(email: string): string {
 export interface FamilyController {
   readonly serverUrl: string | null;
   readonly session: FamilySession | null;
+  /**
+   * Устройство в семье и ведёт её журнал: адрес сервера, сессия и семья есть. Тогда бюджет на
+   * экране — бюджет семьи или ничего: без документа семьи (`status.familyDocument`) приложение
+   * показывает, чего устройство ждёт, а не онбординг и не бюджет, который был до вступления.
+   */
+  readonly inFamily: boolean;
   readonly membership: MembershipSnapshot | null;
   readonly members: readonly MemberRecord[];
   readonly devices: readonly DeviceRecord[];
@@ -651,11 +674,16 @@ export function startVisibilityAwarePolling(poll: VisibilityAwarePoll): () => vo
 
 /** Ровно та часть движка, которую делает круг. Тест подставляет сюда объект в две строки. */
 export interface SyncRoundEngine {
-  sync(): Promise<{ readonly pull: { readonly applied: number } }>;
+  sync(): Promise<{ readonly pull: { readonly applied: number; readonly settled?: boolean } }>;
 }
 
 export interface SyncRoundResult {
   readonly applied: number;
+  /**
+   * Документ переписан из журнала без новых операций — задержка снята сборкой, которая открывает
+   * состояние (`PullResult.settled`). Экрану есть что показать, хотя `applied` — ноль.
+   */
+  readonly settled: boolean;
   readonly outcome: SyncRoundOutcome;
 }
 
@@ -674,9 +702,9 @@ export interface SyncRoundResult {
 export async function runSyncRound(engine: SyncRoundEngine): Promise<SyncRoundResult> {
   try {
     const result = await engine.sync();
-    return { applied: result.pull.applied, outcome: "ok" };
+    return { applied: result.pull.applied, settled: result.pull.settled ?? false, outcome: "ok" };
   } catch (failure) {
-    return { applied: 0, outcome: classifySyncFailure(failure) };
+    return { applied: 0, settled: false, outcome: classifySyncFailure(failure) };
   }
 }
 
@@ -965,6 +993,7 @@ export function useFamily(
     const retired = await store
       .readSyncState<StoredFamilyKey>(RETIRED_KEY_STATE_KEY)
       .catch(() => undefined);
+    const origin = await store.readSyncState<JournalOrigin>(JOURNAL_ORIGIN_KEY).catch(() => undefined);
     return new SyncEngine({
       repository: repository as never,
       transport: transportWithTokenRefresh(
@@ -988,6 +1017,10 @@ export function useFamily(
       // которое он не принял бы, в документ не попадает: иначе каждое открытие и каждая запись
       // падали бы на нём на всех устройствах семьи.
       acceptsState: acceptsJournalState,
+      // Бюджет устройства, создавшего семью, — бюджет семьи с первой записи (посев). Бюджет
+      // вступившего становится семейным, только когда движок запишет в документ принятое
+      // состояние журнала; до тех пор он не показывается и не пишется как семейный.
+      foundedDocument: origin === "local",
     });
   }, [refreshAccess, repository, serverUrl, store]);
 
@@ -1196,7 +1229,7 @@ export function useFamily(
               result = await runSyncRound(next);
               if (cancelled) return;
               setSyncRound(result.outcome);
-              await refreshSyncState(next, result.applied > 0);
+              await refreshSyncState(next, result.applied > 0 || result.settled);
               return;
             }
           }
@@ -1205,7 +1238,7 @@ export function useFamily(
         // «синхронизировано» при лежащем сервере, умершем токене и отозванном устройстве, потому
         // что отчёт ниже собирается из записей, которых неудавшийся круг не делает.
         setSyncRound(result.outcome);
-        await refreshSyncState(engine, result.applied > 0);
+        await refreshSyncState(engine, result.applied > 0 || result.settled);
       } finally {
         running = false;
       }
@@ -1807,6 +1840,7 @@ export function useFamily(
   return {
     serverUrl,
     session,
+    inFamily: isSyncActive(serverUrl, session) && session?.familyId != null,
     membership,
     members,
     devices,

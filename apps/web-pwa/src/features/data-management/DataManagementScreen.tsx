@@ -9,6 +9,7 @@ import {
 import { createPortal } from "react-dom";
 import { type BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
+import { BudgetWriteRefusal } from "../../write-refusal";
 import {
   activateDialogEnvironment,
   handleDialogKeyboard,
@@ -169,8 +170,10 @@ export function DataManagementScreen({
       try {
         await onRestoreBackup(file);
         dispatch({ type: "succeed", message: "Резервная копия восстановлена." });
-      } catch {
-        dispatch({ type: "fail", message: SAFE_ERRORS.restore });
+      } catch (error) {
+        // Восстановление — такая же запись бюджета, как любая другая, и пока записи недоступны,
+        // человек узнаёт почему, а не «не удалось».
+        dispatch({ type: "fail", message: error instanceof BudgetWriteRefusal ? error.userMessage : SAFE_ERRORS.restore });
       }
     });
   };

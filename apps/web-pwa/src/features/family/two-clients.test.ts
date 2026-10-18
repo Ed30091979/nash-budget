@@ -45,6 +45,8 @@ import {
   type JournalOrigin,
 } from "./controller";
 import { membersById, transactionAuthorLabel } from "./model";
+import { toOperationsErrorView } from "../operations/model";
+import { BudgetWriteRefusal, WRITE_REFUSAL_TEXT } from "../../write-refusal";
 
 const FAMILY_ID = "0f000000-0000-4000-8000-00000000fa11";
 const DEVICE_ANNA = "0000000a-0000-4000-8000-000000000001";
@@ -143,7 +145,7 @@ async function makeClient(
   memberId: string,
   familyKey: CryptoKey,
   origin: JournalOrigin,
-  gated = false,
+  accepts?: (state: BudgetState) => boolean,
 ): Promise<Client> {
   const repository = createBudgetRepository({ databaseName: databaseName(label) });
   const created = await repository.createIfAbsent(prepareBudgetState(makeSeedBudget()));
@@ -155,8 +157,11 @@ async function makeClient(
     familyKey,
     keyEpoch: FIRST_EPOCH,
     keyDigest: toHex(await familyKeyFingerprint(familyKey)),
-    // The gate the application gives its engine (controller.ts), where a test asks for it.
-    ...(gated ? { acceptsState: acceptsJournalState } : {}),
+    // The gate the application gives its engine (controller.ts), where a test asks for it — on
+    // top of a rule of the test's own, standing in for an older build that does not open a record.
+    ...(accepts === undefined ? {} : { acceptsState: (state: BudgetState) => acceptsJournalState(state) && accepts(state) }),
+    // As controller.ts: the founder's budget is the family's from the first write.
+    foundedDocument: origin === "local",
   });
   await repository.writeSyncState([{ key: JOURNAL_ORIGIN_KEY, value: origin }]);
 
@@ -401,11 +406,17 @@ describe("два клиента одной семьи", () => {
     expect(await documentOf(boris)).toEqual(await documentOf(anna));
   });
 
-  it("состояние, которое шлюз приложения не открывает, не замораживает устройство молча", async () => {
+  it("пока состояние семьи не открывается этой версией, устройство только читает и ничего не шлёт", async () => {
+    // Второе ревью, MEDIUM-2 и MEDIUM-3: запись, сделанная на задержанном документе, собрана не из
+    // состояния журнала и ушла бы семье целыми сущностями под меткой, перебивающей чужие правки.
     const transport = new JournalServer();
     const familyKey = await generateFamilyKey();
+    // A peer's account this test's "older build" does not open. A UUID on purpose: the hold is a
+    // version skew, and whatever the journal itself can tell is wrong it withholds instead.
+    const STRANGER = "7bbbbbbb-bbbb-4bbb-8bbb-00000000beef";
+    const olderBuild = (state: BudgetState) => state.accounts.every((account) => account.id !== STRANGER);
     const anna = await makeClient("anna-6", transport, DEVICE_ANNA, MEMBER_ANNA, familyKey, "local");
-    const boris = await makeClient("boris-6", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family", true);
+    const boris = await makeClient("boris-6", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family", olderBuild);
 
     await anna.apply((state) => ({
       ...state,
@@ -415,9 +426,6 @@ describe("два клиента одной семьи", () => {
     await boris.receive();
     expect((await boris.engine.status()).hold).toBeNull();
 
-    // Another device writes what the journal carries and this application refuses to open: an
-    // account under an identifier that is not a UUID. The journal calls the state ready.
-    const STRANGER = "account-not-a-uuid";
     await anna.engine.enqueue([{
       entity: "account",
       action: "create",
@@ -433,24 +441,62 @@ describe("два клиента одной семьи", () => {
     expect(await documentOf(boris)).toEqual(before);
     expect((await boris.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
 
-    // Boris's own expense stays on his screen and in his document, and travels to the family.
+    // Boris's expense is refused with words the form shows, and nothing is queued or written.
     const own = { ...TRANSPORT_4000, id: "55555555-5555-4555-8555-55555555cccc", memberId: MEMBER_BORIS };
-    const shown = await boris.apply((state) => ({ ...state, transactions: [...state.transactions, own] }));
-    expect(shown.transactions.map((entry) => entry.id)).toContain(own.id);
-    expect(boris.shown().transactions.map((entry) => entry.id)).toContain(own.id);
-    expect((await documentOf(boris)).transactions.map((entry) => entry.id)).toContain(own.id);
-    expect(await boris.repository.countOutbox()).toBe(1);
-    await boris.drain();
+    const revision = (await boris.repository.loadVersioned())!.revision;
+    const refusal = await boris.apply((state) => ({ ...state, transactions: [...state.transactions, own] })).catch((failure: unknown) => failure);
+    expect(refusal).toBeInstanceOf(BudgetWriteRefusal);
+    expect((refusal as BudgetWriteRefusal).message).toBe(WRITE_REFUSAL_TEXT.held);
+    expect(toOperationsErrorView(refusal).message).toBe(WRITE_REFUSAL_TEXT.held);
+    expect(await boris.repository.countOutbox()).toBe(0);
+    expect((await boris.repository.loadVersioned())!.revision).toBe(revision);
+    expect(boris.shown().transactions.map((entry) => entry.id)).not.toContain(own.id);
+    // Not even a save that changes no entity reaches the document past the hold.
+    const reordered = await boris.apply((state) => ({ ...state, accounts: [...state.accounts].reverse() })).catch((failure: unknown) => failure);
+    expect(reordered).toBeInstanceOf(BudgetWriteRefusal);
+    expect((await boris.repository.loadVersioned())!.revision).toBe(revision);
 
-    // The writer takes its account back; the state opens again, with everything in it.
+    // The writer takes its account back; the state opens again, and Boris writes as before.
     await anna.engine.enqueue([{ entity: "account", action: "delete", targetId: STRANGER }]);
     await anna.drain();
     await boris.receive();
     expect((await boris.engine.status()).hold).toBeNull();
-    const repaired = await documentOf(boris);
-    expect(repaired.transactions.map((entry) => entry.id)).toContain(own.id);
-    expect(repaired.accounts.map((account) => account.id)).not.toContain(STRANGER);
-    expect(repaired.members?.map((member) => member.name)).toEqual(["Анна"]);
+    await boris.apply((state) => ({ ...state, transactions: [...state.transactions, own] }));
+    expect(await boris.repository.countOutbox()).toBe(1);
+    await boris.drain();
+    await anna.receive();
+    expect(anna.shown().transactions.map((entry) => entry.id)).toContain(own.id);
+    expect(anna.shown().members?.map((member) => member.name)).toEqual(["Анна"]);
+  });
+
+  it("вступившее устройство не пишет семье из бюджета, который был у него до вступления", async () => {
+    // Второе ревью, MEDIUM-3 (b): личные счета вступившего ушли бы семье как семейные.
+    const transport = new JournalServer();
+    const familyKey = await generateFamilyKey();
+    const anna = await makeClient("anna-7", transport, DEVICE_ANNA, MEMBER_ANNA, familyKey, "local");
+    const boris = await makeClient("boris-7", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family");
+    await anna.apply((state) => ({
+      ...state,
+      members: [{ id: MEMBER_ANNA, name: "Анна", role: "owner", active: true }],
+    }));
+    await anna.drain();
+
+    // Before the family's budget has reached Boris his own budget is on the device, and it is not
+    // the family's: his edit is refused, nothing queued.
+    expect((await boris.engine.status()).familyDocument).toBe(false);
+    const refusal = await boris.apply((state) => ({ ...state, accounts: state.accounts.map((account) => ({ ...account, name: "Мой личный" })) })).catch((failure: unknown) => failure);
+    expect(refusal).toBeInstanceOf(BudgetWriteRefusal);
+    expect((refusal as BudgetWriteRefusal).message).toBe(WRITE_REFUSAL_TEXT.pending);
+    expect(await boris.repository.countOutbox()).toBe(0);
+
+    // The family's budget arrives, the document becomes the family's, and Boris writes.
+    await boris.receive();
+    expect((await boris.engine.status()).familyDocument).toBe(true);
+    await boris.apply((state) => ({ ...state, transactions: [...state.transactions, { ...TRANSPORT_4000, memberId: MEMBER_BORIS }] }));
+    await boris.drain();
+    await anna.receive();
+    expect(anna.shown().accounts.map((account) => account.name)).not.toContain("Мой личный");
+    expect(anna.shown().transactions.map((entry) => entry.id)).toContain(TRANSPORT_4000.id);
   });
 
   it("сохранение, ничего не изменившее, не рассылает семье ни одной операции", async () => {

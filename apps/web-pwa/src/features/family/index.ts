@@ -1,4 +1,5 @@
 export { FamilyScreen, type ActiveInvite, type FamilyActions, type FamilyScreenProps } from "./FamilyScreen";
+export { FamilyHoldScreen } from "./FamilyHoldScreen";
 /**
  * Наружу — то, чем пользуется приложение, и ничего больше.
  *

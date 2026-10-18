@@ -21,6 +21,8 @@ import {
   UNATTRIBUTED_AUTHOR,
   classifySyncFailure,
   documentHoldNotice,
+  familyDocumentNotice,
+  showsFamilyHoldScreen,
   filterTransactionsByMember,
   formatInviteCode,
   formatInviteExpiry,
@@ -47,6 +49,7 @@ function report(overrides: Partial<SyncStatusReport> = {}): SyncStatusReport {
     epoch: { keyEpoch: 1, keyDigest: "a".repeat(64), live: true },
     stop: null,
     hold: null,
+    familyDocument: true,
     ...overrides,
   };
 }
@@ -184,17 +187,50 @@ describe("состояние журнала, которое приложение
     expect(documentHoldNotice(null)).toBeNull();
     const kept = documentHoldNotice({ reason: "rejected_by_app", document: "kept" })!;
     expect(kept.title).toBe("Новые записи семьи не открываются в этой версии");
-    expect(kept.body).toContain("ваши новые записи сохраняются и уходят семье");
+    // Second review: the held device is read-only, and the words say so instead of promising that
+    // its writes travel.
+    expect(kept.body).toContain("записи на этом устройстве временно недоступны");
+    expect(kept.body).not.toContain("уходят семье");
     expect(kept.body).toContain("Обновите приложение");
     expect(kept.body).toContain("Ничего не потеряно");
     const empty = documentHoldNotice({ reason: "rejected_by_app", document: "empty" })!;
     expect(empty.title).toBe("Бюджет семьи не открывается в этой версии");
     expect(empty.body).toContain("Обновите приложение");
+    expect(empty.body).toContain("записи недоступны");
     // Every reason the engine can record has words, for both kinds of document.
     for (const reason of DOCUMENT_HOLD_REASONS) {
       for (const document of ["kept", "empty"] as const) {
         expect(documentHoldNotice({ reason, document })?.title.length, `${reason} ${document}`).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it("экран ожидания стоит на месте бюджета ровно тогда, когда в семье нет документа семьи", () => {
+    // Второе ревью, LOW-5: в семье без документа — экран ожидания, а не онбординг.
+    expect(showsFamilyHoldScreen(true, false, null)).toBe(true);
+    expect(showsFamilyHoldScreen(true, false, report({ familyDocument: true }))).toBe(true);
+    // MEDIUM-3 (b): прежний бюджет вступившего устройства не показывается как семейный.
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: false }))).toBe(true);
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: false, hold: { reason: "rejected_by_app", document: "empty" } }))).toBe(true);
+    // Документ семьи — бюджет; задержка над ним — плашка, а не этот экран.
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: true }))).toBe(false);
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: true, hold: { reason: "rejected_by_app", document: "kept" } }))).toBe(false);
+    // Пока отчёта нет, бюджет показан как был; без семьи — обычное приложение и онбординг.
+    expect(showsFamilyHoldScreen(true, true, null)).toBe(false);
+    expect(showsFamilyHoldScreen(false, false, null)).toBe(false);
+    expect(showsFamilyHoldScreen(false, true, report({ familyDocument: false }))).toBe(false);
+  });
+
+  it("экран вместо бюджета не выдаёт прежний бюджет устройства за семейный", () => {
+    // Без задержки бюджет семьи просто ещё не пришёл; с задержкой — не открывается этой версией.
+    const pending = familyDocumentNotice(null);
+    expect(pending.title).toBe("Бюджет семьи ещё не пришёл");
+    expect(pending.body).toContain("записи на этом устройстве недоступны");
+    for (const reason of DOCUMENT_HOLD_REASONS) {
+      // Whatever the hold says the document is, this screen stands in for a budget that is not the
+      // family's, so it always speaks of the family's budget as not shown.
+      expect(familyDocumentNotice({ reason, document: "kept" })).toEqual(documentHoldNotice({ reason, document: "empty" }));
+      expect(familyDocumentNotice({ reason, document: "empty" })).toEqual(documentHoldNotice({ reason, document: "empty" }));
     }
   });
 });
