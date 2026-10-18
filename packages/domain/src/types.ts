@@ -579,6 +579,54 @@ export interface DebtMetrics {
   readonly unvaluedDebtIds: readonly DebtId[];
 }
 
+/**
+ * Everything the household holds on a day: each account's balance since it was opened, in its own
+ * currency and in the base one, and the debts. Cumulative and blind to budgets, unlike the balances
+ * of {@link BudgetMetrics}, which count only the operations of the budget's own window.
+ */
+export interface HoldingsMetrics {
+  readonly asOf: LocalDate;
+  readonly baseCurrency: CurrencyCode;
+  /**
+   * Opening balance and every posted operation dated on or before `asOf`, in the account's own
+   * currency; null when the sum leaves the safe integer range, which no gate in front of the
+   * domain lets a state reach.
+   */
+  readonly accountBalancesMinor: Readonly<Record<AccountId, MinorUnits | null>>;
+  /** The balance in the base currency at the latest rate on or before `asOf`; null when it cannot be valued. */
+  readonly accountBalancesInBaseMinor: Readonly<Record<AccountId, MinorUnits | null>>;
+  /** The valued balances of the accounts with `includeInTotal !== false`, summed. */
+  readonly totalInBaseMinor: MinorUnits;
+  /** Accounts whose balance could not be valued: no rate, or too large a sum. Declaration order. */
+  readonly unvaluedAccountIds: readonly AccountId[];
+  readonly debts: DebtMetrics;
+  /** total + receivable − payable; null when that sum cannot be represented exactly. */
+  readonly netWorthInBaseMinor: MinorUnits | null;
+}
+
+/** One tag's share of a budget, in the base currency. */
+export interface TagMetrics {
+  readonly tagId: TagId;
+  readonly incomeMinor: MinorUnits;
+  readonly expenseMinor: MinorUnits;
+  readonly refundMinor: MinorUnits;
+  /** expense − refund. */
+  readonly actualMinor: MinorUnits;
+  /** Posted incomes, expenses and refunds of the window carrying the tag. */
+  readonly transactionCount: number;
+}
+
+/**
+ * The budget by tag. An operation with two tags counts in both, so the tags do not add up to the
+ * budget and are not meant to: a tag is a second way to look at the same money.
+ */
+export interface TagBreakdown {
+  readonly budgetId: BudgetId;
+  /** Declaration order of state.tags, archived tags included. */
+  readonly tags: readonly TagMetrics[];
+  readonly byTag: Readonly<Record<TagId, TagMetrics>>;
+}
+
 export type AnnualCommitmentStatus = "funded" | "on_track" | "due_soon" | "overdue";
 
 export interface AnnualCommitmentMetrics {

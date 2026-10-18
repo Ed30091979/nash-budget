@@ -39,6 +39,7 @@ export {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  calculateTagExpenses,
   formatMinor,
   normalizeScheduledDueDate,
 } from "./calculate.js";
@@ -64,6 +65,7 @@ export {
   normalizeCounterparty,
 } from "./debts.js";
 export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
+export { calculateHoldings } from "./holdings.js";
 export { carriedId, documentIds, HOUSEHOLD_ID, isUuid, recurringOccurrenceId } from "./identity.js";
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
 export {

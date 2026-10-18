@@ -8,6 +8,7 @@ import {
   calculateMemberExpenses,
   COLLECTION_LIMITS,
   createTag,
+  calculateTagExpenses,
   deleteTag,
   findTagByName,
   makeSeedBudget,
@@ -16,6 +17,7 @@ import {
   TagValidationError,
   type BudgetState,
   type TagId,
+  type Transaction,
 } from "../src/index.js";
 
 const HOLIDAY = "8a000000-0000-4000-8000-0000000000a1";
@@ -212,5 +214,60 @@ describe("tags on canonical G-002", () => {
     });
     expect(calculateBudget(tagged)).toEqual(calculateBudget(g002));
     expect(calculateMemberExpenses(tagged)).toEqual(calculateMemberExpenses(g002));
+  });
+});
+
+describe("calculateTagExpenses", () => {
+  const DOLLARS = "8c000000-0000-4000-8000-0000000000c2";
+  const OLD = "8a000000-0000-4000-8000-0000000000a3";
+
+  /** The tagged seed with a refund, an income, a dollar purchase and operations the breakdown must not count. */
+  function ledger(): BudgetState {
+    const seed = taggedSeed();
+    const extra: Transaction[] = [
+      { id: "55555555-5555-4555-8555-5555555555e1", occurredOn: "2026-07-08", status: "posted", kind: "refund", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food, originalTransactionId: SEED_IDS.transactions.food, tagIds: [HOLIDAY] },
+      { id: "55555555-5555-4555-8555-5555555555e2", occurredOn: "2026-07-15", status: "posted", kind: "income", amountMinor: 2_000_000, accountId: SEED_IDS.accounts.main, tagIds: [OLD] },
+      { id: "55555555-5555-4555-8555-5555555555e3", occurredOn: "2026-07-20", status: "posted", kind: "expense", amountMinor: 2_555, accountId: DOLLARS, categoryId: SEED_IDS.categories.transport, baseAmountMinor: 236_338, baseCurrency: "RUB", rate: { baseMinor: 9_250, quoteMinor: 100 }, tagIds: [HOLIDAY] },
+      // Not counted: pending, outside the window, and not an income or an expense.
+      { id: "55555555-5555-4555-8555-5555555555e4", occurredOn: "2026-07-21", status: "pending", kind: "expense", amountMinor: 999, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food, tagIds: [HOME] },
+      { id: "55555555-5555-4555-8555-5555555555e5", occurredOn: "2026-08-01", status: "posted", kind: "expense", amountMinor: 999, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food, tagIds: [HOME] },
+      { id: "55555555-5555-4555-8555-5555555555e6", occurredOn: "2026-07-22", status: "posted", kind: "transfer", amountMinor: 999, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings, tagIds: [HOME] },
+    ];
+    return {
+      ...seed,
+      tags: [...seed.tags!, { id: OLD, name: "Старое", active: false }],
+      accounts: [...seed.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [...seed.transactions, ...extra],
+    };
+  }
+
+  it("counts each tag's money in the base currency, and an operation with two tags in both", () => {
+    const breakdown = calculateTagExpenses(ledger());
+    expect(breakdown.budgetId).toBe(SEED_IDS.budget);
+    expect(breakdown.tags.map((item) => item.tagId)).toEqual([HOLIDAY, HOME, OLD]);
+    expect(breakdown.byTag[HOLIDAY]).toEqual({
+      tagId: HOLIDAY, incomeMinor: 0, expenseMinor: 3_150_000 + 236_338, refundMinor: 150_000, actualMinor: 3_150_000 + 236_338 - 150_000, transactionCount: 3,
+    });
+    expect(breakdown.byTag[HOME]).toEqual({ tagId: HOME, incomeMinor: 0, expenseMinor: 3_150_000, refundMinor: 0, actualMinor: 3_150_000, transactionCount: 1 });
+    // An archived tag keeps its history.
+    expect(breakdown.byTag[OLD]).toEqual({ tagId: OLD, incomeMinor: 2_000_000, expenseMinor: 0, refundMinor: 0, actualMinor: 0, transactionCount: 1 });
+  });
+
+  it("lists every tag, used or not, and none without tags", () => {
+    expect(calculateTagExpenses(makeSeedBudget())).toEqual({ budgetId: SEED_IDS.budget, tags: [], byTag: {} });
+    const unused: BudgetState = { ...makeSeedBudget(), tags: [{ id: HOME, name: "Дом", active: true }] };
+    expect(calculateTagExpenses(unused).tags).toEqual([{ tagId: HOME, incomeMinor: 0, expenseMinor: 0, refundMinor: 0, actualMinor: 0, transactionCount: 0 }]);
+  });
+
+  it("moves no figure of the budget, and refuses a state the budget refuses", () => {
+    const untagged: BudgetState = {
+      ...ledger(),
+      tags: [],
+      transactions: ledger().transactions.map(({ tagIds: _tags, ...transaction }) => transaction as Transaction),
+    };
+    expect(calculateBudget(ledger())).toEqual(calculateBudget(untagged));
+    expect(() => calculateTagExpenses(ledger(), "44444444-4444-4444-8444-4444444444ff")).toThrow(/calculateTagExpenses references unknown id/);
+    const dangling: BudgetState = { ...ledger(), tags: [] };
+    expect(() => calculateTagExpenses(dangling)).toThrow(/tagIds references unknown id/);
   });
 });

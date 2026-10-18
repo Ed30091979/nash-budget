@@ -22,6 +22,8 @@ import type {
   Household,
   Member,
   MemberExpenseBreakdown,
+  TagBreakdown,
+  TagMetrics,
   MemberExpenseMetrics,
   MemberId,
   MinorUnits,
@@ -1049,6 +1051,65 @@ export function calculateMemberExpenses(
       expensesMinor,
     ),
   };
+}
+
+/**
+ * The budget by tag: for each tag, the incomes, expenses and refunds of the window that carry it,
+ * in the base currency, the way {@link calculateBudget} counts them.
+ *
+ * An operation with two tags counts in both, so the tags do not add up to the budget, and an
+ * operation with none counts in none. Archived tags are listed like the others: archiving takes a
+ * tag off the list of new choices, not off the history. Transfers, goal contributions and debt
+ * movements may carry tags and are not counted: none of them is an income or an expense.
+ *
+ * Every transaction is validated whatever its status and window, as in
+ * {@link calculateMemberExpenses}, so the breakdown is never computed on a state the main
+ * calculation refuses.
+ */
+export function calculateTagExpenses(
+  state: BudgetState,
+  budgetId: string = state.activeBudgetId,
+): TagBreakdown {
+  const index = indexState(state);
+  const budget = requireEntity(index.budgets, budgetId, "calculateTagExpenses");
+  assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
+  assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
+
+  interface Totals { income: MinorUnits; expense: MinorUnits; refund: MinorUnits; count: number }
+  const totals = new Map<TagId, Totals>();
+  for (const tag of index.tags.values()) totals.set(tag.id, { income: 0, expense: 0, refund: 0, count: 0 });
+
+  for (const transaction of state.transactions) {
+    validateTransactionReferences(transaction, index);
+    if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
+    if (transaction.kind !== "income" && transaction.kind !== "expense" && transaction.kind !== "refund") continue;
+    const baseMinor = baseAmountOf(transaction);
+    for (const tagId of transaction.tagIds ?? []) {
+      const current = totals.get(tagId)!;
+      totals.set(tagId, {
+        income: transaction.kind === "income" ? addMinor(current.income, baseMinor, "tag incomeMinor") : current.income,
+        expense: transaction.kind === "expense" ? addMinor(current.expense, baseMinor, "tag expenseMinor") : current.expense,
+        refund: transaction.kind === "refund" ? addMinor(current.refund, baseMinor, "tag refundMinor") : current.refund,
+        count: current.count + 1,
+      });
+    }
+  }
+
+  const tags: TagMetrics[] = [];
+  const byTag = createIdRecord<TagId, TagMetrics>();
+  for (const [tagId, value] of totals) {
+    const metrics: TagMetrics = {
+      tagId,
+      incomeMinor: value.income,
+      expenseMinor: value.expense,
+      refundMinor: value.refund,
+      actualMinor: addMinor(value.expense, -value.refund, "tag actualMinor"),
+      transactionCount: value.count,
+    };
+    tags.push(metrics);
+    byTag[tagId] = metrics;
+  }
+  return { budgetId: budget.id, tags, byTag };
 }
 
 function effectiveCommitmentDueIndex(

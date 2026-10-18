@@ -2,7 +2,10 @@ import {
   baseCurrencyOf,
   calculateAnnualPlan,
   calculateBudget,
+  calculateDebts,
+  calculateHoldings,
   calculateMemberExpenses,
+  calculateTagExpenses,
   COLLECTION_LIMITS,
   COUNTERPARTY_MAX_LENGTH,
   HOUSEHOLD_ID,
@@ -927,6 +930,11 @@ export function prepareBudgetState(
   // The split by participant is a calculation of its own, so it is the only place where a
   // member's own fields are enforced by the domain; a copy that would crash it never lands.
   calculateMemberExpenses(state);
+  // The metrics of wave 1, each a calculation of its own, run on the last day of the active
+  // budget: a copy that would crash the debts, the holdings or the split by tag never lands either.
+  calculateDebts(state, activeBudget.endDate);
+  calculateHoldings(state, activeBudget.endDate);
+  calculateTagExpenses(state);
   return state;
 }
 
