@@ -97,7 +97,8 @@ function withRelinkedMalformedAccountId(state: BudgetState): BudgetState {
       item.accountId === originalId ? { ...item, accountId: malformedId } : item
     )),
     transactions: state.transactions.map((transaction) => {
-      if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
+      if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund"
+        || transaction.kind === "debt_out" || transaction.kind === "debt_in") {
         return transaction.accountId === originalId ? { ...transaction, accountId: malformedId } : transaction;
       }
       return {
@@ -1121,6 +1122,38 @@ describe("долги в резервной копии", () => {
     ["не UUID", { id: "debt-1" }, /debts\[0\]\.id: некорректный UUID/u],
   ] as const)("отклоняет копию: %s", (_name, change, expected) => {
     expect(() => prepareBudgetState(indebted(change))).toThrow(expected);
+  });
+
+  const lending = (change: Record<string, unknown> = {}, debt: Record<string, unknown> = {}): unknown => {
+    const state = indebted(debt);
+    return {
+      ...state,
+      transactions: [...state.transactions, {
+        id: "c7777777-7777-4777-8777-777777777772", kind: "debt_out", status: "posted", occurredOn: "2026-07-09",
+        amountMinor: 500_000, accountId: state.accounts[0]!.id, debtId: PETYA, ...change,
+      }],
+    };
+  };
+
+  it("восстанавливает движение по долгу и отвергает движение без долга — его деньгам не к чему относиться", async () => {
+    const state = lending() as BudgetState;
+    expect(parseAndValidateBudgetBackup(serializeBackup(state))).toEqual(state);
+    const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
+    const publish = vi.fn<(_: BudgetState) => void>();
+    const orphan = lending({ debtId: "c7777777-7777-4777-8777-7777777777ff" });
+    await expect(restoreBudgetBackup(backupFile(orphan), save, publish)).rejects.toThrow(/transactions\[\d+\]\.debtId: неизвестный долг/u);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["долг не UUID", { debtId: "debt-1" }, {}, /transactions\[\d+\]\.debtId: некорректный UUID/u],
+    ["без долга", { debtId: undefined }, {}, /transactions\[\d+\]\.debtId: ожидалась непустая строка/u],
+    ["сумма в валюте долга при одной валюте", { debtAmountMinor: 5_000 }, {}, /debtAmountMinor: счёт и долг в одной валюте/u],
+    ["без суммы в валюте долга при разных валютах", {}, { currency: "USD" }, /без суммы в валюте долга/u],
+    ["сумма в валюте долга у перевода", { kind: "transfer", fromAccountId: "x", toAccountId: "y", debtAmountMinor: 1 }, {}, /debtAmountMinor: сумма в валюте долга бывает только у операции по долгу/u],
+    ["снимок у движения", { baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } }, {}, /baseAmountMinor: у такой операции нет суммы в базовой валюте/u],
+  ] as const)("отклоняет движение по долгу: %s", (_name, change, debt, expected) => {
+    expect(() => prepareBudgetState(JSON.parse(JSON.stringify(lending(change, debt))) as unknown)).toThrow(expected);
   });
 
   it("ограничивает число долгов в файле, но не в документе", () => {

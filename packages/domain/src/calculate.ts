@@ -525,6 +525,32 @@ function validateTransferAmounts(
 }
 
 /**
+ * The two amounts of a debt movement: the account's, and the debt's when its currency is another.
+ * A debt movement is neither income nor expense, so it carries no base-currency snapshot either —
+ * nothing in the budget counts it.
+ */
+function validateDebtAmounts(
+  transaction: Extract<Transaction, { readonly kind: "debt_out" | "debt_in" }>,
+  account: Account,
+  debt: Debt,
+): void {
+  const id = transaction.id;
+  for (const field of ["baseAmountMinor", "baseCurrency", "rate", "toAmountMinor"]) {
+    if (field in transaction) throw new Error(`transaction ${id} moves a debt and must not carry ${field}`);
+  }
+  if (account.currency === debt.currency) {
+    if (transaction.debtAmountMinor !== undefined) {
+      throw new Error(`transaction ${id} is in the debt's currency and must not carry debtAmountMinor`);
+    }
+    return;
+  }
+  if (transaction.debtAmountMinor === undefined) {
+    throw new Error(`transaction ${id} moves ${account.currency} against a debt in ${debt.currency} and must carry debtAmountMinor`);
+  }
+  assertFieldMinor(transaction.debtAmountMinor, `transaction ${id} debtAmountMinor`);
+}
+
+/**
  * Every reference and label of one transaction, against the whole index. Exported for the metrics
  * that live in modules of their own (`debts.ts`, `holdings.ts`), so they refuse exactly what the
  * budget refuses; not part of the package's public surface.
@@ -532,7 +558,11 @@ function validateTransferAmounts(
 export function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
   const { accounts, categories, goals, transactions, baseCurrency } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
-  assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
+  assertEnum(
+    transaction.kind,
+    ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"],
+    `transaction ${transaction.id} kind`,
+  );
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
   validateTransactionLabels(transaction, index);
@@ -607,6 +637,13 @@ export function validateTransactionReferences(transaction: Transaction, index: S
           `transaction ${transaction.id} destination must match goal ${goal.id} linked account`,
         );
       }
+      return;
+    }
+    case "debt_out":
+    case "debt_in": {
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const debt = requireEntity(index.debts, transaction.debtId, `transaction ${transaction.id} debtId`);
+      validateDebtAmounts(transaction, account, debt);
       return;
     }
     default: {
@@ -714,6 +751,15 @@ export function calculateBudget(
         );
         break;
       }
+      // A debt movement is neither income nor expense (rule 4 of the contracts): it moves the
+      // account it touches and no figure of the budget. Its other side is the debt's balance,
+      // which `calculateDebts` keeps.
+      case "debt_out":
+        changeAccount(transaction.accountId, -transaction.amountMinor);
+        break;
+      case "debt_in":
+        changeAccount(transaction.accountId, transaction.amountMinor);
+        break;
     }
   }
 

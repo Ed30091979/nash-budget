@@ -258,6 +258,7 @@ function validateBudgetStateUuids(state: BudgetState): void {
   state.scheduledExpenses.forEach((item, index) => requireUuid(item.id, `scheduledExpenses[${index}].id`));
   state.transactions.forEach((item, index) => {
     requireUuid(item.id, `transactions[${index}].id`);
+    if (item.kind === "debt_out" || item.kind === "debt_in") requireUuid(item.debtId, `transactions[${index}].debtId`);
     // A malformed label is malformed data, judged like every other identifier here; an
     // identifier that is merely unknown is a different case, repaired by
     // clearUnknownMemberAttribution.
@@ -419,15 +420,22 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     requireString(transaction.id, `transactions[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(transaction.occurredOn, `transactions[${index}].occurredOn`, false, 10);
     requireEnum(transaction.status, ["posted", "pending", "draft"], `transactions[${index}].status`);
-    const kind = requireEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transactions[${index}].kind`);
+    const kind = requireEnum(
+      transaction.kind,
+      ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"],
+      `transactions[${index}].kind`,
+    );
     requireNumber(transaction.amountMinor, `transactions[${index}].amountMinor`);
     if (transaction.memberId !== undefined) {
       requireString(transaction.memberId, `transactions[${index}].memberId`, true, BACKUP_LIMITS.idLength);
     }
     requireTransactionLabels(transaction, index);
     requireTransactionAmounts(transaction, kind, index);
-    if (kind === "income" || kind === "expense" || kind === "refund") {
+    if (kind === "income" || kind === "expense" || kind === "refund" || kind === "debt_out" || kind === "debt_in") {
       requireString(transaction.accountId, `transactions[${index}].accountId`, true, BACKUP_LIMITS.idLength);
+    }
+    if (kind === "debt_out" || kind === "debt_in") {
+      requireString(transaction.debtId, `transactions[${index}].debtId`, true, BACKUP_LIMITS.idLength);
     }
     if (kind === "expense" || kind === "refund") {
       requireString(transaction.categoryId, `transactions[${index}].categoryId`, true, BACKUP_LIMITS.idLength);
@@ -529,6 +537,10 @@ function requireTransactionAmounts(transaction: Record<string, unknown>, kind: s
     if (kind !== "transfer") throw new Error(`${label}.toAmountMinor: сумма зачисления бывает только у перевода.`);
     requireFieldAmount(transaction.toAmountMinor, `${label}.toAmountMinor`);
   }
+  if (transaction.debtAmountMinor !== undefined) {
+    if (kind !== "debt_out" && kind !== "debt_in") throw new Error(`${label}.debtAmountMinor: сумма в валюте долга бывает только у операции по долгу.`);
+    requireFieldAmount(transaction.debtAmountMinor, `${label}.debtAmountMinor`);
+  }
 }
 
 /**
@@ -541,7 +553,23 @@ function requireTransactionAmounts(transaction: Record<string, unknown>, kind: s
 function validateCurrencies(state: BudgetState): void {
   const base = baseCurrencyOf(state);
   const currencies = new Map(state.accounts.map((account) => [account.id, account.currency]));
+  const debts = new Map((state.debts ?? []).map((debt) => [debt.id, debt]));
   state.transactions.forEach((transaction, index) => {
+    // Долг — не метка: операция по долгу, которого в копии нет, не ремонтируется снятием, а
+    // отвергается, потому что её деньгам не к чему относиться (D-033).
+    if (transaction.kind === "debt_out" || transaction.kind === "debt_in") {
+      const debt = debts.get(transaction.debtId);
+      if (debt === undefined) throw new Error(`transactions[${index}].debtId: неизвестный долг ${transaction.debtId}.`);
+      const currency = currencies.get(transaction.accountId);
+      if (currency === undefined) return;
+      if (currency !== debt.currency && transaction.debtAmountMinor === undefined) {
+        throw new Error(`transactions[${index}]: операция по счёту в ${currency} и долгу в ${debt.currency} без суммы в валюте долга.`);
+      }
+      if (currency === debt.currency && transaction.debtAmountMinor !== undefined) {
+        throw new Error(`transactions[${index}].debtAmountMinor: счёт и долг в одной валюте.`);
+      }
+      return;
+    }
     if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
       const currency = currencies.get(transaction.accountId);
       if (currency === undefined) return;

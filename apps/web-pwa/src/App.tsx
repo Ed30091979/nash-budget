@@ -108,6 +108,8 @@ const transactionLabels: Record<Transaction["kind"], string> = {
   refund: "Возврат",
   transfer: "Перевод",
   goal_contribution: "Взнос в цель",
+  debt_out: "Долг: со счёта",
+  debt_in: "Долг: на счёт",
 };
 
 type BudgetSaveResult =
@@ -333,6 +335,8 @@ const transactionIcons: Record<Transaction["kind"], IconName> = {
   refund: "rotate-ccw",
   transfer: "arrow-left-right",
   goal_contribution: "target",
+  debt_out: "arrow-up-right",
+  debt_in: "arrow-down-left",
 };
 
 function storageText(health: StorageHealth | null): string {

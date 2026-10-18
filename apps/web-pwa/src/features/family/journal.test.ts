@@ -365,3 +365,23 @@ describe("валюты как операции журнала", () => {
     expect(budgetJournalDrafts(state, without, MEMBER)).toEqual([]);
   });
 });
+
+describe("долги как операции журнала", () => {
+  const PETYA = "0000000a-0000-4000-8000-0000000000f1";
+  const LENT = "0000000a-0000-4000-8000-0000000000f2";
+
+  it("посев переносит долг и движение по нему, срок — только когда он есть", () => {
+    const seed = makeSeedBudget();
+    const state: BudgetState = {
+      ...seed,
+      debts: [{ id: PETYA, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...seed.transactions, { id: LENT, kind: "debt_out", status: "posted", occurredOn: "2026-07-09", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId: PETYA }],
+    };
+    const snapshot = applyJournal(stamp(state));
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.debts).toEqual(state.debts);
+    expect(snapshot.state.transactions.find((item) => item.id === LENT)).toEqual(state.transactions.at(-1));
+    const debtDraft = budgetJournalDrafts(null, state).find((draft) => draft.entity === "debt");
+    expect(debtDraft !== undefined && "fields" in debtDraft && Object.hasOwn(debtDraft.fields, "dueDate")).toBe(false);
+  });
+});

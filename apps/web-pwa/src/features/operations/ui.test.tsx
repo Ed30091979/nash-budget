@@ -190,3 +190,18 @@ describe("operations UI", () => {
     expect(source).not.toMatch(/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML|innerHTML/);
   });
 });
+
+describe("виды операций в форме", () => {
+  it("предлагает только виды, которые форма записывает, даже когда в бюджете есть долги", () => {
+    const seed = makeSeedBudget();
+    const debtId = "8f100000-0000-4000-8000-0000000000d1";
+    const state: BudgetState = {
+      ...seed,
+      debts: [{ id: debtId, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...seed.transactions, { id: "8d100000-0000-4000-8000-000000000007", kind: "debt_out", status: "posted", occurredOn: "2026-07-09", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId }],
+    };
+    const html = renderToStaticMarkup(<OperationsScreen budget={state} clock={JULY_CLOCK} onChange={vi.fn(async () => undefined)} />);
+    const select = html.slice(html.indexOf('id="operation-kind"'), html.indexOf("</select>", html.indexOf('id="operation-kind"')));
+    expect([...select.matchAll(/<option value="([a-z_]+)"/g)].map((match) => match[1])).toEqual(["income", "expense", "refund", "transfer", "goal_contribution"]);
+  });
+});

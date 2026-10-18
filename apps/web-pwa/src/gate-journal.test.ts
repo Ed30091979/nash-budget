@@ -129,6 +129,20 @@ const MUTATIONS: readonly Mutation[] = [
   ...[MIN_LOCAL_DATE, MAX_LOCAL_DATE, "2200-01-01", "1899-12-31"]
     .map((dueDate): Mutation => [`debt.dueDate ${dueDate}`, (state) => indebted(state, { dueDate })]),
   ...["USD", "XYZ"].map((currency): Mutation => [`debt.currency ${currency}`, (state) => indebted(state, { currency })]),
+  ...[{}, { debtAmountMinor: 5_000 }, { debtAmountMinor: MAX_MONEY_MINOR + 1 }, { kind: "debt_in" }, { debtId: "c7777777-7777-4777-8777-7777777777ff" }]
+    .flatMap((change): Mutation[] => ["RUB", "USD"].map((currency): Mutation => [
+      `debt movement ${JSON.stringify(change)} on a debt in ${currency}`,
+      (state) => {
+        const withDebt = indebted(state, { currency }) as BudgetState;
+        return {
+          ...withDebt,
+          transactions: [...withDebt.transactions, {
+            id: "c7777777-7777-4777-8777-777777777772", kind: "debt_out", status: "posted", occurredOn: "2026-07-09",
+            amountMinor: 500_000, accountId: withDebt.accounts[0]!.id, debtId: "c7777777-7777-4777-8777-777777777771", ...change,
+          }],
+        };
+      },
+    ])),
 ];
 
 describe("шлюз копии и журнал семьи", () => {

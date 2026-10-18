@@ -168,7 +168,9 @@ export function archiveDebt(state: BudgetState, id: DebtId): BudgetState {
 
 /** Whether any operation names the debt. */
 function isReferenced(state: BudgetState, id: DebtId): boolean {
-  return state.transactions.some((transaction) => "debtId" in transaction && transaction.debtId === id);
+  return state.transactions.some(
+    (transaction) => (transaction.kind === "debt_out" || transaction.kind === "debt_in") && transaction.debtId === id,
+  );
 }
 
 /**
@@ -210,6 +212,23 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
   const rates = [...index.exchangeRates.values()];
   const baseCurrency = index.baseCurrency;
 
+  // What moved on each debt up to the day, in the debt's own currency: the debt amount when the
+  // account is in another currency, the amount itself otherwise.
+  const moved = new Map<DebtId, { out: MinorUnits; in: MinorUnits }>();
+  for (const transaction of state.transactions) {
+    if (transaction.kind !== "debt_out" && transaction.kind !== "debt_in") continue;
+    if (transaction.status !== "posted" || transaction.occurredOn > asOf) continue;
+    const amount = transaction.debtAmountMinor ?? transaction.amountMinor;
+    const current = moved.get(transaction.debtId) ?? { out: 0, in: 0 };
+    const next = transaction.kind === "debt_out"
+      ? { out: current.out + amount, in: current.in }
+      : { out: current.out, in: current.in + amount };
+    if (!Number.isSafeInteger(next.out) || !Number.isSafeInteger(next.in)) {
+      throw new Error(`debt ${transaction.debtId} movements leave the safe integer range`);
+    }
+    moved.set(transaction.debtId, next);
+  }
+
   const debts: DebtBalanceMetrics[] = [];
   const byDebt = Object.create(null) as Record<DebtId, DebtBalanceMetrics>;
   const unvaluedDebtIds: DebtId[] = [];
@@ -217,11 +236,12 @@ export function calculateDebts(state: BudgetState, asOf: LocalDate): DebtMetrics
   let payableInBaseMinor = 0;
 
   for (const debt of index.debts.values()) {
-    const outMinor = 0;
-    const inMinor = 0;
+    const outMinor = moved.get(debt.id)?.out ?? 0;
+    const inMinor = moved.get(debt.id)?.in ?? 0;
     const balanceMinor = debt.direction === "owed_to_me"
       ? debt.openingMinor + outMinor - inMinor
       : debt.openingMinor + inMinor - outMinor;
+    if (!Number.isSafeInteger(balanceMinor)) throw new Error(`debt ${debt.id} balance leaves the safe integer range`);
 
     let balanceInBaseMinor: MinorUnits | null = null;
     if (debt.currency === baseCurrency) {

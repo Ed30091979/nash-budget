@@ -274,6 +274,15 @@ function transactionFields(transaction: Transaction): Record<string, unknown> {
         toAccountId: transaction.toAccountId,
         goalId: transaction.goalId,
       });
+    case "debt_out":
+    case "debt_in":
+      // Сумма в валюте долга есть, только когда валюта счёта другая; отсутствующая отсутствует.
+      return defined({
+        ...base,
+        accountId: transaction.accountId,
+        debtId: transaction.debtId,
+        debtAmountMinor: transaction.debtAmountMinor,
+      });
   }
 }
 

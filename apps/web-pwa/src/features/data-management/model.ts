@@ -1,4 +1,5 @@
 import { type BudgetState, type Transaction, type TransactionKind } from "@family-budget/domain";
+import { debtVerb } from "../operations/transaction-words";
 import {
   HUMAN_READABLE_CSV_NOTICE,
   serializeHumanReadableCsv,
@@ -37,6 +38,8 @@ const kindLabels: Record<TransactionKind, string> = {
   refund: "Возврат",
   transfer: "Перевод",
   goal_contribution: "Взнос в цель",
+  debt_out: "Долг: со счёта",
+  debt_in: "Долг: на счёт",
 };
 
 const statusLabels = {
@@ -74,6 +77,7 @@ function transactionContext(
   accountNames: ReadonlyMap<string, string>,
   categoryNames: ReadonlyMap<string, string>,
   goalNames: ReadonlyMap<string, string>,
+  counterparties: ReadonlyMap<string, string>,
 ): readonly string[] {
   const account = (id: string) => accountNames.get(id) ?? "Неизвестный счёт";
   const category = (id: string) => categoryNames.get(id) ?? "Неизвестная категория";
@@ -100,7 +104,18 @@ function transactionContext(
         goalNames.get(transaction.goalId) ?? "Неизвестная цель",
         "",
       ];
+    case "debt_out":
+    case "debt_in":
+      return [account(transaction.accountId), counterparties.get(transaction.debtId) ?? "Неизвестный долг", ""];
   }
+}
+
+/** Вид операции словами; у долга — один из четырёх глаголов по его направлению. */
+function kindWord(transaction: Transaction, directions: ReadonlyMap<string, "i_owe" | "owed_to_me">): string {
+  if (transaction.kind === "debt_out" || transaction.kind === "debt_in") {
+    return debtVerb(transaction.kind, directions.get(transaction.debtId));
+  }
+  return kindLabels[transaction.kind];
 }
 
 export const OPERATIONS_CSV_HEADERS = [
@@ -117,16 +132,19 @@ export function createOperationsCsv(state: BudgetState): string {
   const accountNames = new Map(state.accounts.map((item) => [item.id, item.name]));
   const categoryNames = new Map(state.categories.map((item) => [item.id, item.name]));
   const goalNames = new Map(state.goals.map((item) => [item.id, item.name]));
+  const counterparties = new Map((state.debts ?? []).map((item) => [item.id, item.counterparty]));
+  const directions = new Map((state.debts ?? []).map((item) => [item.id, item.direction]));
   const rows = state.transactions.map((transaction) => {
     const [account, categoryOrGoal, relation] = transactionContext(
       transaction,
       accountNames,
       categoryNames,
       goalNames,
+      counterparties,
     );
     return [
       transaction.occurredOn,
-      kindLabels[transaction.kind],
+      kindWord(transaction, directions),
       statusLabels[transaction.status],
       formatAmount(transaction.amountMinor),
       account,

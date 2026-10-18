@@ -36,7 +36,7 @@ import { groupedCategoryOptions } from "./category-picker";
 import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "./CategorySheet";
 import { editAmount, evaluateAmount, settleAmount, type AmountSelection, type KeypadKey } from "./amount-expression";
 import { Keypad, useKeypadAvailable } from "./Keypad";
-import { kindLabels, rubles } from "./transaction-words";
+import { kindLabels, rubles, transactionDetail } from "./transaction-words";
 
 /** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
@@ -111,8 +111,16 @@ function spokenAmountText(text: string): string {
 /** Квитанция записи: её же подводят под глаз после сохранения. */
 export const SAVE_RECEIPT_ID = "operation-save-receipt";
 
+/**
+ * Виды, которые записывает эта форма. Долги и операции в другой валюте приходят из копии или от
+ * другого устройства, и форма их не записывает и не правит — у неё нет ни долга, ни курса (план,
+ * §3.4). Поэтому список видов — свой, а не все подписи `kindLabels`.
+ */
+type FormKind = TransactionDraft["kind"];
+const FORM_KINDS: readonly FormKind[] = ["income", "expense", "refund", "transfer", "goal_contribution"];
+
 /** «Записать доход» — глагол и вид операции в винительном падеже. */
-const kindObjects: Record<TransactionKind, string> = {
+const kindObjects: Record<FormKind, string> = {
   income: "доход",
   expense: "покупку",
   refund: "возврат",
@@ -182,7 +190,7 @@ function firstActiveGoal(budget: BudgetState): string {
  * «Жильё» был бы случайной записью не туда, а не подсказкой. Счёт подставляется — он почти
  * всегда один.
  */
-function defaultDraft(kind: TransactionKind, budget: BudgetState, occurredOn: string): TransactionDraft {
+function defaultDraft(kind: FormKind, budget: BudgetState, occurredOn: string): TransactionDraft {
   const accountId = firstActiveAccount(budget);
   const common = { status: "posted" as const, occurredOn, amount: "" };
   switch (kind) {
@@ -206,7 +214,8 @@ function defaultDraft(kind: TransactionKind, budget: BudgetState, occurredOn: st
   }
 }
 
-function draftFromTransaction(transaction: Transaction): TransactionDraft {
+/** Черновик формы по операции — или `null`, если форма такую операцию показать не может (долг). */
+function draftFromTransaction(transaction: Transaction): TransactionDraft | null {
   const common = {
     status: transaction.status,
     occurredOn: transaction.occurredOn,
@@ -223,6 +232,9 @@ function draftFromTransaction(transaction: Transaction): TransactionDraft {
       return { ...common, kind: transaction.kind, fromAccountId: transaction.fromAccountId, toAccountId: transaction.toAccountId };
     case "goal_contribution":
       return { ...common, kind: transaction.kind, fromAccountId: transaction.fromAccountId, toAccountId: transaction.toAccountId, goalId: transaction.goalId };
+    case "debt_out":
+    case "debt_in":
+      return null;
   }
 }
 
@@ -238,6 +250,8 @@ function transactionContext(transaction: Transaction, budget: BudgetState): stri
     case "refund": return `${category(transaction.categoryId)} · возврат расхода · ${account(transaction.accountId)}`;
     case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
     case "goal_contribution": return `${account(transaction.fromAccountId)} → ${goal(transaction.goalId)}`;
+    case "debt_out":
+    case "debt_in": return transactionDetail(transaction, budget);
   }
 }
 
@@ -531,7 +545,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     setDraft((current) => patchDraft(current, key, value));
     clearTransient();
   };
-  const chooseKind = (kind: TransactionKind) => {
+  const chooseKind = (kind: FormKind) => {
     setDraft((current) => ({ ...defaultDraft(kind, budget, today), amount: current.amount, occurredOn: current.occurredOn }));
     setEditingId(null);
     setSheet(null);
@@ -583,7 +597,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     // глаз. Прокрутка мгновенная и уважает `prefers-reduced-motion` по умолчанию платформы.
     window.setTimeout(() => document.getElementById(SAVE_RECEIPT_ID)?.scrollIntoView({ block: "center" }), 0);
   };
-  const reset = (kind: TransactionKind = draft.kind) => {
+  const reset = (kind: FormKind = draft.kind) => {
     setDraft(defaultDraft(kind, budget, today));
     setEditingId(null);
     setConfirmation(null);
@@ -668,14 +682,23 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       const pending = confirmation;
       const removed = budget.transactions.find((item) => item.id === pending.id);
       void runChange((state) => deleteTransaction(state, pending.id), () => {
-        if (removed) recordReceipt("Удалено", draftFromTransaction(removed));
+        const removedDraft = removed === undefined ? null : draftFromTransaction(removed);
+        if (removedDraft !== null) recordReceipt("Удалено", removedDraft);
         setConfirmation(null);
         if (editingId === pending.id) reset();
       });
     }
   };
   const beginEdit = (transaction: Transaction) => {
-    setDraft(draftFromTransaction(transaction));
+    const editable = draftFromTransaction(transaction);
+    if (editable === null) {
+      // Операция по долгу: у формы нет полей долга, и правка ею потеряла бы его. Говорим это, а не
+      // открываем форму, которая записала бы что-то другое.
+      setError("Операцию по долгу эта форма пока не изменяет.");
+      window.setTimeout(() => document.getElementById("operation-form-error")?.focus(), 0);
+      return;
+    }
+    setDraft(editable);
     setEditingId(transaction.id);
     setFactOpen(true);
     // Квитанция отвечала на прошлую запись; над формой, открывшей чужую операцию, она врёт.
@@ -760,7 +783,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
           {/* Дата вне месяца плана: конверты покупку не увидят, и табло так и говорит — до записи. */}
           {draft.kind === "expense" && activeBudget && !dateInPeriod ? <p className="field-hint record-outside" role="status">{formatDay(draft.occurredOn)} — вне {periodMonth}, месяца плана. Конверты не изменятся: покупка попадёт только в историю.</p> : null}
           <div id="operation-details" className="record-details" hidden={!detailsOpen}>
-            <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as TransactionKind)}>{Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
+            <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as FormKind)}>{FORM_KINDS.map((value) => <option value={value} key={value}>{kindLabels[value]}</option>)}</select></div>
             <TransactionFields budget={budget} draft={draft} patch={patch} onCustomCategory={openCategorySheet} />
             <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
           </div>

@@ -150,6 +150,9 @@ describe("parseOperation", () => {
       { ...base, kind: "refund", accountId: "account-1", categoryId: "category-1", originalTransactionId: "tx-1" },
       { ...base, kind: "transfer", fromAccountId: "account-1", toAccountId: "account-2" },
       { ...base, kind: "goal_contribution", fromAccountId: "account-1", toAccountId: "account-2", goalId: "goal-1" },
+      // Plan 4.5: the two debt kinds join the closed set.
+      { ...base, kind: "debt_out", accountId: "account-1", debtId: sampleTargetId("debt") },
+      { ...base, kind: "debt_in", accountId: "account-1", debtId: sampleTargetId("debt"), debtAmountMinor: 5_000 },
     ];
     for (const [index, fields] of variants.entries()) {
       const operation = parseOperation({
@@ -716,6 +719,8 @@ describe("display fields, notes and tags", () => {
       { ...base, kind: "refund", accountId: "account-1", categoryId: "category-1", originalTransactionId: "tx-1" },
       { ...base, kind: "transfer", fromAccountId: "account-1", toAccountId: "account-2" },
       { ...base, kind: "goal_contribution", fromAccountId: "account-1", toAccountId: "account-2", goalId: "goal-1" },
+      { ...base, kind: "debt_out", accountId: "account-1", debtId: sampleTargetId("debt") },
+      { ...base, kind: "debt_in", accountId: "account-1", debtId: sampleTargetId("debt") },
     ];
     for (const fields of kinds) expect(fieldsOf(parseOperation(write("transaction", fields)))).toEqual(fields);
 
@@ -950,5 +955,27 @@ describe("debts on the wire", () => {
 
   it("identifies a debt by a UUID", () => {
     expect(() => parseOperation(write(SAMPLE_FIELDS.debt, "debt-petya"))).toThrow(/operation targetId must be a UUID/);
+  });
+
+  const MOVEMENT = { kind: "debt_out", occurredOn: "2026-08-07", status: "posted", amountMinor: 500_000, accountId: "account-1", debtId: sampleTargetId("debt") };
+  const movement = (fields: unknown): unknown => ({ opId: opUuid(13), deviceId: DEVICE_A, lamport: 13, entity: "transaction", action: "create", targetId: "tx-debt", fields });
+
+  it("carries a debt movement through a round trip, the debt's amount when it is there", () => {
+    for (const fields of [MOVEMENT, { ...MOVEMENT, kind: "debt_in", debtAmountMinor: 5_000, note: "Вернул Петя", tagIds: [tagUuid(1)] }]) {
+      const decoded = decodeOperation(encodeOperation(parseOperation(movement(fields))));
+      expect(decoded.action === "create" ? decoded.fields : null).toEqual(fields);
+    }
+  });
+
+  it.each([
+    ["a movement without its debt", { ...MOVEMENT, debtId: undefined }, /transaction fields is missing field debtId/],
+    ["a debt that is not a UUID", { ...MOVEMENT, debtId: "debt-petya" }, /transaction debtId must be a UUID/],
+    ["a movement without its account", { ...MOVEMENT, accountId: undefined }, /transaction fields is missing field accountId/],
+    ["a debt amount of nothing", { ...MOVEMENT, debtAmountMinor: 0 }, /transaction debtAmountMinor must be at least 1/],
+    ["a snapshot on a movement", { ...MOVEMENT, baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } }, /transaction fields contains unknown field baseAmountMinor/],
+    ["a debt amount on a transfer", { kind: "transfer", occurredOn: "2026-07-05", status: "posted", amountMinor: 100, fromAccountId: "a", toAccountId: "b", debtAmountMinor: 1 }, /transaction fields contains unknown field debtAmountMinor/],
+    ["a category on a movement", { ...MOVEMENT, categoryId: "category-1" }, /transaction fields contains unknown field categoryId/],
+  ] as const)("refuses %s", (_name, fields, message) => {
+    expect(() => parseOperation(movement(JSON.parse(JSON.stringify(fields)) as unknown))).toThrow(message);
   });
 });

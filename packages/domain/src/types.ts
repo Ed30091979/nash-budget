@@ -63,7 +63,9 @@ export type TransactionKind =
   | "expense"
   | "refund"
   | "transfer"
-  | "goal_contribution";
+  | "goal_contribution"
+  | "debt_out"
+  | "debt_in";
 
 /**
  * A family participant. Attribution only: nothing in the money calculations reads a member,
@@ -353,12 +355,40 @@ export interface GoalContributionTransaction extends BaseTransaction {
   readonly goalId: GoalId;
 }
 
+/**
+ * Money that moved between an account and a debt: not an income and not an expense (rule 4 of
+ * `contracts/README.md`). Two kinds and not four: which way the money went is the kind, and what it
+ * means — lent or repaid, borrowed or paid back — is the debt's direction, so a debt whose direction
+ * changed in flight cannot leave an operation that says the opposite.
+ */
+interface DebtMovement extends BaseTransaction {
+  readonly accountId: AccountId;
+  readonly debtId: DebtId;
+  /**
+   * The amount in the debt's currency; `amountMinor` is the account's. Present exactly when the two
+   * currencies differ — within one currency the two amounts are one amount.
+   */
+  readonly debtAmountMinor?: MinorUnits;
+}
+
+/** Money left the account: «дал в долг» on a debt owed to the family, «вернул долг» on one it owes. */
+export interface DebtOutTransaction extends DebtMovement {
+  readonly kind: "debt_out";
+}
+
+/** Money came to the account: «взял в долг» on a debt the family owes, «мне вернули» on one owed to it. */
+export interface DebtInTransaction extends DebtMovement {
+  readonly kind: "debt_in";
+}
+
 export type Transaction =
   | IncomeTransaction
   | ExpenseTransaction
   | RefundTransaction
   | TransferTransaction
-  | GoalContributionTransaction;
+  | GoalContributionTransaction
+  | DebtOutTransaction
+  | DebtInTransaction;
 
 export interface BudgetState {
   readonly activeBudgetId: BudgetId;

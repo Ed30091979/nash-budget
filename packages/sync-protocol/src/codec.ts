@@ -130,7 +130,7 @@ const GOAL_STATUSES = ["active", "completed", "cancelled"] as const;
 const COMMITMENT_RECURRENCES = ["annual", "one_time"] as const;
 const SCHEDULE_MODES = ["monthly", "selected_months"] as const;
 const TRANSACTION_STATUSES = ["posted", "pending", "draft"] as const;
-const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution"] as const;
+const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"] as const;
 const MEMBER_ROLES = ["owner", "member"] as const;
 const DEBT_DIRECTIONS = ["i_owe", "owed_to_me"] as const;
 
@@ -775,6 +775,22 @@ function parseTransactionFields(value: unknown): TransactionFields {
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");
       return { ...base, kind, fromAccountId, toAccountId, goalId: readId(record, "goalId", "transaction goalId") };
     }
+    case "debt_out":
+    case "debt_in":
+      // Money between an account and a debt: the account, the debt — a UUID, as a debt is
+      // identified — and, when the two currencies differ, the amount in the debt's currency.
+      // Whether they differ is the integrity gate's question; no snapshot, because no figure of the
+      // budget counts a debt movement.
+      requireFieldNames(record, [...shared, "accountId", "debtId"], [...optional, "debtAmountMinor"], label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", "transaction accountId"),
+        debtId: parseEntityUuid(record.debtId, "transaction debtId"),
+        ...(record.debtAmountMinor === undefined
+          ? {}
+          : { debtAmountMinor: readMinor(record, "debtAmountMinor", "transaction debtAmountMinor", 1) }),
+      };
   }
 }
 

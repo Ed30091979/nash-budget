@@ -109,6 +109,8 @@ const KIND_ORDER: readonly Transaction["kind"][] = [
   "refund",
   "transfer",
   "goal_contribution",
+  "debt_out",
+  "debt_in",
 ];
 
 const KIND_FORMS: Readonly<Record<Transaction["kind"], readonly [string, string, string]>> = {
@@ -117,6 +119,8 @@ const KIND_FORMS: Readonly<Record<Transaction["kind"], readonly [string, string,
   refund: ["возврат", "возврата", "возвратов"],
   transfer: ["перевод", "перевода", "переводов"],
   goal_contribution: ["взнос", "взноса", "взносов"],
+  debt_out: ["выдача по долгу", "выдачи по долгу", "выдач по долгу"],
+  debt_in: ["поступление по долгу", "поступления по долгу", "поступлений по долгу"],
 };
 
 /** «а, б и в» — перечисление, как его читают вслух. */

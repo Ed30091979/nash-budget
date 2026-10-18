@@ -13,9 +13,11 @@ import {
   deleteDebt,
   makeSeedBudget,
   normalizeCounterparty,
+  SEED_IDS,
   type BudgetState,
   type Debt,
   type DebtId,
+  type Transaction,
 } from "../src/index.js";
 
 const PETYA = "8f100000-0000-4000-8000-0000000000d1";
@@ -175,5 +177,102 @@ describe("calculateDebts", () => {
     expect(() => calculateDebts(broken({ active: "yes" as never }), "2026-08-31")).toThrow(/active must be a boolean/);
     expect(() => calculateDebts({ ...state, debts: [state.debts![0]!, state.debts![0]!] }, "2026-08-31")).toThrow(/debts contains duplicate id/);
     expect(() => calculateDebts(state, "2026-02-30")).toThrow(/asOf must be a valid calendar date/);
+  });
+});
+
+const DOLLARS = "8c000000-0000-4000-8000-0000000000a2";
+
+/**
+ * The debt movements of G-003 on the seed: 5 000 ₽ lent to Петя and 2 000 ₽ of it back, 100 $
+ * borrowed from Сергей onto the dollar account and 50 $ of it paid back from the rouble account.
+ */
+function withMovements(): BudgetState {
+  const state = withDebts();
+  const movement = (id: string, occurredOn: string, kind: "debt_out" | "debt_in", amountMinor: number, accountId: string, debtId: string, extra: Partial<Transaction> = {}): Transaction =>
+    ({ id, occurredOn, status: "posted", kind, amountMinor, accountId, debtId, ...extra }) as Transaction;
+  return {
+    ...state,
+    debts: state.debts!.map((debt) => ({ ...debt, openingMinor: 0 })),
+    accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+    transactions: [
+      ...state.transactions,
+      movement("8d100000-0000-4000-8000-000000000007", "2026-07-07", "debt_out", 500_000, SEED_IDS.accounts.main, PETYA),
+      movement("8d100000-0000-4000-8000-000000000008", "2026-07-25", "debt_in", 200_000, SEED_IDS.accounts.main, PETYA),
+      movement("8d100000-0000-4000-8000-000000000009", "2026-07-08", "debt_in", 10_000, DOLLARS, SERGEY),
+      movement("8d100000-0000-4000-8000-000000000010", "2026-07-28", "debt_out", 462_500, SEED_IDS.accounts.main, SERGEY, { debtAmountMinor: 5_000 } as Partial<Transaction>),
+    ],
+  };
+}
+
+describe("debt movements", () => {
+  it("moves each debt by its own amount, by the direction of the debt", () => {
+    const metrics = calculateDebts(withMovements(), "2026-08-31");
+    expect(metrics.byDebt[PETYA]).toMatchObject({ outMinor: 500_000, inMinor: 200_000, balanceMinor: 300_000, balanceInBaseMinor: 300_000 });
+    // Borrowed 100 $, paid back 50 $ — in dollars, whatever the account it was paid from.
+    expect(metrics.byDebt[SERGEY]).toMatchObject({ outMinor: 5_000, inMinor: 10_000, balanceMinor: 5_000, balanceInBaseMinor: 462_500 });
+    expect(metrics.receivableInBaseMinor).toBe(300_000);
+    expect(metrics.payableInBaseMinor).toBe(462_500);
+    expect(metrics.netInBaseMinor).toBe(-162_500);
+  });
+
+  it("counts posted movements dated on or before the day, and no other", () => {
+    const state = withMovements();
+    expect(calculateDebts(state, "2026-07-24").byDebt[PETYA]?.balanceMinor).toBe(500_000);
+    const drafted: BudgetState = {
+      ...state,
+      transactions: state.transactions.map((item) => (item.id === "8d100000-0000-4000-8000-000000000008" ? { ...item, status: "pending" } : item)),
+    };
+    expect(calculateDebts(drafted, "2026-08-31").byDebt[PETYA]?.balanceMinor).toBe(500_000);
+  });
+
+  it("shows an overpayment as a balance below zero", () => {
+    const state = withMovements();
+    const overpaid: BudgetState = {
+      ...state,
+      transactions: state.transactions.map((item) => (item.id === "8d100000-0000-4000-8000-000000000008" ? { ...item, amountMinor: 600_000 } : item)),
+    };
+    expect(calculateDebts(overpaid, "2026-08-31").byDebt[PETYA]).toMatchObject({ balanceMinor: -100_000, overdue: false });
+    expect(calculateDebts(overpaid, "2026-08-31").receivableInBaseMinor).toBe(-100_000);
+  });
+
+  it("moves the account and no figure of the budget", () => {
+    const seed = withDebts();
+    const state = withMovements();
+    const before = calculateBudget({ ...seed, accounts: state.accounts });
+    const after = calculateBudget(state);
+    expect(after.incomeMinor).toBe(before.incomeMinor);
+    expect(after.expensesMinor).toBe(before.expensesMinor);
+    expect(after.categoryMetrics).toEqual(before.categoryMetrics);
+    // 5 000 out, 2 000 back, 4 625 paid back to Сергей: the main account is 7 625 ₽ lighter.
+    expect(after.accountBalancesMinor[SEED_IDS.accounts.main]).toBe(before.accountBalancesMinor[SEED_IDS.accounts.main]! - 500_000 + 200_000 - 462_500);
+    expect(after.accountBalancesMinor[DOLLARS]).toBe(50_000 + 10_000);
+    expect(after.capitalMinor).toBe(before.capitalMinor - 762_500);
+    expect(calculateMemberExpenses(state)).toEqual(calculateMemberExpenses({ ...seed, accounts: state.accounts }));
+  });
+
+  it("refuses to delete a debt an operation names, and points to the archive", () => {
+    const state = withMovements();
+    expect(code(() => deleteDebt(state, PETYA))).toBe("debt_in_use");
+    expect(() => deleteDebt(state, PETYA)).toThrow(/убрать в архив/);
+    expect(() => calculateBudget(archiveDebt(state, PETYA))).not.toThrow();
+  });
+
+  it("refuses a movement on a debt it does not hold, or with the wrong amounts", () => {
+    const state = withMovements();
+    const change = (id: string, patch: Record<string, unknown>): BudgetState => ({
+      ...state,
+      transactions: state.transactions.map((item) => (item.id === id ? ({ ...item, ...patch } as Transaction) : item)),
+    });
+    const lent = "8d100000-0000-4000-8000-000000000007";
+    const repaid = "8d100000-0000-4000-8000-000000000010";
+    expect(() => calculateBudget(change(lent, { debtId: "8f100000-0000-4000-8000-0000000000ff" }))).toThrow(/debtId references unknown id/);
+    expect(() => calculateBudget(change(lent, { debtAmountMinor: 500_000 }))).toThrow(/is in the debt's currency and must not carry debtAmountMinor/);
+    const { debtAmountMinor: _amount, ...unconverted } = state.transactions.find((item) => item.id === repaid) as Extract<Transaction, { kind: "debt_out" }>;
+    expect(() => calculateBudget({ ...state, transactions: state.transactions.map((item) => (item.id === repaid ? unconverted : item)) }))
+      .toThrow(/moves RUB against a debt in USD and must carry debtAmountMinor/);
+    expect(() => calculateBudget(change(repaid, { debtAmountMinor: 10 ** 10 + 1 }))).toThrow(/debtAmountMinor must be at most 10000000000/);
+    expect(() => calculateBudget(change(lent, { baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } }))).toThrow(/moves a debt and must not carry baseAmountMinor/);
+    expect(() => calculateMemberExpenses(change(lent, { toAmountMinor: 1 }))).toThrow(/moves a debt and must not carry toAmountMinor/);
+    expect(() => calculateAnnualPlan(change(lent, { accountId: "missing" }), "2026-07", 12)).toThrow(/references unknown id missing/);
   });
 });

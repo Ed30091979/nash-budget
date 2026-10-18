@@ -321,6 +321,9 @@ function transactionContext(
       context: `Перевод ${accountById.get(transaction.fromAccountId) ?? "Счёт удалён"} ${accountById.get(transaction.toAccountId) ?? "Счёт удалён"}`,
     };
   }
+  if (transaction.kind === "debt_out" || transaction.kind === "debt_in") {
+    return { categoryName: null, context: `Долг ${accountById.get(transaction.accountId) ?? "Счёт удалён"}` };
+  }
   return {
     categoryName: null,
     context: `Взнос в цель ${goalById.get(transaction.goalId) ?? "Цель удалена"} ${accountById.get(transaction.fromAccountId) ?? "Счёт удалён"} ${accountById.get(transaction.toAccountId) ?? "Счёт удалён"}`,

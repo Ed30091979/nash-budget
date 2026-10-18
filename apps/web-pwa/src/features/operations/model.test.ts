@@ -570,3 +570,34 @@ describe("operations in another currency", () => {
     expect(state.transactions.find((item) => item.id === DOLLAR_EXPENSE)).toMatchObject({ baseAmountMinor: 360_000 });
   });
 });
+
+describe("operations on a debt", () => {
+  const DEBT = "8f100000-0000-4000-8000-0000000000d1";
+  const LENT = "8d100000-0000-4000-8000-000000000007";
+
+  function withLending() {
+    const state = makeG000State();
+    return {
+      ...state,
+      debts: [{ id: DEBT, counterparty: "Петя", direction: "owed_to_me" as const, currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...state.transactions, { id: LENT, kind: "debt_out" as const, status: "posted" as const, occurredOn: "2026-07-09", amountMinor: 500_000, accountId: ids.accounts.main, debtId: DEBT }],
+    };
+  }
+
+  it("refuses to edit a debt movement the form cannot show, and keeps it whole", () => {
+    const state = withLending();
+    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "5000", accountId: ids.accounts.main, categoryId: ids.categories.products };
+    expect(() => editTransaction(state, LENT, draft)).toThrow(
+      expect.objectContaining({ field: "kind", message: "Операцию по долгу эта форма пока не изменяет." }),
+    );
+  });
+
+  it("deletes a debt movement like any other operation, and records beside it as before", () => {
+    const state = withLending();
+    expect(deleteTransaction(state, LENT).transactions.map((item) => item.id)).not.toContain(LENT);
+    expect(() => createTransaction(state, transferDraft("100"), fixedOperationId)).not.toThrow();
+    expect(calculateOperationsMetrics(state).accountBalancesMinor[ids.accounts.main]).toBe(
+      calculateOperationsMetrics(makeG000State()).accountBalancesMinor[ids.accounts.main]! - 500_000,
+    );
+  });
+});

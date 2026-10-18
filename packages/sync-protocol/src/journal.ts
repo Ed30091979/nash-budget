@@ -777,6 +777,17 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
       }
       return null;
     }
+    case "debt_out":
+    case "debt_in": {
+      // The debt is not a label: an operation on a debt that is gone, or has not arrived, has
+      // nothing to move, and its money cannot be shown against nothing. It is withheld, and comes
+      // back when the debt arrives; a deleted debt keeps it withheld for good, which is why the
+      // app archives a debt rather than deleting it (D-033).
+      const account = live.accounts.get(transaction.accountId);
+      const debt = live.debts.get(transaction.debtId);
+      if (account === undefined || debt === undefined) return missing;
+      return (account.currency === debt.currency) === (transaction.debtAmountMinor === undefined) ? null : mismatch;
+    }
   }
 }
 
@@ -993,7 +1004,27 @@ function transactionContributions(
         [balances, transaction.fromAccountId, -amount],
         [balances, transaction.toAccountId, amount],
       ];
+    // Neither income nor expense: the account moves by the amount, the debt by its own amount.
+    case "debt_out":
+      return [
+        [balances, transaction.accountId, -amount],
+        [balances, debtKey(transaction.debtId), transaction.debtAmountMinor ?? amount],
+      ];
+    case "debt_in":
+      return [
+        [balances, transaction.accountId, amount],
+        [balances, debtKey(transaction.debtId), -(transaction.debtAmountMinor ?? amount)],
+      ];
   }
+}
+
+/**
+ * Where a debt's balance is kept among the balances the gate measures: apart from the accounts, by
+ * the one separator an identifier cannot carry. Measured as "opening + out − in" whatever the
+ * direction, because the magnitude is what the domain's arithmetic has to survive.
+ */
+function debtKey(debtId: StableId): string {
+  return `debt${KEY_SEPARATOR}${debtId}`;
 }
 
 /**
@@ -1023,6 +1054,7 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
   ]);
   const balances = new Map<StableId, number>();
   for (const [id, account] of live.accounts) balances.set(id, account.openingBalanceMinor);
+  for (const [id, debt] of live.debts) balances.set(debtKey(id), debt.openingMinor);
   for (const transaction of live.transactions.values()) {
     for (const [map, key, delta] of transactionContributions(totals, balances, transaction)) {
       map.set(key, addSaturating(map.get(key) ?? 0, delta));

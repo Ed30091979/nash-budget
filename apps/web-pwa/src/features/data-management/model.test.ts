@@ -133,3 +133,31 @@ describe("recovery file boundary", () => {
     expect(formatLastBackupDate("not-a-date")).toBe("дата недоступна");
   });
 });
+
+describe("операции по долгу в CSV", () => {
+  it("называет каждое движение одним из четырёх глаголов по направлению долга", () => {
+    const state = makeG000State();
+    const main = OPERATIONS_TEST_IDS.accounts.main;
+    const lent = "88000000-0000-4000-8000-0000000000d1";
+    const owed = "88000000-0000-4000-8000-0000000000d2";
+    const movement = (id: string, kind: "debt_out" | "debt_in", debtId: string) =>
+      ({ id, kind, status: "posted" as const, occurredOn: "2026-07-09", amountMinor: 100_000, accountId: main, debtId });
+    const csv = createOperationsCsv({
+      ...state,
+      debts: [
+        { id: lent, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true },
+        { id: owed, counterparty: "Сергей", direction: "i_owe", currency: "RUB", openingMinor: 0, active: true },
+      ],
+      transactions: [
+        movement("88000000-0000-4000-8000-0000000000e1", "debt_out", lent),
+        movement("88000000-0000-4000-8000-0000000000e2", "debt_in", lent),
+        movement("88000000-0000-4000-8000-0000000000e3", "debt_in", owed),
+        movement("88000000-0000-4000-8000-0000000000e4", "debt_out", owed),
+      ],
+    });
+    const rows = csv.slice(1).trimEnd().split("\r\n").slice(1);
+    expect(rows.map((row) => row.split(",")[1])).toEqual(["Дал в долг", "Мне вернули долг", "Взял в долг", "Вернул долг"]);
+    expect(rows[0]).toContain("Петя");
+    expect(rows[2]).toContain("Сергей");
+  });
+});

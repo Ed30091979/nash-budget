@@ -3466,6 +3466,64 @@ describe("debts through the journal", () => {
     expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state.debts).toEqual(snapshot.state.debts);
   });
 
+  function movement(id: string, lamport: number, fields: Record<string, unknown>): Operation {
+    return parseOperation({
+      opId: opUuid(62_000 + lamport), deviceId: DEVICE_B, lamport, entity: "transaction", action: "create", targetId: id,
+      fields: { kind: "debt_out", occurredOn: "2026-07-07", status: "posted", amountMinor: 500_000, accountId: MAIN_ACCOUNT_ID, debtId: PETYA, ...fields },
+    });
+  }
+  const LENT = "7d000000-0000-4000-8000-0000000000e1";
+  const REPAID = "7d000000-0000-4000-8000-0000000000e2";
+
+  it("moves the account and the debt, and no figure of the budget", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const snapshot = applyJournal([...journal, debt(950, { ...SAMPLE_FIELDS.debt, openingMinor: 0 }), movement(LENT, 951, {}), movement(REPAID, 952, { kind: "debt_in", amountMinor: 200_000, occurredOn: "2026-07-25" })]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    const before = calculateBudget(plain.state);
+    const after = calculateBudget(snapshot.state);
+    expect(after.incomeMinor).toBe(before.incomeMinor);
+    expect(after.expensesMinor).toBe(before.expensesMinor);
+    expect(after.accountBalancesMinor[MAIN_ACCOUNT_ID]).toBe(before.accountBalancesMinor[MAIN_ACCOUNT_ID]! - 300_000);
+    expect(calculateDebts(snapshot.state, "2026-07-31").byDebt[PETYA]?.balanceMinor).toBe(300_000);
+  });
+
+  it("withholds a movement whose debt is gone or has not arrived, and gives it back when it lands", () => {
+    const journal = buildFixtureJournal();
+    const early = applyJournal([...journal, movement(LENT, 951, {})]);
+    expect(early.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "unknown_reference" }]);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+    const arrived = applyOperations(early, [debt(950)]);
+    expect(arrived.integrity.withheld).toEqual([]);
+    expect(arrived.state.transactions.map((item) => item.id)).toContain(LENT);
+    // A deleted debt keeps it withheld for good: the money has nothing to be shown against.
+    const deleted = applyOperations(arrived, [parseOperation({ opId: opUuid(62_999), deviceId: DEVICE_C, lamport: 990, entity: "debt", action: "delete", targetId: PETYA })]);
+    expect(deleted.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "unknown_reference" }]);
+    expect(deleted.state.debts).toEqual([]);
+  });
+
+  it("withholds a movement whose amounts do not fit the currencies of the account and the debt", () => {
+    const journal = [...buildFixtureJournal(), debt(950, { ...SAMPLE_FIELDS.debt, currency: "USD" })];
+    const unconverted = applyJournal([...journal, movement(LENT, 951, {})]);
+    expect(unconverted.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "currency_mismatch" }]);
+    const converted = applyJournal([...journal, movement(LENT, 951, { debtAmountMinor: 5_500 })]);
+    expect(converted.integrity.withheld).toEqual([]);
+    expect(calculateDebts(converted.state, "2026-07-31").byDebt[PETYA]?.outMinor).toBe(5_500);
+    const extra = applyJournal([...buildFixtureJournal(), debt(950), movement(LENT, 951, { debtAmountMinor: 5_000 })]);
+    expect(extra.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "currency_mismatch" }]);
+  });
+
+  it("measures a debt's balance among the totals the domain must survive", () => {
+    const count = MAX_AGGREGATE_MINOR / MAX_MONEY_MINOR + 1;
+    const lending = Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(63_000 + index), deviceId: DEVICE_B, lamport: 3_000 + index, entity: "transaction", action: "create",
+      targetId: `7d200000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { kind: "debt_in", occurredOn: "2026-07-07", status: "posted", amountMinor: 1, accountId: MAIN_ACCOUNT_ID, debtId: PETYA, debtAmountMinor: MAX_MONEY_MINOR },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), debt(950, { ...SAMPLE_FIELDS.debt, currency: "USD" }), ...lending]);
+    expect(snapshot.integrity.problems).toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+  });
+
   it("reports more debts than a document may hold, and shows all of them", () => {
     const debts = Array.from({ length: COLLECTION_LIMITS.debts + 1 }, (_, index) => parseOperation({
       opId: opUuid(61_000 + index), deviceId: DEVICE_B, lamport: 1_000 + index, entity: "debt", action: "create",

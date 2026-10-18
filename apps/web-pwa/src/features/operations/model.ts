@@ -255,10 +255,17 @@ function goalFor(state: BudgetState, id: string, allowedHistoricalId?: string) {
 }
 
 function accountIds(transaction: Transaction): readonly string[] {
-  if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
-    return [transaction.accountId];
+  switch (transaction.kind) {
+    case "income":
+    case "expense":
+    case "refund":
+    case "debt_out":
+    case "debt_in":
+      return [transaction.accountId];
+    case "transfer":
+    case "goal_contribution":
+      return [transaction.fromAccountId, transaction.toAccountId];
   }
-  return [transaction.fromAccountId, transaction.toAccountId];
 }
 
 type CarriedLabels = Pick<Transaction, "memberId" | "note" | "tagIds" | "recurringRuleId">;
@@ -470,11 +477,12 @@ export function deleteTransactions(state: BudgetState, ids: readonly string[]): 
  * записали.
  */
 function assertEditableByForm(state: BudgetState, current: Transaction): void {
+  // Долга у формы нет вовсе: ни выбора долга, ни суммы в его валюте.
+  if (current.kind === "debt_out" || current.kind === "debt_in") {
+    fail("kind", "Операцию по долгу эта форма пока не изменяет.");
+  }
   const foreign = (accountId: string) => state.accounts.find((item) => item.id === accountId)?.currency !== baseCurrencyOf(state);
-  const accounts = current.kind === "income" || current.kind === "expense" || current.kind === "refund"
-    ? [current.accountId]
-    : [current.fromAccountId, current.toAccountId];
-  if (accounts.some(foreign)) fail("kind", "Операцию в другой валюте эта форма пока не изменяет.");
+  if (accountIds(current).some(foreign)) fail("kind", "Операцию в другой валюте эта форма пока не изменяет.");
 }
 
 export function editTransaction(state: BudgetState, id: string, draft: TransactionDraft): BudgetState {
