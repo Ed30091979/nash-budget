@@ -26,6 +26,7 @@ import type {
   Member,
   MemberId,
   ScheduledExpense,
+  Tag,
   Transaction,
 } from "@family-budget/domain";
 import type { EntityKind, OperationDraft } from "@family-budget/sync-protocol";
@@ -54,37 +55,64 @@ function defined(fields: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
+/**
+ * Значение с ключами по алфавиту на любой глубине; списки сохраняют свой порядок.
+ *
+ * Сортировки одного верхнего уровня хватало, пока вложенным значением был только список месяцев.
+ * Поля волны 1 вкладывают объекты, и у объекта, собранного в другом порядке ключей, текст был бы
+ * другим — правка, ничего не меняющая, рассылала бы семье «обновление».
+ */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (typeof value !== "object" || value === null) return value;
+  const record = value as Record<string, unknown>;
+  // Объект без прототипа: имя поля — данные, и ни одно из них не может стать сеттером.
+  const sorted = Object.create(null) as Record<string, unknown>;
+  for (const key of Object.keys(record).sort()) sorted[key] = sortedKeys(record[key]);
+  return sorted;
+}
+
 /** Каноническая запись полей: ключи по алфавиту, поэтому равные поля дают равный текст. */
 function canonical(fields: Record<string, unknown>): string {
-  return JSON.stringify(
-    Object.keys(fields)
-      .sort()
-      .map((key) => [key, fields[key]]),
-  );
+  return JSON.stringify(sortedKeys(fields));
 }
 
 function memberFields(member: Member): Record<string, unknown> {
   return { name: member.name, role: member.role, active: member.active };
 }
 
+function tagFields(tag: Tag): Record<string, unknown> {
+  return { name: tag.name, active: tag.active };
+}
+
+/**
+ * Поля оформления у счёта, категории и цели необязательны, как и метка участника: отсутствующее
+ * остаётся отсутствующим, поэтому счёт без них даёт ровно те поля, что давал всегда.
+ */
 function accountFields(account: Account): Record<string, unknown> {
-  return {
+  return defined({
     name: account.name,
     type: account.type,
     currency: account.currency,
     openingBalanceMinor: account.openingBalanceMinor,
     active: account.active,
-  };
+    sortOrder: account.sortOrder,
+    icon: account.icon,
+    color: account.color,
+    includeInTotal: account.includeInTotal,
+  });
 }
 
 function categoryFields(category: Category): Record<string, unknown> {
-  return {
+  return defined({
     name: category.name,
     type: category.type,
     group: category.group,
     active: category.active,
     sortOrder: category.sortOrder,
-  };
+    icon: category.icon,
+    color: category.color,
+  });
 }
 
 function budgetFields(budget: Budget): Record<string, unknown> {
@@ -109,14 +137,16 @@ function budgetLineFields(budgetId: string, line: BudgetLine): Record<string, un
 }
 
 function goalFields(goal: Goal): Record<string, unknown> {
-  return {
+  return defined({
     name: goal.name,
     linkedAccountId: goal.linkedAccountId,
     targetMinor: goal.targetMinor,
     openingContributedMinor: goal.openingContributedMinor,
     plannedContributionMinor: goal.plannedContributionMinor,
     status: goal.status,
-  };
+    deadline: goal.deadline,
+    icon: goal.icon,
+  });
 }
 
 function annualCommitmentFields(commitment: AnnualCommitment): Record<string, unknown> {
@@ -147,11 +177,13 @@ function scheduledExpenseFields(expense: ScheduledExpense): Record<string, unkno
 }
 
 /**
- * Поля операции по её виду, вместе с меткой участника.
+ * Поля операции по её виду, вместе с меткой участника, заметкой, метками и правилом.
  *
  * Метка на самой операции и метка в заголовке отвечают на разные вопросы: заголовок говорит, кто
  * операцию *записал*, а эта — чей это расход. Здесь переносится вторая, ровно как её держит
- * бюджет: отсутствующая остаётся отсутствующей.
+ * бюджет: отсутствующая остаётся отсутствующей. Заметка, метки и правило регулярной операции —
+ * такие же справочные поля и переносятся так же; список меток копируется, а не передаётся ссылкой
+ * на массив состояния.
  */
 function transactionFields(transaction: Transaction): Record<string, unknown> {
   const base = {
@@ -160,6 +192,9 @@ function transactionFields(transaction: Transaction): Record<string, unknown> {
     status: transaction.status,
     amountMinor: transaction.amountMinor,
     memberId: transaction.memberId,
+    note: transaction.note,
+    tagIds: transaction.tagIds === undefined ? undefined : [...transaction.tagIds],
+    recurringRuleId: transaction.recurringRuleId,
   };
   switch (transaction.kind) {
     case "income":
@@ -207,6 +242,7 @@ export function budgetEntityRows(state: BudgetState): ReadonlyMap<string, Entity
   };
 
   for (const member of state.members ?? []) add("member", member.id, memberFields(member));
+  for (const tag of state.tags ?? []) add("tag", tag.id, tagFields(tag));
   for (const account of state.accounts) add("account", account.id, accountFields(account));
   for (const category of state.categories) add("category", category.id, categoryFields(category));
   for (const budget of state.budgets) {

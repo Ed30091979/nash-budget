@@ -1,3 +1,12 @@
+import {
+  isDisplayKey,
+  isNormalizedLabel,
+  isNormalizedNote,
+  MAX_TAGS_PER_TRANSACTION,
+  NOTE_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
+} from "@family-budget/domain";
+
 import type {
   AccountFields,
   AnnualCommitmentFields,
@@ -10,6 +19,7 @@ import type {
   Operation,
   OperationHeader,
   ScheduledExpenseFields,
+  TagFields,
   TransactionFields,
 } from "./types.js";
 import { ENTITY_KINDS, OPERATION_ACTIONS } from "./types.js";
@@ -85,6 +95,8 @@ const MAX_TEXT_LENGTH = 200;
 const MAX_DEPTH = 8;
 const MAX_NODES = 2_000;
 const MAX_MONTHS = 12;
+/** The bound of a category's sort order, and of an account's: far beyond any list a family keeps. */
+const MAX_SORT_ORDER = 1_000_000;
 /** Untrusted text is echoed back into an error message only in this quantity. */
 const MAX_ECHO_LENGTH = 32;
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -220,7 +232,11 @@ function readString(record: Record<string, unknown>, key: string, label: string,
  * from naming one and the same budget line. A space would not — see journal.ts.
  */
 function readId(record: Record<string, unknown>, key: string, label: string): string {
-  const value = record[key];
+  return parseId(record[key], label);
+}
+
+/** The rule of {@link readId}, for an identifier that is not a field of a record: a list entry. */
+function parseId(value: unknown, label: string): string {
   if (typeof value !== "string") fail(`${label} must be a string`);
   // The domain rejects a blank stable id, so whitespace alone never counts as an identifier.
   if (value.trim().length === 0) fail(`${label} must not be empty`);
@@ -319,6 +335,64 @@ function readLocalDate(record: Record<string, unknown>, key: string, label: stri
   return value;
 }
 
+/**
+ * A name stored the way the domain stores one (`normalizeLabel`): trimmed, NFC, free of hidden
+ * characters and written in one alphabet.
+ *
+ * Held to the domain's own predicate rather than to {@link readString} alone, because the domain
+ * checks a tag's name on every calculation, and a journal that accepted a name the domain refuses
+ * would hand every device of the family a state whose every calculation throws.
+ */
+function readLabel(record: Record<string, unknown>, key: string, label: string, maxLength: number): string {
+  const value = readString(record, key, label);
+  if (value.length > maxLength) fail(`${label} must be at most ${maxLength} characters`);
+  if (!isNormalizedLabel(value, maxLength)) {
+    fail(`${label} must be trimmed, normalized text in one alphabet`);
+  }
+  return value;
+}
+
+/**
+ * A note on an operation: one line of up to {@link NOTE_MAX_LENGTH} characters, exactly as the
+ * domain's `normalizeNote` stores it.
+ *
+ * Longer than any other text the codec carries ({@link MAX_TEXT_LENGTH} is for names), and held to
+ * the domain's predicate instead of {@link UNSAFE_TEXT}: the domain's rule is the wider of the two,
+ * so whatever a device stored, every other device accepts — and nothing else.
+ */
+function readNote(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  if (typeof value !== "string") fail(`${label} must be a string`);
+  if (value.length > NOTE_MAX_LENGTH) fail(`${label} must be at most ${NOTE_MAX_LENGTH} characters`);
+  if (!isNormalizedNote(value)) fail(`${label} must be one trimmed line of normalized text`);
+  return value;
+}
+
+/**
+ * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice.
+ * An empty list is refused rather than read as "no tags", because no tags is no field; whether
+ * each tag exists is the integrity gate's question, not the codec's.
+ */
+function readTagIds(record: Record<string, unknown>, key: string, label: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TAGS_PER_TRANSACTION) {
+    fail(`${label} must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
+  }
+  const ids: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    ids.push(parseId(value[index], `${label}[${index}]`));
+  }
+  if (new Set(ids).size !== ids.length) fail(`${label} must not repeat a tag`);
+  return ids;
+}
+
+/** The key of a design token, never a colour or a file name — see `DisplayKey` in the domain. */
+function readDisplayKey(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  if (!isDisplayKey(value)) fail(`${label} must be a design-token key`);
+  return value;
+}
+
 function readMonths(record: Record<string, unknown>, key: string, label: string): number[] {
   const value = record[key];
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MONTHS) {
@@ -334,29 +408,49 @@ function readMonths(record: Record<string, unknown>, key: string, label: string)
   return months;
 }
 
+/**
+ * Display fields: optional everywhere, and absent stays absent, exactly as the participant's label
+ * on a transaction. An entity written before they existed carries none, and a trip through the
+ * codec must not hand it an empty one. Named one by one in each strict list, never opened up.
+ */
 function parseAccountFields(value: unknown): AccountFields {
   const label = "account fields";
   const record = requireRecord(value, label);
-  requireFieldNames(record, ["name", "type", "currency", "openingBalanceMinor", "active"], [], label);
+  requireFieldNames(
+    record,
+    ["name", "type", "currency", "openingBalanceMinor", "active"],
+    ["sortOrder", "icon", "color", "includeInTotal"],
+    label,
+  );
   return {
     name: readString(record, "name", "account name"),
     type: readEnum(record, "type", ACCOUNT_TYPES, "account type"),
     currency: readCurrency(record, "currency", "account currency"),
     openingBalanceMinor: readMinor(record, "openingBalanceMinor", "account openingBalanceMinor"),
     active: readBoolean(record, "active", "account active"),
+    ...(record.sortOrder === undefined
+      ? {}
+      : { sortOrder: readInteger(record, "sortOrder", "account sortOrder", -MAX_SORT_ORDER, MAX_SORT_ORDER) }),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "account icon") }),
+    ...(record.color === undefined ? {} : { color: readDisplayKey(record, "color", "account color") }),
+    ...(record.includeInTotal === undefined
+      ? {}
+      : { includeInTotal: readBoolean(record, "includeInTotal", "account includeInTotal") }),
   };
 }
 
 function parseCategoryFields(value: unknown): CategoryFields {
   const label = "category fields";
   const record = requireRecord(value, label);
-  requireFieldNames(record, ["name", "type", "group", "active", "sortOrder"], [], label);
+  requireFieldNames(record, ["name", "type", "group", "active", "sortOrder"], ["icon", "color"], label);
   return {
     name: readString(record, "name", "category name"),
     type: readEnum(record, "type", CATEGORY_TYPES, "category type"),
     group: readString(record, "group", "category group", true),
     active: readBoolean(record, "active", "category active"),
-    sortOrder: readInteger(record, "sortOrder", "category sortOrder", -1_000_000, 1_000_000),
+    sortOrder: readInteger(record, "sortOrder", "category sortOrder", -MAX_SORT_ORDER, MAX_SORT_ORDER),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "category icon") }),
+    ...(record.color === undefined ? {} : { color: readDisplayKey(record, "color", "category color") }),
   };
 }
 
@@ -417,7 +511,7 @@ function parseGoalFields(value: unknown): GoalFields {
   requireFieldNames(
     record,
     ["name", "linkedAccountId", "targetMinor", "openingContributedMinor", "plannedContributionMinor", "status"],
-    [],
+    ["deadline", "icon"],
     label,
   );
   return {
@@ -427,6 +521,8 @@ function parseGoalFields(value: unknown): GoalFields {
     openingContributedMinor: readMinor(record, "openingContributedMinor", "goal openingContributedMinor", 0),
     plannedContributionMinor: readMinor(record, "plannedContributionMinor", "goal plannedContributionMinor", 0),
     status: readEnum(record, "status", GOAL_STATUSES, "goal status"),
+    ...(record.deadline === undefined ? {} : { deadline: readLocalDate(record, "deadline", "goal deadline") }),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "goal icon") }),
   };
 }
 
@@ -506,6 +602,14 @@ function parseTransactionFields(value: unknown): TransactionFields {
    * written before participants existed omits it, and such an operation stays valid for ever.
    */
   const attribution = ["memberId"];
+  /**
+   * The three labels every kind may carry besides the participant: a note, tags and the recurring
+   * rule the operation is an occurrence of. Optional for the same reason, and absent stays absent
+   * for the same reason. No figure reads any of them, so whether the tags and the rule exist is
+   * left to the integrity gate, which takes off a label that names nothing and keeps the money.
+   */
+  const labels = ["note", "tagIds", "recurringRuleId"];
+  const optional = [...attribution, ...labels];
   const base = {
     occurredOn: readLocalDate(record, "occurredOn", "transaction occurredOn"),
     status: readEnum(record, "status", TRANSACTION_STATUSES, "transaction status"),
@@ -513,6 +617,11 @@ function parseTransactionFields(value: unknown): TransactionFields {
     // Absent stays absent: an unlabelled transaction must not gain an empty label by passing
     // through the codec, because `memberId: undefined` is a different value to the domain.
     ...(record.memberId === undefined ? {} : { memberId: readId(record, "memberId", "transaction memberId") }),
+    ...(record.note === undefined ? {} : { note: readNote(record, "note", "transaction note") }),
+    ...(record.tagIds === undefined ? {} : { tagIds: readTagIds(record, "tagIds", "transaction tagIds") }),
+    ...(record.recurringRuleId === undefined
+      ? {}
+      : { recurringRuleId: readId(record, "recurringRuleId", "transaction recurringRuleId") }),
   };
 
   switch (kind) {
@@ -530,7 +639,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
        * omits it and stays valid for ever. Only an income carries it — the other kinds either
        * require a category or have none at all, and their lists are unchanged.
        */
-      requireFieldNames(record, [...shared, "accountId"], [...attribution, "categoryId"], label);
+      requireFieldNames(record, [...shared, "accountId"], [...optional, "categoryId"], label);
       return {
         ...base,
         kind,
@@ -543,7 +652,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
       };
     }
     case "expense":
-      requireFieldNames(record, [...shared, "accountId", "categoryId"], attribution, label);
+      requireFieldNames(record, [...shared, "accountId", "categoryId"], optional, label);
       return {
         ...base,
         kind,
@@ -554,7 +663,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
       requireFieldNames(
         record,
         [...shared, "accountId", "categoryId", "originalTransactionId"],
-        attribution,
+        optional,
         label,
       );
       return {
@@ -565,7 +674,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
         originalTransactionId: readId(record, "originalTransactionId", "transaction originalTransactionId"),
       };
     case "transfer": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], attribution, label);
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], optional, label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       // The domain refuses a movement inside one account, so it never reaches a journal.
@@ -573,7 +682,7 @@ function parseTransactionFields(value: unknown): TransactionFields {
       return { ...base, kind, fromAccountId, toAccountId };
     }
     case "goal_contribution": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], attribution, label);
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], optional, label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");
@@ -590,6 +699,16 @@ function parseMemberFields(value: unknown): MemberFields {
     name: readString(record, "name", "member name"),
     role: readEnum(record, "role", MEMBER_ROLES, "member role"),
     active: readBoolean(record, "active", "member active"),
+  };
+}
+
+function parseTagFields(value: unknown): TagFields {
+  const label = "tag fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["name", "active"], [], label);
+  return {
+    name: readLabel(record, "name", "tag name", TAG_NAME_MAX_LENGTH),
+    active: readBoolean(record, "active", "tag active"),
   };
 }
 
@@ -619,6 +738,8 @@ function parseWrite(
       return { ...header, entity, action, targetId, fields: parseTransactionFields(fields) };
     case "member":
       return { ...header, entity, action, targetId, fields: parseMemberFields(fields) };
+    case "tag":
+      return { ...header, entity, action, targetId, fields: parseTagFields(fields) };
   }
 }
 

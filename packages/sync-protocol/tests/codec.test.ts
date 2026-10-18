@@ -1,3 +1,4 @@
+import { isNormalizedLabel, normalizeNote } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -620,5 +621,151 @@ describe("decodeOperation", () => {
         fields: { ...SAMPLE_FIELDS.account, name: "О".repeat(201) },
       }),
     ).toThrow(/account name must be at most 200 characters/);
+  });
+});
+
+describe("display fields, notes and tags", () => {
+  const TAGGED_EXPENSE = {
+    ...UNLABELLED_EXPENSE,
+    note: "Пятёрочка у дома",
+    tagIds: ["tag-home", "tag-holiday"],
+  } satisfies TransactionFields;
+
+  function write(entity: string, fields: unknown, lamport = 9): unknown {
+    return { opId: opUuid(lamport), deviceId: DEVICE_A, lamport, entity, action: "create", targetId: `${entity}-1`, fields };
+  }
+
+  function fieldsOf(operation: Operation): unknown {
+    return operation.action === "create" || operation.action === "update" ? operation.fields : null;
+  }
+
+  it("carries every new field through a round trip, and invents none", () => {
+    const written: readonly (readonly [string, Record<string, unknown>])[] = [
+      ["account", { ...SAMPLE_FIELDS.account, sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false }],
+      ["category", { ...SAMPLE_FIELDS.category, icon: "shopping-basket", color: "mint" }],
+      ["goal", { ...SAMPLE_FIELDS.goal, deadline: "2027-06-01", icon: "plane" }],
+      ["transaction", { ...TAGGED_EXPENSE, recurringRuleId: "rule-water" }],
+      ["transaction", { ...CATEGORISED_INCOME, memberId: "member-petr", note: "Аванс за август", tagIds: ["tag-old"] }],
+      ["tag", { name: "Отпуск", active: false }],
+    ];
+    for (const [entity, fields] of written) {
+      const operation = parseOperation(write(entity, fields));
+      const decoded = decodeOperation(encodeOperation(operation));
+      expect(fieldsOf(decoded), entity).toEqual(fields);
+      expect(encodeOperation(decoded)).toBe(encodeOperation(operation));
+    }
+
+    // Everything written before these fields existed carries none, and keeps carrying none.
+    const added = {
+      account: ["sortOrder", "icon", "color", "includeInTotal"],
+      category: ["icon", "color"],
+      goal: ["deadline", "icon"],
+      transaction: ["note", "tagIds", "recurringRuleId"],
+    } as const;
+    for (const entity of ["account", "category", "goal", "transaction"] as const) {
+      const plain = fieldsOf(decodeOperation(encodeOperation(parseOperation(write(entity, SAMPLE_FIELDS[entity])))));
+      expect(plain).toEqual(SAMPLE_FIELDS[entity]);
+      for (const field of added[entity]) {
+        expect(Object.hasOwn(plain as object, field), `${entity}.${field}`).toBe(false);
+      }
+    }
+  });
+
+  it("puts the labels on every kind of transaction and keeps the lists strict otherwise", () => {
+    const base = { occurredOn: "2026-07-09", status: "posted", amountMinor: 400_000, note: "Заметка", tagIds: ["tag-1"], recurringRuleId: "rule-1" };
+    const kinds = [
+      { ...base, kind: "income", accountId: "account-1" },
+      { ...base, kind: "expense", accountId: "account-1", categoryId: "category-1" },
+      { ...base, kind: "refund", accountId: "account-1", categoryId: "category-1", originalTransactionId: "tx-1" },
+      { ...base, kind: "transfer", fromAccountId: "account-1", toAccountId: "account-2" },
+      { ...base, kind: "goal_contribution", fromAccountId: "account-1", toAccountId: "account-2", goalId: "goal-1" },
+    ];
+    for (const fields of kinds) expect(fieldsOf(parseOperation(write("transaction", fields)))).toEqual(fields);
+
+    expect(() => parseOperation(write("transaction", { ...TAGGED_EXPENSE, notes: "x" })))
+      .toThrow(/transaction fields contains unknown field notes/);
+    expect(() => parseOperation(write("tag", { name: "Отпуск", active: true, color: "sage" })))
+      .toThrow(/tag fields contains unknown field color/);
+    expect(() => parseOperation(write("member", { ...SAMPLE_FIELDS.member, icon: "plane" })))
+      .toThrow(/member fields contains unknown field icon/);
+  });
+
+  it.each([
+    ["a note that is not a string", "transaction", { ...UNLABELLED_EXPENSE, note: 7 }, /transaction note must be a string/],
+    ["an empty note", "transaction", { ...UNLABELLED_EXPENSE, note: "" }, /transaction note must be one trimmed line/],
+    ["a note with a leading space", "transaction", { ...UNLABELLED_EXPENSE, note: " Пятёрочка" }, /transaction note must be one trimmed line/],
+    ["a note of two lines", "transaction", { ...UNLABELLED_EXPENSE, note: "Пятёрочка\nу дома" }, /transaction note must be one trimmed line/],
+    ["a note with a bidi override", "transaction", { ...UNLABELLED_EXPENSE, note: "Пятёрочка\u202e" }, /transaction note must be one trimmed line/],
+    ["a note longer than 500", "transaction", { ...UNLABELLED_EXPENSE, note: "я".repeat(501) }, /transaction note must be at most 500 characters/],
+    ["an empty list of tags", "transaction", { ...UNLABELLED_EXPENSE, tagIds: [] }, /transaction tagIds must list from 1 to 10 tags/],
+    ["eleven tags", "transaction", { ...UNLABELLED_EXPENSE, tagIds: Array.from({ length: 11 }, (_, index) => `tag-${index}`) }, /transaction tagIds must list from 1 to 10 tags/],
+    ["a repeated tag", "transaction", { ...UNLABELLED_EXPENSE, tagIds: ["tag-1", "tag-1"] }, /transaction tagIds must not repeat a tag/],
+    ["a tag that is not a string", "transaction", { ...UNLABELLED_EXPENSE, tagIds: [7] }, /transaction tagIds\[0\] must be a string/],
+    ["a blank tag", "transaction", { ...UNLABELLED_EXPENSE, tagIds: ["  "] }, /transaction tagIds\[0\] must not be empty/],
+    ["tags that are not a list", "transaction", { ...UNLABELLED_EXPENSE, tagIds: "tag-1" }, /transaction tagIds must list from 1 to 10 tags/],
+    ["a blank recurring rule", "transaction", { ...UNLABELLED_EXPENSE, recurringRuleId: " " }, /transaction recurringRuleId must not be empty/],
+    ["a tag name with a trailing space", "tag", { name: "Отпуск ", active: true }, /tag name must be trimmed, normalized text/],
+    ["a tag name in two alphabets", "tag", { name: "Отпуск Paris", active: true }, /tag name must be trimmed, normalized text/],
+    ["a tag name longer than 40", "tag", { name: "я".repeat(41), active: true }, /tag name must be at most 40 characters/],
+    ["a tag without a flag", "tag", { name: "Отпуск" }, /tag fields is missing field active/],
+    ["a colour for an icon", "account", { ...SAMPLE_FIELDS.account, icon: "#00ff00" }, /account icon must be a design-token key/],
+    ["a file name for a colour", "category", { ...SAMPLE_FIELDS.category, color: "mint.png" }, /category color must be a design-token key/],
+    ["a fractional sort order", "account", { ...SAMPLE_FIELDS.account, sortOrder: 1.5 }, /account sortOrder must be an integer/],
+    ["an unbounded sort order", "account", { ...SAMPLE_FIELDS.account, sortOrder: 1_000_001 }, /account sortOrder must be from -1000000 to 1000000/],
+    ["a total flag that is a word", "account", { ...SAMPLE_FIELDS.account, includeInTotal: "yes" }, /account includeInTotal must be a boolean/],
+    ["an impossible deadline", "goal", { ...SAMPLE_FIELDS.goal, deadline: "2027-02-29" }, /goal deadline must be a valid calendar date/],
+    ["a deadline past the calendar", "goal", { ...SAMPLE_FIELDS.goal, deadline: "2200-01-01" }, /goal deadline must be from 1900-01-01 to 2199-12-31/],
+    ["an icon that is a number", "goal", { ...SAMPLE_FIELDS.goal, icon: 7 }, /goal icon must be a design-token key/],
+  ] as const)("refuses %s", (_name, entity, fields, message) => {
+    expect(() => parseOperation(write(entity, fields))).toThrow(message);
+  });
+
+  it("accepts every note normalizeNote stores and every tag name normalizeLabel stores", () => {
+    // The domain's text rule is the wider one, so a note one device stored is a note every
+    // other device accepts. Walked over every character of the Basic Multilingual Plane outside
+    // the surrogates, inside a note and inside a tag name, plus a few emoji.
+    const characters: string[] = ["🌴", "👨\u200d👩", "❤\ufe0f"];
+    for (let code = 0; code <= 0xffff; code += 1) {
+      if (code < 0xd800 || code > 0xdfff) characters.push(String.fromCharCode(code));
+    }
+    let notes = 0;
+    let names = 0;
+    for (const character of characters) {
+      let note: string | undefined;
+      try {
+        note = normalizeNote(`Заметка ${character} конец`);
+      } catch {
+        note = undefined;
+      }
+      if (note !== undefined) {
+        notes += 1;
+        const decoded = parseOperation(write("transaction", { ...UNLABELLED_EXPENSE, note }));
+        expect(fieldsOf(decoded)).toEqual({ ...UNLABELLED_EXPENSE, note });
+      }
+      const name = `Дача${character}`;
+      if (isNormalizedLabel(name, 40)) {
+        names += 1;
+        expect(fieldsOf(parseOperation(write("tag", { name, active: true })))).toEqual({ name, active: true });
+      }
+    }
+    // Most of the plane is ordinary text; the refusals are the hidden characters and no more.
+    expect(notes).toBeGreaterThan(60_000);
+    expect(names).toBeGreaterThan(40_000);
+  });
+
+  it("fits the largest transaction the new fields allow into one envelope", () => {
+    const largest = {
+      ...UNLABELLED_EXPENSE,
+      accountId: "a".repeat(128),
+      categoryId: "c".repeat(128),
+      memberId: "m".repeat(128),
+      recurringRuleId: "r".repeat(128),
+      // Three UTF-8 bytes per character, the widest a character of the plane takes.
+      note: "中".repeat(500),
+      tagIds: Array.from({ length: 10 }, (_, index) => `${index}`.padEnd(128, "t")),
+    };
+    const operation = { ...(write("transaction", largest) as Record<string, unknown>), memberId: "w".repeat(128), targetId: "x".repeat(128) };
+    const encoded = encodeOperation(parseOperation(operation));
+    expect(new TextEncoder().encode(encoded).byteLength).toBeLessThan(MAX_OPERATION_BYTES);
   });
 });

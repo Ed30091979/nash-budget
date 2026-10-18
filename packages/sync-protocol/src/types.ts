@@ -12,6 +12,8 @@ import type {
   MemberRole,
   ScheduledExpense,
   StableId,
+  Tag,
+  TagId,
   Transaction,
 } from "@family-budget/domain";
 
@@ -33,19 +35,21 @@ export type OpId = string;
  * more. The server decides who may read or write a family, and its decision is the only one
  * that binds.
  */
-export type { Member, MemberId, MemberRole };
+export type { Member, MemberId, MemberRole, Tag, TagId };
 
 /**
- * A {@link BudgetState} whose participants are always present.
+ * A {@link BudgetState} whose participants and tags are always present.
  *
- * Not redundant now that the domain carries members itself: the domain declares them optional,
- * because every backup and every budget written before participants existed omits them and
- * stays valid. A journal has no such history to honour — it materialises the list on every
- * pass, empty when a family has named nobody — so the state it produces promises the list, and
- * a consumer of this package reads `state.members` without a fallback.
+ * Not redundant now that the domain carries both itself: the domain declares them optional,
+ * because every backup and every budget written before participants or tags existed omits them
+ * and stays valid. A journal has no such history to honour — it materialises each list on every
+ * pass, empty when a family has named nobody and tagged nothing — so the state it produces
+ * promises the lists, and a consumer of this package reads `state.members` and `state.tags`
+ * without a fallback.
  */
 export interface SyncedBudgetState extends BudgetState {
   readonly members: readonly Member[];
+  readonly tags: readonly Tag[];
 }
 
 /** Omit that keeps a discriminated union discriminated. */
@@ -64,6 +68,7 @@ export type AnnualCommitmentFields = Omit<AnnualCommitment, "id">;
 export type ScheduledExpenseFields = Omit<ScheduledExpense, "id">;
 export type TransactionFields = DistributiveOmit<Transaction, "id">;
 export type MemberFields = Omit<Member, "id">;
+export type TagFields = Omit<Tag, "id">;
 
 export interface EntityFieldsByKind {
   readonly account: AccountFields;
@@ -75,6 +80,7 @@ export interface EntityFieldsByKind {
   readonly scheduledExpense: ScheduledExpenseFields;
   readonly transaction: TransactionFields;
   readonly member: MemberFields;
+  readonly tag: TagFields;
 }
 
 export type EntityKind = keyof EntityFieldsByKind;
@@ -90,6 +96,9 @@ export const ENTITY_KINDS = [
   "scheduledExpense",
   "transaction",
   "member",
+  // New kinds are appended, never inserted: this order sorts the entries of every journal, so a
+  // kind placed in the middle would reorder the canonical listing of journals that never held it.
+  "tag",
 ] as const satisfies readonly EntityKind[];
 
 export const OPERATION_ACTIONS = ["create", "update", "delete", "activate"] as const;

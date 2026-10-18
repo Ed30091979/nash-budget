@@ -204,6 +204,15 @@ describe("перечень удержанных сущностей", () => {
     expect(withheldHeadline(rows)).toBe("Записей семьи не показано в бюджете: 2");
   });
 
+  it("называет удержанную метку меткой", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "tag", id: "55555555-5555-4555-8555-555555555555", reason: "identifier_claimed_twice" }],
+    });
+    expect(rows[0]).toMatchObject({ entity: "tag", entityLabel: "Метка" });
+  });
+
   it("молчит только когда удерживать нечего", () => {
     expect(withheldRows({ ready: true, problems: [], withheld: [] })).toEqual([]);
     expect(withheldRows(null)).toEqual([]);

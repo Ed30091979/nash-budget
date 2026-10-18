@@ -7,6 +7,7 @@ import {
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
 import { describe, expect, it } from "vitest";
 
+import { sha256Hex } from "../src/digest.js";
 import {
   applyJournal,
   applyOperations,
@@ -14,6 +15,7 @@ import {
   createClock,
   createEmptyJournal,
   createLocalOperation,
+  encodeOperation,
   ENTITY_KINDS,
   HONEST_LAMPORT_CEILING,
   MAX_AGGREGATE_MINOR,
@@ -260,6 +262,8 @@ function entityIds(state: SyncedBudgetState, entity: EntityKind): string[] {
       return state.transactions.map((item) => item.id);
     case "member":
       return state.members.map((item) => item.id);
+    case "tag":
+      return state.tags.map((item) => item.id);
   }
 }
 
@@ -278,6 +282,7 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
         state.scheduledExpenses,
         state.transactions,
         state.members,
+        state.tags,
       ];
       return collections.flat().find((item) => item.id === targetId);
     }
@@ -299,6 +304,7 @@ const SEED_PARENTS: { readonly [K in EntityKind]: readonly ("account" | "categor
   scheduledExpense: ["account", "category"],
   transaction: ["account", "category"],
   member: [],
+  tag: [],
 };
 
 const SEED_TARGET = { account: SEED_ACCOUNT_ID, category: SEED_CATEGORY_ID, budget: SEED_BUDGET_ID } as const;
@@ -2990,5 +2996,179 @@ describe("withheld entities", () => {
     // The same journal with the family's own activation back in it is ready, and the phantom
     // is withheld instead. Nothing else changed.
     expect(applyJournal(withheld).integrity.ready).toBe(true);
+  });
+});
+
+describe("tags and labels through the journal", () => {
+  const TAG_HOME = "tag-home";
+  const TAG_HOLIDAY = "tag-holiday";
+  const TAGGED_EXPENSE_ID = "expense-tagged-for-the-dacha";
+
+  function tag(targetId: string, name: string, lamport: number, opIndex: number): Operation {
+    return parseOperation({
+      opId: opUuid(opIndex),
+      deviceId: DEVICE_B,
+      lamport,
+      entity: "tag",
+      action: "create",
+      targetId,
+      fields: { name, active: true },
+    });
+  }
+
+  function taggedExpense(tagIds: readonly string[], extra: Record<string, unknown> = {}): Operation {
+    return parseOperation({
+      opId: opUuid(1_001),
+      deviceId: DEVICE_B,
+      lamport: 910,
+      entity: "transaction",
+      action: "create",
+      targetId: TAGGED_EXPENSE_ID,
+      fields: {
+        kind: "expense",
+        occurredOn: "2026-07-12",
+        status: "posted",
+        amountMinor: 150_000,
+        accountId: MAIN_ACCOUNT_ID,
+        categoryId: PRODUCTS_CATEGORY_ID,
+        note: "Рассада на дачу",
+        tagIds,
+        ...extra,
+      },
+    });
+  }
+
+  const found = (snapshot: JournalSnapshot): Transaction | undefined =>
+    snapshot.state.transactions.find((item) => item.id === TAGGED_EXPENSE_ID);
+
+  it("leaves the canonical text of the G-002 journal exactly what it was", () => {
+    // Pinned before the codec learned a single new field: the kind is appended at the end of
+    // ENTITY_KINDS, every new field is optional and absent stays absent, so a journal that uses
+    // none of them encodes, orders and converges byte for byte as before.
+    const snapshot = applyJournal(buildFixtureJournal());
+    expect(snapshot.entries).toHaveLength(28);
+    expect(sha256Hex(snapshot.entries.map((entry) => encodeOperation(entry)).join("\n")))
+      .toBe("8518c76130c93fc5f0282edff1869076f57353ef0fcad8c6684fd866c8588423");
+    expect(sha256Hex(snapshot.activations.map((entry) => encodeOperation(entry)).join("\n")))
+      .toBe("9df5e0a45dec26f541167505314af91cd8796324281a839dff50ba62f768cb12");
+    // And the state promises the new list the way it promises participants: empty, not absent.
+    expect(snapshot.state.tags).toEqual([]);
+    expect(ENTITY_KINDS.at(-1)).toBe("tag");
+  });
+
+  it("carries tags and a note across devices and through storage, without moving the money", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const shown = applyJournal([
+      ...journal,
+      tag(TAG_HOME, "Дом", 900, 1_002),
+      tag(TAG_HOLIDAY, "Дача", 901, 1_003),
+      taggedExpense([TAG_HOME, TAG_HOLIDAY]),
+    ]);
+
+    expect(shown.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(shown.state.tags.map((item) => item.name).sort()).toEqual(["Дача", "Дом"]);
+    expect(found(shown)).toMatchObject({ note: "Рассада на дачу", tagIds: [TAG_HOME, TAG_HOLIDAY], amountMinor: 150_000 });
+    expect(found(restoreJournal(JSON.parse(JSON.stringify(shown)) as unknown))?.tagIds).toEqual([TAG_HOME, TAG_HOLIDAY]);
+    // The state is one the domain accepts whole, and labels decide nothing in it.
+    expect(calculateBudget(shown.state).expensesMinor).toBe(calculateBudget(plain.state).expensesMinor + 150_000);
+    expect(() => calculateMemberExpenses(shown.state)).not.toThrow();
+    expect(() => calculateAnnualPlan(shown.state, G002.startMonth, 12)).not.toThrow();
+  });
+
+  it("takes off a tag that is gone or has not arrived, keeps the rest, and gives it back when it lands", () => {
+    const journal = buildFixtureJournal();
+    const home = tag(TAG_HOME, "Дом", 900, 1_002);
+    const holiday = tag(TAG_HOLIDAY, "Дача", 901, 1_003);
+    const expense = taggedExpense([TAG_HOME, TAG_HOLIDAY]);
+
+    // Дача has not been delivered yet: the expense stays, to the kopeck, tagged with what resolves.
+    const early = applyJournal([...journal, home, expense]);
+    expect(found(early)?.tagIds).toEqual([TAG_HOME]);
+    expect(found(early)?.amountMinor).toBe(150_000);
+    expect(early.integrity.withheld).toEqual([]);
+    expect(early.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: TAGGED_EXPENSE_ID }]);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+
+    const arrived = applyOperations(early, [holiday]);
+    expect(found(arrived)?.tagIds).toEqual([TAG_HOME, TAG_HOLIDAY]);
+    expect(arrived.integrity.problems).toEqual([]);
+
+    // Both deleted while the expense was in flight: the field goes, not to an empty list.
+    const deletions = [TAG_HOME, TAG_HOLIDAY].map((targetId, index) => parseOperation({
+      opId: opUuid(1_010 + index),
+      deviceId: DEVICE_C,
+      lamport: 920 + index,
+      entity: "tag",
+      action: "delete",
+      targetId,
+    }));
+    const untagged = applyJournal([...journal, home, holiday, expense, ...deletions]);
+    const kept = found(untagged);
+    expect(kept?.amountMinor).toBe(150_000);
+    expect(kept !== undefined && "tagIds" in kept).toBe(false);
+    expect(kept?.note).toBe("Рассада на дачу");
+    expect(untagged.state.tags).toEqual([]);
+    expect(calculateBudget(untagged.state).expensesMinor).toBe(calculateBudget(arrived.state).expensesMinor);
+
+    // Every replica, every delivery order, and a restart all say the same.
+    const random = mulberry32(34);
+    const reference = applyJournal([...journal, home, expense]);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const shuffled = applyJournal(shuffle([...journal, home, expense], random));
+      expect(shuffled.state).toEqual(reference.state);
+      expect(shuffled.integrity).toEqual(reference.integrity);
+    }
+    expect(restoreJournal(JSON.parse(JSON.stringify(reference)) as unknown).state).toEqual(reference.state);
+  });
+
+  it("takes off a recurring-rule label, which names nothing while rules are not part of the model", () => {
+    const journal = buildFixtureJournal();
+    const snapshot = applyJournal([...journal, taggedExpense(["tag-never-written"], { recurringRuleId: "rule-water" })]);
+    const kept = found(snapshot);
+
+    expect(kept?.amountMinor).toBe(150_000);
+    expect(kept !== undefined && ("recurringRuleId" in kept || "tagIds" in kept)).toBe(false);
+    expect(snapshot.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: TAGGED_EXPENSE_ID }]);
+    expect(() => calculateBudget(snapshot.state)).not.toThrow();
+  });
+
+  it("settles a tag and another entity claiming one identifier like any other pair, and the label follows", () => {
+    const journal = buildFixtureJournal();
+    // A tag written under the identifier of the family's main account, ranked lower: it loses.
+    const intruder = parseOperation({
+      opId: opUuid(1_020),
+      deviceId: DEVICE_C,
+      lamport: 1,
+      entity: "tag",
+      action: "create",
+      targetId: MAIN_ACCOUNT_ID,
+      fields: { name: "Захват", active: true },
+    });
+    const snapshot = applyJournal([...journal, intruder, taggedExpense([MAIN_ACCOUNT_ID])]);
+
+    expect(snapshot.integrity.withheld).toContainEqual({ entity: "tag", id: MAIN_ACCOUNT_ID, reason: "identifier_claimed_twice" });
+    expect(snapshot.state.tags).toEqual([]);
+    expect(snapshot.state.accounts.map((item) => item.id)).toContain(MAIN_ACCOUNT_ID);
+    expect(found(snapshot) !== undefined && "tagIds" in found(snapshot)!).toBe(false);
+    expect(new Set(allStateIds(snapshot.state)).size).toBe(allStateIds(snapshot.state).length);
+  });
+
+  it("carries display fields of accounts, categories and goals into the state", () => {
+    const journal = buildFixtureJournal();
+    const account = journal.find((item) => item.action === "create" && item.entity === "account" && item.targetId === MAIN_ACCOUNT_ID);
+    if (account === undefined || account.action !== "create" || account.entity !== "account") throw new Error("fixture account is missing");
+    const decorated = parseOperation({
+      ...account,
+      opId: opUuid(1_030),
+      lamport: 930,
+      action: "update",
+      fields: { ...account.fields, sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false },
+    });
+    const snapshot = applyJournal([...journal, decorated]);
+
+    expect(snapshot.state.accounts.find((item) => item.id === MAIN_ACCOUNT_ID))
+      .toMatchObject({ sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false });
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(applyJournal(journal).state));
   });
 });

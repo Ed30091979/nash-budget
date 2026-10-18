@@ -82,6 +82,7 @@ export const SAMPLE_FIELDS: FieldsSample = {
     categoryId: "sample-category",
   },
   member: { name: "Мария", role: "owner", active: true },
+  tag: { name: "Отпуск", active: true },
 };
 
 /** The same entities after one edit each, used to prove that update replaces the winner. */
@@ -95,4 +96,5 @@ export const UPDATED_FIELDS: FieldsSample = {
   scheduledExpense: { ...SAMPLE_FIELDS.scheduledExpense, amountMinor: 2_600_000 },
   transaction: { ...SAMPLE_FIELDS.transaction, amountMinor: 2_400_000 },
   member: { ...SAMPLE_FIELDS.member, active: false },
+  tag: { ...SAMPLE_FIELDS.tag, name: "Отпуск 2027", active: false },
 };

@@ -8,6 +8,7 @@ import type {
   Goal,
   ScheduledExpense,
   StableId,
+  Tag,
   Transaction,
 } from "@family-budget/domain";
 
@@ -484,6 +485,7 @@ interface LiveEntities {
   readonly scheduledExpenses: Map<StableId, ScheduledExpense>;
   readonly transactions: Map<StableId, Transaction>;
   readonly members: Map<StableId, Member>;
+  readonly tags: Map<StableId, Tag>;
 }
 
 function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
@@ -497,6 +499,7 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
     scheduledExpenses: new Map(),
     transactions: new Map(),
     members: new Map(),
+    tags: new Map(),
   };
 
   for (const entry of ordered) {
@@ -531,6 +534,9 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
       case "member":
         live.members.set(entry.targetId, { id: entry.targetId, ...entry.fields });
         break;
+      case "tag":
+        live.tags.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
     }
   }
 
@@ -548,6 +554,7 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
     ["scheduledExpense", live.scheduledExpenses],
     ["transaction", live.transactions],
     ["member", live.members],
+    ["tag", live.tags],
   ];
 }
 
@@ -721,13 +728,18 @@ function incomeCategoryCode(live: LiveEntities, categoryId: StableId): JournalPr
 /**
  * Clears a label whose referent the journal does not hold, and says so out loud.
  *
- * Two labels reach a transaction this way — the participant credited with it, and the category
- * an income is filed under — and both are governed by the one rule written here rather than by a
- * rule each, because the case is the same case.
+ * Four labels reach a transaction this way — the participant credited with it, the category an
+ * income is filed under, its tags, and the recurring rule it is an occurrence of — and all of them
+ * are governed by the one rule written here rather than by a rule each, because the case is the
+ * same case. Tags are cleared one by one: a transaction keeps every tag that resolves, and loses
+ * the field only when none does, because there is no empty list of tags. Recurring rules are not
+ * part of this version of the model, so a rule label names nothing on any replica and is cleared
+ * wherever it appears — the same answer the backup gate gives it.
  *
- * The state has to be one the domain accepts, and it refuses both: `calculateMemberExpenses`
+ * The state has to be one the domain accepts, and it refuses all four: `calculateMemberExpenses`
  * refuses a transaction whose `memberId` names nobody, and `calculateBudget` refuses an income
- * whose `categoryId` names nothing or names an expense category. But the answer cannot be the one
+ * whose `categoryId` names nothing or names an expense category, and a tag or a rule that names
+ * nothing on any transaction at all. But the answer cannot be the one
  * an unresolved account or an expense category gets: a family deleting a participant, or deleting
  * a category it no longer uses, is an ordinary thing to do, and doing it while another device
  * labels a transaction is ordinary concurrency. If the transaction went down with the label,
@@ -764,6 +776,17 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
         cleared = uncategorised;
         report(problem(code, "transaction", id));
       }
+    }
+    if (cleared.tagIds !== undefined && cleared.tagIds.some((tagId) => !live.tags.has(tagId))) {
+      const { tagIds, ...untagged } = cleared;
+      const resolved = tagIds.filter((tagId) => live.tags.has(tagId));
+      cleared = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
+      report(problem("unknown_reference", "transaction", id));
+    }
+    if (cleared.recurringRuleId !== undefined) {
+      const { recurringRuleId: _unresolved, ...unlinked } = cleared;
+      cleared = unlinked;
+      report(problem("unknown_reference", "transaction", id));
     }
     if (cleared !== transaction) live.transactions.set(id, cleared);
   }
@@ -1159,8 +1182,8 @@ function buildView(
   rejectDuplicateBudgetLines(live, owners, report, record);
   dropDanglingEntities(live, report, record);
   // After the sweep, so that a transaction already on its way out is not reported twice over,
-  // and after resolveSharedIdentifiers, which is the one step that can take a participant or a
-  // category out without a delete having been written for it.
+  // and after resolveSharedIdentifiers, which is the one step that can take a participant, a
+  // category or a tag out without a delete having been written for it.
   clearUnresolvedLabels(live, report);
   reportAggregateBounds(live, report);
   reportTombstoneBudget(ordered, confirmedDevices(live, owners), report);
@@ -1189,6 +1212,7 @@ function buildView(
     scheduledExpenses: [...live.scheduledExpenses.values()],
     transactions: [...live.transactions.values()],
     members: [...live.members.values()],
+    tags: [...live.tags.values()],
   };
 
   const unique = new Map<string, JournalProblem>();

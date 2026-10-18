@@ -185,3 +185,98 @@ describe("бюджет как операции журнала", () => {
     expect(Object.hasOwn(plain ?? {}, "categoryId")).toBe(false);
   });
 });
+
+describe("метки, заметки и оформление как операции журнала", () => {
+  const TAG_HOME = "0000000a-0000-4000-8000-0000000000d1";
+  const TAG_OLD = "0000000a-0000-4000-8000-0000000000d2";
+
+  /** Посевной бюджет, в котором есть всё, что принесла волна 1. */
+  function labelled(): BudgetState {
+    const state = makeSeedBudget();
+    return {
+      ...state,
+      tags: [
+        { id: TAG_HOME, name: "Дом", active: true },
+        { id: TAG_OLD, name: "Старое", active: false },
+      ],
+      accounts: state.accounts.map((account, index) => ({
+        ...account,
+        sortOrder: (index + 1) * 10,
+        icon: "banknote",
+        color: "sage",
+        ...(index === 1 ? { includeInTotal: false } : {}),
+      })),
+      categories: state.categories.map((category) => ({ ...category, icon: "shopping-basket", color: "mint" })),
+      goals: state.goals.map((goal) => ({ ...goal, deadline: "2027-06-01", icon: "plane" })),
+      transactions: state.transactions.map((entry) =>
+        entry.id === SEED_IDS.transactions.food
+          ? { ...entry, note: "Пятёрочка у дома", tagIds: [TAG_HOME, TAG_OLD] }
+          : entry,
+      ),
+    };
+  }
+
+  it("посев переносит метки, заметку и оформление так, что журнал собирает то же состояние", () => {
+    const state = labelled();
+    const materialized = applyJournal(stamp(state)).state;
+
+    expect([...materialized.tags].sort((left, right) => left.id.localeCompare(right.id))).toEqual(state.tags);
+    expect(materialized.transactions.find((entry) => entry.id === SEED_IDS.transactions.food))
+      .toMatchObject({ note: "Пятёрочка у дома", tagIds: [TAG_HOME, TAG_OLD] });
+    for (const account of state.accounts) {
+      expect(materialized.accounts.find((entry) => entry.id === account.id)).toEqual(account);
+    }
+    for (const category of state.categories) {
+      expect(materialized.categories.find((entry) => entry.id === category.id)).toEqual(category);
+    }
+    expect(materialized.goals).toEqual(state.goals);
+  });
+
+  it("бюджет без новых полей даёт ровно те поля, что давал всегда", () => {
+    const drafts = budgetJournalDrafts(null, makeSeedBudget());
+    for (const draft of drafts) {
+      if (!("fields" in draft)) continue;
+      for (const field of ["sortOrder", "icon", "color", "includeInTotal", "deadline", "note", "tagIds", "recurringRuleId"]) {
+        // У категории порядок был всегда, у остальных этих полей нет вовсе.
+        if (draft.entity === "category" && field === "sortOrder") continue;
+        expect(Object.hasOwn(draft.fields, field), `${draft.entity}.${field}`).toBe(false);
+      }
+    }
+    expect(drafts.some((draft) => draft.entity === "tag")).toBe(false);
+  });
+
+  it("перестановка ключей и записей — не изменение, а правка метки — update одной записи", () => {
+    const state = labelled();
+    const reordered: BudgetState = {
+      ...state,
+      tags: [...(state.tags ?? [])].reverse(),
+      accounts: state.accounts.map((account) =>
+        Object.fromEntries(Object.entries(account).reverse()) as unknown as typeof account),
+      transactions: [...state.transactions].reverse().map((entry) =>
+        Object.fromEntries(Object.entries(entry).reverse()) as unknown as typeof entry),
+    };
+    expect(budgetJournalDrafts(state, reordered, MEMBER)).toEqual([]);
+
+    const renamed: BudgetState = {
+      ...state,
+      tags: (state.tags ?? []).map((tag) => (tag.id === TAG_HOME ? { ...tag, name: "Дача" } : tag)),
+    };
+    expect(budgetJournalDrafts(state, renamed, MEMBER)).toEqual([
+      { memberId: MEMBER, entity: "tag", action: "update", targetId: TAG_HOME, fields: { name: "Дача", active: true } },
+    ]);
+
+    const untagged: BudgetState = {
+      ...state,
+      tags: (state.tags ?? []).filter((tag) => tag.id !== TAG_OLD),
+      transactions: state.transactions.map((entry) =>
+        entry.id === SEED_IDS.transactions.food ? { ...entry, tagIds: [TAG_HOME] } : entry),
+    };
+    const drafts = budgetJournalDrafts(state, untagged, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action, draft.targetId])).toEqual([
+      ["transaction", "update", SEED_IDS.transactions.food],
+      ["tag", "delete", TAG_OLD],
+    ]);
+    // И каждый набросок проходит настоящий кодек.
+    expect(() => stamp(untagged, state)).not.toThrow();
+  });
+});

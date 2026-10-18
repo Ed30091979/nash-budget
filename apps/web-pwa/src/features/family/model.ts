@@ -202,6 +202,7 @@ const ENTITY_LABELS = {
   scheduledExpense: "Расход по расписанию",
   transaction: "Операция",
   member: "Участник",
+  tag: "Метка",
 } as const satisfies Readonly<Record<WithheldEntity["entity"], string>>;
 
 const WITHHOLDING_LABELS = {
