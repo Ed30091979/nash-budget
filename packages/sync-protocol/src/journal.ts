@@ -10,6 +10,7 @@ import type {
   ExchangeRate,
   Goal,
   Household,
+  RecurringRule,
   ScheduledExpense,
   StableId,
   Tag,
@@ -495,6 +496,7 @@ interface LiveEntities {
   /** At most one entry, under `HOUSEHOLD_ID`: the codec refuses any other target. */
   readonly households: Map<StableId, Household>;
   readonly debts: Map<StableId, Debt>;
+  readonly recurringRules: Map<StableId, RecurringRule>;
 }
 
 function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
@@ -512,6 +514,7 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
     exchangeRates: new Map(),
     households: new Map(),
     debts: new Map(),
+    recurringRules: new Map(),
   };
 
   for (const entry of ordered) {
@@ -558,6 +561,9 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
       case "debt":
         live.debts.set(entry.targetId, { id: entry.targetId, ...entry.fields });
         break;
+      case "recurringRule":
+        live.recurringRules.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
     }
   }
 
@@ -579,6 +585,7 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
     ["exchangeRate", live.exchangeRates],
     ["household", live.households],
     ["debt", live.debts],
+    ["recurringRule", live.recurringRules],
   ];
 }
 
@@ -792,6 +799,40 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
 }
 
 /**
+ * Why a recurring rule cannot be shown, or null while it can.
+ *
+ * A rule writes operations, and its template is held to what the operation it writes is held to:
+ * the accounts must be there, an expense must go to an expense category that is there, and a
+ * transfer names what arrives exactly when its two accounts are kept in different currencies. A
+ * rule whose template fails one of these would write an operation the domain refuses, so it is
+ * withheld, and it comes back by itself when the account or the category arrives — or when the
+ * currencies agree again. The category of an income template and the tags of any template are
+ * labels, as they are on an operation, and are cleared by clearUnresolvedLabels instead.
+ *
+ * A rule's occurrences do not depend on it: they are ordinary operations, and a rule withheld or
+ * deleted only takes its label off them.
+ */
+function recurringRuleProblem(live: LiveEntities, rule: RecurringRule): WithheldEntity | null {
+  const template = rule.template;
+  const missing = withheldFor("recurringRule", rule.id, "unknown_reference");
+  switch (template.kind) {
+    case "expense":
+      if (!live.accounts.has(template.accountId)) return missing;
+      return expenseCategoryProblem(live, "recurringRule", rule.id, template.categoryId);
+    case "income":
+      return live.accounts.has(template.accountId) ? null : missing;
+    case "transfer": {
+      const from = live.accounts.get(template.fromAccountId);
+      const to = live.accounts.get(template.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      return (from.currency === to.currency) === (template.toAmountMinor === undefined)
+        ? null
+        : withheldFor("recurringRule", rule.id, "currency_mismatch");
+    }
+  }
+}
+
+/**
  * Why the category on an income cannot stand, or null while it can.
  *
  * The domain accepts an income with no category and an income filed under a category of type
@@ -815,8 +856,9 @@ function incomeCategoryCode(live: LiveEntities, categoryId: StableId): JournalPr
  * are governed by the one rule written here rather than by a rule each, because the case is the
  * same case. Tags are cleared one by one: a transaction keeps every tag that resolves, and loses
  * the field only when none does, because there is no empty list of tags. A rule label is cleared
- * when the journal holds no such rule — the same answer the backup gate gives it — and until rules
- * travel through the journal as entities of their own, it holds none.
+ * when the journal holds no such rule — never written, deleted, or withheld — the same answer the
+ * backup gate gives it: the occurrence stays an ordinary operation. The category of an income
+ * template and the tags of any template are cleared by the same rule, reported about the rule.
  *
  * The state has to be one the domain accepts, and it refuses all four: `calculateMemberExpenses`
  * refuses a transaction whose `memberId` names nobody, and `calculateBudget` refuses an income
@@ -865,13 +907,32 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
       cleared = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
       report(problem("unknown_reference", "transaction", id));
     }
-    // No entity kind carries a recurring rule yet, so no rule label resolves.
-    if (cleared.recurringRuleId !== undefined) {
+    if (cleared.recurringRuleId !== undefined && !live.recurringRules.has(cleared.recurringRuleId)) {
       const { recurringRuleId: _unresolved, ...unlinked } = cleared;
       cleared = unlinked;
       report(problem("unknown_reference", "transaction", id));
     }
     if (cleared !== transaction) live.transactions.set(id, cleared);
+  }
+
+  // The same two labels in the template of a rule: the category of an income and the tags.
+  for (const [id, rule] of live.recurringRules) {
+    let template = rule.template;
+    if (template.kind === "income" && template.categoryId !== undefined) {
+      const code = incomeCategoryCode(live, template.categoryId);
+      if (code !== null) {
+        const { categoryId: _unresolved, ...uncategorised } = template;
+        template = uncategorised;
+        report(problem(code, "recurringRule", id));
+      }
+    }
+    if (template.tagIds !== undefined && template.tagIds.some((tagId) => !live.tags.has(tagId))) {
+      const { tagIds, ...untagged } = template;
+      const resolved = tagIds.filter((tagId) => live.tags.has(tagId));
+      template = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
+      report(problem("unknown_reference", "recurringRule", id));
+    }
+    if (template !== rule.template) live.recurringRules.set(id, { ...rule, template });
   }
 }
 
@@ -906,6 +967,7 @@ function dropDanglingEntities(
     sweep(live.annualCommitments, (item) => annualCommitmentProblem(live, item));
     sweep(live.scheduledExpenses, (item) => scheduledExpenseProblem(live, item));
     sweep(live.transactions, (item) => transactionProblem(live, item));
+    sweep(live.recurringRules, (rule) => recurringRuleProblem(live, rule));
   }
 }
 
@@ -1109,8 +1171,8 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 }
 
 /**
- * Says out loud that the state holds more participants, tags, exchange rates or debts than a
- * document may. Withholds nothing.
+ * Says out loud that the state holds more participants, tags, exchange rates, debts or recurring
+ * rules than a document may. Withholds nothing.
  *
  * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
  * stays under it when it creates. Several devices creating offline can still pass it together, and
@@ -1123,6 +1185,7 @@ function reportCollectionLimits(live: LiveEntities, report: (problem: JournalPro
   if (live.tags.size > COLLECTION_LIMITS.tags) report(problem("collection_limit", "tag", ""));
   if (live.exchangeRates.size > COLLECTION_LIMITS.exchangeRates) report(problem("collection_limit", "exchangeRate", ""));
   if (live.debts.size > COLLECTION_LIMITS.debts) report(problem("collection_limit", "debt", ""));
+  if (live.recurringRules.size > COLLECTION_LIMITS.recurringRules) report(problem("collection_limit", "recurringRule", ""));
 }
 
 /**
@@ -1346,6 +1409,7 @@ function buildView(
     tags: [...live.tags.values()],
     exchangeRates: [...live.exchangeRates.values()],
     debts: [...live.debts.values()],
+    recurringRules: [...live.recurringRules.values()],
     // Absent stays absent: a journal without a household is counted in roubles, like a backup.
     ...(live.households.has(HOUSEHOLD_ID) ? { household: live.households.get(HOUSEHOLD_ID)! } : {}),
   };

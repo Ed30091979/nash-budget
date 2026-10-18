@@ -13,6 +13,7 @@ import type {
   Member,
   MemberId,
   MemberRole,
+  RecurringRule,
   ScheduledExpense,
   StableId,
   Tag,
@@ -39,10 +40,11 @@ export type OpId = string;
  * that binds.
  */
 export type { Member, MemberId, MemberRole, Tag, TagId };
-export type { Debt, ExchangeRate, Household };
+export type { Debt, ExchangeRate, Household, RecurringRule };
 
 /**
- * A {@link BudgetState} whose participants, tags, exchange rates and debts are always present.
+ * A {@link BudgetState} whose participants, tags, exchange rates, debts and recurring rules are
+ * always present.
  *
  * Not redundant now that the domain carries them itself: the domain declares them optional,
  * because every backup and every budget written before they existed omits them and stays valid.
@@ -56,6 +58,7 @@ export interface SyncedBudgetState extends BudgetState {
   readonly tags: readonly Tag[];
   readonly exchangeRates: readonly ExchangeRate[];
   readonly debts: readonly Debt[];
+  readonly recurringRules: readonly RecurringRule[];
 }
 
 /** Omit that keeps a discriminated union discriminated. */
@@ -79,6 +82,8 @@ export type ExchangeRateFields = Omit<ExchangeRate, "id">;
 /** The household is always written under `HOUSEHOLD_ID`, so its fields are all there is to it. */
 export type HouseholdFields = Omit<Household, "id">;
 export type DebtFields = Omit<Debt, "id">;
+/** The template is nested and carries no identifier of its own: an occurrence gets one when written. */
+export type RecurringRuleFields = Omit<RecurringRule, "id">;
 
 export interface EntityFieldsByKind {
   readonly account: AccountFields;
@@ -94,6 +99,7 @@ export interface EntityFieldsByKind {
   readonly exchangeRate: ExchangeRateFields;
   readonly household: HouseholdFields;
   readonly debt: DebtFields;
+  readonly recurringRule: RecurringRuleFields;
 }
 
 export type EntityKind = keyof EntityFieldsByKind;
@@ -115,6 +121,7 @@ export const ENTITY_KINDS = [
   "exchangeRate",
   "household",
   "debt",
+  "recurringRule",
 ] as const satisfies readonly EntityKind[];
 
 export const OPERATION_ACTIONS = ["create", "update", "delete", "activate"] as const;
@@ -225,7 +232,7 @@ export const JOURNAL_PROBLEM_CODES = [
   "implausible_lamport",
   /**
    * The state holds more entities of one kind than a document may — more participants, tags,
-   * exchange rates or debts than `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
+   * exchange rates, debts or recurring rules than `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
    * together, and no one of them did anything wrong, so nothing is withheld and the state stays
    * ready; the entity names the kind, the identifier is empty. A backup of such a state is refused
    * until the family brings the count down.
@@ -234,8 +241,9 @@ export const JOURNAL_PROBLEM_CODES = [
   /**
    * The currencies of an entity do not fit together: an income, expense or refund on an account in
    * another currency without its base-currency snapshot (or one in the base currency with one), a
-   * transfer between currencies without the amount that arrived, a goal contribution across
-   * currencies, or a goal, large payment or schedule on an account outside the base currency.
+   * transfer between currencies without the amount that arrived (on an operation or in the template
+   * of a recurring rule), a goal contribution across currencies, or a goal, large payment or
+   * schedule on an account outside the base currency.
    * Reachable by honest concurrent editing — the account's currency or the household's base
    * changed on one device while another wrote against the old one — so the entity is withheld and
    * everything around it stays correct.

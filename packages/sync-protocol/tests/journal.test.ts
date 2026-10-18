@@ -5,6 +5,8 @@ import {
   calculateMemberExpenses,
   COLLECTION_LIMITS,
   HOUSEHOLD_ID,
+  materializeRecurring,
+  recurringOccurrenceId,
   type Transaction,
 } from "@family-budget/domain";
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
@@ -276,6 +278,8 @@ function entityIds(state: SyncedBudgetState, entity: EntityKind): string[] {
       return state.household === undefined ? [] : [state.household.id];
     case "debt":
       return state.debts.map((item) => item.id);
+    case "recurringRule":
+      return state.recurringRules.map((item) => item.id);
   }
 }
 
@@ -299,6 +303,7 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
         state.tags,
         state.exchangeRates,
         state.debts,
+        state.recurringRules,
       ];
       return collections.flat().find((item) => item.id === targetId);
     }
@@ -324,6 +329,7 @@ const SEED_PARENTS: { readonly [K in EntityKind]: readonly ("account" | "categor
   exchangeRate: [],
   household: [],
   debt: [],
+  recurringRule: ["account", "category"],
 };
 
 const SEED_TARGET = { account: SEED_ACCOUNT_ID, category: SEED_CATEGORY_ID, budget: SEED_BUDGET_ID } as const;
@@ -349,6 +355,7 @@ const REFERENCING_KINDS: readonly EntityKind[] = [
   "annualCommitment",
   "scheduledExpense",
   "transaction",
+  "recurringRule",
 ];
 
 /** Every identifier the state exposes, in the one flat set a backup export builds. */
@@ -3121,7 +3128,7 @@ describe("tags and labels through the journal", () => {
     expect(ENTITY_KINDS.slice(0, 9)).toEqual([
       "account", "category", "budget", "budgetLine", "goal", "annualCommitment", "scheduledExpense", "transaction", "member",
     ]);
-    expect(ENTITY_KINDS.slice(9, 13)).toEqual(["tag", "exchangeRate", "household", "debt"]);
+    expect(ENTITY_KINDS.slice(9, 14)).toEqual(["tag", "exchangeRate", "household", "debt", "recurringRule"]);
   });
 
   it("carries tags and a note across devices and through storage, without moving the money", () => {
@@ -3190,7 +3197,9 @@ describe("tags and labels through the journal", () => {
     expect(restoreJournal(JSON.parse(JSON.stringify(reference)) as unknown).state).toEqual(reference.state);
   });
 
-  it("takes off a recurring-rule label, which names nothing while rules are not part of the model", () => {
+  // Orchestrator step 13: rules travel through the journal now, so the label goes only when it names
+  // no rule the journal holds — as here; "recurring rules through the journal" keeps one that it does.
+  it("takes off a recurring-rule label that names no rule the journal holds", () => {
     const journal = buildFixtureJournal();
     const snapshot = applyJournal([...journal, taggedExpense([tagUuid(0x4ff)], { recurringRuleId: testUuid(0x7b0, 0x4ff) })]);
     const kept = found(snapshot);
@@ -3533,5 +3542,141 @@ describe("debts through the journal", () => {
     expect(snapshot.integrity.ready).toBe(true);
     expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "debt", id: "" }]);
     expect(snapshot.state.debts).toHaveLength(COLLECTION_LIMITS.debts + 1);
+  });
+});
+
+describe("recurring rules through the journal", () => {
+  const RULE = "7f000000-0000-4000-8000-0000000000a1";
+  const DOLLARS = "7f000000-0000-4000-8000-0000000000c1";
+  const TAG = tagUuid(0x7f1);
+  const WATER = { kind: "expense", amountMinor: 150_000, accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID, note: "Доставка воды" };
+  const RULE_FIELDS = { name: "Доставка воды", template: WATER, frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true };
+  const FIRST = recurringOccurrenceId(RULE, "2026-07-07");
+  let nextOp = 70_000;
+
+  function write(entity: EntityKind, targetId: string, fields: unknown, lamport = 950, device = DEVICE_B, action: "create" | "update" = "create"): Operation {
+    nextOp += 1;
+    return parseOperation({ opId: opUuid(nextOp), deviceId: device, lamport, entity, action, targetId, fields });
+  }
+
+  const rule = (template: unknown = WATER, lamport = 950, extra: Record<string, unknown> = {}): Operation =>
+    write("recurringRule", RULE, { ...RULE_FIELDS, template, ...extra }, lamport);
+
+  /** The occurrence of the water delivery on 7 July, as materializeRecurring writes it. */
+  const occurrence = (lamport = 951, device = DEVICE_B): Operation => write("transaction", FIRST, {
+    kind: "expense", occurredOn: "2026-07-07", status: "posted", amountMinor: 150_000,
+    accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID, note: "Доставка воды", recurringRuleId: RULE,
+  }, lamport, device);
+
+  const ruleOf = (snapshot: JournalSnapshot) => snapshot.state.recurringRules.find((item) => item.id === RULE);
+  const firstOf = (snapshot: JournalSnapshot) => snapshot.state.transactions.find((item) => item.id === FIRST);
+
+  it("carries a rule into the state, and its occurrence keeps its label", () => {
+    const snapshot = applyJournal([...buildFixtureJournal(), rule(), occurrence()]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.recurringRules).toEqual([{ id: RULE, ...RULE_FIELDS }]);
+    expect(firstOf(snapshot)?.recurringRuleId).toBe(RULE);
+    // The domain accepts what the journal shows, and writes the rest of the month from it: the day
+    // another device already wrote is passed over under its derived identifier.
+    expect(materializeRecurring(snapshot.state, "2026-07-31").created.map((item) => item.occurredOn)).toEqual(["2026-07-21"]);
+    expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state).toEqual(snapshot.state);
+    // A journal without rules promises the list, empty.
+    expect(applyJournal(buildFixtureJournal()).state.recurringRules).toEqual([]);
+  });
+
+  it("writes one operation for a day two devices materialised offline", () => {
+    const journal = buildFixtureJournal();
+    const watermark = (device: string, lamport: number) =>
+      write("recurringRule", RULE, { ...RULE_FIELDS, materializedThrough: "2026-07-31" }, lamport, device, "update");
+    const operations = [rule(), occurrence(960, DEVICE_B), occurrence(960, DEVICE_C), watermark(DEVICE_B, 961), watermark(DEVICE_C, 961)];
+    const reference = applyJournal([...journal, ...operations]);
+    expect(reference.state.transactions.filter((item) => item.id === FIRST)).toHaveLength(1);
+    expect(ruleOf(reference)?.materializedThrough).toBe("2026-07-31");
+    expect(reference.integrity.withheld).toEqual([]);
+    const random = mulberry32(0x7f);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(applyJournal(shuffle([...journal, ...operations], random)).state).toEqual(reference.state);
+    }
+  });
+
+  it("takes the label off the occurrences of a deleted rule, and keeps every kopeck", () => {
+    const labelled = applyJournal([...buildFixtureJournal(), rule(), occurrence()]);
+    const deleted = applyOperations(labelled, [parseOperation({ opId: opUuid(71_999), deviceId: DEVICE_C, lamport: 990, entity: "recurringRule", action: "delete", targetId: RULE })]);
+    expect(deleted.state.recurringRules).toEqual([]);
+    expect(firstOf(deleted)).toBeDefined();
+    expect(firstOf(deleted) !== undefined && "recurringRuleId" in firstOf(deleted)!).toBe(false);
+    expect(deleted.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: FIRST }]);
+    expect(deleted.integrity.withheld).toEqual([]);
+    expect(calculateBudget(deleted.state)).toEqual(calculateBudget(labelled.state));
+  });
+
+  it("withholds a rule whose template names an account or an expense category that is not there, and gives it back", () => {
+    const journal = buildFixtureJournal();
+    const early = applyJournal([...journal, rule({ ...WATER, accountId: "account-late" }), occurrence()]);
+    expect(early.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+    // The occurrence is an ordinary operation: it stays, and only the label of a rule nobody sees goes.
+    expect(firstOf(early)?.amountMinor).toBe(150_000);
+    expect(firstOf(early) !== undefined && "recurringRuleId" in firstOf(early)!).toBe(false);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+    const arrived = applyOperations(early, [write("account", "account-late", SAMPLE_FIELDS.account, 990)]);
+    expect(arrived.integrity.withheld).toEqual([]);
+    expect(firstOf(arrived)?.recurringRuleId).toBe(RULE);
+
+    const salary = write("category", SALARY_CATEGORY_ID, { name: "Зарплата", type: "income", group: "Доходы", active: true, sortOrder: 90 }, 940);
+    const wrongSide = applyJournal([...journal, salary, rule({ ...WATER, categoryId: SALARY_CATEGORY_ID })]);
+    expect(wrongSide.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "wrong_category_type" }]);
+    const noCategory = applyJournal([...journal, rule({ ...WATER, categoryId: "category-late" })]);
+    expect(noCategory.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+    const transferFrom = applyJournal([...journal, rule({ kind: "transfer", amountMinor: 100, fromAccountId: "account-late", toAccountId: MAIN_ACCOUNT_ID })]);
+    expect(transferFrom.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+  });
+
+  it("withholds a transfer rule whose currencies do not fit", () => {
+    const journal = [...buildFixtureJournal(), write("account", DOLLARS, { ...SAMPLE_FIELDS.account, name: "Доллары", currency: "USD" }, 940)];
+    const across = { kind: "transfer", amountMinor: 1_800_000, fromAccountId: MAIN_ACCOUNT_ID, toAccountId: DOLLARS };
+    expect(applyJournal([...journal, rule(across)]).integrity.withheld)
+      .toEqual([{ entity: "recurringRule", id: RULE, reason: "currency_mismatch" }]);
+    const converted = applyJournal([...journal, rule({ ...across, toAmountMinor: 20_000 })]);
+    expect(converted.integrity.withheld).toEqual([]);
+    expect(() => calculateBudget(converted.state)).not.toThrow();
+    const within = { kind: "transfer", amountMinor: 100, fromAccountId: MAIN_ACCOUNT_ID, toAccountId: RESERVE_ACCOUNT_ID, toAmountMinor: 100 };
+    expect(applyJournal([...journal, rule(within)]).integrity.withheld)
+      .toEqual([{ entity: "recurringRule", id: RULE, reason: "currency_mismatch" }]);
+  });
+
+  it("takes off the category of an income template and template tags that are not there, and keeps the rule", () => {
+    const journal = buildFixtureJournal();
+    const income = { kind: "income", amountMinor: 12_000_000, accountId: MAIN_ACCOUNT_ID, categoryId: SALARY_CATEGORY_ID, tagIds: [TAG] };
+    const early = applyJournal([...journal, rule(income)]);
+    expect(early.integrity.withheld).toEqual([]);
+    expect(early.integrity.problems).toEqual([{ code: "unknown_reference", entity: "recurringRule", id: RULE }]);
+    expect(ruleOf(early)?.template).toEqual({ kind: "income", amountMinor: 12_000_000, accountId: MAIN_ACCOUNT_ID });
+    expect(() => calculateBudget(early.state)).not.toThrow();
+
+    const arrived = applyOperations(early, [
+      write("category", SALARY_CATEGORY_ID, { name: "Зарплата", type: "income", group: "Доходы", active: true, sortOrder: 90 }, 990),
+      write("tag", TAG, { name: "Дом", active: true }, 991),
+    ]);
+    expect(arrived.integrity.problems).toEqual([]);
+    expect(ruleOf(arrived)?.template).toEqual(income);
+
+    const wrongSide = applyJournal([...journal, rule({ kind: "income", amountMinor: 1, accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID })]);
+    expect(wrongSide.integrity.problems).toEqual([{ code: "wrong_category_type", entity: "recurringRule", id: RULE }]);
+    expect(ruleOf(wrongSide)?.template).toEqual({ kind: "income", amountMinor: 1, accountId: MAIN_ACCOUNT_ID });
+
+    // An expense keeps the tags that resolve and loses only the others.
+    const tagged = applyJournal([...journal, write("tag", TAG, { name: "Дом", active: true }, 940), rule({ ...WATER, tagIds: [TAG, tagUuid(0x7f2)] })]);
+    expect(ruleOf(tagged)?.template).toEqual({ ...WATER, tagIds: [TAG] });
+  });
+
+  it("reports more rules than a document may hold, and shows all of them", () => {
+    const rules = Array.from({ length: COLLECTION_LIMITS.recurringRules + 1 }, (_, index) => parseOperation({
+      opId: opUuid(72_000 + index), deviceId: DEVICE_B, lamport: 1_000 + index, entity: "recurringRule", action: "create",
+      targetId: testUuid(0x7f3, index), fields: RULE_FIELDS,
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...rules]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "recurringRule", id: "" }]);
+    expect(snapshot.state.recurringRules).toHaveLength(COLLECTION_LIMITS.recurringRules + 1);
   });
 });

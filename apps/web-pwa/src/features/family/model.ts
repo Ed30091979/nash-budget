@@ -206,6 +206,7 @@ const ENTITY_LABELS = {
   exchangeRate: "Курс валюты",
   household: "Хозяйство",
   debt: "Долг",
+  recurringRule: "Регулярная операция",
 } as const satisfies Readonly<Record<WithheldEntity["entity"], string>>;
 
 const WITHHOLDING_LABELS = {

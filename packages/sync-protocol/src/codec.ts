@@ -14,8 +14,11 @@ import {
   NOTE_MAX_LENGTH,
   RATE_PART_MAX,
   RATE_PART_MIN,
+  MAX_RECURRENCE_INTERVAL,
+  RULE_NAME_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
   type ExchangeRateValue,
+  type RecurringTemplate,
 } from "@family-budget/domain";
 
 import type {
@@ -32,6 +35,7 @@ import type {
   MemberFields,
   Operation,
   OperationHeader,
+  RecurringRuleFields,
   ScheduledExpenseFields,
   TagFields,
   TransactionFields,
@@ -133,6 +137,8 @@ const TRANSACTION_STATUSES = ["posted", "pending", "draft"] as const;
 const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"] as const;
 const MEMBER_ROLES = ["owner", "member"] as const;
 const DEBT_DIRECTIONS = ["i_owe", "owed_to_me"] as const;
+const RECURRENCE_FREQUENCIES = ["daily", "weekly", "monthly", "yearly"] as const;
+const TEMPLATE_KINDS = ["expense", "income", "transfer"] as const;
 
 /** Every rejection raised by the protocol, so callers can tell a bad envelope from a bug. */
 export class SyncProtocolError extends Error {
@@ -438,7 +444,7 @@ function parseEntityUuid(value: unknown, label: string): string {
 }
 
 /** Entity kinds whose identifiers are UUIDs on the wire. See {@link parseEntityUuid}. */
-const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate", "debt"]);
+const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate", "debt", "recurringRule"]);
 
 /**
  * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice,
@@ -850,6 +856,89 @@ function parseDebtFields(value: unknown): DebtFields {
   };
 }
 
+/**
+ * The operation a recurring rule writes, nested in the rule: one of three kinds, each with a strict
+ * list of fields, as an operation of that kind has — and no identifier, date, status or snapshot,
+ * because every occurrence gets those when it is written. Whether the accounts, the category and
+ * the tags exist, and whether the currencies of a transfer differ, is the integrity gate's question.
+ */
+function parseRecurringTemplate(value: unknown): RecurringTemplate {
+  const label = "recurringRule template";
+  const record = requireRecord(value, label);
+  const kind = readEnum(record, "kind", TEMPLATE_KINDS, `${label} kind`);
+  const labels = ["note", "tagIds"];
+  const base = {
+    amountMinor: readMinor(record, "amountMinor", `${label} amountMinor`, 1),
+    ...(record.note === undefined ? {} : { note: readNote(record, "note", `${label} note`) }),
+    ...(record.tagIds === undefined ? {} : { tagIds: readTagIds(record, "tagIds", `${label} tagIds`) }),
+  };
+  switch (kind) {
+    case "expense":
+      requireFieldNames(record, ["kind", "amountMinor", "accountId", "categoryId"], labels, label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", `${label} accountId`),
+        categoryId: readId(record, "categoryId", `${label} categoryId`),
+      };
+    case "income":
+      requireFieldNames(record, ["kind", "amountMinor", "accountId"], [...labels, "categoryId"], label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", `${label} accountId`),
+        ...(record.categoryId === undefined ? {} : { categoryId: readId(record, "categoryId", `${label} categoryId`) }),
+      };
+    case "transfer": {
+      requireFieldNames(record, ["kind", "amountMinor", "fromAccountId", "toAccountId"], [...labels, "toAmountMinor"], label);
+      const fromAccountId = readId(record, "fromAccountId", `${label} fromAccountId`);
+      const toAccountId = readId(record, "toAccountId", `${label} toAccountId`);
+      if (fromAccountId === toAccountId) fail(`${label} must use two different accounts`);
+      return {
+        ...base,
+        kind,
+        fromAccountId,
+        toAccountId,
+        ...(record.toAmountMinor === undefined
+          ? {}
+          : { toAmountMinor: readMinor(record, "toAmountMinor", `${label} toAmountMinor`, 1) }),
+      };
+    }
+  }
+}
+
+/**
+ * A recurring rule: an optional name (a stored label of up to {@link RULE_NAME_MAX_LENGTH}), the
+ * template, how often (every 1 to {@link MAX_RECURRENCE_INTERVAL} days, weeks, months or years),
+ * from when, until when (included, not before the start) and how far it has written. Absent stays
+ * absent for each optional field.
+ */
+function parseRecurringRuleFields(value: unknown): RecurringRuleFields {
+  const label = "recurringRule fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(
+    record,
+    ["template", "frequency", "interval", "startDate", "active"],
+    ["name", "endDate", "materializedThrough"],
+    label,
+  );
+  const startDate = readLocalDate(record, "startDate", "recurringRule startDate");
+  const endDate = record.endDate === undefined ? undefined : readLocalDate(record, "endDate", "recurringRule endDate");
+  if (endDate !== undefined && endDate < startDate) fail("recurringRule endDate must not be before startDate");
+  return {
+    ...(record.name === undefined ? {} : { name: readLabel(record, "name", "recurringRule name", RULE_NAME_MAX_LENGTH) }),
+    template: parseRecurringTemplate(record.template),
+    frequency: readEnum(record, "frequency", RECURRENCE_FREQUENCIES, "recurringRule frequency"),
+    interval: readInteger(record, "interval", "recurringRule interval", 1, MAX_RECURRENCE_INTERVAL),
+    startDate,
+    ...(endDate === undefined ? {} : { endDate }),
+    ...(record.materializedThrough === undefined
+      ? {}
+      : { materializedThrough: readLocalDate(record, "materializedThrough", "recurringRule materializedThrough") }),
+    active: readBoolean(record, "active", "recurringRule active"),
+  };
+}
+
 function parseHouseholdFields(value: unknown): HouseholdFields {
   const label = "household fields";
   const record = requireRecord(value, label);
@@ -891,6 +980,8 @@ function parseWrite(
       return { ...header, entity, action, targetId, fields: parseHouseholdFields(fields) };
     case "debt":
       return { ...header, entity, action, targetId, fields: parseDebtFields(fields) };
+    case "recurringRule":
+      return { ...header, entity, action, targetId, fields: parseRecurringRuleFields(fields) };
   }
 }
 

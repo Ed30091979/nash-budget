@@ -11,8 +11,10 @@
 import {
   HOUSEHOLD_ID,
   makePlanningSeed,
+  materializeRecurring,
   MAX_LOCAL_DATE,
   MAX_MONEY_MINOR,
+  MAX_RECURRENCE_INTERVAL,
   MAX_SORT_ORDER,
   MIN_LOCAL_DATE,
   RATE_PART_MAX,
@@ -90,6 +92,20 @@ function indebted(state: BudgetState, change: Record<string, unknown> = {}): unk
   };
 }
 
+const RULE_ID = "c9999999-9999-4999-8999-999999999991";
+
+/** Правило шагов 12–13 с правкой поверх: расход по первому счёту в первую расходную категорию. */
+function scheduled(state: BudgetState, change: Record<string, unknown> = {}, template: Record<string, unknown> = {}): unknown {
+  const categoryId = state.categories.find((item) => item.type === "expense")!.id;
+  return {
+    ...state,
+    recurringRules: [{
+      id: RULE_ID, template: { kind: "expense", amountMinor: 150_000, accountId: state.accounts[0]!.id, categoryId, ...template },
+      frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true, ...change,
+    }],
+  };
+}
+
 /** Краевые значения: по обе стороны каждой границы и то, что граница должна отвергнуть. */
 const MUTATIONS: readonly Mutation[] = [
   ...[0, 1, -1, MAX_SORT_ORDER, -MAX_SORT_ORDER, MAX_SORT_ORDER + 1, -MAX_SORT_ORDER - 1, Number.MAX_SAFE_INTEGER, 1.5]
@@ -143,6 +159,29 @@ const MUTATIONS: readonly Mutation[] = [
         };
       },
     ])),
+  ["recurring rule", (state) => scheduled(state)],
+  ["recurring rule with its occurrences", (state) => materializeRecurring(scheduled(state) as BudgetState, "2026-07-31").state],
+  ["an occurrence of a rule the copy lacks", (state) => ({
+    ...state, transactions: state.transactions.map((item, index) => (index === 0 ? { ...item, recurringRuleId: RULE_ID } : item)),
+  })],
+  ...[1, MAX_RECURRENCE_INTERVAL, MAX_RECURRENCE_INTERVAL + 1, 0, 1.5]
+    .map((interval): Mutation => [`rule.interval ${interval}`, (state) => scheduled(state, { interval })]),
+  ...[MIN_LOCAL_DATE, MAX_LOCAL_DATE, "2200-01-01", "1899-12-31", "2026-02-30"]
+    .flatMap((date): Mutation[] => [
+      [`rule.startDate ${date}`, (state) => scheduled(state, { startDate: date })],
+      [`rule.endDate ${date}`, (state) => scheduled(state, { startDate: MIN_LOCAL_DATE, endDate: date })],
+      [`rule.materializedThrough ${date}`, (state) => scheduled(state, { materializedThrough: date })],
+    ]),
+  ...["Доставка воды", "я".repeat(80), "я".repeat(81), " Вода", "Во\u00adда", ""]
+    .map((name): Mutation => [`rule.name ${JSON.stringify(name)}`, (state) => scheduled(state, { name })]),
+  ...[1, MAX_MONEY_MINOR, MAX_MONEY_MINOR + 1, 0]
+    .map((amountMinor): Mutation => [`template.amountMinor ${amountMinor}`, (state) => scheduled(state, {}, { amountMinor })]),
+  ...["Доставка воды", "я".repeat(500), "я".repeat(501), "Вода\nи хлеб", " Вода"]
+    .map((note): Mutation => [`template.note ${JSON.stringify(note)}`, (state) => scheduled(state, {}, { note })]),
+  ["income template", (state) => scheduled(state, {}, { kind: "income", categoryId: undefined })],
+  ["transfer template", (state) => scheduled(state, {}, { kind: "transfer", accountId: undefined, categoryId: undefined, fromAccountId: state.accounts[0]!.id, toAccountId: state.accounts[1]!.id })],
+  ["transfer template into itself", (state) => scheduled(state, {}, { kind: "transfer", accountId: undefined, categoryId: undefined, fromAccountId: state.accounts[0]!.id, toAccountId: state.accounts[0]!.id })],
+  ["template with an id", (state) => scheduled(state, {}, { id: RULE_ID })],
 ];
 
 describe("шлюз копии и журнал семьи", () => {

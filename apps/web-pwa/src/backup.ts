@@ -15,12 +15,15 @@ import {
   isWithinDateWindow,
   MAX_LOCAL_DATE,
   MAX_MONEY_MINOR,
+  MAX_RECURRENCE_INTERVAL,
   MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
   MIN_LOCAL_DATE,
   NOTE_MAX_LENGTH,
+  RULE_NAME_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
   type BudgetState,
+  type RecurringTemplate,
   type Transaction,
 } from "@family-budget/domain";
 import {
@@ -49,6 +52,7 @@ export const BACKUP_LIMITS = {
   debts: COLLECTION_LIMITS.debts,
   recurringRules: COLLECTION_LIMITS.recurringRules,
   counterpartyLength: COUNTERPARTY_MAX_LENGTH,
+  ruleNameLength: RULE_NAME_MAX_LENGTH,
   tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
   tagNameLength: TAG_NAME_MAX_LENGTH,
 } as const;
@@ -246,6 +250,12 @@ function validateBudgetStateUuids(state: BudgetState): void {
   if (state.household !== undefined) requireUuid(state.household.id, "household.id");
   state.exchangeRates?.forEach((item, index) => requireUuid(item.id, `exchangeRates[${index}].id`));
   state.debts?.forEach((item, index) => requireUuid(item.id, `debts[${index}].id`));
+  state.recurringRules?.forEach((rule, index) => {
+    requireUuid(rule.id, `recurringRules[${index}].id`);
+    // The references of a template are identifiers like any other, judged here like any other.
+    for (const [field, id] of templateReferences(rule.template)) requireUuid(id, `recurringRules[${index}].template.${field}`);
+    rule.template.tagIds?.forEach((tagId, tagIndex) => requireUuid(tagId, `recurringRules[${index}].template.tagIds[${tagIndex}]`));
+  });
   state.members?.forEach((item, index) => requireUuid(item.id, `members[${index}].id`));
   state.tags?.forEach((item, index) => requireUuid(item.id, `tags[${index}].id`));
   state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
@@ -351,12 +361,30 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     });
   }
 
-  // Absent in every copy written before recurring rules existed. Only the outline is read here; the
-  // domain holds every field of a rule to its rules when the gate calculates the state.
+  // Absent in every copy written before recurring rules existed, exactly like the participants above.
   if (state.recurringRules !== undefined) {
     requireArray(state.recurringRules, "recurringRules", grown(BACKUP_LIMITS.recurringRules)).forEach((item, index) => {
-      const rule = requireRecord(item, `recurringRules[${index}]`);
-      requireString(rule.id, `recurringRules[${index}].id`, true, BACKUP_LIMITS.idLength);
+      const label = `recurringRules[${index}]`;
+      const rule = requireRecord(item, label);
+      requireString(rule.id, `${label}.id`, true, BACKUP_LIMITS.idLength);
+      if (rule.name !== undefined) {
+        const name = requireString(rule.name, `${label}.name`, true, BACKUP_LIMITS.ruleNameLength);
+        if (!isStorableLabel(name, RULE_NAME_MAX_LENGTH)) {
+          throw new Error(`${label}.name: название с лишними пробелами или служебными символами.`);
+        }
+      }
+      requireEnum(rule.frequency, ["daily", "weekly", "monthly", "yearly"], `${label}.frequency`);
+      if (typeof rule.interval !== "number" || !Number.isSafeInteger(rule.interval) || rule.interval < 1 || rule.interval > MAX_RECURRENCE_INTERVAL) {
+        throw new Error(`${label}.interval: целое число от 1 до ${MAX_RECURRENCE_INTERVAL}.`);
+      }
+      requireWindowDate(rule.startDate, `${label}.startDate`);
+      if (rule.endDate !== undefined) {
+        requireWindowDate(rule.endDate, `${label}.endDate`);
+        if ((rule.endDate as string) < (rule.startDate as string)) throw new Error(`${label}.endDate: последняя дата раньше первой.`);
+      }
+      if (rule.materializedThrough !== undefined) requireWindowDate(rule.materializedThrough, `${label}.materializedThrough`);
+      requireBoolean(rule.active, `${label}.active`);
+      requireRecurringTemplate(rule.template, `${label}.template`);
     });
   }
 
@@ -499,6 +527,100 @@ function requireTransactionLabels(transaction: Record<string, unknown>, index: n
   if (transaction.recurringRuleId !== undefined) {
     requireString(transaction.recurringRuleId, `transactions[${index}].recurringRuleId`, true, BACKUP_LIMITS.idLength);
   }
+}
+
+/** The fields a template of each kind carries: those of the operation it writes, without id and date. */
+const TEMPLATE_FIELDS = {
+  expense: ["kind", "amountMinor", "accountId", "categoryId", "note", "tagIds"],
+  income: ["kind", "amountMinor", "accountId", "categoryId", "note", "tagIds"],
+  transfer: ["kind", "amountMinor", "fromAccountId", "toAccountId", "toAmountMinor", "note", "tagIds"],
+} as const;
+
+/**
+ * The template of a recurring rule, in the shape the domain stores it and the journal carries it:
+ * one of three kinds and the fields of that kind, nothing else. Strict, as a rate is: a template is
+ * nested data the journal reads by a closed list, and a field this build does not know would be
+ * kept here and dropped on the way to every other device.
+ */
+function requireRecurringTemplate(value: unknown, label: string): void {
+  const template = requireRecord(value, label);
+  const kind = requireEnum(template.kind, ["expense", "income", "transfer"], `${label}.kind`);
+  const allowed: readonly string[] = TEMPLATE_FIELDS[kind];
+  for (const key of Object.keys(template)) {
+    if (!allowed.includes(key)) throw new Error(`${label}: лишнее поле ${key.slice(0, 32)}.`);
+  }
+  requireFieldAmount(template.amountMinor, `${label}.amountMinor`);
+  if (kind === "transfer") {
+    const from = requireString(template.fromAccountId, `${label}.fromAccountId`, true, BACKUP_LIMITS.idLength);
+    const to = requireString(template.toAccountId, `${label}.toAccountId`, true, BACKUP_LIMITS.idLength);
+    if (from === to) throw new Error(`${label}: перевод со счёта на него же.`);
+    if (template.toAmountMinor !== undefined) requireFieldAmount(template.toAmountMinor, `${label}.toAmountMinor`);
+  } else {
+    requireString(template.accountId, `${label}.accountId`, true, BACKUP_LIMITS.idLength);
+    if (kind === "expense" || template.categoryId !== undefined) {
+      requireString(template.categoryId, `${label}.categoryId`, true, BACKUP_LIMITS.idLength);
+    }
+  }
+  if (template.note !== undefined) {
+    const note = requireString(template.note, `${label}.note`, true, BACKUP_LIMITS.textLength);
+    if (!isStorableNote(note)) throw new Error(`${label}.note: заметка в несколько строк, с лишними пробелами или служебными символами.`);
+  }
+  if (template.tagIds !== undefined) {
+    const tagIds = requireArray(template.tagIds, `${label}.tagIds`, BACKUP_LIMITS.tagsPerTransaction);
+    if (tagIds.length === 0) throw new Error(`${label}.tagIds: ожидался непустой список.`);
+    const seen = new Set<string>();
+    tagIds.forEach((tagId, tagIndex) => {
+      const id = requireString(tagId, `${label}.tagIds[${tagIndex}]`, true, BACKUP_LIMITS.idLength);
+      if (seen.has(id)) throw new Error(`${label}.tagIds: метка повторяется.`);
+      seen.add(id);
+    });
+  }
+}
+
+/** The accounts and the category a template names, with the field that names each. */
+function templateReferences(template: RecurringTemplate): readonly (readonly [string, string])[] {
+  if (template.kind === "transfer") return [["fromAccountId", template.fromAccountId], ["toAccountId", template.toAccountId]];
+  return [["accountId", template.accountId], ...(template.categoryId === undefined ? [] : [["categoryId", template.categoryId] as const])];
+}
+
+/**
+ * Шаблоны регулярных операций: всё, что они называют, есть в копии и подходит по виду, а перевод
+ * между валютами называет сумму зачисления — по тем же правилам, что и операция, которую правило
+ * пишет.
+ *
+ * Метка шаблона, которой в копии нет, не ремонтируется, а отвергается: приложение такой копии не
+ * пишет — домен не принимает правило с неизвестной меткой, — значит, файл собран не им, и угадывать,
+ * чего хотел его автор, шлюз не берётся. Проверка стоит здесь, а не оставлена расчёту, чтобы отказ
+ * называл правило файла.
+ */
+function validateRecurringRules(state: BudgetState): void {
+  const accounts = new Map(state.accounts.map((account) => [account.id, account]));
+  const categories = new Map(state.categories.map((category) => [category.id, category]));
+  const tags = new Set((state.tags ?? []).map((tag) => tag.id));
+  (state.recurringRules ?? []).forEach((rule, index) => {
+    const label = `recurringRules[${index}].template`;
+    const template = rule.template;
+    for (const [field, id] of templateReferences(template)) {
+      if (field === "categoryId") {
+        const category = categories.get(id);
+        if (!category) throw new Error(`${label}.categoryId: неизвестная категория ${id}.`);
+        if (category.type !== template.kind) {
+          throw new Error(`${label}.categoryId: категория должна быть ${template.kind === "income" ? "доходной" : "расходной"}.`);
+        }
+      } else if (!accounts.has(id)) {
+        throw new Error(`${label}.${field}: неизвестный счёт ${id}.`);
+      }
+    }
+    for (const tagId of template.tagIds ?? []) {
+      if (!tags.has(tagId)) throw new Error(`${label}.tagIds: неизвестная метка ${tagId}.`);
+    }
+    if (template.kind === "transfer") {
+      const from = accounts.get(template.fromAccountId)!.currency;
+      const to = accounts.get(template.toAccountId)!.currency;
+      if (from !== to && template.toAmountMinor === undefined) throw new Error(`${label}: перевод из ${from} в ${to} без суммы зачисления.`);
+      if (from === to && template.toAmountMinor !== undefined) throw new Error(`${label}.toAmountMinor: перевод в одной валюте без отдельной суммы зачисления.`);
+    }
+  });
 }
 
 /** A currency of the domain's table; anything else is a currency this build cannot count. */
@@ -795,6 +917,7 @@ export function prepareBudgetState(
   validateAllBudgets(state);
   validateIncomeCategories(state);
   validateCurrencies(state);
+  validateRecurringRules(state);
   calculateBudget(state);
   calculateAnnualPlan(
     state,

@@ -89,6 +89,14 @@ export const SAMPLE_FIELDS: FieldsSample = {
   exchangeRate: { currency: "USD", baseCurrency: "RUB", date: "2026-07-31", rate: { baseMinor: 9_000, quoteMinor: 100 } },
   household: { baseCurrency: "RUB" },
   debt: { counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, active: true },
+  recurringRule: {
+    name: "Доставка воды",
+    template: { kind: "expense", amountMinor: 150_000, accountId: "sample-account", categoryId: "sample-category", note: "Доставка воды" },
+    frequency: "weekly",
+    interval: 2,
+    startDate: "2026-08-04",
+    active: true,
+  },
 };
 
 /** The same entities after one edit each, used to prove that update replaces the winner. */
@@ -106,13 +114,14 @@ export const UPDATED_FIELDS: FieldsSample = {
   exchangeRate: { ...SAMPLE_FIELDS.exchangeRate, rate: { baseMinor: 9_250, quoteMinor: 100 } },
   household: { baseCurrency: "EUR" },
   debt: { ...SAMPLE_FIELDS.debt, openingMinor: 250_000, dueDate: "2026-12-31", active: false },
+  recurringRule: { ...SAMPLE_FIELDS.recurringRule, interval: 1, endDate: "2026-12-31", materializedThrough: "2026-08-31" },
 };
 
 /**
  * Kinds whose identifiers the codec demands as UUIDs: the kinds of wave 1, which have no history of
  * readable names. The older kinds keep the readable identifiers their tests always used.
  */
-const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate", "debt"];
+const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate", "debt", "recurringRule"];
 
 /**
  * A target identifier for `entity`, readable where the codec allows it: `${entity}-${name}` for the

@@ -7,7 +7,16 @@
  * набросок, который кодек отвергнет, — это операция, которая никогда не дойдёт до семьи, и узнать
  * об этом на экране пользователя было бы поздно.
  */
-import { calculateBudget, HOUSEHOLD_ID, makePlanningSeed, makeSeedBudget, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import {
+  calculateBudget,
+  HOUSEHOLD_ID,
+  makePlanningSeed,
+  makeSeedBudget,
+  materializeRecurring,
+  SEED_IDS,
+  type BudgetState,
+  type RecurringRule,
+} from "@family-budget/domain";
 import { applyJournal, createClock, createLocalOperation, type Operation } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
@@ -383,5 +392,67 @@ describe("долги как операции журнала", () => {
     expect(snapshot.state.transactions.find((item) => item.id === LENT)).toEqual(state.transactions.at(-1));
     const debtDraft = budgetJournalDrafts(null, state).find((draft) => draft.entity === "debt");
     expect(debtDraft !== undefined && "fields" in debtDraft && Object.hasOwn(debtDraft.fields, "dueDate")).toBe(false);
+  });
+});
+
+describe("регулярные операции как операции журнала", () => {
+  const RULE = "0000000a-0000-4000-8000-0000000000e1";
+  const TAG = "0000000a-0000-4000-8000-0000000000e2";
+  const WATER: RecurringRule = {
+    id: RULE,
+    name: "Доставка воды",
+    template: {
+      kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food,
+      note: "Доставка воды", tagIds: [TAG],
+    },
+    frequency: "weekly",
+    interval: 2,
+    startDate: "2026-07-07",
+    active: true,
+  };
+
+  function withRule(): BudgetState {
+    return { ...makeSeedBudget(), tags: [{ id: TAG, name: "Дом", active: true }], recurringRules: [WATER] };
+  }
+
+  it("посев переносит правило с шаблоном и его вхождения с меткой правила", () => {
+    const state = materializeRecurring(withRule(), "2026-07-31").state;
+    const snapshot = applyJournal(stamp(state));
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.recurringRules).toEqual(state.recurringRules);
+    const occurrences = state.transactions.filter((entry) => entry.recurringRuleId === RULE);
+    expect(occurrences.map((entry) => entry.occurredOn)).toEqual(["2026-07-07", "2026-07-21"]);
+    for (const occurrence of occurrences) {
+      expect(snapshot.state.transactions.find((entry) => entry.id === occurrence.id)).toEqual(occurrence);
+    }
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(state));
+  });
+
+  it("материализация — создания вхождений и одно обновление правила, а порядок ключей шаблона — не изменение", () => {
+    const before = withRule();
+    const after = materializeRecurring(before, "2026-07-31").state;
+    const drafts = budgetJournalDrafts(before, after, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action])).toEqual([
+      ["recurringRule", "update"],
+      ["transaction", "create"],
+      ["transaction", "create"],
+    ]);
+    expect(drafts[0]).toMatchObject({ targetId: RULE, fields: { materializedThrough: "2026-07-31" } });
+
+    const reordered: BudgetState = {
+      ...after,
+      // The same fields in the opposite order of keys, the template's included.
+      recurringRules: after.recurringRules!.map((rule) => Object.fromEntries(Object.entries({
+        ...rule,
+        template: Object.fromEntries(Object.entries(rule.template).reverse()),
+      }).reverse()) as unknown as RecurringRule),
+    };
+    expect(budgetJournalDrafts(after, reordered, MEMBER)).toEqual([]);
+    const plain = budgetJournalDrafts(null, { ...makeSeedBudget(), recurringRules: [{ ...WATER, template: { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main } }] })
+      .find((draft) => draft.entity === "recurringRule");
+    expect(plain !== undefined && "fields" in plain ? plain.fields : null).toEqual({
+      name: "Доставка воды", template: { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main },
+      frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true,
+    });
   });
 });

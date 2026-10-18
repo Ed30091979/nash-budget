@@ -979,3 +979,101 @@ describe("debts on the wire", () => {
     expect(() => parseOperation(movement(JSON.parse(JSON.stringify(fields)) as unknown))).toThrow(message);
   });
 });
+
+describe("recurring rules on the wire", () => {
+  const EXPENSE_TEMPLATE = SAMPLE_FIELDS.recurringRule.template;
+  const INCOME_TEMPLATE = { kind: "income", amountMinor: 12_000_000, accountId: "account-1" };
+  const TRANSFER_TEMPLATE = { kind: "transfer", amountMinor: 1_800_000, fromAccountId: "account-1", toAccountId: "account-2", toAmountMinor: 20_000 };
+
+  function write(fields: unknown, targetId = sampleTargetId("recurringRule")): unknown {
+    return { opId: opUuid(14), deviceId: DEVICE_A, lamport: 14, entity: "recurringRule", action: "create", targetId, fields };
+  }
+
+  const withTemplate = (template: unknown): unknown => ({ ...SAMPLE_FIELDS.recurringRule, template });
+
+  it("carries a rule and its nested template through a round trip, and absent stays absent", () => {
+    const written = [
+      SAMPLE_FIELDS.recurringRule,
+      UPDATED_FIELDS.recurringRule,
+      withTemplate({ ...EXPENSE_TEMPLATE, tagIds: [tagUuid(1), tagUuid(2)] }),
+      withTemplate(INCOME_TEMPLATE),
+      withTemplate({ ...INCOME_TEMPLATE, categoryId: "category-salary" }),
+      withTemplate(TRANSFER_TEMPLATE),
+      { template: EXPENSE_TEMPLATE, frequency: "yearly", interval: 999, startDate: "2024-02-29", active: false },
+    ];
+    for (const fields of written) {
+      const operation = parseOperation(write(fields));
+      const decoded = decodeOperation(encodeOperation(operation));
+      expect(decoded.action === "create" ? decoded.fields : null).toEqual(fields);
+      expect(encodeOperation(decoded)).toBe(encodeOperation(operation));
+    }
+    const plain = parseOperation(write({ template: INCOME_TEMPLATE, frequency: "monthly", interval: 1, startDate: "2026-08-05", active: true }));
+    const fields = plain.action === "create" ? plain.fields : {};
+    for (const field of ["name", "endDate", "materializedThrough"]) expect(Object.hasOwn(fields, field), field).toBe(false);
+    if (plain.action === "create" && plain.entity === "recurringRule") {
+      for (const field of ["categoryId", "note", "tagIds"]) expect(Object.hasOwn(plain.fields.template, field), field).toBe(false);
+    }
+  });
+
+  it.each([
+    ["an interval of zero", { ...SAMPLE_FIELDS.recurringRule, interval: 0 }, /recurringRule interval must be from 1 to 999/],
+    ["an interval past 999", { ...SAMPLE_FIELDS.recurringRule, interval: 1_000 }, /recurringRule interval must be from 1 to 999/],
+    ["a fractional interval", { ...SAMPLE_FIELDS.recurringRule, interval: 1.5 }, /recurringRule interval must be an integer/],
+    ["a frequency of its own", { ...SAMPLE_FIELDS.recurringRule, frequency: "hourly" }, /recurringRule frequency has unknown value hourly/],
+    ["an end before the start", { ...SAMPLE_FIELDS.recurringRule, endDate: "2026-08-03" }, /recurringRule endDate must not be before startDate/],
+    ["a start past the calendar", { ...SAMPLE_FIELDS.recurringRule, startDate: "2200-01-01" }, /recurringRule startDate must be from 1900-01-01 to 2199-12-31/],
+    ["a watermark on an impossible day", { ...SAMPLE_FIELDS.recurringRule, materializedThrough: "2026-02-30" }, /recurringRule materializedThrough must be a valid calendar date/],
+    ["a name with a soft hyphen", { ...SAMPLE_FIELDS.recurringRule, name: "Во\u00adда" }, /recurringRule name must be trimmed text without hidden characters/],
+    ["a name longer than 80", { ...SAMPLE_FIELDS.recurringRule, name: "я".repeat(81) }, /recurringRule name must be at most 80 characters/],
+    ["a rule without its flag", { template: EXPENSE_TEMPLATE, frequency: "weekly", interval: 2, startDate: "2026-08-04" }, /recurringRule fields is missing field active/],
+    ["a rule with a field of its own", { ...SAMPLE_FIELDS.recurringRule, count: 10 }, /recurringRule fields contains unknown field count/],
+    ["a rule without a template", { ...SAMPLE_FIELDS.recurringRule, template: undefined }, /recurringRule fields is missing field template/],
+    ["a template that is a list", withTemplate([EXPENSE_TEMPLATE]), /recurringRule template must be an object/],
+    ["a refund template", withTemplate({ ...EXPENSE_TEMPLATE, kind: "refund" }), /recurringRule template kind has unknown value refund/],
+    ["a debt template", withTemplate({ kind: "debt_out", amountMinor: 1, accountId: "account-1", debtId: sampleTargetId("debt") }), /recurringRule template kind has unknown value debt_out/],
+    ["a template with an identifier", withTemplate({ ...EXPENSE_TEMPLATE, id: "x" }), /recurringRule template contains unknown field id/],
+    ["a template with a date", withTemplate({ ...EXPENSE_TEMPLATE, occurredOn: "2026-08-04" }), /recurringRule template contains unknown field occurredOn/],
+    ["a template with a snapshot", withTemplate({ ...EXPENSE_TEMPLATE, baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } }), /recurringRule template contains unknown field baseAmountMinor/],
+    ["a template with a participant", withTemplate({ ...EXPENSE_TEMPLATE, memberId: "member-1" }), /recurringRule template contains unknown field memberId/],
+    ["an expense template without a category", withTemplate({ kind: "expense", amountMinor: 1, accountId: "account-1" }), /recurringRule template is missing field categoryId/],
+    ["a template of nothing", withTemplate({ ...EXPENSE_TEMPLATE, amountMinor: 0 }), /recurringRule template amountMinor must be at least 1/],
+    ["a template past the field ceiling", withTemplate({ ...EXPENSE_TEMPLATE, amountMinor: MAX_MONEY_MINOR + 1 }), /recurringRule template amountMinor must be at most 10000000000/],
+    ["a template note on two lines", withTemplate({ ...EXPENSE_TEMPLATE, note: "Вода\nи хлеб" }), /recurringRule template note must be one trimmed line/],
+    ["template tags that are not UUIDs", withTemplate({ ...EXPENSE_TEMPLATE, tagIds: ["tag-home"] }), /recurringRule template tagIds\[0\] must be a UUID/],
+    ["template tags repeated", withTemplate({ ...EXPENSE_TEMPLATE, tagIds: [tagUuid(1), tagUuid(1)] }), /recurringRule template tagIds must not repeat a tag/],
+    ["an empty list of template tags", withTemplate({ ...EXPENSE_TEMPLATE, tagIds: [] }), /recurringRule template tagIds must list from 1 to 10 tags/],
+    ["a transfer into its own account", withTemplate({ ...TRANSFER_TEMPLATE, toAccountId: "account-1" }), /recurringRule template must use two different accounts/],
+    ["a transfer arriving as nothing", withTemplate({ ...TRANSFER_TEMPLATE, toAmountMinor: 0 }), /recurringRule template toAmountMinor must be at least 1/],
+    ["an arrived amount on an income", withTemplate({ ...INCOME_TEMPLATE, toAmountMinor: 1 }), /recurringRule template contains unknown field toAmountMinor/],
+  ] as const)("refuses %s", (_name, fields, message) => {
+    expect(() => parseOperation(write(JSON.parse(JSON.stringify(fields)) as unknown))).toThrow(message);
+  });
+
+  it("identifies a rule by a UUID, and an occurrence names its rule by one", () => {
+    expect(() => parseOperation(write(SAMPLE_FIELDS.recurringRule, "rule-water"))).toThrow(/operation targetId must be a UUID/);
+    expect(parseOperation(write(SAMPLE_FIELDS.recurringRule))).toMatchObject({ targetId: sampleTargetId("recurringRule") });
+  });
+
+  it("fits the largest rule into one envelope", () => {
+    const largest = {
+      name: "\u4e2d".repeat(80),
+      template: {
+        kind: "transfer",
+        amountMinor: MAX_MONEY_MINOR,
+        fromAccountId: "a".repeat(128),
+        toAccountId: "b".repeat(128),
+        toAmountMinor: MAX_MONEY_MINOR,
+        note: "\u4e2d".repeat(500),
+        tagIds: Array.from({ length: 10 }, (_, index) => tagUuid(index)),
+      },
+      frequency: "monthly",
+      interval: 999,
+      startDate: "2026-08-04",
+      endDate: "2199-12-31",
+      materializedThrough: "2199-12-31",
+      active: true,
+    };
+    const operation = { ...(write(largest) as Record<string, unknown>), memberId: "w".repeat(128) };
+    expect(new TextEncoder().encode(encodeOperation(parseOperation(operation))).byteLength).toBeLessThan(MAX_OPERATION_BYTES);
+  });
+});

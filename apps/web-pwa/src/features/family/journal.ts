@@ -28,6 +28,8 @@ import type {
   Household,
   Member,
   MemberId,
+  RecurringRule,
+  RecurringTemplate,
   ScheduledExpense,
   Tag,
   Transaction,
@@ -77,7 +79,7 @@ function sortedKeys(value: unknown): unknown {
 
 /**
  * Каноническая запись полей: ключи по алфавиту на любой глубине, поэтому равные поля дают равный
- * текст. Экспортирована ради проверки вложенных значений, которых у полей этой волны пока нет.
+ * текст. Экспортирована ради проверки вложенных значений — курса, снимка и шаблона правила.
  */
 export function canonical(fields: Record<string, unknown>): string {
   return JSON.stringify(sortedKeys(fields));
@@ -114,6 +116,46 @@ function debtFields(debt: Debt): Record<string, unknown> {
     openingMinor: debt.openingMinor,
     dueDate: debt.dueDate,
     active: debt.active,
+  });
+}
+
+/** Шаблон правила: поля операции своего вида, без идентификатора и даты; метки — копией списка. */
+function templateFields(template: RecurringTemplate): Record<string, unknown> {
+  const base = {
+    kind: template.kind,
+    amountMinor: template.amountMinor,
+    note: template.note,
+    tagIds: template.tagIds === undefined ? undefined : [...template.tagIds],
+  };
+  switch (template.kind) {
+    case "expense":
+      return defined({ ...base, accountId: template.accountId, categoryId: template.categoryId });
+    case "income":
+      return defined({ ...base, accountId: template.accountId, categoryId: template.categoryId });
+    case "transfer":
+      return defined({
+        ...base,
+        fromAccountId: template.fromAccountId,
+        toAccountId: template.toAccountId,
+        toAmountMinor: template.toAmountMinor,
+      });
+  }
+}
+
+/**
+ * Правило регулярной операции с вложенным шаблоном. Водяной знак — обычное поле: его сдвиг после
+ * материализации уходит в журнал обновлением правила, и второе устройство не пишет закрытые дни.
+ */
+function recurringRuleFields(rule: RecurringRule): Record<string, unknown> {
+  return defined({
+    name: rule.name,
+    template: templateFields(rule.template),
+    frequency: rule.frequency,
+    interval: rule.interval,
+    startDate: rule.startDate,
+    endDate: rule.endDate,
+    materializedThrough: rule.materializedThrough,
+    active: rule.active,
   });
 }
 
@@ -298,6 +340,7 @@ export function budgetEntityRows(state: BudgetState): ReadonlyMap<string, Entity
   if (state.household !== undefined) add("household", state.household.id, householdFields(state.household));
   for (const rate of state.exchangeRates ?? []) add("exchangeRate", rate.id, exchangeRateFields(rate));
   for (const debt of state.debts ?? []) add("debt", debt.id, debtFields(debt));
+  for (const rule of state.recurringRules ?? []) add("recurringRule", rule.id, recurringRuleFields(rule));
   for (const account of state.accounts) add("account", account.id, accountFields(account));
   for (const category of state.categories) add("category", category.id, categoryFields(category));
   for (const budget of state.budgets) {

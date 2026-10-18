@@ -5,13 +5,16 @@ import {
   COLLECTION_LIMITS,
   HOUSEHOLD_ID,
   makePlanningSeed,
+  materializeRecurring,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
   PLANNING_IDS,
+  SEED_IDS,
   TAG_NAME_MAX_LENGTH,
   type BudgetState,
   type Debt,
   type Member,
+  type RecurringRule,
   type Tag,
   type Transaction,
 } from "@family-budget/domain";
@@ -1188,5 +1191,74 @@ describe("долги в резервной копии", () => {
     expect(BACKUP_LIMITS.debts).toBe(COLLECTION_LIMITS.debts);
     expect(prepareBudgetState(many)).toEqual(many);
     expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`debts: допускается не более ${BACKUP_LIMITS.debts} элементов`);
+  });
+});
+
+describe("регулярные операции в резервной копии", () => {
+  const RULE = "c8888888-8888-4888-8888-888888888881";
+  const TAG = "c8888888-8888-4888-8888-888888888882";
+  const WATER = {
+    kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: PLANNING_IDS.categories.food,
+    note: "Доставка воды", tagIds: [TAG],
+  };
+  // Чужой файл: в поле может оказаться что угодно, поэтому запись приводится к типу, а не собирается по нему.
+  const withRule = (change: Record<string, unknown> = {}, template: Record<string, unknown> = WATER): BudgetState => ({
+    ...makePlanningSeed(),
+    tags: [{ id: TAG, name: "Дом", active: true }],
+    recurringRules: [{
+      id: RULE, name: "Доставка воды", template, frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true, ...change,
+    } as unknown as RecurringRule],
+  });
+
+  it("восстанавливает правило и его вхождения байт в байт, а копия без правил их не приобретает", async () => {
+    const state = materializeRecurring(withRule({ endDate: "2026-12-31" }), "2026-07-31").state;
+    expect(state.transactions.filter((item) => item.recurringRuleId === RULE)).toHaveLength(2);
+    expect(parseAndValidateBudgetBackup(serializeBackup(state))).toEqual(state);
+    const exported = await createBudgetBackup(state, vi.fn(async () => undefined));
+    expect(parseAndValidateBudgetBackup(exported.text)).toEqual(state);
+    expect("recurringRules" in parseAndValidateBudgetBackup(serializeBackup(makePlanningSeed()))).toBe(false);
+    const transfer = withRule({}, { kind: "transfer", amountMinor: 100_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings });
+    expect(parseAndValidateBudgetBackup(serializeBackup(transfer))).toEqual(transfer);
+  });
+
+  it.each([
+    ["интервал 0", { interval: 0 }, WATER, /recurringRules\[0\]\.interval: целое число от 1 до 999/u],
+    ["интервал 1000", { interval: 1_000 }, WATER, /recurringRules\[0\]\.interval: целое число от 1 до 999/u],
+    ["своя частота", { frequency: "hourly" }, WATER, /recurringRules\[0\]\.frequency: недопустимое значение/u],
+    ["конец раньше начала", { endDate: "2026-07-06" }, WATER, /recurringRules\[0\]\.endDate: последняя дата раньше первой/u],
+    ["начало за окном журнала", { startDate: "2200-01-01" }, WATER, /recurringRules\[0\]\.startDate: дата вне диапазона/u],
+    ["водяной знак в несуществующий день", { materializedThrough: "2026-02-30" }, WATER, /recurringRules\[0\]\.materializedThrough: невозможная календарная дата/u],
+    ["имя с пробелом", { name: "Вода " }, WATER, /recurringRules\[0\]\.name: название с лишними пробелами/u],
+    ["имя длиннее 80", { name: "я".repeat(81) }, WATER, /recurringRules\[0\]\.name: строка длиннее 80/u],
+    ["признак строкой", { active: "yes" }, WATER, /recurringRules\[0\]\.active: ожидалось логическое значение/u],
+    ["не UUID", { id: "rule-1" }, WATER, /recurringRules\[0\]\.id: некорректный UUID/u],
+    ["без шаблона", { template: undefined }, WATER, /recurringRules\[0\]\.template: ожидался объект/u],
+    ["шаблон возврата", {}, { ...WATER, kind: "refund" }, /recurringRules\[0\]\.template\.kind: недопустимое значение/u],
+    ["лишнее поле шаблона", {}, { ...WATER, id: "c8888888-8888-4888-8888-888888888883" }, /recurringRules\[0\]\.template: лишнее поле id/u],
+    ["снимок в шаблоне", {}, { ...WATER, baseAmountMinor: 1 }, /recurringRules\[0\]\.template: лишнее поле baseAmountMinor/u],
+    ["шаблон на ноль", {}, { ...WATER, amountMinor: 0 }, /recurringRules\[0\]\.template\.amountMinor: сумма от 1/u],
+    ["заметка в две строки", {}, { ...WATER, note: "Вода\nи хлеб" }, /recurringRules\[0\]\.template\.note: заметка в несколько строк/u],
+    ["пустой список меток", {}, { ...WATER, tagIds: [] }, /recurringRules\[0\]\.template\.tagIds: ожидался непустой список/u],
+    ["метка не UUID", {}, { ...WATER, tagIds: ["tag-1"] }, /recurringRules\[0\]\.template\.tagIds\[0\]: некорректный UUID/u],
+    ["неизвестная метка", {}, { ...WATER, tagIds: ["c8888888-8888-4888-8888-8888888888ff"] }, /recurringRules\[0\]\.template\.tagIds: неизвестная метка/u],
+    ["неизвестный счёт", {}, { ...WATER, accountId: "c8888888-8888-4888-8888-8888888888fe" }, /recurringRules\[0\]\.template\.accountId: неизвестный счёт/u],
+    ["счёт не UUID", {}, { ...WATER, accountId: "account-1" }, /recurringRules\[0\]\.template\.accountId: некорректный UUID/u],
+    ["расход без категории", {}, { kind: "expense", amountMinor: 1, accountId: SEED_IDS.accounts.main }, /recurringRules\[0\]\.template\.categoryId: ожидалась непустая строка/u],
+    ["доход в расходной категории", {}, { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main, categoryId: PLANNING_IDS.categories.food }, /recurringRules\[0\]\.template\.categoryId: категория должна быть доходной/u],
+    ["перевод на тот же счёт", {}, { kind: "transfer", amountMinor: 1, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.main }, /recurringRules\[0\]\.template: перевод со счёта на него же/u],
+    ["сумма зачисления в одной валюте", {}, { kind: "transfer", amountMinor: 1, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings, toAmountMinor: 1 }, /toAmountMinor: перевод в одной валюте/u],
+  ] as const)("отклоняет копию: %s", (_name, change, template, expected) => {
+    expect(() => prepareBudgetState(JSON.parse(JSON.stringify(withRule(change, template))) as unknown)).toThrow(expected);
+  });
+
+  it("ограничивает число правил в файле, но не в документе", () => {
+    const rules = Array.from({ length: BACKUP_LIMITS.recurringRules + 1 }, (_, index) => ({
+      ...withRule().recurringRules![0]!,
+      id: `c8000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    const many: BudgetState = { ...withRule(), recurringRules: rules };
+    expect(BACKUP_LIMITS.recurringRules).toBe(COLLECTION_LIMITS.recurringRules);
+    expect(prepareBudgetState(many)).toEqual(many);
+    expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`recurringRules: допускается не более ${BACKUP_LIMITS.recurringRules} элементов`);
   });
 });
