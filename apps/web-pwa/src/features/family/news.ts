@@ -16,7 +16,7 @@
  * Здесь только арифметика и слова. Когда новость считается увиденной — решает `App.tsx`:
  * человек ушёл с «Сегодня» или свернул приложение, пока она стояла на экране.
  */
-import type { BudgetState, Member, MemberId, Transaction } from "@family-budget/domain";
+import type { BudgetState, Member, MemberId, RecurringRule, RecurringRuleId, Transaction } from "@family-budget/domain";
 import type { JournalEntry } from "@family-budget/sync-protocol";
 
 import { formatMoney } from "../../money";
@@ -129,6 +129,25 @@ function joinSpoken(parts: readonly string[]): string {
   return `${parts.slice(0, -1).join(", ")} и ${parts[parts.length - 1]}`;
 }
 
+/** «2 покупки на 4 500 ₽ и 1 доход на 80 000 ₽» — операции одного автора по видам. */
+function kindsLine(list: readonly FamilyNewsItem[]): string {
+  const parts = KIND_ORDER.flatMap((kind) => {
+    const ofKind = list.filter((item) => item.transaction.kind === kind);
+    if (ofKind.length === 0) return [];
+    const sumMinor = ofKind.reduce((total, item) => total + item.transaction.amountMinor, 0);
+    return [`${plural(ofKind.length, KIND_FORMS[kind])} на ${formatMoney(sumMinor)}`];
+  });
+  return joinSpoken(parts);
+}
+
+/**
+ * Кто «автор» вхождения регулярной операции: правило, а не участник устройства, которое его
+ * материализовало. Правило без названия называется так, как его называет экран.
+ */
+function ruleLabel(rule: RecurringRule | undefined): string {
+  return rule?.name === undefined ? "По регулярной операции" : `По правилу «${rule.name}»`;
+}
+
 /**
  * Новость словами: по строке на участника — «Анна: 2 покупки на 4 500 ₽ и 1 доход на 80 000 ₽».
  *
@@ -137,26 +156,32 @@ function joinSpoken(parts: readonly string[]): string {
  * повторяет «Последние записи»: там пять последних операций по одной, здесь — итог того, что
  * пришло с прошлого раза, по видам и суммам. Глагола нет нарочно: имя участника рода не
  * называет, и «записал» ошибалось бы в половине семей.
+ *
+ * Вхождения регулярной операции идут своей строкой — «По правилу «Аренда»: 1 покупка на …», —
+ * а не строкой участника, чьё устройство их записало: его заголовок стоит на операции только
+ * потому, что материализовать правило выпало его устройству, и «Анна: 30 покупок» о том, что
+ * никто не покупал, было бы неправдой.
  */
 export function familyNewsLines(
   items: readonly FamilyNewsItem[],
   members: ReadonlyMap<MemberId, Member>,
+  budget: Pick<BudgetState, "recurringRules"> = {},
 ): readonly string[] {
+  const rules = new Map<RecurringRuleId, RecurringRule>((budget.recurringRules ?? []).map((rule) => [rule.id, rule]));
   const byAuthor = new Map<string | undefined, FamilyNewsItem[]>();
+  const byRule = new Map<RecurringRuleId, FamilyNewsItem[]>();
   for (const item of items) {
+    const ruleId = item.transaction.recurringRuleId;
+    if (ruleId !== undefined) {
+      byRule.set(ruleId, [...(byRule.get(ruleId) ?? []), item]);
+      continue;
+    }
     const list = byAuthor.get(item.memberId) ?? [];
     list.push(item);
     byAuthor.set(item.memberId, list);
   }
-  return [...byAuthor.entries()]
-    .map(([memberId, list]) => {
-      const parts = KIND_ORDER.flatMap((kind) => {
-        const ofKind = list.filter((item) => item.transaction.kind === kind);
-        if (ofKind.length === 0) return [];
-        const sumMinor = ofKind.reduce((total, item) => total + item.transaction.amountMinor, 0);
-        return [`${plural(ofKind.length, KIND_FORMS[kind])} на ${formatMoney(sumMinor)}`];
-      });
-      return `${transactionAuthorLabel(members, memberId)}: ${joinSpoken(parts)}`;
-    })
-    .sort((left, right) => left.localeCompare(right, "ru-RU"));
+  return [
+    ...[...byAuthor.entries()].map(([memberId, list]) => `${transactionAuthorLabel(members, memberId)}: ${kindsLine(list)}`),
+    ...[...byRule.entries()].map(([ruleId, list]) => `${ruleLabel(rules.get(ruleId))}: ${kindsLine(list)}`),
+  ].sort((left, right) => left.localeCompare(right, "ru-RU"));
 }

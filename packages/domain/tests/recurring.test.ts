@@ -7,6 +7,7 @@ import {
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  DEFAULT_MAX_OCCURRENCES_PER_CALL,
   DEFAULT_MAX_OCCURRENCES_PER_RULE,
   deleteRecurringRule,
   documentIds,
@@ -342,11 +343,103 @@ describe("materializeRecurring", () => {
     }
   });
 
-  it("refuses a derived identifier another entity already holds", () => {
+  it("passes over a derived identifier another entity already holds, says so, and never throws", () => {
+    // A UUID of version 8 passes isUuid, so any device may plant an entity on the identifier a day of
+    // the rule is derived to. Throwing on it threw on every device that holds the state.
     const id = recurringOccurrenceId(RULE, "2026-08-18");
     const state = withRules([waterRule()]);
     const taken = { ...state, tags: [...state.tags!, { id, name: "Совпадение", active: true }] };
-    expect(() => materializeRecurring(taken, "2026-08-31")).toThrow(new RegExp(`derived occurrence identifier ${id} is already used`));
+    const result = materializeRecurring(taken, "2026-08-31");
+    expect(datesOf(result.created)).toEqual(["2026-08-04"]);
+    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-08-18", reason: "id_conflict" }]);
+    // The day can never be written, so it is closed like an archived one, and nothing is overwritten.
+    expect(ruleOf(result.state).materializedThrough).toBe("2026-08-31");
+    expect(result.state.tags).toEqual(taken.tags);
+    expect(materializeRecurring(result.state, "2026-08-31").state).toBe(result.state);
+  });
+
+  it("does not write over an occurrence the family deleted, whatever the watermark says", () => {
+    // A rule's watermark can go back — a concurrent edit of the rule wins with an older one — while
+    // the journal keeps the delete of the occurrence for good. Written again, it would show on this
+    // device alone; it is passed over and reported instead.
+    const deleted = new Set([recurringOccurrenceId(RULE, "2026-08-04")]);
+    const result = materializeRecurring(withRules([waterRule()]), "2026-08-31", { deletedIds: deleted });
+    expect(datesOf(result.created)).toEqual(["2026-08-18"]);
+    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-08-04", reason: "deleted" }]);
+    expect(ruleOf(result.state).materializedThrough).toBe("2026-08-31");
+  });
+
+  it("loses no occurrence when the days after the watermark are already written", () => {
+    // The review's case: a daily rule from 1 January without a watermark, its first ten days written
+    // already (by another device), and a bound of five. The list of days used to be cut to six before
+    // anything was looked at, the ten written days were passed over without counting, and the
+    // watermark jumped to 30 January: twenty occurrences gone for good.
+    const daily = waterRule({ frequency: "daily", interval: 1, startDate: "2026-01-01" });
+    const firstTen = materializeRecurring(withRules([daily]), "2026-01-10").created;
+    const state = withRules([daily], { transactions: [...makeSeedBudget().transactions, ...firstTen] });
+    expect(ruleOf(state).materializedThrough).toBeUndefined();
+
+    const first = materializeRecurring(state, "2026-01-30", { maxPerRule: 5 });
+    expect(datesOf(first.created)).toEqual(["2026-01-11", "2026-01-12", "2026-01-13", "2026-01-14", "2026-01-15"]);
+    expect(first.skipped).toEqual([{ ruleId: RULE, date: "2026-01-16", reason: "limit" }]);
+    expect(ruleOf(first.state).materializedThrough).toBe("2026-01-15");
+
+    let current = first.state;
+    for (let call = 0; call < 10; call += 1) current = materializeRecurring(current, "2026-01-30", { maxPerRule: 5 }).state;
+    const days = current.transactions.filter((transaction) => transaction.recurringRuleId === RULE).map((transaction) => transaction.occurredOn);
+    expect(days).toEqual(Array.from({ length: 30 }, (_, index) => `2026-01-${String(index + 1).padStart(2, "0")}`));
+    expect(ruleOf(current).materializedThrough).toBe("2026-01-30");
+  });
+
+  it("bounds one call across all rules, with each rule's watermark where it stopped", () => {
+    const daily = (index: number) => waterRule({ id: `8b100000-0000-4000-8000-${String(index).padStart(12, "0")}`, frequency: "daily", interval: 1, startDate: "2026-01-01" });
+    const state = withRules([daily(1), daily(2), daily(3)]);
+    const first = materializeRecurring(state, "2026-01-31", { maxTotal: 50 });
+    expect(first.created).toHaveLength(50);
+    expect(first.skipped).toEqual([
+      { ruleId: daily(2).id, date: "2026-01-20", reason: "limit" },
+      { ruleId: daily(3).id, date: "2026-01-01", reason: "limit" },
+    ]);
+    const marks = (value: BudgetState) => (value.recurringRules ?? []).map((rule) => rule.materializedThrough);
+    // The first rule is done, the second stopped after nineteen days, the third did not start.
+    expect(marks(first.state)).toEqual(["2026-01-31", "2026-01-19", undefined]);
+    const second = materializeRecurring(first.state, "2026-01-31", { maxTotal: 50 });
+    expect(second.created).toHaveLength(12 + 31);
+    expect(second.skipped).toEqual([]);
+    expect(marks(second.state)).toEqual(["2026-01-31", "2026-01-31", "2026-01-31"]);
+    for (const maxTotal of [0, -1, 1.5]) {
+      expect(() => materializeRecurring(state, "2026-01-31", { maxTotal }), String(maxTotal)).toThrow(/maxTotal must be a positive integer/);
+    }
+  });
+
+  it("writes at most a thousand occurrences in one call by default, whatever the number of rules", () => {
+    // Three hundred daily rules from 1900 used to be 120 000 operations in one call: more than one
+    // batch of the journal and more operations than a backup may hold.
+    const rules = Array.from({ length: 300 }, (_, index) =>
+      waterRule({ id: `8b200000-0000-4000-8000-${String(index).padStart(12, "0")}`, frequency: "daily", interval: 1, startDate: "1900-01-01" }));
+    const result = materializeRecurring(withRules(rules), "2026-08-31");
+    expect(result.created).toHaveLength(DEFAULT_MAX_OCCURRENCES_PER_CALL);
+    expect(DEFAULT_MAX_OCCURRENCES_PER_CALL).toBeLessThan(COLLECTION_LIMITS.transactions);
+    expect(result.skipped.filter((item) => item.reason === "limit")).toHaveLength(300);
+    // 400, 400 and 200 written, the rest not started: each watermark on the day before its stop.
+    expect((result.state.recurringRules ?? []).slice(0, 4).map((rule) => rule.materializedThrough))
+      .toEqual([addDays("1900-01-01", 399), addDays("1900-01-01", 399), addDays("1900-01-01", 199), undefined]);
+  });
+
+  it("writes no occurrence past the last day the journal carries", () => {
+    const yearly = waterRule({ frequency: "yearly", interval: 1, startDate: "2190-03-01" });
+    const result = materializeRecurring(withRules([yearly]), "2300-01-01");
+    expect(datesOf(result.created).at(-1)).toBe("2199-03-01");
+    expect(result.created).toHaveLength(10);
+    expect(ruleOf(result.state).materializedThrough).toBe("2199-12-31");
+  });
+
+  it("credits an occurrence to no participant: the rule wrote it, not the device that materialised it", () => {
+    const state = withRules([waterRule()], { members: [{ id: "8f200000-0000-4000-8000-000000000001", name: "Анна", role: "owner", active: true }] });
+    const result = materializeRecurring(state, "2026-08-31");
+    expect(result.created).toHaveLength(2);
+    expect(result.created.every((transaction) => !("memberId" in transaction))).toBe(true);
+    expect(() => calculateMemberExpenses(result.state)).not.toThrow();
   });
 
   it("writes income and transfers too, with the template's own fields", () => {

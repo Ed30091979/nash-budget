@@ -1,4 +1,11 @@
-import { makeSeedBudget, SEED_IDS, type BudgetState, type Transaction } from "@family-budget/domain";
+import {
+  makeSeedBudget,
+  materializeRecurring,
+  SEED_IDS,
+  type BudgetState,
+  type RecurringRule,
+  type Transaction,
+} from "@family-budget/domain";
 import type { JournalEntry } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
@@ -195,5 +202,49 @@ describe("семейная новость словами", () => {
     const lines = familyNewsLines(familyNewsSince(transactionIds(seed), state, authors, ANNA), membersById(state));
     expect(lines[0]).toContain("5 покупок на");
     expect(lines[0]).toContain("1 перевод на");
+  });
+});
+
+describe("семейная новость о регулярных операциях", () => {
+  const seed = makeSeedBudget();
+  const WATER: RecurringRule = {
+    id: "0000000d-0000-4000-8000-00000000d001",
+    name: "Доставка воды",
+    template: { kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food },
+    frequency: "weekly",
+    interval: 2,
+    startDate: "2026-07-07",
+    active: true,
+  };
+
+  it("вхождения правила — строка правила, а не участника, чьё устройство их записало", () => {
+    const ruled = withMembers({ ...seed, recurringRules: [WATER] }, [expense("t-b", 100_000)]);
+    const { state, created } = materializeRecurring(ruled, "2026-07-31");
+    expect(created).toHaveLength(2);
+    // Boris's device materialised both occurrences, so its header is on them in the journal.
+    const authors = authorsOfTransactions([
+      entry("t-b", DEVICE_BORIS, MEMBER_BORIS),
+      ...created.map((transaction) => entry(transaction.id, DEVICE_BORIS, MEMBER_BORIS)),
+    ]);
+    const news = familyNewsSince(transactionIds(seed), state, authors, ANNA);
+    expect(news).toHaveLength(3);
+    expect(familyNewsLines(news, membersById(state), state)).toEqual([
+      `Борис: 1 покупка на ${formatMoney(100_000)}`,
+      `По правилу «Доставка воды»: 2 покупки на ${formatMoney(300_000)}`,
+    ]);
+  });
+
+  it("правило без названия названо регулярной операцией, а не выдумано", () => {
+    const { name: _name, ...nameless } = WATER;
+    const { state, created } = materializeRecurring(withMembers({ ...seed, recurringRules: [nameless] }, []), "2026-07-31");
+    const authors = authorsOfTransactions(created.map((transaction) => entry(transaction.id, DEVICE_BORIS, MEMBER_BORIS)));
+    expect(familyNewsLines(familyNewsSince(transactionIds(seed), state, authors, ANNA), membersById(state), state))
+      .toEqual([`По регулярной операции: 2 покупки на ${formatMoney(300_000)}`]);
+  });
+
+  it("свои вхождения новостью не являются, как и любая своя запись", () => {
+    const { state, created } = materializeRecurring(withMembers({ ...seed, recurringRules: [WATER] }, []), "2026-07-31");
+    const authors = authorsOfTransactions(created.map((transaction) => entry(transaction.id, DEVICE_ANNA, MEMBER_ANNA)));
+    expect(familyNewsSince(transactionIds(seed), state, authors, ANNA)).toEqual([]);
   });
 });

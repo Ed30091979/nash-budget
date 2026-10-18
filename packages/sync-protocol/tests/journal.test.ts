@@ -4,6 +4,7 @@ import {
   calculateDebts,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  DEFAULT_MAX_OCCURRENCES_PER_CALL,
   HOUSEHOLD_ID,
   materializeRecurring,
   recurringOccurrenceId,
@@ -3618,6 +3619,25 @@ describe("recurring rules through the journal", () => {
     expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state).toEqual(snapshot.state);
     // A journal without rules promises the list, empty.
     expect(applyJournal(buildFixtureJournal()).state.recurringRules).toEqual([]);
+  });
+
+  it("hands the journal's tombstones to materialisation: a deleted occurrence is not written again", () => {
+    // The occurrence of 7 July was written and then deleted; the rule's watermark lost to an older
+    // edit of the rule, so by the watermark alone the day is open. The tombstone is final in the
+    // journal, and the day is passed over and reported instead of being written on this device alone.
+    nextOp += 1;
+    const deletion = parseOperation({ opId: opUuid(nextOp), deviceId: DEVICE_C, lamport: 970, entity: "transaction", action: "delete", targetId: FIRST });
+    const snapshot = applyJournal([...buildFixtureJournal(), rule(), occurrence(), deletion]);
+    expect(firstOf(snapshot)).toBeUndefined();
+    expect(ruleOf(snapshot)?.materializedThrough).toBeUndefined();
+    const deletedIds = new Set(
+      snapshot.entries.filter((entry) => entry.entity === "transaction" && entry.action === "delete").map((entry) => entry.targetId),
+    );
+    const result = materializeRecurring(snapshot.state, "2026-07-31", { deletedIds });
+    expect(result.created.map((item) => item.occurredOn)).toEqual(["2026-07-21"]);
+    expect(result.skipped).toEqual([{ ruleId: RULE, date: "2026-07-07", reason: "deleted" }]);
+    // And what one call writes always fits one batch of the journal.
+    expect(DEFAULT_MAX_OCCURRENCES_PER_CALL).toBeLessThan(MAX_BATCH_OPERATIONS);
   });
 
   it("writes one operation for a day two devices materialised offline", () => {

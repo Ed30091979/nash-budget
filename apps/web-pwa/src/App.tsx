@@ -572,7 +572,10 @@ export default function App() {
     const own: OwnAuthor = { deviceId: ownDeviceId, memberId: ownMemberId };
     return familyNewsSince(seenTransactionIds, budget, family.transactionAuthors, own);
   }, [budget, seenTransactionIds, family.transactionAuthors, ownDeviceId, ownMemberId]);
-  const familyNewsText = useMemo(() => familyNewsLines(familyNews, memberById), [familyNews, memberById]);
+  const familyNewsText = useMemo(
+    () => familyNewsLines(familyNews, memberById, budget ?? {}),
+    [familyNews, memberById, budget],
+  );
   // Новость увидена, когда человек ушёл с «Сегодня» или свернул приложение, пока она там стояла:
   // «прошлый раз» становится нынешним состоянием, и за тем же она не возвращается.
   const newsOnScreen = screen === "today" && familyNews.length > 0;

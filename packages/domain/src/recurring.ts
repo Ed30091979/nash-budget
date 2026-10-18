@@ -1,5 +1,5 @@
 import { indexState, validateTransactionReferences } from "./calculate.js";
-import { addDays, dayIndex, monthIndex, monthOfDate, shiftDate } from "./calendar.js";
+import { addDays, dayIndex, MAX_LOCAL_DATE, monthIndex, monthOfDate, shiftDate } from "./calendar.js";
 import { convertMinor, type RateIndex } from "./currency.js";
 import { documentIds, recurringOccurrenceId } from "./identity.js";
 import { MAX_MONEY_MINOR } from "./limits.js";
@@ -23,8 +23,25 @@ import type {
  * each of them once.
  */
 
-/** Why a day of a rule was passed over. Reported, never silent. */
-export type RecurringSkipReason = "missing_rate" | "archived_account" | "archived_category" | "limit";
+/**
+ * Why a day of a rule was passed over. Reported, never silent.
+ *
+ * - `missing_rate`, `limit` — the rule stops on that day, and the next call starts from it.
+ * - `archived_account`, `archived_category` — the family closed what the rule writes to; the day is
+ *   passed over for good.
+ * - `id_conflict` — another entity, not an operation, already holds the identifier the day's
+ *   occurrence is derived to: the day cannot be written without overwriting it, so it is passed over
+ *   for good rather than throwing on every device of the family.
+ * - `deleted` — the family deleted that occurrence (a tombstone of the journal): it is not written
+ *   again, whatever the watermark says.
+ */
+export type RecurringSkipReason =
+  | "missing_rate"
+  | "archived_account"
+  | "archived_category"
+  | "limit"
+  | "id_conflict"
+  | "deleted";
 
 export interface RecurringSkip {
   readonly ruleId: RecurringRuleId;
@@ -43,19 +60,71 @@ export interface RecurringMaterialization {
 export interface MaterializeOptions {
   /** How many occurrences one rule may write in one call; the rest waits for the next call. */
   readonly maxPerRule?: number;
+  /**
+   * How many occurrences one call may write in all, whatever the number of rules; the rest waits
+   * for the next call. Bounded because a call's occurrences travel as one batch of the journal and
+   * land in one document: three hundred daily rules from 1900 would otherwise be 120 000 operations
+   * in one call, past both the journal's batch and the backup's limit of operations.
+   */
+  readonly maxTotal?: number;
+  /**
+   * Identifiers the family has deleted — the journal's tombstones. A day whose derived identifier
+   * is among them is passed over (`deleted`) and never written again: a delete is final in the
+   * journal, and an occurrence written over its tombstone would show on this device alone.
+   */
+  readonly deletedIds?: ReadonlySet<StableId>;
 }
 
 /** The default bound of {@link MaterializeOptions.maxPerRule}: more than a year of daily occurrences. */
 export const DEFAULT_MAX_OCCURRENCES_PER_RULE = 400;
 
 /**
+ * The default bound of {@link MaterializeOptions.maxTotal}: far below the journal's batch of
+ * 100 000 operations and the backup's 50 000, and still a year of a family's regular payments.
+ */
+export const DEFAULT_MAX_OCCURRENCES_PER_CALL = 1_000;
+
+/**
  * The days a rule falls on after `after` and on or before `through`, within its own start and end,
- * in order, at most `limit` of them.
+ * in order, one at a time: nothing is computed beyond the day the caller stops at.
  *
  * Every occurrence is counted from the start date, never from the occurrence before it: a monthly
  * rule from 31 January falls on 28 February and then on 31 March, not on the 28th for ever after,
  * and a yearly one from 29 February falls on 28 February in a common year and on the 29th again in a
  * leap one. Days and weeks are plain day arithmetic.
+ */
+export function* occurrenceDays(
+  rule: Pick<RecurringRule, "frequency" | "interval" | "startDate" | "endDate">,
+  after: LocalDate,
+  through: LocalDate,
+): Generator<LocalDate, void, undefined> {
+  const last = rule.endDate !== undefined && rule.endDate < through ? rule.endDate : through;
+  if (last < rule.startDate || last <= after) return;
+  const start = dayIndex(rule.startDate, "startDate");
+  const afterIndex = dayIndex(after, "after");
+
+  if (rule.frequency === "daily" || rule.frequency === "weekly") {
+    const step = rule.interval * (rule.frequency === "weekly" ? 7 : 1);
+    // The first k whose day lies after `after`.
+    for (let k = Math.max(0, Math.floor((afterIndex - start) / step) + 1); ; k += 1) {
+      const date = addDays(rule.startDate, k * step);
+      if (date > last) return;
+      yield date;
+    }
+  }
+
+  const stepMonths = rule.interval * (rule.frequency === "yearly" ? 12 : 1);
+  // Start a step before the month of `after`, so a clipped day of that month is not missed.
+  const monthsAfter = monthIndex(monthOfDate(after), "after") - monthIndex(monthOfDate(rule.startDate), "startDate");
+  for (let k = Math.max(0, Math.floor(monthsAfter / stepMonths) - 1); ; k += 1) {
+    const date = shiftDate(rule.startDate, k * stepMonths);
+    if (date > last) return;
+    if (date > after) yield date;
+  }
+}
+
+/**
+ * The days of {@link occurrenceDays} as a list, at most `limit` of them.
  */
 export function occurrenceDates(
   rule: Pick<RecurringRule, "frequency" | "interval" | "startDate" | "endDate">,
@@ -63,32 +132,11 @@ export function occurrenceDates(
   through: LocalDate,
   limit = Number.MAX_SAFE_INTEGER,
 ): LocalDate[] {
-  const last = rule.endDate !== undefined && rule.endDate < through ? rule.endDate : through;
   const dates: LocalDate[] = [];
-  if (last < rule.startDate || last <= after) return dates;
-  const start = dayIndex(rule.startDate, "startDate");
-  const afterIndex = dayIndex(after, "after");
-
-  if (rule.frequency === "daily" || rule.frequency === "weekly") {
-    const step = rule.interval * (rule.frequency === "weekly" ? 7 : 1);
-    // The first k whose day lies after `after`.
-    let k = Math.max(0, Math.floor((afterIndex - start) / step) + 1);
-    for (; dates.length < limit; k += 1) {
-      const date = addDays(rule.startDate, k * step);
-      if (date > last) break;
-      dates.push(date);
-    }
-    return dates;
-  }
-
-  const stepMonths = rule.interval * (rule.frequency === "yearly" ? 12 : 1);
-  // Start a step before the month of `after`, so a clipped day of that month is not missed.
-  const monthsAfter = monthIndex(monthOfDate(after), "after") - monthIndex(monthOfDate(rule.startDate), "startDate");
-  let k = Math.max(0, Math.floor(monthsAfter / stepMonths) - 1);
-  for (; dates.length < limit; k += 1) {
-    const date = shiftDate(rule.startDate, k * stepMonths);
-    if (date > last) break;
-    if (date > after) dates.push(date);
+  if (dates.length >= limit) return dates;
+  for (const date of occurrenceDays(rule, after, through)) {
+    dates.push(date);
+    if (dates.length >= limit) break;
   }
   return dates;
 }
@@ -117,22 +165,30 @@ function snapshotFor(
 /**
  * Writes every occurrence of every active rule up to `through`, and moves each rule's watermark.
  *
- * For each rule the days are those after its watermark (or from its start) up to `through` and its
- * end. A day whose operation already exists — written by this device earlier or by another one — is
- * passed over, which is what makes the call idempotent. A day on an archived account or category is
- * passed over and reported, and the watermark moves past it: the family archived the account, and
- * writing into it later would be the app deciding otherwise.
+ * For each rule the days are those after its watermark (or from its start) up to `through`, its end
+ * and the last day the journal carries. A day whose operation already exists — written by this
+ * device earlier or by another one — is passed over, which is what makes the call idempotent. A day
+ * on an archived account or category is passed over and reported, and the watermark moves past it:
+ * the family archived the account, and writing into it later would be the app deciding otherwise.
+ * So is a day whose derived identifier another entity holds (`id_conflict`) or the family deleted
+ * (`deleted`, from {@link MaterializeOptions.deletedIds}): neither can ever be written, and neither
+ * may throw, because the state that holds it is every device's state.
  *
  * Two reasons stop a rule instead of passing a day over: a foreign occurrence with no usable rate
- * for its day (`missing_rate`), and the `maxPerRule` bound (`limit`). The watermark then stops on the
- * day before, so the next call — after a rate is entered, or simply the next one — writes the rest.
+ * for its day (`missing_rate`), and the bounds of one call (`limit`) — `maxPerRule` occurrences of
+ * one rule, `maxTotal` of all rules together. The watermark then stops on the day before, so the
+ * next call — after a rate is entered, or simply the next one — writes the rest. The days are
+ * produced one at a time and the watermark is the last day actually considered, so a stop never
+ * closes a day nobody looked at: days already written do not count toward the bound, and a rule
+ * whose first hundred days exist goes on past them to the days that do not.
+ *
  * Writing the occurrence without its value in the base currency is not an option: the budget counts
  * that value, and the rate of a later day would revalue the past.
  *
  * Every occurrence is posted, labelled with its rule, identified by `recurringOccurrenceId`, and in
- * a foreign currency carries the snapshot of its own day. The result is checked by the domain's own
- * rules before it is returned, and a derived identifier already taken by an entity that is not that
- * occurrence is refused rather than overwritten, as a carried-forward month refuses one.
+ * a foreign currency carries the snapshot of its own day. It carries no participant: the rule wrote
+ * it, not whichever device happened to materialise it. The result is checked by the domain's own
+ * rules before it is returned.
  */
 export function materializeRecurring(
   state: BudgetState,
@@ -141,8 +197,13 @@ export function materializeRecurring(
 ): RecurringMaterialization {
   const maxPerRule = options.maxPerRule ?? DEFAULT_MAX_OCCURRENCES_PER_RULE;
   if (!Number.isSafeInteger(maxPerRule) || maxPerRule < 1) throw new Error("maxPerRule must be a positive integer");
+  const maxTotal = options.maxTotal ?? DEFAULT_MAX_OCCURRENCES_PER_CALL;
+  if (!Number.isSafeInteger(maxTotal) || maxTotal < 1) throw new Error("maxTotal must be a positive integer");
   const index = indexState(state);
   dayIndex(through, "through");
+  // An occurrence past the last day the journal carries could not reach the family.
+  const horizon = through < MAX_LOCAL_DATE ? through : MAX_LOCAL_DATE;
+  const deleted = options.deletedIds ?? new Set<StableId>();
 
   const transactionIds = new Set<StableId>(state.transactions.map((item) => item.id));
   const otherIds = new Set<StableId>(documentIds(state).filter((id) => !transactionIds.has(id)));
@@ -154,21 +215,21 @@ export function materializeRecurring(
   for (const rule of index.recurringRules.values()) {
     if (!rule.active) continue;
     const closed = rule.materializedThrough ?? addDays(rule.startDate, -1);
-    const end = rule.endDate !== undefined && rule.endDate < through ? rule.endDate : through;
-    // One more day than the bound, to know whether the bound stopped the rule.
-    const dates = occurrenceDates(rule, closed, end, maxPerRule + 1);
+    const end = rule.endDate !== undefined && rule.endDate < horizon ? rule.endDate : horizon;
     let watermark = end;
     let written = 0;
 
-    for (const date of dates) {
-      if (written === maxPerRule) {
-        skipped.push({ ruleId: rule.id, date, reason: "limit" });
-        watermark = addDays(date, -1);
-        break;
-      }
+    for (const date of occurrenceDays(rule, closed, end)) {
       const id = recurringOccurrenceId(rule.id, date);
       if (transactionIds.has(id)) continue;
-      if (otherIds.has(id)) throw new Error(`derived occurrence identifier ${id} is already used`);
+      if (otherIds.has(id)) {
+        skipped.push({ ruleId: rule.id, date, reason: "id_conflict" });
+        continue;
+      }
+      if (deleted.has(id)) {
+        skipped.push({ ruleId: rule.id, date, reason: "deleted" });
+        continue;
+      }
 
       const template = rule.template;
       const accounts = template.kind === "transfer" ? [template.fromAccountId, template.toAccountId] : [template.accountId];
@@ -180,6 +241,11 @@ export function materializeRecurring(
       if (categoryId !== undefined && index.categories.get(categoryId)?.active === false) {
         skipped.push({ ruleId: rule.id, date, reason: "archived_category" });
         continue;
+      }
+      if (written === maxPerRule || created.length === maxTotal) {
+        skipped.push({ ruleId: rule.id, date, reason: "limit" });
+        watermark = addDays(date, -1);
+        break;
       }
 
       const labels = {
