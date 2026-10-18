@@ -20,7 +20,7 @@ import {
   type Operation,
   type TransactionFields,
 } from "../src/index.js";
-import { DEVICE_A, opUuid, SAMPLE_FIELDS, SAMPLE_TARGET_IDS, sampleTargetId, tagUuid, testUuid } from "./samples.js";
+import { DEVICE_A, opUuid, SAMPLE_FIELDS, SAMPLE_TARGET_IDS, sampleTargetId, tagUuid, testUuid, UPDATED_FIELDS } from "./samples.js";
 
 const ACCOUNT_OPERATION = {
   opId: opUuid(1),
@@ -917,5 +917,38 @@ describe("currencies on the wire", () => {
     };
     const operation = { ...(write("transaction", largest) as Record<string, unknown>), memberId: "w".repeat(128), targetId: "x".repeat(128) };
     expect(new TextEncoder().encode(encodeOperation(parseOperation(operation))).byteLength).toBeLessThan(MAX_OPERATION_BYTES);
+  });
+});
+
+describe("debts on the wire", () => {
+  function write(fields: unknown, targetId = sampleTargetId("debt")): unknown {
+    return { opId: opUuid(12), deviceId: DEVICE_A, lamport: 12, entity: "debt", action: "create", targetId, fields };
+  }
+
+  it("carries a debt through a round trip, and an absent due date stays absent", () => {
+    for (const fields of [SAMPLE_FIELDS.debt, UPDATED_FIELDS.debt, { ...SAMPLE_FIELDS.debt, currency: "USD", direction: "i_owe" }]) {
+      const operation = parseOperation(write(fields));
+      const decoded = decodeOperation(encodeOperation(operation));
+      expect(decoded.action === "create" ? decoded.fields : null).toEqual(fields);
+    }
+    const plain = parseOperation(write(SAMPLE_FIELDS.debt));
+    expect(plain.action === "create" && Object.hasOwn(plain.fields, "dueDate")).toBe(false);
+  });
+
+  it.each([
+    ["a counterparty with a soft hyphen", { ...SAMPLE_FIELDS.debt, counterparty: "Пе\u00adтя" }, /debt counterparty must be trimmed text without hidden characters/],
+    ["a counterparty longer than 80", { ...SAMPLE_FIELDS.debt, counterparty: "я".repeat(81) }, /debt counterparty must be at most 80 characters/],
+    ["a direction of its own", { ...SAMPLE_FIELDS.debt, direction: "lent" }, /debt direction has unknown value lent/],
+    ["a currency this build does not know", { ...SAMPLE_FIELDS.debt, currency: "XYZ" }, /debt currency must be a supported currency/],
+    ["a negative opening", { ...SAMPLE_FIELDS.debt, openingMinor: -1 }, /debt openingMinor must be at least 0/],
+    ["a due date past the calendar", { ...SAMPLE_FIELDS.debt, dueDate: "2200-01-01" }, /debt dueDate must be from 1900-01-01 to 2199-12-31/],
+    ["a debt without its flag", { counterparty: "Петя", direction: "i_owe", currency: "RUB", openingMinor: 0 }, /debt fields is missing field active/],
+    ["a debt with a field of its own", { ...SAMPLE_FIELDS.debt, interest: 5 }, /debt fields contains unknown field interest/],
+  ] as const)("refuses %s", (_name, fields, message) => {
+    expect(() => parseOperation(write(fields))).toThrow(message);
+  });
+
+  it("identifies a debt by a UUID", () => {
+    expect(() => parseOperation(write(SAMPLE_FIELDS.debt, "debt-petya"))).toThrow(/operation targetId must be a UUID/);
   });
 });

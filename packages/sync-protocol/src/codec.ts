@@ -1,4 +1,5 @@
 import {
+  COUNTERPARTY_MAX_LENGTH,
   HOUSEHOLD_ID,
   isDisplayKey,
   isStorableLabel,
@@ -23,6 +24,7 @@ import type {
   BudgetFields,
   BudgetLineFields,
   CategoryFields,
+  DebtFields,
   EntityKind,
   ExchangeRateFields,
   GoalFields,
@@ -130,6 +132,7 @@ const SCHEDULE_MODES = ["monthly", "selected_months"] as const;
 const TRANSACTION_STATUSES = ["posted", "pending", "draft"] as const;
 const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution"] as const;
 const MEMBER_ROLES = ["owner", "member"] as const;
+const DEBT_DIRECTIONS = ["i_owe", "owed_to_me"] as const;
 
 /** Every rejection raised by the protocol, so callers can tell a bad envelope from a bug. */
 export class SyncProtocolError extends Error {
@@ -435,7 +438,7 @@ function parseEntityUuid(value: unknown, label: string): string {
 }
 
 /** Entity kinds whose identifiers are UUIDs on the wire. See {@link parseEntityUuid}. */
-const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate"]);
+const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate", "debt"]);
 
 /**
  * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice,
@@ -812,6 +815,25 @@ function parseExchangeRateFields(value: unknown): ExchangeRateFields {
   };
 }
 
+/**
+ * A debt: who it is with (a stored label of up to {@link COUNTERPARTY_MAX_LENGTH}), which way it
+ * runs, its currency and its opening amount from zero up. The due date is optional and absent stays
+ * absent.
+ */
+function parseDebtFields(value: unknown): DebtFields {
+  const label = "debt fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["counterparty", "direction", "currency", "openingMinor", "active"], ["dueDate"], label);
+  return {
+    counterparty: readLabel(record, "counterparty", "debt counterparty", COUNTERPARTY_MAX_LENGTH),
+    direction: readEnum(record, "direction", DEBT_DIRECTIONS, "debt direction"),
+    currency: readCurrency(record, "currency", "debt currency"),
+    openingMinor: readMinor(record, "openingMinor", "debt openingMinor", 0),
+    ...(record.dueDate === undefined ? {} : { dueDate: readLocalDate(record, "dueDate", "debt dueDate") }),
+    active: readBoolean(record, "active", "debt active"),
+  };
+}
+
 function parseHouseholdFields(value: unknown): HouseholdFields {
   const label = "household fields";
   const record = requireRecord(value, label);
@@ -851,6 +873,8 @@ function parseWrite(
       return { ...header, entity, action, targetId, fields: parseExchangeRateFields(fields) };
     case "household":
       return { ...header, entity, action, targetId, fields: parseHouseholdFields(fields) };
+    case "debt":
+      return { ...header, entity, action, targetId, fields: parseDebtFields(fields) };
   }
 }
 

@@ -22,6 +22,7 @@ import type {
   BudgetLine,
   BudgetState,
   Category,
+  Debt,
   ExchangeRate,
   Goal,
   Household,
@@ -102,6 +103,18 @@ function exchangeRateFields(rate: ExchangeRate): Record<string, unknown> {
 
 function householdFields(household: Household): Record<string, unknown> {
   return { baseCurrency: household.baseCurrency };
+}
+
+/** Срок долга необязателен, и отсутствующий остаётся отсутствующим. */
+function debtFields(debt: Debt): Record<string, unknown> {
+  return defined({
+    counterparty: debt.counterparty,
+    direction: debt.direction,
+    currency: debt.currency,
+    openingMinor: debt.openingMinor,
+    dueDate: debt.dueDate,
+    active: debt.active,
+  });
 }
 
 /**
@@ -275,6 +288,7 @@ export function budgetEntityRows(state: BudgetState): ReadonlyMap<string, Entity
   for (const tag of state.tags ?? []) add("tag", tag.id, tagFields(tag));
   if (state.household !== undefined) add("household", state.household.id, householdFields(state.household));
   for (const rate of state.exchangeRates ?? []) add("exchangeRate", rate.id, exchangeRateFields(rate));
+  for (const debt of state.debts ?? []) add("debt", debt.id, debtFields(debt));
   for (const account of state.accounts) add("account", account.id, accountFields(account));
   for (const category of state.categories) add("category", category.id, categoryFields(category));
   for (const budget of state.budgets) {

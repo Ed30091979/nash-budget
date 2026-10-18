@@ -55,6 +55,15 @@ export {
   RATE_PART_MIN,
   SUPPORTED_CURRENCIES,
 } from "./currency.js";
+export {
+  archiveDebt,
+  calculateDebts,
+  createDebt,
+  DebtValidationError,
+  deleteDebt,
+  normalizeCounterparty,
+} from "./debts.js";
+export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
 export { carriedId, documentIds, HOUSEHOLD_ID, isUuid } from "./identity.js";
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
 export {
@@ -85,6 +94,7 @@ export {
 } from "./stored-text.js";
 export type { CodePointRange } from "./stored-text.js";
 export {
+  COUNTERPARTY_MAX_LENGTH,
   DISPLAY_KEY_MAX_LENGTH,
   isDisplayKey,
   isNormalizedLabel,

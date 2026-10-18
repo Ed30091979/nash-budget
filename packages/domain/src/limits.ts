@@ -40,4 +40,5 @@ export const COLLECTION_LIMITS = {
   members: 100,
   tags: 500,
   exchangeRates: 10_000,
+  debts: 500,
 } as const;

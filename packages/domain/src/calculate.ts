@@ -13,6 +13,7 @@ import type {
   CategoryId,
   CategoryMetrics,
   CurrencyCode,
+  Debt,
   ExchangeRate,
   ExpenseShareMetrics,
   FormatMinorOptions,
@@ -52,6 +53,7 @@ import { HOUSEHOLD_ID } from "./identity.js";
 import { MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
 import { isStorableLabel, isStorableNote } from "./stored-text.js";
 import {
+  COUNTERPARTY_MAX_LENGTH,
   isDisplayKey,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
@@ -172,6 +174,7 @@ export interface StateIndex {
   readonly transactions: ReadonlyMap<StableId, Transaction>;
   readonly tags: ReadonlyMap<TagId, Tag>;
   readonly exchangeRates: ReadonlyMap<StableId, ExchangeRate>;
+  readonly debts: ReadonlyMap<StableId, Debt>;
   /** The currency every budget figure is counted in: the household's, or roubles. */
   readonly baseCurrency: CurrencyCode;
 }
@@ -187,12 +190,33 @@ export function indexState(state: BudgetState): StateIndex {
     transactions: indexById(state.transactions, "transactions"),
     tags: indexById(state.tags ?? [], "tags"),
     exchangeRates: indexById(state.exchangeRates ?? [], "exchangeRates"),
+    debts: indexById(state.debts ?? [], "debts"),
     baseCurrency: baseCurrencyOf(state),
   };
   for (const tag of index.tags.values()) validateTag(tag);
   if (state.household !== undefined) validateHousehold(state.household);
   for (const rate of index.exchangeRates.values()) validateExchangeRate(rate);
+  for (const debt of index.debts.values()) validateDebt(debt);
   return index;
+}
+
+/**
+ * A debt, by the rules of every field added since the journal existed: a stored label for the
+ * counterparty, a direction of the two, a supported currency, an opening amount from zero to the
+ * field ceiling and a due date inside the window.
+ */
+function validateDebt(debt: Debt): void {
+  if (!isStorableLabel(debt.counterparty, COUNTERPARTY_MAX_LENGTH)) {
+    throw new Error(`debt ${debt.id} counterparty must be stored text of at most ${COUNTERPARTY_MAX_LENGTH} characters`);
+  }
+  assertEnum(debt.direction, ["i_owe", "owed_to_me"], `debt ${debt.id} direction`);
+  if (!isSupportedCurrency(debt.currency)) {
+    throw new Error(`debt ${debt.id} currency has unknown value ${String(debt.currency)}`);
+  }
+  assertNonNegativeMinor(debt.openingMinor, `debt ${debt.id} openingMinor`);
+  if (debt.openingMinor > MAX_MONEY_MINOR) throw new Error(`debt ${debt.id} openingMinor must be at most ${MAX_MONEY_MINOR}`);
+  if (debt.dueDate !== undefined) assertWindowDate(debt.dueDate, `debt ${debt.id} dueDate`);
+  if (typeof debt.active !== "boolean") throw new Error(`debt ${debt.id} active must be a boolean`);
 }
 
 function validateHousehold(household: Household): void {
@@ -500,7 +524,12 @@ function validateTransferAmounts(
   assertFieldMinor(transaction.toAmountMinor, `transaction ${id} toAmountMinor`);
 }
 
-function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
+/**
+ * Every reference and label of one transaction, against the whole index. Exported for the metrics
+ * that live in modules of their own (`debts.ts`, `holdings.ts`), so they refuse exactly what the
+ * budget refuses; not part of the package's public surface.
+ */
+export function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
   const { accounts, categories, goals, transactions, baseCurrency } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
   assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);

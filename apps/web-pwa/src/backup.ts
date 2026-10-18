@@ -4,6 +4,7 @@ import {
   calculateBudget,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
+  COUNTERPARTY_MAX_LENGTH,
   HOUSEHOLD_ID,
   isExchangeRateValue,
   isSupportedCurrency,
@@ -45,6 +46,8 @@ export const BACKUP_LIMITS = {
   textLength: 500,
   tags: COLLECTION_LIMITS.tags,
   exchangeRates: COLLECTION_LIMITS.exchangeRates,
+  debts: COLLECTION_LIMITS.debts,
+  counterpartyLength: COUNTERPARTY_MAX_LENGTH,
   tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
   tagNameLength: TAG_NAME_MAX_LENGTH,
 } as const;
@@ -241,6 +244,7 @@ function validateBudgetStateUuids(state: BudgetState): void {
   requireUuid(state.activeBudgetId, "activeBudgetId");
   if (state.household !== undefined) requireUuid(state.household.id, "household.id");
   state.exchangeRates?.forEach((item, index) => requireUuid(item.id, `exchangeRates[${index}].id`));
+  state.debts?.forEach((item, index) => requireUuid(item.id, `debts[${index}].id`));
   state.members?.forEach((item, index) => requireUuid(item.id, `members[${index}].id`));
   state.tags?.forEach((item, index) => requireUuid(item.id, `tags[${index}].id`));
   state.accounts.forEach((item, index) => requireUuid(item.id, `accounts[${index}].id`));
@@ -323,6 +327,25 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
       if (currency === base) throw new Error(`exchangeRates[${index}]: курс валюты к ней самой.`);
       requireWindowDate(rate.date, `exchangeRates[${index}].date`);
       requireRate(rate.rate, `exchangeRates[${index}].rate`);
+    });
+  }
+
+  // Absent in every copy written before debts existed, exactly like the participants above.
+  if (state.debts !== undefined) {
+    requireArray(state.debts, "debts", grown(BACKUP_LIMITS.debts)).forEach((item, index) => {
+      const debt = requireRecord(item, `debts[${index}]`);
+      requireString(debt.id, `debts[${index}].id`, true, BACKUP_LIMITS.idLength);
+      const counterparty = requireString(debt.counterparty, `debts[${index}].counterparty`, true, BACKUP_LIMITS.counterpartyLength);
+      if (!isStorableLabel(counterparty, COUNTERPARTY_MAX_LENGTH)) {
+        throw new Error(`debts[${index}].counterparty: имя с лишними пробелами или служебными символами.`);
+      }
+      requireEnum(debt.direction, ["i_owe", "owed_to_me"], `debts[${index}].direction`);
+      requireCurrency(debt.currency, `debts[${index}].currency`);
+      if (typeof debt.openingMinor !== "number" || !Number.isSafeInteger(debt.openingMinor) || debt.openingMinor < 0 || debt.openingMinor > MAX_MONEY_MINOR) {
+        throw new Error(`debts[${index}].openingMinor: сумма от 0 до ${MAX_MONEY_MINOR} minor units.`);
+      }
+      if (debt.dueDate !== undefined) requireWindowDate(debt.dueDate, `debts[${index}].dueDate`);
+      requireBoolean(debt.active, `debts[${index}].active`);
     });
   }
 

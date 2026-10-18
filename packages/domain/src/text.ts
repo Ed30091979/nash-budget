@@ -19,6 +19,8 @@ import type { DisplayKey } from "./types.js";
 /** A note on an operation: one line, at most this many UTF-16 units — the backup's text limit. */
 export const NOTE_MAX_LENGTH = 500;
 export const TAG_NAME_MAX_LENGTH = 40;
+/** The name of whoever a debt is with. */
+export const COUNTERPARTY_MAX_LENGTH = 80;
 export const MAX_TAGS_PER_TRANSACTION = 10;
 export const DISPLAY_KEY_MAX_LENGTH = 40;
 

@@ -6,6 +6,7 @@ import type {
   BudgetLine,
   BudgetState,
   Category,
+  Debt,
   ExchangeRate,
   Goal,
   Household,
@@ -38,10 +39,10 @@ export type OpId = string;
  * that binds.
  */
 export type { Member, MemberId, MemberRole, Tag, TagId };
-export type { ExchangeRate, Household };
+export type { Debt, ExchangeRate, Household };
 
 /**
- * A {@link BudgetState} whose participants, tags and exchange rates are always present.
+ * A {@link BudgetState} whose participants, tags, exchange rates and debts are always present.
  *
  * Not redundant now that the domain carries them itself: the domain declares them optional,
  * because every backup and every budget written before they existed omits them and stays valid.
@@ -54,6 +55,7 @@ export interface SyncedBudgetState extends BudgetState {
   readonly members: readonly Member[];
   readonly tags: readonly Tag[];
   readonly exchangeRates: readonly ExchangeRate[];
+  readonly debts: readonly Debt[];
 }
 
 /** Omit that keeps a discriminated union discriminated. */
@@ -76,6 +78,7 @@ export type TagFields = Omit<Tag, "id">;
 export type ExchangeRateFields = Omit<ExchangeRate, "id">;
 /** The household is always written under `HOUSEHOLD_ID`, so its fields are all there is to it. */
 export type HouseholdFields = Omit<Household, "id">;
+export type DebtFields = Omit<Debt, "id">;
 
 export interface EntityFieldsByKind {
   readonly account: AccountFields;
@@ -90,6 +93,7 @@ export interface EntityFieldsByKind {
   readonly tag: TagFields;
   readonly exchangeRate: ExchangeRateFields;
   readonly household: HouseholdFields;
+  readonly debt: DebtFields;
 }
 
 export type EntityKind = keyof EntityFieldsByKind;
@@ -110,6 +114,7 @@ export const ENTITY_KINDS = [
   "tag",
   "exchangeRate",
   "household",
+  "debt",
 ] as const satisfies readonly EntityKind[];
 
 export const OPERATION_ACTIONS = ["create", "update", "delete", "activate"] as const;
@@ -219,8 +224,8 @@ export const JOURNAL_PROBLEM_CODES = [
    */
   "implausible_lamport",
   /**
-   * The state holds more entities of one kind than a document may — more participants, tags or
-   * exchange rates than `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
+   * The state holds more entities of one kind than a document may — more participants, tags,
+   * exchange rates or debts than `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
    * together, and no one of them did anything wrong, so nothing is withheld and the state stays
    * ready; the entity names the kind, the identifier is empty. A backup of such a state is refused
    * until the family brings the count down.

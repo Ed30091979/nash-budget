@@ -205,6 +205,7 @@ const ENTITY_LABELS = {
   tag: "Метка",
   exchangeRate: "Курс валюты",
   household: "Хозяйство",
+  debt: "Долг",
 } as const satisfies Readonly<Record<WithheldEntity["entity"], string>>;
 
 const WITHHOLDING_LABELS = {

@@ -10,6 +10,7 @@ import {
   PLANNING_IDS,
   TAG_NAME_MAX_LENGTH,
   type BudgetState,
+  type Debt,
   type Member,
   type Tag,
   type Transaction,
@@ -1090,5 +1091,46 @@ describe("валюты в резервной копии", () => {
     expect(BACKUP_LIMITS.exchangeRates).toBe(COLLECTION_LIMITS.exchangeRates);
     expect(prepareBudgetState(many)).toEqual(many);
     expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`exchangeRates: допускается не более ${BACKUP_LIMITS.exchangeRates} элементов`);
+  });
+});
+
+describe("долги в резервной копии", () => {
+  const PETYA = "c7777777-7777-4777-8777-777777777771";
+  const indebted = (change: Record<string, unknown> = {}): BudgetState => ({
+    ...makePlanningSeed(),
+    // Чужой файл: в поле может оказаться что угодно, поэтому запись приводится к типу, а не собирается по нему.
+    debts: [{ id: PETYA, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, active: true, ...change } as Debt],
+  });
+
+  it("восстанавливает долг байт в байт, а копия без долгов их не приобретает", async () => {
+    const state = indebted({ dueDate: "2026-12-31", currency: "USD", direction: "i_owe" });
+    expect(parseAndValidateBudgetBackup(serializeBackup(state))).toEqual(state);
+    const exported = await createBudgetBackup(state, vi.fn(async () => undefined));
+    expect(parseAndValidateBudgetBackup(exported.text)).toEqual(state);
+    expect("debts" in parseAndValidateBudgetBackup(serializeBackup(makePlanningSeed()))).toBe(false);
+  });
+
+  it.each([
+    ["имя с пробелом", { counterparty: "Петя " }, /debts\[0\]\.counterparty: имя с лишними пробелами/u],
+    ["имя длиннее 80", { counterparty: "я".repeat(81) }, /debts\[0\]\.counterparty: строка длиннее 80/u],
+    ["чужое направление", { direction: "lent" }, /debts\[0\]\.direction: недопустимое значение/u],
+    ["неизвестная валюта", { currency: "XYZ" }, /debts\[0\]\.currency: недопустимое значение/u],
+    ["отрицательная сумма", { openingMinor: -1 }, /debts\[0\]\.openingMinor: сумма от 0/u],
+    ["срок за окном журнала", { dueDate: "2200-01-01" }, /debts\[0\]\.dueDate: дата вне диапазона/u],
+    ["признак строкой", { active: "yes" }, /debts\[0\]\.active: ожидалось логическое значение/u],
+    ["не UUID", { id: "debt-1" }, /debts\[0\]\.id: некорректный UUID/u],
+  ] as const)("отклоняет копию: %s", (_name, change, expected) => {
+    expect(() => prepareBudgetState(indebted(change))).toThrow(expected);
+  });
+
+  it("ограничивает число долгов в файле, но не в документе", () => {
+    const debts = Array.from({ length: BACKUP_LIMITS.debts + 1 }, (_, index) => ({
+      id: `c7000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      counterparty: `Сосед ${index}`, direction: "owed_to_me" as const, currency: "RUB", openingMinor: 0, active: true,
+    }));
+    const many: BudgetState = { ...makePlanningSeed(), debts };
+    expect(BACKUP_LIMITS.debts).toBe(COLLECTION_LIMITS.debts);
+    expect(prepareBudgetState(many)).toEqual(many);
+    expect(() => prepareBudgetState(many, undefined, "file")).toThrow(`debts: допускается не более ${BACKUP_LIMITS.debts} элементов`);
   });
 });

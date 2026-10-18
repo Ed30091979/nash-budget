@@ -82,6 +82,14 @@ function dollars(state: BudgetState, expense: Record<string, unknown> = {}, rate
   };
 }
 
+/** Долг шага 10 с правкой поверх. */
+function indebted(state: BudgetState, change: Record<string, unknown> = {}): unknown {
+  return {
+    ...state,
+    debts: [{ id: "c7777777-7777-4777-8777-777777777771", counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, active: true, ...change }],
+  };
+}
+
 /** Краевые значения: по обе стороны каждой границы и то, что граница должна отвергнуть. */
 const MUTATIONS: readonly Mutation[] = [
   ...[0, 1, -1, MAX_SORT_ORDER, -MAX_SORT_ORDER, MAX_SORT_ORDER + 1, -MAX_SORT_ORDER - 1, Number.MAX_SAFE_INTEGER, 1.5]
@@ -113,6 +121,14 @@ const MUTATIONS: readonly Mutation[] = [
     .map((date): Mutation => [`exchange rate date ${date}`, (state) => dollars(state, {}, { date })]),
   ...["RUB", "EUR", "XYZ", "rub"].map((baseCurrency): Mutation => [`snapshot baseCurrency ${baseCurrency}`, (state) => dollars(state, { baseCurrency })]),
   ...["USD", "JPY", "KWD", "XYZ"].map((currency): Mutation => [`exchange rate currency ${currency}`, (state) => dollars(state, {}, { currency })]),
+  ["debt", (state) => indebted(state)],
+  ...["Петя", "я".repeat(80), "я".repeat(81), " Петя", "Петя Smith", "Пе\u00adтя", "???"]
+    .map((counterparty): Mutation => [`debt.counterparty ${JSON.stringify(counterparty)}`, (state) => indebted(state, { counterparty })]),
+  ...[0, MAX_MONEY_MINOR, MAX_MONEY_MINOR + 1, -1]
+    .map((openingMinor): Mutation => [`debt.openingMinor ${openingMinor}`, (state) => indebted(state, { openingMinor })]),
+  ...[MIN_LOCAL_DATE, MAX_LOCAL_DATE, "2200-01-01", "1899-12-31"]
+    .map((dueDate): Mutation => [`debt.dueDate ${dueDate}`, (state) => indebted(state, { dueDate })]),
+  ...["USD", "XYZ"].map((currency): Mutation => [`debt.currency ${currency}`, (state) => indebted(state, { currency })]),
 ];
 
 describe("шлюз копии и журнал семьи", () => {

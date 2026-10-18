@@ -11,6 +11,7 @@ export type MemberId = StableId;
 export type TagId = StableId;
 export type RecurringRuleId = StableId;
 export type ExchangeRateId = StableId;
+export type DebtId = StableId;
 export type HouseholdId = StableId;
 /** An ISO 4217 code, and only one of `SUPPORTED_CURRENCIES` in `currency.ts`. */
 export type CurrencyCode = string;
@@ -169,6 +170,32 @@ export interface Goal {
 export interface Tag {
   readonly id: TagId;
   readonly name: string;
+  readonly active: boolean;
+}
+
+/** Who owes whom: the family owes the counterparty, or the counterparty owes the family. */
+export type DebtDirection = "i_owe" | "owed_to_me";
+
+/**
+ * Money lent or borrowed: «Петя должен мне», «я должен Сергею».
+ *
+ * A debt is a balance of its own, outside the budget: lending is not an expense and borrowing is not
+ * an income (rule 4 of `contracts/README.md`), so no figure of `BudgetMetrics` reads a debt. What a
+ * debt is worth is a metric of its own, `calculateDebts`. The direction gives the operations on the
+ * debt their meaning, so it does not change once operations are written against it.
+ */
+export interface Debt {
+  readonly id: DebtId;
+  /** Who the debt is with, as the family calls them: a label, at most 80 characters. */
+  readonly counterparty: string;
+  readonly direction: DebtDirection;
+  /** The debt is counted in this currency; any supported one, the base or not. */
+  readonly currency: CurrencyCode;
+  /** What was owed when the debt was entered, before any operation, in the debt's currency; ≥ 0. */
+  readonly openingMinor: MinorUnits;
+  /** When it is due. Optional; a debt past it with something still owed is overdue. */
+  readonly dueDate?: LocalDate;
+  /** An archived debt is no longer offered for new operations and still counts in every total. */
   readonly active: boolean;
 }
 
@@ -343,6 +370,8 @@ export interface BudgetState {
   readonly household?: Household;
   /** Absent in every budget written before rates existed, exactly like `members`. */
   readonly exchangeRates?: readonly ExchangeRate[];
+  /** Absent in every budget written before debts existed, exactly like `members`. */
+  readonly debts?: readonly Debt[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];
@@ -417,6 +446,43 @@ export interface MemberExpenseBreakdown {
   readonly byMember: Readonly<Record<MemberId, MemberExpenseMetrics>>;
   /** Everything posted without a memberId, including every pre-member operation. */
   readonly unattributed: ExpenseShareMetrics;
+}
+
+/** One debt as it stands on a day. */
+export interface DebtBalanceMetrics {
+  readonly debtId: DebtId;
+  readonly direction: DebtDirection;
+  readonly currency: CurrencyCode;
+  /** Posted money that left an account for this debt up to the day, in the debt's currency. */
+  readonly outMinor: MinorUnits;
+  /** Posted money that came to an account from this debt up to the day, in the debt's currency. */
+  readonly inMinor: MinorUnits;
+  /** owed_to_me: opening + out − in; i_owe: opening + in − out. Below zero is an overpayment. */
+  readonly balanceMinor: MinorUnits;
+  /** The balance in the base currency at the latest rate on or before the day; null without one. */
+  readonly balanceInBaseMinor: MinorUnits | null;
+  /** Past its due date with something still owed. */
+  readonly overdue: boolean;
+}
+
+/**
+ * Every debt of the household on a day, archived ones included. A standalone metric, like the split
+ * by participant: no figure of {@link BudgetMetrics} reads a debt.
+ */
+export interface DebtMetrics {
+  readonly asOf: LocalDate;
+  readonly baseCurrency: CurrencyCode;
+  /** Declaration order of state.debts. */
+  readonly debts: readonly DebtBalanceMetrics[];
+  readonly byDebt: Readonly<Record<DebtId, DebtBalanceMetrics>>;
+  /** What others owe the family, in the base currency: the valued owed_to_me balances, summed. */
+  readonly receivableInBaseMinor: MinorUnits;
+  /** What the family owes others, in the base currency: the valued i_owe balances, summed. */
+  readonly payableInBaseMinor: MinorUnits;
+  /** receivable − payable. */
+  readonly netInBaseMinor: MinorUnits;
+  /** Debts whose balance could not be valued in the base currency: no rate, or too large a sum. */
+  readonly unvaluedDebtIds: readonly DebtId[];
 }
 
 export type AnnualCommitmentStatus = "funded" | "on_track" | "due_soon" | "overdue";

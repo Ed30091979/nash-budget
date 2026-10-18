@@ -1,6 +1,7 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateDebts,
   calculateMemberExpenses,
   COLLECTION_LIMITS,
   HOUSEHOLD_ID,
@@ -273,6 +274,8 @@ function entityIds(state: SyncedBudgetState, entity: EntityKind): string[] {
       return state.exchangeRates.map((item) => item.id);
     case "household":
       return state.household === undefined ? [] : [state.household.id];
+    case "debt":
+      return state.debts.map((item) => item.id);
   }
 }
 
@@ -295,6 +298,7 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
         state.members,
         state.tags,
         state.exchangeRates,
+        state.debts,
       ];
       return collections.flat().find((item) => item.id === targetId);
     }
@@ -319,6 +323,7 @@ const SEED_PARENTS: { readonly [K in EntityKind]: readonly ("account" | "categor
   tag: [],
   exchangeRate: [],
   household: [],
+  debt: [],
 };
 
 const SEED_TARGET = { account: SEED_ACCOUNT_ID, category: SEED_CATEGORY_ID, budget: SEED_BUDGET_ID } as const;
@@ -3116,7 +3121,7 @@ describe("tags and labels through the journal", () => {
     expect(ENTITY_KINDS.slice(0, 9)).toEqual([
       "account", "category", "budget", "budgetLine", "goal", "annualCommitment", "scheduledExpense", "transaction", "member",
     ]);
-    expect(ENTITY_KINDS.slice(9, 12)).toEqual(["tag", "exchangeRate", "household"]);
+    expect(ENTITY_KINDS.slice(9, 13)).toEqual(["tag", "exchangeRate", "household", "debt"]);
   });
 
   it("carries tags and a note across devices and through storage, without moving the money", () => {
@@ -3441,5 +3446,34 @@ describe("several currencies through the journal", () => {
     expect(deleted.state.exchangeRates).toEqual([]);
     expect(deleted.integrity).toEqual({ ready: true, problems: [], withheld: [] });
     expect(calculateBudget(deleted.state)).toEqual(calculateBudget(applyJournal(journal).state));
+  });
+});
+
+describe("debts through the journal", () => {
+  const PETYA = "7d000000-0000-4000-8000-0000000000d1";
+
+  function debt(lamport: number, fields: Record<string, unknown> = SAMPLE_FIELDS.debt, action: "create" | "update" = "create"): Operation {
+    return parseOperation({ opId: opUuid(60_000 + lamport), deviceId: DEVICE_B, lamport, entity: "debt", action, targetId: PETYA, fields });
+  }
+
+  it("carries a debt into the state without moving a kopeck of the budget", () => {
+    const journal = buildFixtureJournal();
+    const snapshot = applyJournal([...journal, debt(950)]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.debts).toEqual([{ id: PETYA, ...SAMPLE_FIELDS.debt }]);
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(applyJournal(journal).state));
+    expect(calculateDebts(snapshot.state, "2026-07-31").receivableInBaseMinor).toBe(300_000);
+    expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state.debts).toEqual(snapshot.state.debts);
+  });
+
+  it("reports more debts than a document may hold, and shows all of them", () => {
+    const debts = Array.from({ length: COLLECTION_LIMITS.debts + 1 }, (_, index) => parseOperation({
+      opId: opUuid(61_000 + index), deviceId: DEVICE_B, lamport: 1_000 + index, entity: "debt", action: "create",
+      targetId: testUuid(0x7d1, index), fields: { ...SAMPLE_FIELDS.debt, counterparty: `Сосед ${index}` },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...debts]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "debt", id: "" }]);
+    expect(snapshot.state.debts).toHaveLength(COLLECTION_LIMITS.debts + 1);
   });
 });

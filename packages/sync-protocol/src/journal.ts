@@ -6,6 +6,7 @@ import type {
   BudgetLine,
   Category,
   CurrencyCode,
+  Debt,
   ExchangeRate,
   Goal,
   Household,
@@ -493,6 +494,7 @@ interface LiveEntities {
   readonly exchangeRates: Map<StableId, ExchangeRate>;
   /** At most one entry, under `HOUSEHOLD_ID`: the codec refuses any other target. */
   readonly households: Map<StableId, Household>;
+  readonly debts: Map<StableId, Debt>;
 }
 
 function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
@@ -509,6 +511,7 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
     tags: new Map(),
     exchangeRates: new Map(),
     households: new Map(),
+    debts: new Map(),
   };
 
   for (const entry of ordered) {
@@ -552,6 +555,9 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
       case "household":
         live.households.set(entry.targetId, { id: entry.targetId, ...entry.fields });
         break;
+      case "debt":
+        live.debts.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
     }
   }
 
@@ -572,6 +578,7 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
     ["tag", live.tags],
     ["exchangeRate", live.exchangeRates],
     ["household", live.households],
+    ["debt", live.debts],
   ];
 }
 
@@ -1069,8 +1076,8 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 }
 
 /**
- * Says out loud that the state holds more participants, tags or exchange rates than a document
- * may. Withholds nothing.
+ * Says out loud that the state holds more participants, tags, exchange rates or debts than a
+ * document may. Withholds nothing.
  *
  * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
  * stays under it when it creates. Several devices creating offline can still pass it together, and
@@ -1082,6 +1089,7 @@ function reportCollectionLimits(live: LiveEntities, report: (problem: JournalPro
   if (live.members.size > COLLECTION_LIMITS.members) report(problem("collection_limit", "member", ""));
   if (live.tags.size > COLLECTION_LIMITS.tags) report(problem("collection_limit", "tag", ""));
   if (live.exchangeRates.size > COLLECTION_LIMITS.exchangeRates) report(problem("collection_limit", "exchangeRate", ""));
+  if (live.debts.size > COLLECTION_LIMITS.debts) report(problem("collection_limit", "debt", ""));
 }
 
 /**
@@ -1304,6 +1312,7 @@ function buildView(
     members: [...live.members.values()],
     tags: [...live.tags.values()],
     exchangeRates: [...live.exchangeRates.values()],
+    debts: [...live.debts.values()],
     // Absent stays absent: a journal without a household is counted in roubles, like a backup.
     ...(live.households.has(HOUSEHOLD_ID) ? { household: live.households.get(HOUSEHOLD_ID)! } : {}),
   };

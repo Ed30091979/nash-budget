@@ -88,6 +88,7 @@ export const SAMPLE_FIELDS: FieldsSample = {
   tag: { name: "Отпуск", active: true },
   exchangeRate: { currency: "USD", baseCurrency: "RUB", date: "2026-07-31", rate: { baseMinor: 9_000, quoteMinor: 100 } },
   household: { baseCurrency: "RUB" },
+  debt: { counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 300_000, active: true },
 };
 
 /** The same entities after one edit each, used to prove that update replaces the winner. */
@@ -104,13 +105,14 @@ export const UPDATED_FIELDS: FieldsSample = {
   tag: { ...SAMPLE_FIELDS.tag, name: "Отпуск 2027", active: false },
   exchangeRate: { ...SAMPLE_FIELDS.exchangeRate, rate: { baseMinor: 9_250, quoteMinor: 100 } },
   household: { baseCurrency: "EUR" },
+  debt: { ...SAMPLE_FIELDS.debt, openingMinor: 250_000, dueDate: "2026-12-31", active: false },
 };
 
 /**
  * Kinds whose identifiers the codec demands as UUIDs: the kinds of wave 1, which have no history of
  * readable names. The older kinds keep the readable identifiers their tests always used.
  */
-const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate"];
+const UUID_KINDS: readonly EntityKind[] = ["tag", "exchangeRate", "debt"];
 
 /**
  * A target identifier for `entity`, readable where the codec allows it: `${entity}-${name}` for the

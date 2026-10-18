@@ -114,6 +114,7 @@ export function documentIds(state: BudgetState): StableId[] {
     ...(state.tags ?? []).map((item) => item.id),
     ...(state.household === undefined ? [] : [state.household.id]),
     ...(state.exchangeRates ?? []).map((item) => item.id),
+    ...(state.debts ?? []).map((item) => item.id),
     ...state.accounts.map((item) => item.id),
     ...state.categories.map((item) => item.id),
     ...state.budgets.flatMap((item) => [item.id, ...item.lines.map((line) => line.id)]),
