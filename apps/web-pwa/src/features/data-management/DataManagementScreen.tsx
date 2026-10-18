@@ -34,6 +34,8 @@ import {
 export interface CreatedBackup {
   readonly text: string;
   readonly createdAt: string;
+  /** Копию эта сборка не восстановит — и почему; `null` или нет поля, когда восстановит. */
+  readonly restoreWarning?: string | null;
 }
 
 export interface DataManagementScreenProps {
@@ -123,7 +125,12 @@ export function DataManagementScreen({
           onRecordSuccessfulBackup,
         );
         setLastBackupAt(createdAt);
-        dispatch({ type: "succeed", message: "Резервная копия JSON скачана." });
+        // Копия за пределом восстановления записана целиком, и сказать это надо сейчас, а не при
+        // попытке восстановить её.
+        dispatch({
+          type: "succeed",
+          message: result.restoreWarning ? `Резервная копия JSON скачана. ${result.restoreWarning}` : "Резервная копия JSON скачана.",
+        });
       } catch {
         dispatch({ type: "fail", message: SAFE_ERRORS.backup });
       }

@@ -1305,7 +1305,7 @@ function MoreScreen(props: {
   storageHealth: StorageHealth | null;
   showIosInstall: boolean;
   lastSuccessfulBackup: string | null;
-  onCreateBackup: () => Promise<{ readonly text: string; readonly createdAt: string }>;
+  onCreateBackup: () => Promise<{ readonly text: string; readonly createdAt: string; readonly restoreWarning?: string | null }>;
   onRecordSuccessfulBackup: Parameters<typeof DataManagementScreen>[0]["onRecordSuccessfulBackup"];
   onRestoreBackup: Parameters<typeof DataManagementScreen>[0]["onRestoreBackup"];
   onPersistClear: () => Promise<void>;

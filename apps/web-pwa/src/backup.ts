@@ -76,6 +76,11 @@ interface BackupFile {
 export interface PreparedBudgetBackup {
   readonly text: string;
   readonly createdAt: string;
+  /**
+   * Что сказать человеку, когда записанную копию эта сборка восстановить не сможет — в бюджете
+   * записей больше, чем принимает восстановление, — или `null`, когда копия восстанавливается.
+   */
+  readonly restoreWarning: string | null;
 }
 
 /**
@@ -136,9 +141,12 @@ export function describeBackupRepairs(repairs: readonly BackupRepair[]): string 
  * refusal. Every collection grows through the family's journal, so this is every count the gate
  * keeps — the lines of a budget and of all budgets included.
  *
- * - `file` — a backup being restored or written. A file is untrusted input, and the counts bound
- *   the work its restore does, so a file beyond {@link COLLECTION_LIMITS} is refused, and so is
- *   writing one: no backup is ever written that this build would refuse to restore.
+ * - `file` — a backup being restored. A file is untrusted input, and the counts bound the work its
+ *   restore does, so a file beyond {@link COLLECTION_LIMITS} is refused.
+ * - `export` — a backup being written from the state the app holds. Not refused for a count either:
+ *   the family's data is the family's, and a copy of a document past a limit is still a copy of
+ *   everything it holds. That this build would refuse to restore it is checked and said at the
+ *   moment of writing ({@link PreparedBudgetBackup.restoreWarning}), not discovered on restore.
  * - `document` — a state the app already holds: written by this device, read from storage or
  *   materialised from the journal. Several devices adding accounts, operations or tags offline can
  *   pass a limit together — two devices merging sixty accounts each is honest work — and a refusal
@@ -148,7 +156,7 @@ export function describeBackupRepairs(repairs: readonly BackupRepair[]): string 
  *
  * Every other check is the same for both: a malformed field is malformed wherever it comes from.
  */
-export type BudgetStateSource = "document" | "file";
+export type BudgetStateSource = "document" | "file" | "export";
 
 const RENDERABLE_PLANNING_HORIZON_MONTHS = 24;
 
@@ -995,11 +1003,39 @@ export function parseAndValidateBudgetBackup(text: string, report?: BackupRepair
   return new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, report, "file")).parse(text);
 }
 
+/** Сколько записей какого вида больше, чем принимает восстановление копии, — словами. */
+export function restoreLimitExcess(state: BudgetState): readonly string[] {
+  const lines = state.budgets.map((budget) => budget.lines.length);
+  const counts: readonly (readonly [string, number, number])[] = [
+    ["счетов", state.accounts.length, BACKUP_LIMITS.accounts],
+    ["категорий", state.categories.length, BACKUP_LIMITS.categories],
+    ["бюджетных периодов", state.budgets.length, BACKUP_LIMITS.budgets],
+    ["строк в одном бюджете", Math.max(0, ...lines), BACKUP_LIMITS.linesPerBudget],
+    ["строк во всех бюджетах", lines.reduce((total, count) => total + count, 0), BACKUP_LIMITS.totalBudgetLines],
+    ["целей", state.goals.length, BACKUP_LIMITS.goals],
+    ["крупных платежей", state.annualCommitments.length, BACKUP_LIMITS.annualCommitments],
+    ["регулярных расходов", state.scheduledExpenses.length, BACKUP_LIMITS.scheduledExpenses],
+    ["операций", state.transactions.length, BACKUP_LIMITS.transactions],
+    ["участников", (state.members ?? []).length, BACKUP_LIMITS.members],
+    ["меток", (state.tags ?? []).length, BACKUP_LIMITS.tags],
+    ["курсов валют", (state.exchangeRates ?? []).length, BACKUP_LIMITS.exchangeRates],
+    ["долгов", (state.debts ?? []).length, BACKUP_LIMITS.debts],
+    ["регулярных операций", (state.recurringRules ?? []).length, BACKUP_LIMITS.recurringRules],
+  ];
+  return counts.filter(([, count, limit]) => count > limit).map(([label, count, limit]) => `${label} ${count} при пределе ${limit}`);
+}
+
 /**
  * Serializes first and records metadata only when the complete backup is valid.
  *
  * The file carries the state as {@link prepareBudgetState} returns it, so an attribution that
  * names nobody is written out cleared rather than baked into the copy.
+ *
+ * A state past a count limit is written all the same (`export`): refusing it would leave a family
+ * whose devices merged past a limit without any copy of its data. The file is then read back by the
+ * very path a restore takes, and when this build would refuse it — a file past a limit is refused,
+ * because the limits bound the work an untrusted file makes the app do — the copy says so in
+ * {@link PreparedBudgetBackup.restoreWarning}, naming every count over its limit.
  */
 export async function createBudgetBackup(
   state: BudgetState,
@@ -1007,12 +1043,19 @@ export async function createBudgetBackup(
   options: SerializeBackupOptions = {},
 ): Promise<PreparedBudgetBackup> {
   const createdAt = options.createdAt ?? new Date().toISOString();
-  const text = new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, undefined, "file")).serialize(state, {
+  const text = new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, undefined, "export")).serialize(state, {
     ...options,
     createdAt,
   });
+  let restoreWarning: string | null = null;
+  try {
+    parseAndValidateBudgetBackup(text);
+  } catch {
+    const excess = restoreLimitExcess(state);
+    restoreWarning = `Восстановить эту копию эта версия приложения не сможет${excess.length > 0 ? `: ${excess.join(", ")}` : ""}. Пределы восстановления защищают приложение от чужого файла; эта копия восстановится, когда записей в бюджете станет не больше предела.`;
+  }
   await persistLastSuccessfulBackup(createdAt);
-  return { text, createdAt };
+  return { text, createdAt, restoreWarning };
 }
 
 export async function restoreBudgetBackup(

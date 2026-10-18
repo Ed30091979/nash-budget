@@ -120,24 +120,20 @@ function allDocumentIds(state: BudgetState): Set<string> {
   return ids;
 }
 
-function validateLimits(state: BudgetState): void {
-  if (state.accounts.length > OPERATIONS_LIMITS.accounts) fail("document", "Слишком много счетов.");
-  if (state.categories.length > OPERATIONS_LIMITS.categories) fail("document", "Слишком много категорий.");
-  if (state.budgets.length > OPERATIONS_LIMITS.budgets) fail("document", "Слишком много бюджетных периодов.");
-  if (state.goals.length > OPERATIONS_LIMITS.goals) fail("document", "Слишком много целей.");
-  if (state.annualCommitments.length > OPERATIONS_LIMITS.commitments) fail("document", "Слишком много крупных платежей.");
-  if (state.scheduledExpenses.length > OPERATIONS_LIMITS.schedules) fail("document", "Слишком много регулярных платежей.");
-  if (state.transactions.length > OPERATIONS_LIMITS.transactions) fail("document", "Слишком много операций.");
-  if (state.budgets.some((budget) => budget.lines.length > OPERATIONS_LIMITS.linesPerBudget)) {
-    fail("document", "Слишком много бюджетных лимитов в одном периоде.");
-  }
-  const lines = state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
-  if (lines > OPERATIONS_LIMITS.totalBudgetLines) fail("document", "Слишком много бюджетных лимитов.");
+function totalBudgetLines(state: BudgetState): number {
+  return state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
 }
 
+/**
+ * Проверка всего документа после правки — без пределов числа записей. Они ограничивают только рост:
+ * новую запись вида, которого уже столько, сколько позволено, или больше, форма не создаёт (каждая
+ * функция `create…` проверяет свой вид). Документ, в котором записей больше предела, — обычное
+ * следствие того, что несколько устройств семьи добавляли записи офлайн, — правится и чистится как
+ * любой другой: отказ здесь запрещал бы удалить лишнее и тем самым навсегда держал бы семью за
+ * пределом, а не в нём.
+ */
 function validateState(state: BudgetState): BudgetMetrics {
   try {
-    validateLimits(state);
     allDocumentIds(state);
     validateRefundRelations(state);
     return calculateBudget(state);
@@ -617,6 +613,9 @@ export function createOperationCategory(
   if (!budget) fail("limit", "Активный бюджетный период не найден.");
   if (budget.lines.length >= OPERATIONS_LIMITS.linesPerBudget) {
     fail("limit", "Достигнут лимит бюджетных лимитов в периоде.");
+  }
+  if (totalBudgetLines(created.state) >= OPERATIONS_LIMITS.totalBudgetLines) {
+    fail("limit", "Достигнут лимит бюджетных лимитов.");
   }
   const line: BudgetLine = {
     id: nextId(ids, makeId),

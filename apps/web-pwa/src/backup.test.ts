@@ -925,8 +925,8 @@ describe("метки, заметки и оформление в резервно
 
   it("ограничивает число участников и меток в файле, но не в документе, который приложение уже держит", async () => {
     // Несколько устройств, добавляя метки без связи, вместе переходят предел. Документ из журнала
-    // семьи открывается, а файл с таким числом не пишется и не читается: восстановить его эта
-    // сборка не смогла бы.
+    // семьи открывается, файл с таким числом пишется — с предупреждением, что восстановить его эта
+    // сборка не сможет, — и не читается.
     const tags = Array.from({ length: BACKUP_LIMITS.tags + 1 }, (_, index) => ({
       id: `c0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
       name: `Метка ${index}`,
@@ -941,7 +941,10 @@ describe("метки, заметки и оформление в резервно
     expect(prepareBudgetState(merged)).toEqual(merged);
     expect(prepareBudgetState(merged, undefined, "document")).toEqual(merged);
     expect(() => prepareBudgetState(merged, undefined, "file")).toThrow(`members: допускается не более ${BACKUP_LIMITS.members} элементов`);
-    await expect(createBudgetBackup(merged, vi.fn(async () => undefined))).rejects.toThrow(/допускается не более/);
+    const exported = await createBudgetBackup(merged, vi.fn(async () => undefined));
+    expect(exported.restoreWarning).toContain(`участников ${BACKUP_LIMITS.members + 1} при пределе ${BACKUP_LIMITS.members}`);
+    expect(exported.restoreWarning).toContain(`меток ${BACKUP_LIMITS.tags + 1} при пределе ${BACKUP_LIMITS.tags}`);
+    expect(() => parseAndValidateBudgetBackup(exported.text)).toThrow(`members: допускается не более ${BACKUP_LIMITS.members} элементов`);
     expect(() => parseAndValidateBudgetBackup(serializeBackup({ ...makePlanningSeed(), tags })))
       .toThrow(`tags: допускается не более ${BACKUP_LIMITS.tags} элементов`);
     // Предел общий с доменом: createTag отказывает на той же цифре.
@@ -1273,9 +1276,11 @@ describe("пределы числа записей: файл, а не докум
 
     // A state the app holds — its own, or the family's from the journal — is never refused for a count.
     expect(prepareBudgetState(state)).toEqual(state);
-    // A file is refused, naming the first collection over its limit, and no file is written of it.
+    // A file is refused, naming the first collection over its limit. Writing a copy of this state is
+    // refused too, but by the file format, not by a count of a kind: 50 001 operations are more
+    // entries than one list of a backup carries (over-limit.test.ts writes every other kind).
     expect(() => prepareBudgetState(state, undefined, "file")).toThrow(`accounts: допускается не более ${BACKUP_LIMITS.accounts} элементов`);
-    await expect(createBudgetBackup(state, vi.fn(async () => undefined))).rejects.toThrow(/допускается не более/u);
+    await expect(createBudgetBackup(state, vi.fn(async () => undefined))).rejects.toThrow(/Резервная копия содержит слишком/u);
   }, 60_000);
 
   it("файл называет каждый предел по очереди, пока семья не приведёт число в рамки", () => {
