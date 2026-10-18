@@ -36,16 +36,16 @@ import {
 
 export const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
 export const BACKUP_LIMITS = {
-  accounts: 100,
+  accounts: COLLECTION_LIMITS.accounts,
   members: COLLECTION_LIMITS.members,
-  categories: 500,
-  budgets: 240,
-  goals: 200,
-  annualCommitments: 1_000,
-  scheduledExpenses: 1_000,
-  transactions: 50_000,
-  linesPerBudget: 500,
-  totalBudgetLines: 10_000,
+  categories: COLLECTION_LIMITS.categories,
+  budgets: COLLECTION_LIMITS.budgets,
+  goals: COLLECTION_LIMITS.goals,
+  annualCommitments: COLLECTION_LIMITS.annualCommitments,
+  scheduledExpenses: COLLECTION_LIMITS.scheduledExpenses,
+  transactions: COLLECTION_LIMITS.transactions,
+  linesPerBudget: COLLECTION_LIMITS.linesPerBudget,
+  totalBudgetLines: COLLECTION_LIMITS.budgetLines,
   selectedMonths: 12,
   idLength: 128,
   nameLength: 200,
@@ -129,16 +129,19 @@ export function describeBackupRepairs(repairs: readonly BackupRepair[]): string 
 }
 
 /**
- * Where a state comes from, which decides one thing: whether the count of a collection that grows
- * through the family's journal is a refusal.
+ * Where a state comes from, which decides one thing: whether the count of a collection is a
+ * refusal. Every collection grows through the family's journal, so this is every count the gate
+ * keeps — the lines of a budget and of all budgets included.
  *
  * - `file` — a backup being restored or written. A file is untrusted input, and the counts bound
  *   the work its restore does, so a file beyond {@link COLLECTION_LIMITS} is refused, and so is
  *   writing one: no backup is ever written that this build would refuse to restore.
- * - `document` — a state the app already holds: written by this device or materialised from the
- *   journal. Several devices adding participants or tags offline can pass a limit together, and a
- *   refusal here would refuse the merged state on every write of every device. Creation keeps each
- *   device under the limit, and the journal reports the overflow (`collection_limit`) instead.
+ * - `document` — a state the app already holds: written by this device, read from storage or
+ *   materialised from the journal. Several devices adding accounts, operations or tags offline can
+ *   pass a limit together — two devices merging sixty accounts each is honest work — and a refusal
+ *   here would refuse the merged state on every write of every device, leaving the whole family on
+ *   its last snapshot with nothing on the screen to say so. Creation keeps each device under the
+ *   limit where a form creates the kind, and the journal reports the overflow (`collection_limit`).
  *
  * Every other check is the same for both: a malformed field is malformed wherever it comes from.
  */
@@ -294,7 +297,7 @@ function requireSafeMinor(value: number, label: string, allowNegative = false): 
 
 function requireBaseShape(value: unknown, source: BudgetStateSource): asserts value is LegacyBudgetState {
   const state = requireRecord(value, "Бюджет");
-  // A count of a collection the journal grows is a refusal for a file only; see BudgetStateSource.
+  // A count is a refusal for a file only, for every collection; see BudgetStateSource.
   const grown = (limit: number): number => (source === "file" ? limit : Number.MAX_SAFE_INTEGER);
   requireString(state.activeBudgetId, "activeBudgetId", true, BACKUP_LIMITS.idLength);
 
@@ -391,7 +394,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     });
   }
 
-  requireArray(state.accounts, "accounts", BACKUP_LIMITS.accounts).forEach((item, index) => {
+  requireArray(state.accounts, "accounts", grown(BACKUP_LIMITS.accounts)).forEach((item, index) => {
     const account = requireRecord(item, `accounts[${index}]`);
     requireString(account.id, `accounts[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(account.name, `accounts[${index}].name`, false, BACKUP_LIMITS.nameLength);
@@ -406,7 +409,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     requireOptionalBoolean(account.includeInTotal, `accounts[${index}].includeInTotal`);
   });
 
-  requireArray(state.categories, "categories", BACKUP_LIMITS.categories).forEach((item, index) => {
+  requireArray(state.categories, "categories", grown(BACKUP_LIMITS.categories)).forEach((item, index) => {
     const category = requireRecord(item, `categories[${index}]`);
     requireString(category.id, `categories[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(category.name, `categories[${index}].name`, false, BACKUP_LIMITS.nameLength);
@@ -419,7 +422,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
   });
 
   let totalBudgetLines = 0;
-  requireArray(state.budgets, "budgets", BACKUP_LIMITS.budgets).forEach((item, index) => {
+  requireArray(state.budgets, "budgets", grown(BACKUP_LIMITS.budgets)).forEach((item, index) => {
     const budget = requireRecord(item, `budgets[${index}]`);
     requireString(budget.id, `budgets[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(budget.startDate, `budgets[${index}].startDate`, false, 10);
@@ -427,9 +430,9 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     requireEnum(budget.status, ["draft", "open", "closed"], `budgets[${index}].status`);
     requireNumber(budget.plannedIncomeMinor, `budgets[${index}].plannedIncomeMinor`);
     requireNumber(budget.warningThreshold, `budgets[${index}].warningThreshold`);
-    const lines = requireArray(budget.lines, `budgets[${index}].lines`, BACKUP_LIMITS.linesPerBudget);
+    const lines = requireArray(budget.lines, `budgets[${index}].lines`, grown(BACKUP_LIMITS.linesPerBudget));
     totalBudgetLines += lines.length;
-    if (totalBudgetLines > BACKUP_LIMITS.totalBudgetLines) {
+    if (totalBudgetLines > grown(BACKUP_LIMITS.totalBudgetLines)) {
       throw new Error(`budget lines: допускается не более ${BACKUP_LIMITS.totalBudgetLines} элементов суммарно.`);
     }
     lines.forEach((lineValue, lineIndex) => {
@@ -443,7 +446,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     });
   });
 
-  requireArray(state.goals, "goals", BACKUP_LIMITS.goals).forEach((item, index) => {
+  requireArray(state.goals, "goals", grown(BACKUP_LIMITS.goals)).forEach((item, index) => {
     const goal = requireRecord(item, `goals[${index}]`);
     requireString(goal.id, `goals[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(goal.name, `goals[${index}].name`, false, BACKUP_LIMITS.nameLength);
@@ -456,7 +459,7 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     requireOptionalDisplayKey(goal.icon, `goals[${index}].icon`);
   });
 
-  requireArray(state.transactions, "transactions", BACKUP_LIMITS.transactions).forEach((item, index) => {
+  requireArray(state.transactions, "transactions", grown(BACKUP_LIMITS.transactions)).forEach((item, index) => {
     const transaction = requireRecord(item, `transactions[${index}]`);
     requireString(transaction.id, `transactions[${index}].id`, true, BACKUP_LIMITS.idLength);
     requireString(transaction.occurredOn, `transactions[${index}].occurredOn`, false, 10);
@@ -498,8 +501,8 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     }
   });
 
-  if (state.annualCommitments !== undefined) requireArray(state.annualCommitments, "annualCommitments", BACKUP_LIMITS.annualCommitments);
-  if (state.scheduledExpenses !== undefined) requireArray(state.scheduledExpenses, "scheduledExpenses", BACKUP_LIMITS.scheduledExpenses);
+  if (state.annualCommitments !== undefined) requireArray(state.annualCommitments, "annualCommitments", grown(BACKUP_LIMITS.annualCommitments));
+  if (state.scheduledExpenses !== undefined) requireArray(state.scheduledExpenses, "scheduledExpenses", grown(BACKUP_LIMITS.scheduledExpenses));
 }
 
 /**

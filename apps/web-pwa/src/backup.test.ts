@@ -1196,6 +1196,118 @@ describe("долги в резервной копии", () => {
   });
 });
 
+describe("пределы числа записей: файл, а не документ", () => {
+  const uuid = (prefix: string, index: number): string => `${prefix}-0000-4000-8000-${String(index).padStart(12, "0")}`;
+
+  /**
+   * План-образец, в котором каждой коллекции на одну запись больше предела: столько семья набирает
+   * честно, когда устройства создают офлайн и сливаются, — два устройства по шестьдесят счетов
+   * дают сто двадцать.
+   */
+  const overEveryLimit = (): BudgetState => {
+    const seed = makePlanningSeed();
+    const expense = seed.categories.find((category) => category.type === "expense")!;
+    const account = seed.accounts[0]!.id;
+    const categories = [
+      ...seed.categories,
+      ...Array.from({ length: BACKUP_LIMITS.categories + 1 - seed.categories.length }, (_, index) => ({
+        ...expense, id: uuid("c1000000", index), name: `Категория ${index}`, sortOrder: 1_000 + index,
+      })),
+    ];
+    const expenseIds = categories.filter((category) => category.type === "expense").map((category) => category.id);
+    const active = seed.budgets.find((budget) => budget.id === seed.activeBudgetId)!;
+    // Строк в активном бюджете больше предела одного бюджета, а во всех вместе — больше общего.
+    const lines = expenseIds.map((categoryId, index) => ({ id: uuid("c1100000", index), categoryId, plannedMinor: 100 }));
+    const budgets = [
+      { ...active, lines },
+      ...Array.from({ length: BACKUP_LIMITS.budgets }, (_, index) => ({
+        id: uuid("c1200000", index),
+        startDate: `${1990 + Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}-01`,
+        endDate: `${1990 + Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}-28`,
+        status: "closed" as const, plannedIncomeMinor: 0, warningThreshold: 0.8,
+        lines: index < 20 ? lines.map((line, lineIndex) => ({ ...line, id: uuid(`c13${String(index).padStart(5, "0")}`, lineIndex) })) : [],
+      })),
+    ];
+    return {
+      ...seed,
+      accounts: [
+        ...seed.accounts,
+        ...Array.from({ length: BACKUP_LIMITS.accounts + 1 - seed.accounts.length }, (_, index) => ({
+          id: uuid("c1400000", index), name: `Счёт ${index}`, type: "cash" as const, currency: "RUB", openingBalanceMinor: 0, active: true,
+        })),
+      ],
+      categories,
+      budgets,
+      goals: Array.from({ length: BACKUP_LIMITS.goals + 1 }, (_, index) => ({
+        id: uuid("c1500000", index), name: `Цель ${index}`, linkedAccountId: account, targetMinor: 100, openingContributedMinor: 0,
+        plannedContributionMinor: 0, status: "active" as const,
+      })),
+      annualCommitments: Array.from({ length: BACKUP_LIMITS.annualCommitments + 1 }, (_, index) => ({
+        id: uuid("c1600000", index), name: `Платёж ${index}`, categoryId: expense.id, accountId: account, dueDate: "2026-12-01",
+        amountMinor: 100, reservedMinor: 0, recurrence: "annual" as const, active: index === 0,
+      })),
+      scheduledExpenses: Array.from({ length: BACKUP_LIMITS.scheduledExpenses + 1 }, (_, index) => ({
+        id: uuid("c1700000", index), name: `Расход ${index}`, categoryId: expense.id, accountId: account, amountMinor: 100,
+        dueDay: 5, mode: "monthly" as const, active: index === 0,
+      })),
+      transactions: [
+        ...seed.transactions,
+        ...Array.from({ length: BACKUP_LIMITS.transactions + 1 - seed.transactions.length }, (_, index): Transaction => ({
+          id: uuid("c1800000", index), occurredOn: "2026-06-15", status: "posted", kind: "expense", amountMinor: 1, accountId: account, categoryId: expense.id,
+        })),
+      ],
+    };
+  };
+
+  it("документ сверх любого предела открывается, а файл с ним не восстанавливается и не пишется", async () => {
+    const state = overEveryLimit();
+    expect(state.accounts.length).toBe(BACKUP_LIMITS.accounts + 1);
+    expect(state.categories.length).toBe(BACKUP_LIMITS.categories + 1);
+    expect(state.budgets.length).toBe(BACKUP_LIMITS.budgets + 1);
+    expect(state.budgets[0]!.lines.length).toBeGreaterThan(BACKUP_LIMITS.linesPerBudget);
+    expect(state.budgets.reduce((total, budget) => total + budget.lines.length, 0)).toBeGreaterThan(BACKUP_LIMITS.totalBudgetLines);
+    expect(state.transactions.length).toBe(BACKUP_LIMITS.transactions + 1);
+
+    // A state the app holds — its own, or the family's from the journal — is never refused for a count.
+    expect(prepareBudgetState(state)).toEqual(state);
+    // A file is refused, naming the first collection over its limit, and no file is written of it.
+    expect(() => prepareBudgetState(state, undefined, "file")).toThrow(`accounts: допускается не более ${BACKUP_LIMITS.accounts} элементов`);
+    await expect(createBudgetBackup(state, vi.fn(async () => undefined))).rejects.toThrow(/допускается не более/u);
+  }, 60_000);
+
+  it("файл называет каждый предел по очереди, пока семья не приведёт число в рамки", () => {
+    const cut = (state: BudgetState, key: "accounts" | "categories" | "budgets" | "goals" | "transactions" | "annualCommitments", limit: number): BudgetState =>
+      ({ ...state, [key]: state[key].slice(0, limit) });
+    const steps: readonly (readonly [string, (state: BudgetState) => BudgetState])[] = [
+      [`accounts: допускается не более ${BACKUP_LIMITS.accounts} элементов`, (state) => state],
+      [`categories: допускается не более ${BACKUP_LIMITS.categories} элементов`, (state) => cut(state, "accounts", BACKUP_LIMITS.accounts)],
+      [`budgets: допускается не более ${BACKUP_LIMITS.budgets} элементов`, (state) => cut(state, "categories", BACKUP_LIMITS.categories)],
+      [`budgets[0].lines: допускается не более ${BACKUP_LIMITS.linesPerBudget} элементов`, (state) => cut(state, "budgets", BACKUP_LIMITS.budgets)],
+      [`budget lines: допускается не более ${BACKUP_LIMITS.totalBudgetLines} элементов суммарно`, (state) => ({
+        ...state, budgets: state.budgets.map((budget) => ({ ...budget, lines: budget.lines.slice(0, BACKUP_LIMITS.linesPerBudget) })),
+      })],
+      [`goals: допускается не более ${BACKUP_LIMITS.goals} элементов`, (state) => ({
+        ...state, budgets: state.budgets.map((budget, index) => (index === 0 ? budget : { ...budget, lines: [] })),
+      })],
+      [`transactions: допускается не более ${BACKUP_LIMITS.transactions} элементов`, (state) => cut(state, "goals", BACKUP_LIMITS.goals)],
+      [`annualCommitments: допускается не более ${BACKUP_LIMITS.annualCommitments} элементов`, (state) => cut(state, "transactions", BACKUP_LIMITS.transactions)],
+      [`scheduledExpenses: допускается не более ${BACKUP_LIMITS.scheduledExpenses} элементов`, (state) => cut(state, "annualCommitments", BACKUP_LIMITS.annualCommitments)],
+    ];
+    let state = overEveryLimit();
+    for (const [message, bringDown] of steps) {
+      state = bringDown(state);
+      expect(() => prepareBudgetState(state, undefined, "file"), message).toThrow(message);
+    }
+  }, 60_000);
+
+  it("каждый предел копии — предел домена, который журнал называет", () => {
+    for (const key of ["accounts", "categories", "budgets", "goals", "annualCommitments", "scheduledExpenses", "transactions", "linesPerBudget"] as const) {
+      expect(BACKUP_LIMITS[key], key).toBe(COLLECTION_LIMITS[key]);
+    }
+    expect(BACKUP_LIMITS.totalBudgetLines).toBe(COLLECTION_LIMITS.budgetLines);
+  });
+});
+
 describe("суммы, которые задаёт участник семьи", () => {
   const KWD_RATE = "c7000000-0000-4000-8000-0000000000b1";
   const LENT = "c7000000-0000-4000-8000-0000000000b2";

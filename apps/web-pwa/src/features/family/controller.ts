@@ -36,7 +36,7 @@ import {
   toHex,
   verifyBindProof,
 } from "@family-budget/sync-crypto";
-import { restoreJournal, type JournalIntegrity } from "@family-budget/sync-protocol";
+import { restoreJournal, type JournalIntegrity, type SyncedBudgetState } from "@family-budget/sync-protocol";
 
 import { EPOCH_REFUSAL_TEXT, takeIncomingEpoch } from "./epoch-intake";
 import {
@@ -76,7 +76,7 @@ import {
 } from "./session";
 
 /** Принимает ли шлюз приложения состояние журнала: документ хранит только такие (см. SyncEngine). */
-function acceptsJournalState(state: BudgetState): boolean {
+export function acceptsJournalState(state: BudgetState): boolean {
   try {
     prepareBudgetState(state);
     return true;
@@ -441,9 +441,14 @@ export interface JournalWriterOptions {
  * посева не делает никогда — иначе его личный бюджет молча влился бы в семейный.
  *
  * Показывается то, что действительно легло в документ, а не то, что просили записать: шлюз
- * целостности показывает снимок, только когда его можно показать, иначе документ сохраняет
- * прежнее состояние (решение 19). Поэтому результат читается с диска, а не собирается из
- * намерения — иначе экран показывал бы изменение, которого перезапуск не найдёт.
+ * целостности показывает снимок, только когда его можно показать (решение 19). Поэтому результат
+ * читается с диска, а не собирается из намерения — иначе экран показывал бы изменение, которого
+ * перезапуск не найдёт.
+ *
+ * Когда снимок журнала показать нельзя — он не готов или шлюз приложения его отверг, — движку
+ * передаётся `next`: состояние, которое приложение само собрало из показанного и проверило тем же
+ * шлюзом. Оно и ложится в документ. Прежде документ сохранял значение, на котором правку сделали,
+ * и своя запись человека исчезала с экрана, уходя при этом семье.
  */
 export function createBudgetJournalWriter(options: JournalWriterOptions): BudgetJournalWrite {
   return async ({ expectedRevision, previous, next }) => {
@@ -462,15 +467,16 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
       // чтобы форма состояния на диске всё равно догнала показанную.
       return options.saveIfRevision(expectedRevision, next);
     }
-    const committed = await engine.enqueue(drafts);
+    // Тип документа движка — состояние журнала; `next` — состояние приложения, прошедшее его шлюз.
+    // Документ хранит оба вида и всегда хранил: приложение пишет в него своё состояние напрямую.
+    const committed = await engine.enqueue(drafts, { document: next as SyncedBudgetState });
     const document = await options.store.loadVersioned().catch(() => null);
     options.afterWrite?.(engine);
     if (document !== null) return { status: "saved", value: document.value, revision: document.revision };
-    return {
-      status: "saved",
-      value: committed.snapshot.integrity.ready ? committed.snapshot.state : previous,
-      revision: committed.revision,
-    };
+    // Документ не прочитался после записи. В нём лежит либо `next`, либо принятый снимок журнала,
+    // который несёт ту же правку, — показывается `next`: его приложение уже проверило.
+    if (committed.revision === null) return { status: "conflict", current: null };
+    return { status: "saved", value: next, revision: committed.revision };
   };
 }
 

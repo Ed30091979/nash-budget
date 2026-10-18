@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import { makeSeedBudget, type BudgetState, type Transaction } from "@family-budget/domain";
 import {
+  DOCUMENT_HOLD_REASONS,
   SyncClientError,
   SyncServerError,
   type SyncStatusReport,
@@ -19,6 +20,7 @@ import {
   SYNC_ROUND_OUTCOMES,
   UNATTRIBUTED_AUTHOR,
   classifySyncFailure,
+  documentHoldNotice,
   filterTransactionsByMember,
   formatInviteCode,
   formatInviteExpiry,
@@ -44,6 +46,7 @@ function report(overrides: Partial<SyncStatusReport> = {}): SyncStatusReport {
     queued: 0,
     epoch: { keyEpoch: 1, keyDigest: "a".repeat(64), live: true },
     stop: null,
+    hold: null,
     ...overrides,
   };
 }
@@ -173,6 +176,26 @@ describe("тревога «ключ семьи не совпадает»", () =>
       "Требуется обновление приложения",
     );
     expect(syncNotice(stop({ reason: "quarantined" }))?.title).toBe("Запись отложена");
+  });
+});
+
+describe("состояние журнала, которое приложение не открыло", () => {
+  it("говорит, что случилось и что делать, и молчит, когда документ показывает журнал", () => {
+    expect(documentHoldNotice(null)).toBeNull();
+    const kept = documentHoldNotice({ reason: "rejected_by_app", document: "kept" })!;
+    expect(kept.title).toBe("Новые записи семьи не открываются в этой версии");
+    expect(kept.body).toContain("ваши новые записи сохраняются и уходят семье");
+    expect(kept.body).toContain("Обновите приложение");
+    expect(kept.body).toContain("Ничего не потеряно");
+    const empty = documentHoldNotice({ reason: "rejected_by_app", document: "empty" })!;
+    expect(empty.title).toBe("Бюджет семьи не открывается в этой версии");
+    expect(empty.body).toContain("Обновите приложение");
+    // Every reason the engine can record has words, for both kinds of document.
+    for (const reason of DOCUMENT_HOLD_REASONS) {
+      for (const document of ["kept", "empty"] as const) {
+        expect(documentHoldNotice({ reason, document })?.title.length, `${reason} ${document}`).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

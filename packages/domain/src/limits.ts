@@ -25,16 +25,19 @@ export const MAX_MONEY_MINOR = 10 ** 10;
 export const MAX_SORT_ORDER = 1_000_000;
 
 /**
- * How many entities of a kind one document may hold, for the kinds that grow through the journal:
- * a family's devices add them independently, so the count is a property of the merged journal and
- * not of any one device.
+ * How many entities of a kind one document may hold. Every kind grows through the journal: a
+ * family's devices add accounts, operations and participants alike independently, so the count is
+ * a property of the merged journal and not of any one device.
  *
- * Creation refuses beyond the limit, so no single device exceeds it. A backup file is refused
- * beyond it, because a file is untrusted input and these counts bound the work its restore does.
- * A document the app already holds — written by this device, or materialised from the journal — is
- * not refused for a count: several devices creating offline can pass the limit together, and
- * refusing the merged state would freeze every device of the family on its last snapshot. The
- * journal reports the overflow instead (`collection_limit`).
+ * Creation refuses beyond the limit where a form creates the kind, so no single device exceeds it.
+ * A backup file is refused beyond it, because a file is untrusted input and these counts bound the
+ * work its restore does. A document the app already holds — written by this device, or
+ * materialised from the journal — is not refused for a count of any kind: several devices creating
+ * offline can pass a limit together, an honest offline merge of two devices with sixty accounts
+ * each is a hundred and twenty, and refusing the merged state would freeze every device of the
+ * family on its last snapshot. The journal reports the overflow instead (`collection_limit`).
+ *
+ * `budgetLines` bounds the lines of all budgets together and `linesPerBudget` the lines of one.
  */
 export const COLLECTION_LIMITS = {
   members: 100,
@@ -42,6 +45,15 @@ export const COLLECTION_LIMITS = {
   exchangeRates: 10_000,
   debts: 500,
   recurringRules: 1_000,
+  accounts: 100,
+  categories: 500,
+  budgets: 240,
+  goals: 200,
+  annualCommitments: 1_000,
+  scheduledExpenses: 1_000,
+  transactions: 50_000,
+  linesPerBudget: 500,
+  budgetLines: 10_000,
 } as const;
 
 /** How often a recurring rule may repeat: every 1 to 999 days, weeks, months or years. */

@@ -231,8 +231,9 @@ export const JOURNAL_PROBLEM_CODES = [
    */
   "implausible_lamport",
   /**
-   * The state holds more entities of one kind than a document may — more participants, tags,
-   * exchange rates, debts or recurring rules than `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
+   * The state holds more entities of one kind than a document may — of any kind, from accounts and
+   * budget lines to participants, tags, exchange rates, debts and recurring rules — than
+   * `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
    * together, and no one of them did anything wrong, so nothing is withheld and the state stays
    * ready; the entity names the kind, the identifier is empty. A backup of such a state is refused
    * until the family brings the count down.

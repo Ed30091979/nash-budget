@@ -97,6 +97,7 @@ const stoppedStatus: SyncStatusReport = {
     opId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
     attempts: 10,
   },
+  hold: null,
 };
 
 /**
@@ -477,6 +478,15 @@ describe("тревога, уведомления и удержанные зап�
     expect(alarm).not.toMatch(/Понятно|Закрыть|Скрыть/u);
   });
 
+  it("состояние журнала, которое приложение не открыло, показано и не закрывается", () => {
+    const markup = render({ ...signedInOwner(), status: { ...stopped(1), stop: null, hold: { reason: "rejected_by_app", document: "kept" } } });
+    expect(markup).toContain("Новые записи семьи не открываются в этой версии");
+    expect(markup).toContain('aria-labelledby="family-hold-title"');
+    expect(markup).toMatch(/<section[^>]*family-hold[^>]*role="alert"/u);
+    expect(markup).not.toContain("Понятно");
+    expect(render({ ...signedInOwner(), status: { ...stopped(1), stop: null } })).not.toContain("family-hold");
+  });
+
   it("обычная остановка — уведомление, которое можно закрыть", () => {
     const markup = render({
       ...signedInOwner(),
@@ -616,6 +626,7 @@ describe("доступность экрана семьи", () => {
         queued: 0,
         epoch: { keyEpoch: 1, keyDigest: "a".repeat(64), live: true },
         stop: null,
+        hold: null,
       },
     });
     expect(markup).toContain('role="status"');

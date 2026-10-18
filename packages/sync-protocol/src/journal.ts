@@ -1171,14 +1171,16 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 }
 
 /**
- * Says out loud that the state holds more participants, tags, exchange rates, debts or recurring
- * rules than a document may. Withholds nothing.
+ * Says out loud that the state holds more entities of a kind than a document may — of any kind:
+ * accounts, categories, budgets and their lines, goals, large payments, schedules, operations,
+ * participants, tags, exchange rates, debts or recurring rules. Withholds nothing.
  *
  * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
  * stays under it when it creates. Several devices creating offline can still pass it together, and
  * withholding the excess would mean choosing which of the family's entities to drop — by an order a
  * writing peer controls, which is the eviction {@link MAX_AGGREGATE_MINOR} gave up for good. So the
- * count is reported against the kind, the state stays ready, and the app goes on showing everything.
+ * count is reported against the kind, the state stays ready, and the app goes on showing everything:
+ * the app's own gate does not refuse a document for a count either, only a backup file.
  */
 function reportCollectionLimits(live: LiveEntities, report: (problem: JournalProblem) => void): void {
   if (live.members.size > COLLECTION_LIMITS.members) report(problem("collection_limit", "member", ""));
@@ -1186,6 +1188,23 @@ function reportCollectionLimits(live: LiveEntities, report: (problem: JournalPro
   if (live.exchangeRates.size > COLLECTION_LIMITS.exchangeRates) report(problem("collection_limit", "exchangeRate", ""));
   if (live.debts.size > COLLECTION_LIMITS.debts) report(problem("collection_limit", "debt", ""));
   if (live.recurringRules.size > COLLECTION_LIMITS.recurringRules) report(problem("collection_limit", "recurringRule", ""));
+  if (live.accounts.size > COLLECTION_LIMITS.accounts) report(problem("collection_limit", "account", ""));
+  if (live.categories.size > COLLECTION_LIMITS.categories) report(problem("collection_limit", "category", ""));
+  if (live.budgets.size > COLLECTION_LIMITS.budgets) report(problem("collection_limit", "budget", ""));
+  if (live.goals.size > COLLECTION_LIMITS.goals) report(problem("collection_limit", "goal", ""));
+  if (live.annualCommitments.size > COLLECTION_LIMITS.annualCommitments) report(problem("collection_limit", "annualCommitment", ""));
+  if (live.scheduledExpenses.size > COLLECTION_LIMITS.scheduledExpenses) report(problem("collection_limit", "scheduledExpense", ""));
+  if (live.transactions.size > COLLECTION_LIMITS.transactions) report(problem("collection_limit", "transaction", ""));
+  const linesPerBudget = new Map<BudgetId, number>();
+  for (const entry of live.budgetLines.values()) {
+    linesPerBudget.set(entry.budgetId, (linesPerBudget.get(entry.budgetId) ?? 0) + 1);
+  }
+  if (
+    live.budgetLines.size > COLLECTION_LIMITS.budgetLines ||
+    [...linesPerBudget.values()].some((count) => count > COLLECTION_LIMITS.linesPerBudget)
+  ) {
+    report(problem("collection_limit", "budgetLine", ""));
+  }
 }
 
 /**

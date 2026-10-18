@@ -3445,9 +3445,12 @@ describe("several currencies through the journal", () => {
       targetId: `7c200000-0000-4000-8000-${String(index).padStart(12, "0")}`,
       fields: { name: "Счёт", type: "savings", currency, openingBalanceMinor: MAX_MONEY_MINOR, active: true },
     }));
-    expect(applyJournal([...buildFixtureJournal(), ...accounts("USD")]).integrity.problems).toEqual([]);
+    // A thousand and one accounts are also more than a document may hold, which is said against the
+    // kind (collection_limit) whatever their currency; only the roubles reach the totals ceiling.
+    expect(applyJournal([...buildFixtureJournal(), ...accounts("USD")]).integrity.problems)
+      .toEqual([{ code: "collection_limit", entity: "account", id: "" }]);
     expect(applyJournal([...buildFixtureJournal(), ...accounts("RUB")]).integrity.problems)
-      .toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+      .toEqual([{ code: "amount_out_of_range", entity: null, id: "" }, { code: "collection_limit", entity: "account", id: "" }]);
   });
 
   it("keeps a deleted rate harmless: nothing refers to one", () => {
@@ -3543,6 +3546,38 @@ describe("debts through the journal", () => {
     expect(snapshot.integrity.ready).toBe(true);
     expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "debt", id: "" }]);
     expect(snapshot.state.debts).toHaveLength(COLLECTION_LIMITS.debts + 1);
+  });
+});
+
+describe("counts of every kind", () => {
+  it("reports more accounts and budget lines than a document may hold, withholds none, and stays ready", () => {
+    // Two devices that each opened sixty accounts offline meet with a hundred and twenty: honest
+    // work, and once a state the app refused, on every device, for a count.
+    const accounts = Array.from({ length: COLLECTION_LIMITS.accounts + 1 }, (_, index) => parseOperation({
+      opId: opUuid(64_000 + index), deviceId: index % 2 === 0 ? DEVICE_A : DEVICE_B, lamport: 1_000 + index,
+      entity: "account", action: "create", targetId: testUuid(0x7a1, index),
+      fields: { name: `Счёт ${index}`, type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
+    }));
+    const categories = Array.from({ length: COLLECTION_LIMITS.linesPerBudget + 1 }, (_, index) => parseOperation({
+      opId: opUuid(65_000 + index), deviceId: DEVICE_B, lamport: 2_000 + index, entity: "category", action: "create",
+      targetId: testUuid(0x7c1, index),
+      fields: { name: `Категория ${index}`, type: "expense", group: "everyday", active: true, sortOrder: 1_000 + index },
+    }));
+    const lines = categories.map((category, index) => parseOperation({
+      opId: opUuid(66_000 + index), deviceId: DEVICE_B, lamport: 3_000 + index, entity: "budgetLine", action: "create",
+      targetId: testUuid(0x7b1, index), fields: { budgetId: BUDGET_ID, categoryId: category.targetId, plannedMinor: 100 },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...accounts, ...categories, ...lines]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.withheld).toEqual([]);
+    expect(snapshot.integrity.problems).toEqual([
+      { code: "collection_limit", entity: "account", id: "" },
+      { code: "collection_limit", entity: "budgetLine", id: "" },
+      { code: "collection_limit", entity: "category", id: "" },
+    ]);
+    expect(snapshot.state.accounts.length).toBeGreaterThan(COLLECTION_LIMITS.accounts);
+    expect(snapshot.state.budgets.find((budget) => budget.id === BUDGET_ID)!.lines.length).toBeGreaterThan(COLLECTION_LIMITS.linesPerBudget);
+    expect(() => calculateBudget(snapshot.state)).not.toThrow();
   });
 });
 

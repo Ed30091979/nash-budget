@@ -12,6 +12,8 @@ import type { BudgetState, Member, MemberId, Transaction } from "@family-budget/
 import { formatKeyFingerprint } from "@family-budget/sync-crypto";
 import {
   SyncClientError,
+  type DocumentHold,
+  type DocumentHoldReason,
   type PinState,
   type SyncStatusReport,
   type SyncStop,
@@ -188,6 +190,40 @@ export function syncNotice(stop: SyncStop | null): SyncNotice | null {
   if (stop === null || stop.reason === "key_mismatch") return null;
   const template = NOTICE_BY_REASON[stop.reason];
   return { title: template.title, body: template.body, dismissible: true };
+}
+
+/* ───────────────────────────── Состояние, которое приложение не открыло ───────────────────────────── */
+
+export interface DocumentHoldNotice {
+  readonly title: string;
+  readonly body: string;
+}
+
+const HOLD_NOTICES = {
+  rejected_by_app: {
+    kept: {
+      title: "Новые записи семьи не открываются в этой версии",
+      body: "Семья прислала изменения, которые эта версия приложения открыть не может. На экране — бюджет в том виде, в каком он открылся в последний раз; ваши новые записи сохраняются и уходят семье. Обновите приложение на этом устройстве. Ничего не потеряно: записи семьи хранятся в журнале и появятся, как только бюджет снова откроется — после обновления или после того, как участник, который вносил изменения, их поправит.",
+    },
+    empty: {
+      title: "Бюджет семьи не открывается в этой версии",
+      body: "Журнал семьи пришёл, но эта версия приложения не может его открыть, поэтому бюджет семьи на этом устройстве пока не показан. Обновите приложение. Ничего не потеряно: записи семьи хранятся в журнале и появятся, как только бюджет откроется.",
+    },
+  },
+} as const satisfies Readonly<Record<DocumentHoldReason, Readonly<Record<DocumentHold["document"], DocumentHoldNotice>>>>;
+
+/**
+ * Слова для состояния журнала, которое шлюз приложения не принял (`SyncStatusReport.hold`), или
+ * `null`, когда документ показывает журнал.
+ *
+ * Не гасится кнопкой: запись снимается сама, когда пришедшее состояние снова открывается, а до тех
+ * пор человек смотрит на вчерашний бюджет и обязан об этом знать. Прежде этот случай не говорил
+ * ничего — журнал «готов», проблем нет, а на экране у всей семьи оставался последний открывшийся
+ * снимок.
+ */
+export function documentHoldNotice(hold: DocumentHold | null): DocumentHoldNotice | null {
+  if (hold === null) return null;
+  return HOLD_NOTICES[hold.reason][hold.document];
 }
 
 /* ───────────────────────────── Удержанные сущности ───────────────────────────── */

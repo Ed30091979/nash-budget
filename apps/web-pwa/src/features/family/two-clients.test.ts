@@ -39,6 +39,7 @@ import { createAppBudgetSaveCoordinator } from "../../App";
 import { prepareBudgetState } from "../../backup";
 import { createBudgetRepository } from "../../storage-repository";
 import {
+  acceptsJournalState,
   createBudgetJournalWriter,
   JOURNAL_ORIGIN_KEY,
   type JournalOrigin,
@@ -142,6 +143,7 @@ async function makeClient(
   memberId: string,
   familyKey: CryptoKey,
   origin: JournalOrigin,
+  gated = false,
 ): Promise<Client> {
   const repository = createBudgetRepository({ databaseName: databaseName(label) });
   const created = await repository.createIfAbsent(prepareBudgetState(makeSeedBudget()));
@@ -153,6 +155,8 @@ async function makeClient(
     familyKey,
     keyEpoch: FIRST_EPOCH,
     keyDigest: toHex(await familyKeyFingerprint(familyKey)),
+    // The gate the application gives its engine (controller.ts), where a test asks for it.
+    ...(gated ? { acceptsState: acceptsJournalState } : {}),
   });
   await repository.writeSyncState([{ key: JOURNAL_ORIGIN_KEY, value: origin }]);
 
@@ -395,6 +399,58 @@ describe("два клиента одной семьи", () => {
 
     // И оба устройства показывают буквально одно и то же состояние.
     expect(await documentOf(boris)).toEqual(await documentOf(anna));
+  });
+
+  it("состояние, которое шлюз приложения не открывает, не замораживает устройство молча", async () => {
+    const transport = new JournalServer();
+    const familyKey = await generateFamilyKey();
+    const anna = await makeClient("anna-6", transport, DEVICE_ANNA, MEMBER_ANNA, familyKey, "local");
+    const boris = await makeClient("boris-6", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family", true);
+
+    await anna.apply((state) => ({
+      ...state,
+      members: [{ id: MEMBER_ANNA, name: "Анна", role: "owner", active: true }],
+    }));
+    await anna.drain();
+    await boris.receive();
+    expect((await boris.engine.status()).hold).toBeNull();
+
+    // Another device writes what the journal carries and this application refuses to open: an
+    // account under an identifier that is not a UUID. The journal calls the state ready.
+    const STRANGER = "account-not-a-uuid";
+    await anna.engine.enqueue([{
+      entity: "account",
+      action: "create",
+      targetId: STRANGER,
+      fields: { name: "Чужой", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
+    }]);
+    await anna.drain();
+    const before = await documentOf(boris);
+    const delivery = await boris.receive();
+    expect(delivery).toEqual({ applied: 1, stopped: false });
+
+    // The document stays on what opened, and the device says so instead of saying nothing.
+    expect(await documentOf(boris)).toEqual(before);
+    expect((await boris.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
+
+    // Boris's own expense stays on his screen and in his document, and travels to the family.
+    const own = { ...TRANSPORT_4000, id: "55555555-5555-4555-8555-55555555cccc", memberId: MEMBER_BORIS };
+    const shown = await boris.apply((state) => ({ ...state, transactions: [...state.transactions, own] }));
+    expect(shown.transactions.map((entry) => entry.id)).toContain(own.id);
+    expect(boris.shown().transactions.map((entry) => entry.id)).toContain(own.id);
+    expect((await documentOf(boris)).transactions.map((entry) => entry.id)).toContain(own.id);
+    expect(await boris.repository.countOutbox()).toBe(1);
+    await boris.drain();
+
+    // The writer takes its account back; the state opens again, with everything in it.
+    await anna.engine.enqueue([{ entity: "account", action: "delete", targetId: STRANGER }]);
+    await anna.drain();
+    await boris.receive();
+    expect((await boris.engine.status()).hold).toBeNull();
+    const repaired = await documentOf(boris);
+    expect(repaired.transactions.map((entry) => entry.id)).toContain(own.id);
+    expect(repaired.accounts.map((account) => account.id)).not.toContain(STRANGER);
+    expect(repaired.members?.map((member) => member.name)).toEqual(["Анна"]);
   });
 
   it("сохранение, ничего не изменившее, не рассылает семье ни одной операции", async () => {

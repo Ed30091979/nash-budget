@@ -24,6 +24,7 @@ import type { RotationState } from "./controller";
 import { formatLastBackupDate } from "../data-management/model";
 import {
   MEMBER_ROLE_LABELS,
+  documentHoldNotice,
   formatInviteCode,
   formatInviteExpiry,
   isValidEmail,
@@ -197,6 +198,7 @@ export function FamilyScreen(props: FamilyScreenProps) {
   const alarm = syncAlarm(props.status?.stop ?? null);
   const stop = props.status?.stop ?? null;
   const notice = stop !== null && stop.opId === dismissedStopOpId ? null : syncNotice(stop);
+  const hold = documentHoldNotice(props.status?.hold ?? null);
   const withheld = withheldRows(props.integrity);
   const headline = withheldHeadline(withheld);
   // Не `memberNameOf`: так звался и проп рядом, и два разных обращения с одним именем стояли
@@ -320,6 +322,17 @@ export function FamilyScreen(props: FamilyScreenProps) {
             >
               Сверить отпечатки ключей
             </button>
+          </div>
+        </section>
+      ) : null}
+
+      {hold ? (
+        <section className="section-card family-notice family-hold" role="alert" aria-labelledby="family-hold-title">
+          <div className="section-title">
+            <div>
+              <h2 id="family-hold-title">{hold.title}</h2>
+              <p>{hold.body}</p>
+            </div>
           </div>
         </section>
       ) : null}

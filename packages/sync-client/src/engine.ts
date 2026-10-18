@@ -33,7 +33,6 @@ import {
   type IndexedDbBudgetRepository,
   type OutboxAppend,
   type OutboxRecord,
-  type SaveIfRevisionResult,
 } from "@family-budget/storage";
 import {
   checkpointDigest,
@@ -67,9 +66,10 @@ import {
 import { SyncClientError } from "./errors.js";
 import { applyDelivery } from "./intake.js";
 import type { SyncTransport } from "./transport.js";
-import { SYNC_STOP_REASONS } from "./types.js";
+import { DOCUMENT_HOLD_REASONS, SYNC_STOP_REASONS } from "./types.js";
 import type {
   AcceptedEpoch,
+  DocumentHold,
   OutgoingEnvelope,
   PullResult,
   PushResult,
@@ -107,6 +107,14 @@ export const SYNC_STATE_KEYS = {
    * lost travel in `inheritedGaps` of the first checkpoint of the new epoch instead).
    */
   anchor: "anchor",
+  /**
+   * The {@link DocumentHold} of the last write that folded the journal: why the document does not
+   * show the journal's state although the journal says it could be shown, or `null` while it does.
+   * Written in the same transaction as the journal it is about, so the two never disagree, and read
+   * back by {@link SyncEngine.status} — a refusal that only lived in memory would be gone at the
+   * next launch while the document went on not showing the family's work.
+   */
+  hold: "hold",
 } as const;
 
 /**
@@ -195,16 +203,41 @@ export interface SyncEngineOptions {
   readonly now?: () => number;
   /**
    * The application's own gate over a materialised state, asked before the state replaces the
-   * document. `false` is treated exactly like a snapshot that is not ready: the document keeps the
-   * last state that passed, and the journal is saved so a later operation can repair it.
+   * document.
    *
    * The journal's integrity gate guarantees a state the domain accepts; the application may demand
    * more of a state it stores — a UUID for every identifier, for one — and a state the journal calls
    * ready but the application refuses would otherwise be written to the document and then refused
    * on every load and every write of every device. Absent, every ready state is accepted, as before.
+   *
+   * `false` keeps the refused state out of the document, and three things make that safe rather
+   * than a silent freeze. The refusal is recorded ({@link SYNC_STATE_KEYS.hold}) and reported by
+   * {@link SyncEngine.status}, for a screen to say so. This device's own writes still reach its
+   * document: {@link SyncEngine.enqueue} is handed the state the application validated, and that is
+   * what the document holds, never the stale value the edit was made on. And a device that has never
+   * held a document is not given one the application refuses: it stays without, and says why. The
+   * journal and the cursor are saved in every case, so the operation that repairs the state lands on
+   * top of everything else.
    */
   readonly acceptsState?: (state: SyncedBudgetState) => boolean;
 }
+
+/** What {@link SyncEngine.enqueue} is told about the write it queues, beyond the operations. */
+export interface EnqueueOptions {
+  /**
+   * The state this write leaves the document in when the journal's own state cannot be shown —
+   * not ready, or refused by `acceptsState`: the state the application built and validated from
+   * the document it was shown, with this change applied. Without it the document would keep the
+   * value the change was made on, and the device's own write would vanish from its screen while
+   * travelling to the family.
+   */
+  readonly document?: SyncedBudgetState;
+}
+
+/** A write of {@link SyncEngine}'s, whichever of the two commits of the store carried it. */
+type Committed =
+  | { readonly status: "saved"; readonly revision: string | null }
+  | { readonly status: "conflict" };
 
 /** What one pass over the queue moved to the epoch in hand, and what it could not move. */
 interface OutboxRekey {
@@ -233,7 +266,8 @@ export interface CheckpointReport {
 
 export interface EnqueueResult {
   readonly snapshot: JournalSnapshot;
-  readonly revision: string;
+  /** The document's revision after the write; `null` when the device holds no document. */
+  readonly revision: string | null;
   readonly queued: number;
 }
 
@@ -510,6 +544,24 @@ export class SyncEngine {
   }
 
   /**
+   * The hold recorded by the last write that folded the journal, read back with the same suspicion
+   * as the stop: a record this build did not write is a corrupted record, not a hold to show.
+   */
+  async readHold(): Promise<DocumentHold | null> {
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.hold);
+    if (stored === undefined || stored === null) return null;
+    const record = stored as Partial<DocumentHold>;
+    if (
+      typeof record.reason !== "string" ||
+      !(DOCUMENT_HOLD_REASONS as readonly string[]).includes(record.reason) ||
+      (record.document !== "kept" && record.document !== "empty")
+    ) {
+      throw new SyncClientError("corrupt_sync_state", "the stored hold is not a hold");
+    }
+    return { reason: record.reason as DocumentHold["reason"], document: record.document };
+  }
+
+  /**
    * The epoch this device has accepted, measured against the epoch it actually holds.
    *
    * Three cases and no fourth. The record names the epoch held — it is returned as written, and
@@ -621,6 +673,7 @@ export class SyncEngine {
       // behind, the envelope went with the journal it belonged to (5.5 step 7) and the alarm is
       // no longer about anything; `pull()` erases the record itself on its next run.
       stop: stored.keyEpoch === cursor.keyEpoch ? await this.readStop() : null,
+      hold: await this.readHold(),
     };
   }
 
@@ -644,7 +697,7 @@ export class SyncEngine {
    * before the transaction opens — step 5 says an operation that fails a limit is not created at
    * all, and a limit checked inside the transaction would already have written half of it.
    */
-  async enqueue(drafts: readonly OperationDraft[]): Promise<EnqueueResult> {
+  async enqueue(drafts: readonly OperationDraft[], options: EnqueueOptions = {}): Promise<EnqueueResult> {
     if (drafts.length === 0) throw new SyncClientError("corrupt_sync_state", "nothing to enqueue");
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
@@ -682,9 +735,13 @@ export class SyncEngine {
       }
 
       const snapshot = applyOperations(journal, operations);
-      const commit = await this.commit(document, snapshot, appends, [
-        { key: SYNC_STATE_KEYS.journal, value: serializeJournal(snapshot) },
-      ]);
+      const commit = await this.commit(
+        document,
+        snapshot,
+        appends,
+        [{ key: SYNC_STATE_KEYS.journal, value: serializeJournal(snapshot) }],
+        options.document,
+      );
       if (commit.status === "saved") {
         return { snapshot, revision: commit.revision, queued: appends.length };
       }
@@ -701,22 +758,58 @@ export class SyncEngine {
    * shown and the application's own gate accepts it. When it cannot — no active budget, one the
    * journal does not hold, or a state the application refuses to store — the document keeps the
    * last state that could, exactly as decision 19 asks, and the journal is still saved so the
-   * missing operation repairs it when it arrives.
+   * missing operation repairs it when it arrives. `own` is this device's own write on top of that
+   * state, as the application validated it; it takes the kept state's place, because the document
+   * may only ever hold what the application accepts, and that is what it accepted. With neither a
+   * document nor a write of its own the device stays without a document rather than being given
+   * one the application refuses.
+   *
+   * A refusal by the application is recorded beside the journal ({@link SYNC_STATE_KEYS.hold}); a
+   * state that is merely not ready is not a refusal and says so through its own integrity verdict.
    */
   private async commit(
     document: { readonly value: SyncedBudgetState; readonly revision: string } | null,
     snapshot: JournalSnapshot,
     outbox: readonly OutboxAppend[],
     syncState: readonly { readonly key: string; readonly value: unknown }[],
-  ): Promise<SaveIfRevisionResult<SyncedBudgetState>> {
-    const showable = snapshot.integrity.ready && this.acceptsState(snapshot.state);
-    const value = showable || document === null ? snapshot.state : document.value;
-    return this.repository.commitWithSync({
-      expectedRevision: document?.revision ?? null,
-      value,
+    own?: SyncedBudgetState,
+  ): Promise<Committed> {
+    const ready = snapshot.integrity.ready;
+    const accepted = ready && this.acceptsState(snapshot.state);
+    const value = accepted ? snapshot.state : (own ?? document?.value);
+    const hold: DocumentHold | null =
+      ready && !accepted ? { reason: "rejected_by_app", document: value === undefined ? "empty" : "kept" } : null;
+    const entries = [...syncState, { key: SYNC_STATE_KEYS.hold, value: hold }];
+    const expectedRevision = document?.revision ?? null;
+    if (value === undefined) {
+      const kept = await this.repository.commitBookkeeping({ expectedRevision, outbox, syncState: entries });
+      return kept.status === "saved" ? { status: "saved", revision: kept.current?.revision ?? null } : kept;
+    }
+    const saved = await this.repository.commitWithSync({ expectedRevision, value, outbox, syncState: entries });
+    return saved.status === "saved" ? { status: "saved", revision: saved.revision } : { status: "conflict" };
+  }
+
+  /**
+   * A write of the queue or of the bookkeeping that leaves the budget as it was found: the document
+   * written back unchanged, or — on a device that holds none — no document written at all, so that
+   * moving a queue or anchoring a checkpoint never invents one out of a state nobody accepted.
+   */
+  private async commitUnchanged(
+    document: { readonly value: SyncedBudgetState; readonly revision: string } | null,
+    outbox: readonly OutboxAppend[],
+    syncState: readonly { readonly key: string; readonly value: unknown }[],
+  ): Promise<Committed> {
+    if (document === null) {
+      const kept = await this.repository.commitBookkeeping({ expectedRevision: null, outbox, syncState });
+      return kept.status === "saved" ? { status: "saved", revision: kept.current?.revision ?? null } : kept;
+    }
+    const saved = await this.repository.commitWithSync({
+      expectedRevision: document.revision,
+      value: document.value,
       outbox,
       syncState,
     });
+    return saved.status === "saved" ? { status: "saved", revision: saved.revision } : { status: "conflict" };
   }
 
   /** A queue record as it was written, or `null` when it is not the shape this build writes. */
@@ -805,15 +898,10 @@ export class SyncEngine {
     await this.repository.confirmOutbox(appends.map((append) => append.opId));
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
-      const commit = await this.repository.commitWithSync({
-        expectedRevision: document?.revision ?? null,
-        // The document is not what changed here — only the queue is — so it is written back as it
-        // was found. A device with a queue always has a document (3.1 step 7 writes both), and the
-        // journal answers for the case that cannot happen rather than leaving it to `null`.
-        value: document?.value ?? (await this.readJournal()).state,
-        outbox: appends,
-        syncState: [{ key: SYNC_STATE_KEYS.rekey, value: null }],
-      });
+      // The document is not what changed here — only the queue is — so it is written back as it
+      // was found, and a device without one is not given one: the journal's state is not something
+      // this device's application has accepted just because the queue moved.
+      const commit = await this.commitUnchanged(document, appends, [{ key: SYNC_STATE_KEYS.rekey, value: null }]);
       if (commit.status === "saved") return;
     }
     throw new SyncClientError("write_conflict", "the re-encrypted queue lost its revision check");
@@ -1203,23 +1291,19 @@ export class SyncEngine {
     // would claim again.
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
-      const commit = await this.repository.commitWithSync({
-        expectedRevision: document?.revision ?? null,
-        // A checkpoint changes nothing in the budget, so the document is written back as found.
-        value: document?.value ?? (await this.readJournal()).state,
-        outbox: [append],
-        syncState: [
-          {
-            key: SYNC_STATE_KEYS.anchor,
-            value: serializeAnchor({
-              ...anchor,
-              own: { index, digest },
-              sinceLast: 0,
-              writtenAt: now,
-            }),
-          },
-        ],
-      });
+      // A checkpoint changes nothing in the budget, so the document is written back as found — and
+      // on a device that holds none, none is written.
+      const commit = await this.commitUnchanged(document, [append], [
+        {
+          key: SYNC_STATE_KEYS.anchor,
+          value: serializeAnchor({
+            ...anchor,
+            own: { index, digest },
+            sinceLast: 0,
+            writtenAt: now,
+          }),
+        },
+      ]);
       if (commit.status === "saved") return true;
     }
     throw new SyncClientError("write_conflict", "the checkpoint lost its revision check");

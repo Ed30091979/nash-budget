@@ -169,9 +169,39 @@ export interface PullResult
   readonly pageLimitReached: boolean;
 }
 
+/**
+ * Why the document does not show the family's journal although the journal says it can be shown.
+ *
+ * A list and not a bare union for the reason {@link SYNC_STOP_REASONS} is: the record is written to
+ * disk and read back, and a reason no branch of this build knows would reach a screen as nothing.
+ */
+export const DOCUMENT_HOLD_REASONS = [
+  /**
+   * The application's own gate (`SyncEngineOptions.acceptsState`) refused the state the journal
+   * materialised: an identifier of an older kind that is not a UUID, for one. The journal and the
+   * cursor moved, nothing of the family's is lost, and the document holds what the application
+   * last accepted — so the family is told, instead of looking at yesterday's budget in silence.
+   */
+  "rejected_by_app",
+] as const;
+
+export type DocumentHoldReason = (typeof DOCUMENT_HOLD_REASONS)[number];
+
+export interface DocumentHold {
+  readonly reason: DocumentHoldReason;
+  /**
+   * What the document holds instead. `kept` — the last state the application accepted, with this
+   * device's own writes on top of it; `empty` — nothing, because no state of this journal was ever
+   * accepted on this device, and a state the application refuses is not written in its place.
+   */
+  readonly document: "kept" | "empty";
+}
+
 export interface SyncStatusReport {
   readonly cursor: SyncCursor;
   readonly queued: number;
   readonly epoch: AcceptedEpoch;
   readonly stop: SyncStop | null;
+  /** The journal's state that the document does not show, and why; `null` while it shows it. */
+  readonly hold: DocumentHold | null;
 }
