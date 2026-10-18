@@ -11,7 +11,7 @@ import { makePlanningSeed, makeSeedBudget, SEED_IDS, type BudgetState } from "@f
 import { applyJournal, createClock, createLocalOperation, type Operation } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
-import { budgetJournalDrafts } from "./journal";
+import { budgetJournalDrafts, canonical } from "./journal";
 
 const DEVICE = "0000000a-0000-4000-8000-000000000001";
 const MEMBER = "0000000a-0000-4000-8000-00000000aaaa";
@@ -70,6 +70,18 @@ describe("бюджет как операции журнала", () => {
     };
     expect(budgetJournalDrafts(state, shuffled, MEMBER)).toEqual([]);
     expect(budgetJournalDrafts(state, state, MEMBER)).toEqual([]);
+  });
+
+  it("перестановка ключей вложенного объекта — тоже не изменение, а порядок списка — изменение", () => {
+    // Сортировка одного верхнего уровня пропустила бы вложенный курс или шаблон правила, собранный
+    // в другом порядке ключей, и каждое открытие экрана рассылало бы семье «обновление».
+    const one = { amountMinor: 1, rate: { baseMinor: 9_000, quoteMinor: 100 }, template: { kind: "expense", nested: { b: [1, { y: 2, x: 1 }], a: null } } };
+    const two = { template: { nested: { a: null, b: [1, { x: 1, y: 2 }] }, kind: "expense" }, rate: { quoteMinor: 100, baseMinor: 9_000 }, amountMinor: 1 };
+    expect(canonical(two)).toBe(canonical(one));
+    expect(canonical({ tagIds: ["b", "a"] })).not.toBe(canonical({ tagIds: ["a", "b"] }));
+    expect(canonical({ rate: { baseMinor: 9_000, quoteMinor: 100 } })).not.toBe(canonical({ rate: { baseMinor: 9_250, quoteMinor: 100 } }));
+    // Имя поля — данные: «__proto__» во вложенном объекте не становится прототипом.
+    expect(canonical(JSON.parse('{"a":{"__proto__":{"x":1}}}') as Record<string, unknown>)).toBe('{"a":{"__proto__":{"x":1}}}');
   });
 
   it("правка — это update той же записи, а не второе создание", () => {

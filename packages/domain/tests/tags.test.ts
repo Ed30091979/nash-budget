@@ -6,6 +6,7 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  COLLECTION_LIMITS,
   createTag,
   deleteTag,
   findTagByName,
@@ -78,6 +79,22 @@ describe("createTag", () => {
     expect(findTagByName(archived, "отпуск")?.id).toBe(HOLIDAY);
     const { tag } = createTag(archived, "Отпуск", sequentialIds("8a000000-0000-4000-8000-0000000000a3"));
     expect(tag.active).toBe(true);
+  });
+
+  it("refuses the tag past the limit a backup holds a document to, archived tags counted", () => {
+    const seed = makeSeedBudget();
+    const full: BudgetState = {
+      ...seed,
+      tags: Array.from({ length: COLLECTION_LIMITS.tags }, (_, index) => ({
+        id: `8a000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        name: `Метка ${index}`,
+        active: index % 2 === 0,
+      })),
+    };
+    expect(code(() => createTag(full, "Отпуск", sequentialIds(HOLIDAY)))).toBe("limit_reached");
+    expect(() => createTag(full, "Отпуск", sequentialIds(HOLIDAY))).toThrow(/Меток уже 500/);
+    const roomForOne: BudgetState = { ...full, tags: full.tags!.slice(1) };
+    expect(createTag(roomForOne, "Отпуск", sequentialIds(HOLIDAY)).state.tags).toHaveLength(COLLECTION_LIMITS.tags);
   });
 
   it("refuses an identifier that is empty or already taken anywhere in the document", () => {

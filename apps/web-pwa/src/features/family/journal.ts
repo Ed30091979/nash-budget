@@ -72,8 +72,11 @@ function sortedKeys(value: unknown): unknown {
   return sorted;
 }
 
-/** Каноническая запись полей: ключи по алфавиту, поэтому равные поля дают равный текст. */
-function canonical(fields: Record<string, unknown>): string {
+/**
+ * Каноническая запись полей: ключи по алфавиту на любой глубине, поэтому равные поля дают равный
+ * текст. Экспортирована ради проверки вложенных значений, которых у полей этой волны пока нет.
+ */
+export function canonical(fields: Record<string, unknown>): string {
   return JSON.stringify(sortedKeys(fields));
 }
 

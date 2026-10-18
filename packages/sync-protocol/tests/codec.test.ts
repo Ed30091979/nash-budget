@@ -1,3 +1,4 @@
+import * as domain from "@family-budget/domain";
 import { isNormalizedLabel, normalizeNote } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 
@@ -245,6 +246,18 @@ describe("parseOperation", () => {
     expect(() => parseOperation(withBalance(-MAX_MONEY_MINOR - 1))).toThrow(
       /account openingBalanceMinor must be at least -10000000000/,
     );
+  });
+
+  it("takes its bounds from the domain, so the two cannot disagree", () => {
+    // A bound the codec kept for itself let the domain and the backup gate accept a value the codec
+    // then refused, and the value was stranded on the device that wrote it.
+    expect(MAX_MONEY_MINOR).toBe(domain.MAX_MONEY_MINOR);
+    expect(MIN_LOCAL_DATE).toBe(domain.MIN_LOCAL_DATE);
+    expect(MAX_LOCAL_DATE).toBe(domain.MAX_LOCAL_DATE);
+    const sorted = (sortOrder: number): unknown => ({ ...ACCOUNT_OPERATION, fields: { ...SAMPLE_FIELDS.account, sortOrder } });
+    expect(() => parseOperation(sorted(domain.MAX_SORT_ORDER))).not.toThrow();
+    expect(() => parseOperation(sorted(-domain.MAX_SORT_ORDER))).not.toThrow();
+    expect(() => parseOperation(sorted(domain.MAX_SORT_ORDER + 1))).toThrow(/account sortOrder must be from/);
   });
 
   it("keeps every date inside the calendar the domain can plan over", () => {
@@ -725,6 +738,13 @@ describe("display fields, notes and tags", () => {
     // other device accepts. Walked over every character of the Basic Multilingual Plane outside
     // the surrogates, inside a note and inside a tag name, plus a few emoji.
     const characters: string[] = ["🌴", "👨\u200d👩", "❤\ufe0f"];
+    // A presentation selector between a letter and a combining mark: normalizeNote must drop it
+    // before it composes, or what it stores is a note this codec refuses as not normalised.
+    for (const base of ["A", "e", "и", "\u2764"]) {
+      for (const mark of ["\u0301", "\u0306", "\u030a", "\u0327"]) {
+        characters.push(`${base}\ufe0f${mark}`, `${base}\ufe0e${mark}`, `\ufe0f${base}${mark}\ufe0f`);
+      }
+    }
     for (let code = 0; code <= 0xffff; code += 1) {
       if (code < 0xd800 || code > 0xdfff) characters.push(String.fromCharCode(code));
     }

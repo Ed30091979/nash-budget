@@ -2,6 +2,7 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  COLLECTION_LIMITS,
   type Transaction,
 } from "@family-budget/domain";
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
@@ -54,6 +55,7 @@ import {
   mintedDevice,
   opUuid,
   SAMPLE_FIELDS,
+  testUuid,
   UPDATED_FIELDS,
 } from "./samples.js";
 
@@ -1358,7 +1360,10 @@ describe("integrity gate", () => {
     // naming an author would put a string of the flooder's choosing in the report for no
     // purpose, because nothing follows from it. It does not lower the verdict on its own —
     // this journal holds no budget at all, and that is what does.
+    // A hundred thousand participants are also more than a document may hold, and that is said
+    // against the kind, again without withholding anybody.
     expect(forward.integrity.problems).toEqual([
+      { code: "collection_limit", entity: "member", id: "" },
       { code: "journal_entry_budget", entity: null, id: "" },
       { code: "no_active_budget", entity: "budget", id: "" },
     ]);
@@ -1458,7 +1463,11 @@ describe("integrity gate", () => {
     expect(flooded.state.activeBudgetId).toBe(BUDGET_ID);
     expect(flooded.integrity).toEqual({
       ready: true,
-      problems: [{ code: "journal_entry_budget", entity: null, id: "" }],
+      problems: [
+        // More participants than a document may hold, said against the kind and nothing more.
+        { code: "collection_limit", entity: "member", id: "" },
+        { code: "journal_entry_budget", entity: null, id: "" },
+      ],
       // Nothing is withheld for a flood: every entity of the family is on the screen.
       withheld: [],
     });
@@ -3152,6 +3161,22 @@ describe("tags and labels through the journal", () => {
     expect(snapshot.state.accounts.map((item) => item.id)).toContain(MAIN_ACCOUNT_ID);
     expect(found(snapshot) !== undefined && "tagIds" in found(snapshot)!).toBe(false);
     expect(new Set(allStateIds(snapshot.state)).size).toBe(allStateIds(snapshot.state).length);
+  });
+
+  it("reports a state holding more tags than a document may, and still shows all of them", () => {
+    // Several devices creating offline can pass the limit together, and none of them did anything
+    // wrong: nothing is withheld, the family keeps seeing everything, and the count is reported.
+    const journal = buildFixtureJournal();
+    const tags = Array.from({ length: COLLECTION_LIMITS.tags + 1 }, (_, index) =>
+      tag(testUuid(0x7a6, index), `Метка ${index}`, 1_000 + index, 20_000 + index));
+    const atLimit = applyJournal([...journal, ...tags.slice(1)]);
+    expect(atLimit.integrity.problems).toEqual([]);
+
+    const over = applyJournal([...journal, ...tags]);
+    expect(over.integrity.ready).toBe(true);
+    expect(over.integrity.withheld).toEqual([]);
+    expect(over.integrity.problems).toEqual([{ code: "collection_limit", entity: "tag", id: "" }]);
+    expect(over.state.tags).toHaveLength(COLLECTION_LIMITS.tags + 1);
   });
 
   it("carries display fields of accounts, categories and goals into the state", () => {

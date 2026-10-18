@@ -88,6 +88,20 @@ export function shiftDate(date: LocalDate, monthOffset: number, label = "date"):
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The calendar window every date the journal carries must fall into, and so every date of a field
+ * added to the model since: outside it the month arithmetic of the annual plan walks past the end of
+ * the supported calendar. One window for the domain, the backup gate and the codec — see `limits.ts`
+ * for why each keeping its own was a way to strand data.
+ */
+export const MIN_LOCAL_DATE: LocalDate = "1900-01-01";
+export const MAX_LOCAL_DATE: LocalDate = "2199-12-31";
+
+/** Whether a well-formed date falls inside {@link MIN_LOCAL_DATE} … {@link MAX_LOCAL_DATE}. */
+export function isWithinDateWindow(date: LocalDate): boolean {
+  return date >= MIN_LOCAL_DATE && date <= MAX_LOCAL_DATE;
+}
+
 /** Day index of 0000-01-01 and of 9999-12-31: the range the four-digit calendar can name. */
 const MIN_DAY_INDEX = -719_528;
 const MAX_DAY_INDEX = 2_932_896;

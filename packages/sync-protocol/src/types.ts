@@ -207,6 +207,14 @@ export const JOURNAL_PROBLEM_CODES = [
    * snapshot and brought below it.
    */
   "implausible_lamport",
+  /**
+   * The state holds more entities of one kind than a document may — more participants or tags than
+   * `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
+   * together, and no one of them did anything wrong, so nothing is withheld and the state stays
+   * ready; the entity names the kind, the identifier is empty. A backup of such a state is refused
+   * until the family brings the count down.
+   */
+  "collection_limit",
 ] as const;
 
 export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];

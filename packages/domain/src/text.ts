@@ -110,9 +110,14 @@ export function isNormalizedLabel(value: unknown, maxLength: number): value is s
 }
 
 /**
- * Normalises a note the way it will be stored: NFC, emoji presentation selectors dropped, the
- * surrounding whitespace trimmed. A note that is empty after that is no note at all and comes back
- * as `undefined`, because an operation without a note omits the field rather than carrying `""`.
+ * Normalises a note the way it will be stored: emoji presentation selectors dropped, then NFC, then
+ * the surrounding whitespace trimmed. A note that is empty after that is no note at all and comes
+ * back as `undefined`, because an operation without a note omits the field rather than carrying `""`.
+ *
+ * The selectors go first, and the order is the point. A selector is a starter (canonical class 0),
+ * so one sitting between a letter and a combining mark keeps NFC from composing the two; dropped
+ * after NFC, it left the pair side by side uncomposed, and the stored note was a string the same
+ * rule then refused as not normalised.
  *
  * The same hidden-character rule as {@link normalizeLabel}, and one line only — a line feed is a
  * control character — but no rule on alphabets: a note is prose, «кофе в Starbucks» is an honest
@@ -122,7 +127,7 @@ export function normalizeNote(value: string): string | undefined {
   if (typeof value !== "string" || value.length > NOTE_MAX_LENGTH * 4) {
     fail("too_long", `note must be at most ${NOTE_MAX_LENGTH} characters`);
   }
-  const normalized = value.normalize("NFC").replace(PRESENTATION_SELECTORS, "").trim();
+  const normalized = value.replace(PRESENTATION_SELECTORS, "").normalize("NFC").trim();
   if (!normalized) return undefined;
   if (normalized.length > NOTE_MAX_LENGTH) fail("too_long", `note must be at most ${NOTE_MAX_LENGTH} characters`);
   if (FORBIDDEN_FORMATTING_PATTERN.test(normalized)) {

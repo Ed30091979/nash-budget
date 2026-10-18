@@ -2,7 +2,11 @@ import {
   isDisplayKey,
   isNormalizedLabel,
   isNormalizedNote,
+  MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
+  MIN_LOCAL_DATE,
   NOTE_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
 } from "@family-budget/domain";
@@ -77,17 +81,19 @@ export const MAX_HONEST_LAMPORT = HONEST_LAMPORT_CEILING - 1;
 export const MAX_LAMPORT_SKEW = 1_000_000;
 
 /**
- * Upper bound for every money field: 10^10 minor units, a hundred million roubles for a
- * single amount. The previous 10^13 did not protect the domain at all — 901 amounts at that
- * ceiling add up to 9.01·10^15, past Number.MAX_SAFE_INTEGER, and every device in the family
- * loses its calculations at once. This ceiling is a field bound only; sums are bounded
- * separately by the integrity gate, because no per-field ceiling can bound a sum.
+ * Upper bound for every money field, and the calendar window every date must fall into: defined
+ * once, in the domain (`limits.ts`, `calendar.ts`), and re-exported here for the callers that have
+ * always found them in this package. A bound the codec kept for itself let the domain and the backup
+ * gate accept a value the codec then refused — a goal deadline in 2200 stranded on the device that
+ * wrote it — so the codec owns none of them any more.
+ *
+ * The money ceiling is 10^10 minor units, a hundred million roubles for a single amount. The
+ * previous 10^13 did not protect the domain at all — 901 amounts at that ceiling add up to
+ * 9.01·10^15, past Number.MAX_SAFE_INTEGER, and every device in the family loses its calculations
+ * at once. It is a field bound only; sums are bounded separately by the integrity gate, because no
+ * per-field ceiling can bound a sum. Outside the date window the domain's month arithmetic breaks.
  */
-export const MAX_MONEY_MINOR = 10 ** 10;
-
-/** Calendar window every date must fall into. Outside it the domain's month arithmetic breaks. */
-export const MIN_LOCAL_DATE = "1900-01-01";
-export const MAX_LOCAL_DATE = "2199-12-31";
+export { MAX_LOCAL_DATE, MAX_MONEY_MINOR, MIN_LOCAL_DATE };
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_ID_LENGTH = 128;
@@ -95,8 +101,6 @@ const MAX_TEXT_LENGTH = 200;
 const MAX_DEPTH = 8;
 const MAX_NODES = 2_000;
 const MAX_MONTHS = 12;
-/** The bound of a category's sort order, and of an account's: far beyond any list a family keeps. */
-const MAX_SORT_ORDER = 1_000_000;
 /** Untrusted text is echoed back into an error message only in this quantity. */
 const MAX_ECHO_LENGTH = 32;
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

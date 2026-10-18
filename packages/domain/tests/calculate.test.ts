@@ -7,6 +7,10 @@ import {
   calculateMemberExpenses,
   HOUSEHOLD_ID,
   makePlanningSeed,
+  MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_SORT_ORDER,
+  MIN_LOCAL_DATE,
   makeSeedBudget,
   normalizeScheduledDueDate,
   PLANNING_IDS,
@@ -1312,5 +1316,51 @@ describe("several currencies", () => {
     expect(() => calculateBudget({ ...state, exchangeRates: [USD_RATES[0]!, USD_RATES[0]!] })).toThrow(/exchangeRates contains duplicate id/);
     // A rate against another base is kept and simply never chosen.
     expect(() => calculateBudget(withRate({ baseCurrency: "EUR" }))).not.toThrow();
+  });
+});
+
+describe("bounds shared with the journal", () => {
+  it("holds the new fields to the window and the ceilings the codec carries, and no further", () => {
+    const seed = makeSeedBudget();
+    const account = (sortOrder: number): BudgetState => ({
+      ...seed,
+      accounts: [{ ...seed.accounts[0]!, sortOrder }, ...seed.accounts.slice(1)],
+    });
+    expect(() => calculateBudget(account(MAX_SORT_ORDER))).not.toThrow();
+    expect(() => calculateBudget(account(-MAX_SORT_ORDER))).not.toThrow();
+    expect(() => calculateBudget(account(MAX_SORT_ORDER + 1))).toThrow(/sortOrder must be from -1000000 to 1000000/);
+    expect(() => calculateBudget(account(-MAX_SORT_ORDER - 1))).toThrow(/sortOrder must be from -1000000 to 1000000/);
+
+    const deadline = (value: string): BudgetState => ({ ...seed, goals: [{ ...seed.goals[0]!, deadline: value }] });
+    expect(() => calculateBudget(deadline(MIN_LOCAL_DATE))).not.toThrow();
+    expect(() => calculateBudget(deadline(MAX_LOCAL_DATE))).not.toThrow();
+    expect(() => calculateBudget(deadline("2200-01-01"))).toThrow(/deadline must be from 1900-01-01 to 2199-12-31/);
+    expect(() => calculateBudget(deadline("1899-12-31"))).toThrow(/deadline must be from 1900-01-01 to 2199-12-31/);
+
+    const state = withDollars();
+    const rateOn = (date: string): BudgetState => ({ ...state, exchangeRates: [{ ...USD_RATES[0]!, date }] });
+    expect(() => calculateBudget(rateOn("2200-01-01"))).toThrow(/exchange rate .* date must be from 1900-01-01 to 2199-12-31/);
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor: MAX_MONEY_MINOR }))))
+      .not.toThrow();
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor: MAX_MONEY_MINOR + 1 }))))
+      .toThrow(/baseAmountMinor must be at most 10000000000/);
+    const transfer: Transaction = {
+      id: "8d000000-0000-4000-8000-000000000006", occurredOn: "2026-07-05", status: "posted", kind: "transfer",
+      amountMinor: 1_800_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: USD_ACCOUNT, toAmountMinor: MAX_MONEY_MINOR + 1,
+    };
+    expect(() => calculateBudget({ ...state, transactions: [...state.transactions, transfer] }))
+      .toThrow(/toAmountMinor must be at most 10000000000/);
+  });
+
+  it("leaves the fields that existed before the window as they were, so an old document still opens", () => {
+    // A 1.0.0 document may hold an operation dated outside the window and a category sorted past the
+    // bound; the codec refuses them on the wire, the domain keeps reading them.
+    const seed = makeSeedBudget();
+    const old: BudgetState = {
+      ...seed,
+      categories: seed.categories.map((item, index) => (index === 0 ? { ...item, sortOrder: 2_000_000 } : item)),
+      transactions: [...seed.transactions, { ...seed.transactions[2]!, id: "55555555-5555-4555-8555-5555555555aa", status: "draft", occurredOn: "2250-01-01" }],
+    };
+    expect(() => calculateBudget(old)).not.toThrow();
   });
 });

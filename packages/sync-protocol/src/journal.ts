@@ -11,6 +11,7 @@ import type {
   Tag,
   Transaction,
 } from "@family-budget/domain";
+import { COLLECTION_LIMITS } from "@family-budget/domain";
 
 import {
   canonicalOperationText,
@@ -996,6 +997,21 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
 }
 
 /**
+ * Says out loud that the state holds more participants or tags than a document may. Withholds
+ * nothing.
+ *
+ * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
+ * stays under it when it creates. Several devices creating offline can still pass it together, and
+ * withholding the excess would mean choosing which of the family's entities to drop — by an order a
+ * writing peer controls, which is the eviction {@link MAX_AGGREGATE_MINOR} gave up for good. So the
+ * count is reported against the kind, the state stays ready, and the app goes on showing everything.
+ */
+function reportCollectionLimits(live: LiveEntities, report: (problem: JournalProblem) => void): void {
+  if (live.members.size > COLLECTION_LIMITS.members) report(problem("collection_limit", "member", ""));
+  if (live.tags.size > COLLECTION_LIMITS.tags) report(problem("collection_limit", "tag", ""));
+}
+
+/**
  * Counts the tombstones each author owns and reports the ones that overshoot the budget.
  *
  * Pairing a tombstone with the create it ended is not recoverable from a converged journal:
@@ -1185,6 +1201,7 @@ function buildView(
   // and after resolveSharedIdentifiers, which is the one step that can take a participant, a
   // category or a tag out without a delete having been written for it.
   clearUnresolvedLabels(live, report);
+  reportCollectionLimits(live, report);
   reportAggregateBounds(live, report);
   reportTombstoneBudget(ordered, confirmedDevices(live, owners), report);
   reportImplausibleStamps(ordered, activations.values(), report);

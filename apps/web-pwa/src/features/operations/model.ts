@@ -4,6 +4,9 @@ import {
   createCategory,
   CategoryValidationError,
   documentIds,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MIN_LOCAL_DATE,
   type BudgetLine,
   type BudgetMetrics,
   type BudgetState,
@@ -157,6 +160,11 @@ function assertLocalDate(value: string): string {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     return fail("occurredOn", "Выберите существующую календарную дату.");
+  }
+  // Окно календаря, которое переносит журнал семьи: дату за его пределами запись приняла бы, а
+  // синхронизация потом отвергла бы на каждом устройстве. Старые документы читаются как раньше.
+  if (!isWithinDateWindow(value)) {
+    return fail("occurredOn", `Выберите дату с ${MIN_LOCAL_DATE.slice(0, 4)} по ${MAX_LOCAL_DATE.slice(0, 4)} год.`);
   }
   return value;
 }

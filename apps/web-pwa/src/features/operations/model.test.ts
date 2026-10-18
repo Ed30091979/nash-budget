@@ -515,3 +515,17 @@ describe("правка операции не теряет того, чего ф�
     }, () => TAG_HOME)).toThrow("уникальный");
   });
 });
+
+describe("operation date window", () => {
+  it("takes a date the family journal carries and refuses one past it, naming the field", () => {
+    const state = makeG000State();
+    const draft = (occurredOn: string): TransactionDraft => ({ ...transferDraft("100"), occurredOn });
+    expect(() => createTransaction(state, draft("2199-12-31"), fixedOperationId)).not.toThrow();
+    expect(() => createTransaction(state, draft("1900-01-01"), fixedOperationId)).not.toThrow();
+    for (const occurredOn of ["2200-01-01", "1899-12-31", "9999-12-31"]) {
+      expect(() => createTransaction(state, draft(occurredOn), fixedOperationId)).toThrow(
+        expect.objectContaining({ field: "occurredOn", message: "Выберите дату с 1900 по 2199 год." }),
+      );
+    }
+  });
+});

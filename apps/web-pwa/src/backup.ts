@@ -2,10 +2,15 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  COLLECTION_LIMITS,
   isDisplayKey,
   isNormalizedLabel,
   isNormalizedNote,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
+  MIN_LOCAL_DATE,
   NOTE_MAX_LENGTH,
   TAG_NAME_MAX_LENGTH,
   type BudgetState,
@@ -19,7 +24,7 @@ import {
 export const MAX_BACKUP_FILE_BYTES = 5 * 1024 * 1024;
 export const BACKUP_LIMITS = {
   accounts: 100,
-  members: 100,
+  members: COLLECTION_LIMITS.members,
   categories: 500,
   budgets: 240,
   goals: 200,
@@ -32,7 +37,7 @@ export const BACKUP_LIMITS = {
   idLength: 128,
   nameLength: 200,
   textLength: 500,
-  tags: 500,
+  tags: COLLECTION_LIMITS.tags,
   tagsPerTransaction: MAX_TAGS_PER_TRANSACTION,
   tagNameLength: TAG_NAME_MAX_LENGTH,
 } as const;
@@ -77,6 +82,50 @@ export type BackupRepair =
   };
 
 export type BackupRepairReporter = (repair: BackupRepair) => void;
+
+/** Что сказать человеку о ремонтах одного вида: сколько снято и чего в копии нет. */
+const REPAIR_NOTICES = {
+  unknown_member_attribution: (count: number) => `Снято меток участника: ${count} — такого участника в копии нет.`,
+  unknown_tag: (count: number) => `Снято меток: ${count} — таких меток в копии нет.`,
+  unknown_recurring_rule: (count: number) => `Снята привязка к регулярной операции: ${count} — такого правила в копии нет.`,
+} as const satisfies Readonly<Record<BackupRepair["kind"], (count: number) => string>>;
+
+/**
+ * Сообщение о ремонтах восстановленной копии, по строке на вид ремонта, или `null`, если ремонтов
+ * не было.
+ *
+ * Раньше любой ремонт назывался снятой меткой участника: пока участник был единственной меткой, это
+ * было правдой. С метками и правилами регулярных операций это стало бы ложью на экране, поэтому
+ * каждый вид считается отдельно и называется своими словами. Последняя фраза общая: ремонт снимает
+ * метку и ничего больше — операции и суммы восстановлены как есть.
+ */
+export function describeBackupRepairs(repairs: readonly BackupRepair[]): string | null {
+  const counts = new Map<BackupRepair["kind"], number>();
+  for (const repair of repairs) counts.set(repair.kind, (counts.get(repair.kind) ?? 0) + 1);
+  const lines: string[] = [];
+  for (const kind of Object.keys(REPAIR_NOTICES) as BackupRepair["kind"][]) {
+    const count = counts.get(kind);
+    if (count !== undefined) lines.push(REPAIR_NOTICES[kind](count));
+  }
+  if (lines.length === 0) return null;
+  return [...lines, "Сами операции и все суммы восстановлены без изменений."].join(" ");
+}
+
+/**
+ * Where a state comes from, which decides one thing: whether the count of a collection that grows
+ * through the family's journal is a refusal.
+ *
+ * - `file` — a backup being restored or written. A file is untrusted input, and the counts bound
+ *   the work its restore does, so a file beyond {@link COLLECTION_LIMITS} is refused, and so is
+ *   writing one: no backup is ever written that this build would refuse to restore.
+ * - `document` — a state the app already holds: written by this device or materialised from the
+ *   journal. Several devices adding participants or tags offline can pass a limit together, and a
+ *   refusal here would refuse the merged state on every write of every device. Creation keeps each
+ *   device under the limit, and the journal reports the overflow (`collection_limit`) instead.
+ *
+ * Every other check is the same for both: a malformed field is malformed wherever it comes from.
+ */
+export type BudgetStateSource = "document" | "file";
 
 const RENDERABLE_PLANNING_HORIZON_MONTHS = 24;
 
@@ -156,6 +205,27 @@ function requireLocalDate(value: string, label: string): void {
   }
 }
 
+/**
+ * The date of a field added to the model since the journal existed: inside the window the journal
+ * carries, the same window the domain and the codec hold it to (`MIN_LOCAL_DATE`…`MAX_LOCAL_DATE`).
+ * Older dates are checked by {@link requireLocalDate} alone, because a copy written by 1.0.0 may
+ * carry one outside it and must keep restoring.
+ */
+function requireWindowDate(value: unknown, label: string): void {
+  const date = requireString(value, label, false, 10);
+  requireLocalDate(date, label);
+  if (!isWithinDateWindow(date)) throw new Error(`${label}: дата вне диапазона ${MIN_LOCAL_DATE}…${MAX_LOCAL_DATE}.`);
+}
+
+/** A sort order of a field added since the journal existed: an integer within ±{@link MAX_SORT_ORDER}. */
+function requireOptionalSortOrder(value: unknown, label: string): void {
+  if (value === undefined) return;
+  requireOptionalSafeInteger(value, label);
+  if (Math.abs(value as number) > MAX_SORT_ORDER) {
+    throw new Error(`${label}: порядок вне диапазона ±${MAX_SORT_ORDER}.`);
+  }
+}
+
 function requireUuid(value: string, label: string): void {
   if (!UUID_PATTERN.test(value)) throw new Error(`${label}: некорректный UUID.`);
 }
@@ -194,13 +264,15 @@ function requireSafeMinor(value: number, label: string, allowNegative = false): 
   }
 }
 
-function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
+function requireBaseShape(value: unknown, source: BudgetStateSource): asserts value is LegacyBudgetState {
   const state = requireRecord(value, "Бюджет");
+  // A count of a collection the journal grows is a refusal for a file only; see BudgetStateSource.
+  const grown = (limit: number): number => (source === "file" ? limit : Number.MAX_SAFE_INTEGER);
   requireString(state.activeBudgetId, "activeBudgetId", true, BACKUP_LIMITS.idLength);
 
   // Absent in every copy written before members existed, and such a copy stays valid.
   if (state.members !== undefined) {
-    requireArray(state.members, "members", BACKUP_LIMITS.members).forEach((item, index) => {
+    requireArray(state.members, "members", grown(BACKUP_LIMITS.members)).forEach((item, index) => {
       const member = requireRecord(item, `members[${index}]`);
       requireString(member.id, `members[${index}].id`, true, BACKUP_LIMITS.idLength);
       requireString(member.name, `members[${index}].name`, false, BACKUP_LIMITS.nameLength);
@@ -211,7 +283,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
 
   // Absent in every copy written before tags existed, exactly like the participants above.
   if (state.tags !== undefined) {
-    requireArray(state.tags, "tags", BACKUP_LIMITS.tags).forEach((item, index) => {
+    requireArray(state.tags, "tags", grown(BACKUP_LIMITS.tags)).forEach((item, index) => {
       const tag = requireRecord(item, `tags[${index}]`);
       requireString(tag.id, `tags[${index}].id`, true, BACKUP_LIMITS.idLength);
       const name = requireString(tag.name, `tags[${index}].name`, true, BACKUP_LIMITS.tagNameLength);
@@ -231,7 +303,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireNumber(account.openingBalanceMinor, `accounts[${index}].openingBalanceMinor`);
     requireBoolean(account.active, `accounts[${index}].active`);
     // Display fields: absent in every copy written before them, read by no figure.
-    requireOptionalSafeInteger(account.sortOrder, `accounts[${index}].sortOrder`);
+    requireOptionalSortOrder(account.sortOrder, `accounts[${index}].sortOrder`);
     requireOptionalDisplayKey(account.icon, `accounts[${index}].icon`);
     requireOptionalDisplayKey(account.color, `accounts[${index}].color`);
     requireOptionalBoolean(account.includeInTotal, `accounts[${index}].includeInTotal`);
@@ -283,9 +355,7 @@ function requireBaseShape(value: unknown): asserts value is LegacyBudgetState {
     requireNumber(goal.openingContributedMinor, `goals[${index}].openingContributedMinor`);
     requireNumber(goal.plannedContributionMinor, `goals[${index}].plannedContributionMinor`);
     requireEnum(goal.status, ["active", "completed", "cancelled"], `goals[${index}].status`);
-    if (goal.deadline !== undefined) {
-      requireLocalDate(requireString(goal.deadline, `goals[${index}].deadline`, false, 10), `goals[${index}].deadline`);
-    }
+    if (goal.deadline !== undefined) requireWindowDate(goal.deadline, `goals[${index}].deadline`);
     requireOptionalDisplayKey(goal.icon, `goals[${index}].icon`);
   });
 
@@ -526,8 +596,12 @@ function clearUnresolvedLabels(state: BudgetState, report?: BackupRepairReporter
  * {@link clearUnknownMemberAttribution} and {@link clearUnresolvedLabels}, each of them passed
  * to `report`.
  */
-export function prepareBudgetState(value: unknown, report?: BackupRepairReporter): BudgetState {
-  requireBaseShape(value);
+export function prepareBudgetState(
+  value: unknown,
+  report?: BackupRepairReporter,
+  source: BudgetStateSource = "document",
+): BudgetState {
+  requireBaseShape(value, source);
   const normalized = normalizeBudgetState(value);
   requirePlanningShape(normalized);
   validateBudgetStateUuids(normalized);
@@ -550,7 +624,7 @@ export function prepareBudgetState(value: unknown, report?: BackupRepairReporter
 }
 
 export function parseAndValidateBudgetBackup(text: string, report?: BackupRepairReporter): BudgetState {
-  return new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, report)).parse(text);
+  return new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, report, "file")).parse(text);
 }
 
 /**
@@ -565,7 +639,7 @@ export async function createBudgetBackup(
   options: SerializeBackupOptions = {},
 ): Promise<PreparedBudgetBackup> {
   const createdAt = options.createdAt ?? new Date().toISOString();
-  const text = new ValidatedBackupCodec(prepareBudgetState).serialize(state, {
+  const text = new ValidatedBackupCodec((value: unknown) => prepareBudgetState(value, undefined, "file")).serialize(state, {
     ...options,
     createdAt,
   });

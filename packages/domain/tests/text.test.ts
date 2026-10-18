@@ -135,6 +135,27 @@ describe("normalizeNote", () => {
     expect(normalizeNote("\u263a\ufe0e")).toBe("\u263a");
   });
 
+  it("drops a selector before composing, so what it stores is a note it accepts", () => {
+    // U+FE0F is a starter: between a letter and a combining mark it keeps NFC from composing them.
+    // Dropped after NFC it left "A" and the ring side by side, a note the same rule then refused.
+    expect(normalizeNote("A\ufe0f\u030a")).toBe("\u00c5");
+    expect(normalizeNote("Чаи\ufe0e\u0306 и кофе")).toBe("Чай и кофе");
+    const marks = ["\u0301", "\u0306", "\u0308", "\u030a", "\u0327", "\u0323\u0302"];
+    const bases = ["A", "e", "и", "е", "\u2764", "1"];
+    for (const base of bases) {
+      for (const mark of marks) {
+        for (const selector of ["\ufe0e", "\ufe0f", "\ufe0f\ufe0f", ""]) {
+          for (const sample of [`${base}${selector}${mark}`, `кофе ${base}${selector}${mark} дома`, `${selector}${base}${mark}${selector}`]) {
+            const note = normalizeNote(sample);
+            if (note === undefined) continue;
+            expect(isNormalizedNote(note), JSON.stringify(sample)).toBe(true);
+            expect(normalizeNote(note), JSON.stringify(sample)).toBe(note);
+          }
+        }
+      }
+    }
+  });
+
   it("allows Latin and Cyrillic together in a note, and refuses them together in a label", () => {
     expect(normalizeNote("Кофе в Starbucks")).toBe("Кофе в Starbucks");
     expect(refusal(() => normalizeLabel("Кофе в Starbucks", 40))).toBe("mixed_scripts");

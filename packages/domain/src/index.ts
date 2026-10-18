@@ -23,7 +23,10 @@ export {
   dateFromDayIndex,
   dayIndex,
   daysInMonth,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
   MAX_LOCAL_MONTH_INDEX,
+  MIN_LOCAL_DATE,
   monthEndDate,
   monthFromIndex,
   monthIndex,
@@ -53,6 +56,7 @@ export {
   SUPPORTED_CURRENCIES,
 } from "./currency.js";
 export { carriedId, documentIds, HOUSEHOLD_ID } from "./identity.js";
+export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
 export {
   budgetMonth,
   carriedBudgetId,

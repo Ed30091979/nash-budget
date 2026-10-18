@@ -15,7 +15,15 @@ import {
   makePlanningSeed,
   type BudgetState,
 } from "@family-budget/domain";
-import { createClock, createLocalOperation, encodeOperation } from "@family-budget/sync-protocol";
+import {
+  applyJournal,
+  createClock,
+  createLocalOperation,
+  decodeOperation,
+  encodeOperation,
+  restoreJournal,
+  type SyncedBudgetState,
+} from "@family-budget/sync-protocol";
 import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
 import { readFrozenArtifact, type FrozenArtifact } from "@family-budget/test-fixtures/frozen";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -224,4 +232,41 @@ describe("журнал G-002, засеянный 1.0.0", () => {
 
     expect(lines.join("\n")).toBe(frozen);
   });
+
+  it("читается этой сборкой и собирается обратно в то же состояние", () => {
+    // Сравнение байтов выше проверяет только запись. Здесь — чтение: каждую строку, записанную
+    // 1.0.0, нынешний кодек обязан разобрать, а журнал из них — собраться в тот самый G-002,
+    // в том числе после перезапуска устройства.
+    const operations = readFrozenArtifact("g002Journal").split("\n").map((line) => decodeOperation(line));
+    const frozenState = (JSON.parse(readFrozenArtifact("g002Backup")) as FrozenBackup).payload as BudgetState;
+    const snapshot = applyJournal(operations);
+    const restored = restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown);
+
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    for (const state of [snapshot.state, restored.state]) {
+      expect(comparable(state, frozenState)).toEqual(comparable(frozenState, frozenState));
+      expect(calculateBudget(state)).toEqual(calculateBudget(frozenState));
+      expect(calculateAnnualPlan(state, G002.startMonth, 24)).toEqual(calculateAnnualPlan(frozenState, G002.startMonth, 24));
+    }
+  });
 });
+
+/**
+ * Состояние без зависимости от порядка: журнал отдаёт сущности в порядке своих записей, а не в
+ * порядке файла. Пустые списки, которых в эталоне нет, — обещание журнала (`SyncedBudgetState`), а
+ * не данные, поэтому они отбрасываются.
+ */
+function comparable(state: BudgetState | SyncedBudgetState, reference: BudgetState): Record<string, unknown> {
+  const byId = <T extends { readonly id: string }>(items: readonly T[]): T[] =>
+    [...items].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (Array.isArray(value) && value.length === 0 && !(key in reference)) continue;
+    if (key === "budgets") {
+      result[key] = byId(state.budgets).map((budget) => ({ ...budget, lines: byId(budget.lines) }));
+    } else {
+      result[key] = Array.isArray(value) ? byId(value as { readonly id: string }[]) : value;
+    }
+  }
+  return result;
+}

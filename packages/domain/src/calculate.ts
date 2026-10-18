@@ -31,7 +31,15 @@ import type {
   TagId,
   Transaction,
 } from "./types.js";
-import { daysInMonth, MAX_LOCAL_MONTH_INDEX, monthFromIndex, monthIndex } from "./calendar.js";
+import {
+  daysInMonth,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MAX_LOCAL_MONTH_INDEX,
+  MIN_LOCAL_DATE,
+  monthFromIndex,
+  monthIndex,
+} from "./calendar.js";
 import {
   baseAmountOf,
   baseCurrencyOf,
@@ -41,6 +49,7 @@ import {
   RATE_PART_MIN,
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
+import { MAX_MONEY_MINOR, MAX_SORT_ORDER } from "./limits.js";
 import {
   isDisplayKey,
   isNormalizedLabel,
@@ -105,6 +114,22 @@ function assertLocalDate(value: string, label: string): void {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     throw new Error(`${label} must be a valid calendar date`);
   }
+}
+
+/**
+ * A date of a field added to the model since the journal existed: a calendar date, and inside the
+ * window the codec carries. Older fields are checked by {@link assertLocalDate} alone, because a
+ * document written by 1.0.0 may hold a date outside the window and must keep opening.
+ */
+function assertWindowDate(value: string, label: string): void {
+  assertLocalDate(value, label);
+  if (!isWithinDateWindow(value)) throw new Error(`${label} must be from ${MIN_LOCAL_DATE} to ${MAX_LOCAL_DATE}`);
+}
+
+/** An amount of a field added since the journal existed: positive, and at most a field's ceiling. */
+function assertFieldMinor(value: MinorUnits, label: string): void {
+  assertPositiveMinor(value, label);
+  if (value > MAX_MONEY_MINOR) throw new Error(`${label} must be at most ${MAX_MONEY_MINOR}`);
 }
 
 function indexById<T extends { readonly id: StableId }>(
@@ -196,7 +221,7 @@ function validateExchangeRate(rate: ExchangeRate): void {
   if (rate.currency === rate.baseCurrency) {
     throw new Error(`exchange rate ${rate.id} must value one currency in another`);
   }
-  assertLocalDate(rate.date, `exchange rate ${rate.id} date`);
+  assertWindowDate(rate.date, `exchange rate ${rate.id} date`);
   assertRateValue(rate.rate, `exchange rate ${rate.id} rate`);
 }
 
@@ -276,6 +301,9 @@ function validateAccount(account: Account): void {
   if (account.sortOrder !== undefined && !Number.isSafeInteger(account.sortOrder)) {
     throw new Error(`account ${account.id} sortOrder must be an integer`);
   }
+  if (account.sortOrder !== undefined && Math.abs(account.sortOrder) > MAX_SORT_ORDER) {
+    throw new Error(`account ${account.id} sortOrder must be from -${MAX_SORT_ORDER} to ${MAX_SORT_ORDER}`);
+  }
   assertOptionalDisplayKey(account.icon, `account ${account.id} icon`);
   assertOptionalDisplayKey(account.color, `account ${account.id} color`);
   if (account.includeInTotal !== undefined && typeof account.includeInTotal !== "boolean") {
@@ -317,7 +345,7 @@ function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>, base
   );
   const account = requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
   assertBaseCurrencyAccount(account, baseCurrency, `goal ${goal.id}`);
-  if (goal.deadline !== undefined) assertLocalDate(goal.deadline, `goal ${goal.id} deadline`);
+  if (goal.deadline !== undefined) assertWindowDate(goal.deadline, `goal ${goal.id} deadline`);
   assertOptionalDisplayKey(goal.icon, `goal ${goal.id} icon`);
 }
 
@@ -443,7 +471,7 @@ function validateBaseSnapshot(
   if (transaction.baseCurrency !== baseCurrency) {
     throw new Error(`transaction ${id} snapshot must be in the base currency ${baseCurrency}`);
   }
-  assertPositiveMinor(transaction.baseAmountMinor!, `transaction ${id} baseAmountMinor`);
+  assertFieldMinor(transaction.baseAmountMinor!, `transaction ${id} baseAmountMinor`);
   assertRateValue(transaction.rate, `transaction ${id} rate`);
 }
 
@@ -466,7 +494,7 @@ function validateTransferAmounts(
   if (transaction.toAmountMinor === undefined) {
     throw new Error(`transaction ${id} moves from ${from.currency} to ${to.currency} and must carry toAmountMinor`);
   }
-  assertPositiveMinor(transaction.toAmountMinor, `transaction ${id} toAmountMinor`);
+  assertFieldMinor(transaction.toAmountMinor, `transaction ${id} toAmountMinor`);
 }
 
 function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {

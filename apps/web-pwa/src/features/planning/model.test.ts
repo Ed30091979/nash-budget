@@ -172,3 +172,16 @@ describe("planning input boundaries", () => {
     expect(planningError("unknown")).toEqual({ field: "form", message: "Не удалось сохранить изменение." });
   });
 });
+
+describe("planning date window", () => {
+  it("refuses a due date the family journal could not carry, naming the field", () => {
+    const dto = (dueDate: string) => ({
+      name: "Страхование автомобиля", categoryId: TEST_IDS.categories.transport, accountId: TEST_IDS.account,
+      dueDate, amount: "72000", reserved: "0", recurrence: "annual" as const,
+    });
+    expect(() => createCommitment(makePlanningTestState(), dto("2199-12-31"), deterministicIds())).not.toThrow();
+    expect(() => createCommitment(makePlanningTestState(), dto("2200-01-01"), deterministicIds())).toThrow(
+      expect.objectContaining({ field: "dueDate", message: "Выберите дату с 1900 по 2199 год." }),
+    );
+  });
+});

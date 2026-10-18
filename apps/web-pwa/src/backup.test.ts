@@ -2,6 +2,7 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  COLLECTION_LIMITS,
   makePlanningSeed,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
@@ -826,6 +827,10 @@ describe("метки, заметки и оформление в резервно
     ["includeInTotal строкой", "accounts", { includeInTotal: "yes" }, /accounts\[0\]\.includeInTotal: ожидалось логическое значение/u],
     ["цвет категории с заглавной", "categories", { color: "Mint" }, /categories\[0\]\.color: недопустимый ключ оформления/u],
     ["невозможный срок цели", "goals", { deadline: "2027-02-29" }, /goals\[0\]\.deadline: невозможная календарная дата/u],
+    ["срок цели за окном журнала", "goals", { deadline: "2200-01-01" }, /goals\[0\]\.deadline: дата вне диапазона 1900-01-01…2199-12-31/u],
+    ["срок цели до окна журнала", "goals", { deadline: "1899-12-31" }, /goals\[0\]\.deadline: дата вне диапазона/u],
+    ["порядок счёта за пределом", "accounts", { sortOrder: 1_000_001 }, /accounts\[0\]\.sortOrder: порядок вне диапазона ±1000000/u],
+    ["отрицательный порядок счёта за пределом", "accounts", { sortOrder: -1_000_001 }, /accounts\[0\]\.sortOrder: порядок вне диапазона/u],
     ["иконка цели не строка", "goals", { icon: 7 }, /goals\[0\]\.icon: ожидалась непустая строка/u],
   ] as const)("отклоняет копию: %s — до save/publish", async (_name, collection, change, expected) => {
     const save = vi.fn<(_: BudgetState) => Promise<void>>().mockResolvedValue(undefined);
@@ -836,6 +841,32 @@ describe("метки, заметки и оформление в резервно
     await expect(restoreBudgetBackup(backupFile(malformed), save, publish)).rejects.toThrow(expected);
     expect(save).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it("ограничивает число участников и меток в файле, но не в документе, который приложение уже держит", async () => {
+    // Несколько устройств, добавляя метки без связи, вместе переходят предел. Документ из журнала
+    // семьи открывается, а файл с таким числом не пишется и не читается: восстановить его эта
+    // сборка не смогла бы.
+    const tags = Array.from({ length: BACKUP_LIMITS.tags + 1 }, (_, index) => ({
+      id: `c0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Метка ${index}`,
+      active: true,
+    }));
+    const members = Array.from({ length: BACKUP_LIMITS.members + 1 }, (_, index) => ({
+      ...OWNER,
+      id: `b0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    }));
+    const merged: BudgetState = { ...makePlanningSeed(), tags, members };
+
+    expect(prepareBudgetState(merged)).toEqual(merged);
+    expect(prepareBudgetState(merged, undefined, "document")).toEqual(merged);
+    expect(() => prepareBudgetState(merged, undefined, "file")).toThrow(`members: допускается не более ${BACKUP_LIMITS.members} элементов`);
+    await expect(createBudgetBackup(merged, vi.fn(async () => undefined))).rejects.toThrow(/допускается не более/);
+    expect(() => parseAndValidateBudgetBackup(serializeBackup({ ...makePlanningSeed(), tags })))
+      .toThrow(`tags: допускается не более ${BACKUP_LIMITS.tags} элементов`);
+    // Предел общий с доменом: createTag отказывает на той же цифре.
+    expect(BACKUP_LIMITS.tags).toBe(COLLECTION_LIMITS.tags);
+    expect(BACKUP_LIMITS.members).toBe(COLLECTION_LIMITS.members);
   });
 
   it("ограничивает число меток наравне с прочими коллекциями", async () => {

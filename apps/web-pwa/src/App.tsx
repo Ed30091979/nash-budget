@@ -46,7 +46,7 @@ import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
 import { buildDemoBudgetState } from "./onboarding/demo";
-import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
+import { createBudgetBackup, describeBackupRepairs, prepareBudgetState, restoreBudgetBackup, type BackupRepair } from "./backup";
 import { formatMoney, moneyScale } from "./money";
 import { plural } from "./plural";
 import {
@@ -751,16 +751,16 @@ export default function App() {
             )}
             onRecordSuccessfulBackup={recordBackup}
             onRestoreBackup={async (file) => {
-              let clearedLabels = 0;
+              const repairs: BackupRepair[] = [];
               await restoreBudgetBackup(
                 file,
                 (restored) => budgetSave.apply(() => restored).then(() => undefined),
                 () => undefined,
-                () => { clearedLabels += 1; },
+                (repair) => { repairs.push(repair); },
               );
-              if (clearedLabels > 0) {
-                setMessage(`Снято меток участника: ${clearedLabels}. Такого участника в копии нет; сами операции и все суммы восстановлены без изменений.`);
-              }
+              // Каждый вид ремонта называется своими словами: снятая метка — не снятый участник.
+              const notice = describeBackupRepairs(repairs);
+              if (notice !== null) setMessage(notice);
             }}
             onPersistClear={async () => {
               await repository.clear();

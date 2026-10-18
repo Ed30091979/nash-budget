@@ -1,4 +1,5 @@
 import { documentIds } from "./identity.js";
+import { COLLECTION_LIMITS } from "./limits.js";
 import {
   labelKey,
   normalizeLabel,
@@ -24,6 +25,7 @@ export type TagErrorCode =
   | "name_forbidden_characters"
   | "name_mixed_scripts"
   | "duplicate_name"
+  | "limit_reached"
   | "id_required"
   | "duplicate_id"
   | "unknown_tag";
@@ -93,7 +95,8 @@ export interface TagCreation {
 /**
  * Creates an active tag. Refuses an empty or malformed name and a name an active tag already
  * carries; an archived namesake is not a duplicate, and {@link findTagByName} lets the caller
- * offer to restore it instead. Nothing else in the state moves.
+ * offer to restore it instead. Refuses the tag past `COLLECTION_LIMITS.tags`, archived ones
+ * counted, because a backup counts them all. Nothing else in the state moves.
  */
 export function createTag(
   state: BudgetState,
@@ -105,6 +108,9 @@ export function createTag(
   const tags = state.tags ?? [];
   if (tags.some((tag) => tag.active && labelKey(tag.name) === key)) {
     fail("duplicate_name", "name", "Активная метка с таким названием уже существует.");
+  }
+  if (tags.length >= COLLECTION_LIMITS.tags) {
+    fail("limit_reached", "name", `Меток уже ${COLLECTION_LIMITS.tags} — это предел. Удалите метки, которых нет ни на одной операции.`);
   }
 
   const id = makeId();
