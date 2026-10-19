@@ -142,6 +142,19 @@ export {
   monthAfterPeriod,
 } from "./rollover.js";
 export type { CarriedBudget } from "./rollover.js";
+export {
+  householdPaydays,
+  isPaydayList,
+  MAX_PAYDAY,
+  MAX_PAYDAYS,
+  MIN_PAYDAY,
+  nextPaydayAfter,
+  normalizePaydays,
+  paydayDate,
+  PaydayValidationError,
+  setHouseholdPaydays,
+} from "./paydays.js";
+export type { PaydayErrorCode } from "./paydays.js";
 export { makePlanningSeed, makeSeedBudget, PLANNING_IDS, SEED_IDS } from "./seed.js";
 export {
   archiveTag,

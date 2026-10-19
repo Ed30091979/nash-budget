@@ -142,6 +142,19 @@ describe("parseOperation", () => {
       .toThrow(/the household cannot be deleted/);
   });
 
+  it("carries the household's paydays (D-039) by the domain's one rule, and absent stays absent", () => {
+    const household = { opId: opUuid(5), deviceId: DEVICE_A, lamport: 5, entity: "household", action: "update", targetId: HOUSEHOLD_ID };
+    const named = parseOperation({ ...household, fields: { baseCurrency: "RUB", paydays: [5, 20] } });
+    expect(named).toMatchObject({ fields: { baseCurrency: "RUB", paydays: [5, 20] } });
+    expect(decodeOperation(encodeOperation(named))).toEqual(named);
+    const bare = parseOperation({ ...household, fields: { baseCurrency: "RUB" } });
+    expect(Object.hasOwn((bare as { fields: object }).fields, "paydays")).toBe(false);
+    for (const paydays of [[], [20, 5], [5, 5], [0], [32], [1, 2, 3, 4, 5], [5.5], ["5"], 5, null]) {
+      expect(() => parseOperation({ ...household, fields: { baseCurrency: "RUB", paydays } }), JSON.stringify(paydays))
+        .toThrow(/household paydays must list from 1 to 4 distinct days/);
+    }
+  });
+
   it("accepts every transaction kind", () => {
     const base = { occurredOn: "2026-07-09", status: "posted", amountMinor: 400_000 };
     const variants = [

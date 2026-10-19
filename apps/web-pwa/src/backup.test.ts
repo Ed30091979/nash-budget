@@ -7,6 +7,7 @@ import {
   COLLECTION_LIMITS,
   HOUSEHOLD_ID,
   makePlanningSeed,
+  setHouseholdPaydays,
   materializeRecurring,
   MAX_TAGS_PER_TRANSACTION,
   NOTE_MAX_LENGTH,
@@ -1108,6 +1109,19 @@ describe("валюты в резервной копии", () => {
   it("принимает перевод в доллары с суммой зачисления", () => {
     const state = transfer(DOLLAR_ACCOUNT_ID, { toAmountMinor: 20_000 })(withDollars(makePlanningSeed())) as BudgetState;
     expect(prepareBudgetState(state)).toEqual(state);
+  });
+
+  it("дни выплат (D-039) проходят копию туда и обратно в schemaVersion 2, и неверный список отвергается словами", () => {
+    const state = setHouseholdPaydays(makePlanningSeed(), [5, 20]);
+    const text = serializeBackup(state);
+    expect(JSON.parse(text).schemaVersion).toBe(2);
+    const restored = parseAndValidateBudgetBackup(text);
+    expect(restored.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [5, 20] });
+    expect(restored).toEqual(state);
+    for (const paydays of [[], [20, 5], [5, 5], [0], [32], [1, 2, 3, 4, 5], ["5"]]) {
+      const broken = { ...state, household: { id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays } };
+      expect(() => prepareBudgetState(broken), JSON.stringify(paydays)).toThrow(/household\.paydays: дни выплат/u);
+    }
   });
 
   it("копия без хозяйства и курсов их не приобретает", () => {

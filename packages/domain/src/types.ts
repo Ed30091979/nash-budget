@@ -212,6 +212,12 @@ export interface Debt {
 export interface Household {
   readonly id: HouseholdId;
   readonly baseCurrency: CurrencyCode;
+  /**
+   * The days of the month money arrives on, as the family named them (D-039): one to four distinct
+   * days 1…31, ascending. Absent in every household written before it existed, exactly like `tags`;
+   * the reach clock then derives paydays from recorded income. No figure reads it.
+   */
+  readonly paydays?: readonly number[];
 }
 
 /**

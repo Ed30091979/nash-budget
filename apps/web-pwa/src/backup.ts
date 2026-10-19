@@ -12,6 +12,7 @@ import {
   DEFAULT_BASE_CURRENCY,
   HOUSEHOLD_ID,
   isExchangeRateValue,
+  isPaydayList,
   isSupportedCurrency,
   isBlankStoredText,
   isDisplayKey,
@@ -345,6 +346,11 @@ function requireBaseShape(value: unknown, source: BudgetStateSource): asserts va
     requireString(household.id, "household.id", true, BACKUP_LIMITS.idLength);
     if (household.id !== HOUSEHOLD_ID) throw new Error("household.id: хозяйство записывается под выведенным идентификатором.");
     requireCurrency(household.baseCurrency, "household.baseCurrency");
+    // Дни выплат (D-039) — по тому же правилу, что у домена и кодека журнала: от одного до четырёх
+    // разных чисел 1…31 по возрастанию. Копия, записанная до них, их не несёт и остаётся верной.
+    if (household.paydays !== undefined && !isPaydayList(household.paydays)) {
+      throw new Error("household.paydays: дни выплат — от одного до четырёх разных чисел от 1 до 31 по возрастанию.");
+    }
   }
 
   // Absent in every copy written before rates existed, exactly like the participants above.

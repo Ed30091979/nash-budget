@@ -5,6 +5,7 @@ import {
   calculateBudget,
   carryBudgetForward,
   findBudgetForMonth,
+  householdPaydays,
   monthAfterPeriod,
   type BudgetState,
 } from "@family-budget/domain";
@@ -47,8 +48,8 @@ import { buildDemoBudgetState } from "../onboarding/demo";
 import { createBudgetBackup, prepareBudgetState } from "../backup";
 import { monthNominative } from "../date-words";
 import {
+  budgetPaydays,
   localToday,
-  paydayDays,
   periodClock,
 } from "../reach";
 import { createBudgetRepository } from "../storage-repository";
@@ -622,8 +623,10 @@ export default function App() {
   const incomeDates = budget.transactions
     .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
     .map((transaction) => transaction.occurredOn);
-  const clock = periodClock(activeBudget, incomeDates, today);
-  const paydays = paydayDays(incomeDates, today);
+  // Дни выплат, названные семьёй (`household.paydays`), — первыми; без них — выведенные из доходов.
+  const declaredPaydays = householdPaydays(budget);
+  const clock = periodClock(activeBudget, incomeDates, today, declaredPaydays);
+  const paydays = budgetPaydays(declaredPaydays, incomeDates, today);
   // §6, выход из закрытого месяца. Пока месяц плана идёт, предлагать нечего; когда он кончился —
   // предлагается ровно один месяц, тот, в котором семья сейчас живёт и тратит.
   const monthToOpen = clock.position === "after" ? monthAfterPeriod(activeBudget, today) : null;

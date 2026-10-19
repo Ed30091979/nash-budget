@@ -1,13 +1,16 @@
 import {
   calculateAnnualPlan,
   categoriesInListOrder,
+  householdPaydays,
   makePlanningSeed,
   PLANNING_IDS,
   SEED_IDS,
+  setHouseholdPaydays,
   type BudgetState,
 } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 import { formatMoney } from "../../money";
+import { periodClock } from "../../reach";
 import { defaultAccountOf, limitStatus, overviewModel, reachLineModel, UNCATEGORIZED_INCOME_NAME } from "./overview-model";
 
 /** G-002 — канонический плановый набор: июль 2026, гибкие лимиты 53 000 ₽. */
@@ -27,6 +30,20 @@ describe("строка «Можно на повседневные»", () => {
     expect(formatMoney(line.safeToSpendMinor)).toBe(formatMoney(2_700_000));
     expect(line.safeToSpendMinor).toBe(2_700_000);
     expect(line.flexibleSpentMinor).toBe(2_600_000);
+  });
+
+  it("G-002 с названными днями выплат: те же 27 000 ₽, а насечка — на 20-м по ответу семьи, без истории доходов", () => {
+    const canonical = g002();
+    const named = setHouseholdPaydays(canonical, [5, 20]);
+    const plan = calculateAnnualPlan(named, "2026-07", 24);
+    const line = reachLineModel(named, plan.currentMonth.flexiblePlanMinor);
+    expect(line.safeToSpendMinor).toBe(2_700_000);
+    expect(line).toEqual(reachLineModel(canonical, calculateAnnualPlan(canonical, "2026-07", 24).currentMonth.flexiblePlanMinor));
+    const active = named.budgets[0]!;
+    // В G-002 одна доходная операция 1 июля: истории для вывода нет, и без ответа насечка — конец месяца.
+    const incomes = named.transactions.filter((item) => item.kind === "income").map((item) => item.occurredOn);
+    expect(periodClock(active, incomes, "2026-07-13").payday).toEqual({ date: "2026-07-31", source: "month", daysAhead: 18 });
+    expect(periodClock(active, incomes, "2026-07-13", householdPaydays(named)).payday).toEqual({ date: "2026-07-20", source: "income", daysAhead: 7 });
   });
 });
 

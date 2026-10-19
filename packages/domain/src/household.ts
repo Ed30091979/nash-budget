@@ -87,7 +87,8 @@ export function setBaseCurrency(state: BudgetState, code: CurrencyCode): BudgetS
   if (lock !== null) throw new BaseCurrencyValidationError(lock, BASE_CURRENCY_LOCK_WORDS[lock]);
   return {
     ...state,
-    household: { id: HOUSEHOLD_ID, baseCurrency: code },
+    // Named paydays stay: the base and the days money arrives on are two facts about one household.
+    household: { ...state.household, id: HOUSEHOLD_ID, baseCurrency: code },
     accounts: state.accounts.map((account) => ({ ...account, currency: code })),
   };
 }
