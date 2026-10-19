@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BudgetState } from "@family-budget/domain";
 import { Hyphenated } from "../../components/Hyphenated";
 import { Icon } from "../../components/Icon";
@@ -18,6 +18,11 @@ export interface CategoriesQuestionProps {
   readonly onCustom: () => void;
   /** Лист спрятан, пока поверх него открыт лист «Своя категория». */
   readonly hidden?: boolean;
+  /**
+   * Куда вернуть фокус, когда лист «Своя категория» закрылся: ключ имени заведённой или выбранной
+   * категории — её чип; `null` — сам чип «Своя категория».
+   */
+  readonly returnFocusTo?: string | null;
 }
 
 /**
@@ -26,8 +31,21 @@ export interface CategoriesQuestionProps {
  * отмеченные; крестик оставляет набор как есть. Выбор хранится как отличие от того, что отмечено
  * сейчас: категория, заведённая в листе «Своя категория», встаёт сюда сразу отмеченной.
  */
-export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCustom, hidden = false }: CategoriesQuestionProps) {
+export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCustom, hidden = false, returnFocusTo = null }: CategoriesQuestionProps) {
   const chips = useMemo(() => categoryChips(budget), [budget]);
+  const chipButtons = useRef(new Map<string, HTMLButtonElement>());
+  const ownButton = useRef<HTMLButtonElement>(null);
+  const wasHidden = useRef(hidden);
+  // Лист «Своя категория» закрылся (Esc, «Отмена», сохранение): фокус — снова в этом листе, на
+  // заведённую категорию или на «Свою категорию». Иначе он оставался на <body>: Tab ходил по экрану
+  // под модальным листом, а Esc листа больше не срабатывал (ревью R2, M-2).
+  useEffect(() => {
+    if (wasHidden.current && !hidden) {
+      const target = (returnFocusTo === null ? undefined : chipButtons.current.get(returnFocusTo)) ?? ownButton.current;
+      target?.focus({ preventScroll: false });
+    }
+    wasHidden.current = hidden;
+  }, [hidden, returnFocusTo]);
   const [unchecked, setUnchecked] = useState<ReadonlySet<string>>(() => new Set());
   const [added, setAdded] = useState<ReadonlySet<string>>(() => new Set());
   const [busy, setBusy] = useState(false);
@@ -77,7 +95,14 @@ export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCusto
     const on = chosen.has(item.key);
     return (
       <li key={item.key}>
-        <button className="chip q-chip" type="button" aria-pressed={on} aria-disabled={busy || undefined} onClick={() => toggle(item, frequent)}>
+        <button
+          ref={(element) => { if (element === null) chipButtons.current.delete(item.key); else chipButtons.current.set(item.key, element); }}
+          className="chip q-chip"
+          type="button"
+          aria-pressed={on}
+          aria-disabled={busy || undefined}
+          onClick={() => toggle(item, frequent)}
+        >
           <span className={on ? `chip-face tone-${item.tone}` : "chip-face"}>
             <Icon name={on ? "check" : "plus"} size={20} />
             <bdi dir="auto"><Hyphenated text={item.name} /></bdi>
@@ -107,7 +132,7 @@ export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCusto
       <ul className="q-chips" aria-labelledby="q-categories-more">
         {chips.more.map((item) => chip(item, false))}
         <li>
-          <button className="chip q-chip q-chip-own" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) onCustom(); }}>
+          <button ref={ownButton} className="chip q-chip q-chip-own" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) onCustom(); }}>
             <span className="chip-face"><Icon name="pencil" size={20} />Своя категория</span>
           </button>
         </li>

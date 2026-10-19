@@ -1376,7 +1376,9 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
 .intro-brand-mark { flex: none; }
 .intro-skip { min-height: 48px; padding: 0 12px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; background: transparent; border: 0; }
 button.intro-skip { border-radius: var(--radius-control); }
-.intro-slide { display: flex; flex: 1; flex-direction: column; min-height: 0; animation: route-fade var(--motion-screen) var(--ease-enter); }
+/* Горизонтальный взмах — слайду, вертикальная прокрутка — браузеру: без `pan-y` браузер забирал жест
+   и присылал `pointercancel` вместо `pointerup`, и пальцем слайды не листались (ревью R2, M-3). */
+.intro-slide { display: flex; flex: 1; flex-direction: column; min-height: 0; touch-action: pan-y; animation: route-fade var(--motion-screen) var(--ease-enter); }
 .intro-art { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: 8px 0; }
 .intro-art svg { width: 100%; max-width: 330px; height: auto; max-height: 42dvh; }
 .intro-dots { display: flex; gap: 8px; justify-content: center; margin: 8px 0 28px; }

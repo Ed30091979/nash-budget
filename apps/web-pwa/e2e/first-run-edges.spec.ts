@@ -3,7 +3,7 @@
  * категории», взмах пальцем по слайду, правка дней выплат, валюта набора, возврат из формы счёта
  * и память устройства при «Удалить данные» и в демо. Основной путь — `first-launch.spec.ts`.
  */
-import type { Page } from "@playwright/test";
+import { devices, type Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { demoBudget, restoreBudget } from "./budgets";
 import { tile } from "./sheet";
@@ -45,6 +45,14 @@ async function firstRunMemory(page: Page): Promise<Record<string, unknown> | nul
   }, FIRST_RUN_DATABASE);
 }
 
+/** Фокус внутри листа этого вопроса. */
+async function focusInside(page: Page, title: string): Promise<boolean> {
+  return page.evaluate((name) => {
+    const dialog = document.activeElement?.closest("[role='dialog']");
+    return dialog?.querySelector("h2")?.querySelector(".sr-only")?.textContent === name;
+  }, title);
+}
+
 test("восстановленная копия заканчивает первый запуск: через неделю вопросы не открываются над чужим бюджетом", async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-10-05T10:00:00"));
   await skipToOverview(page);
@@ -82,6 +90,69 @@ test("две вкладки: пример в одной и «Пропустит�
   await first.reload();
   await expect(first.locator(".overview-screen")).toBeVisible();
   await expect(first.locator("[role='dialog']")).toHaveCount(0);
+});
+
+test("после «Своей категории» фокус снова в листе вопроса: Esc, сохранение, Tab по кругу и Esc листа", async ({ page }) => {
+  await skipToOverview(page);
+  const chips = question(page, CHIPS);
+  const own = chips.getByRole("button", { name: "Своя категория" });
+  const sheet = page.getByRole("dialog", { name: "Своя категория" });
+
+  await own.focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(own).toBeFocused();
+  for (let step = 0; step < 4; step += 1) {
+    await page.keyboard.press("Tab");
+    expect(await focusInside(page, CHIPS), `Tab ${step + 1} — внутри листа`).toBe(true);
+  }
+
+  await own.focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet).toBeVisible();
+  await sheet.getByLabel("Название").fill("Рыбалка");
+  await sheet.getByRole("button", { name: "Сохранить категорию" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet).toHaveCount(0);
+  const created = chips.getByRole("button", { name: "Рыбалка" });
+  await expect(created).toHaveAttribute("aria-pressed", "true");
+  await expect(created).toBeFocused();
+
+  // Esc листа снова работает: «Спросить позже» — и следующий вопрос.
+  await page.keyboard.press("Escape");
+  await expect(chips).toHaveCount(0);
+  await expect(question(page, ACCOUNTS)).toBeVisible();
+});
+
+test.describe("сенсорный экран", () => {
+  const { defaultBrowserType: _browser, ...pixel } = devices["Pixel 5"];
+  test.use(pixel);
+
+  test("взмах пальцем листает слайды в обе стороны", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("img", { name: "Шаг 1 из 3" })).toBeVisible();
+    const box = await page.locator(".intro-slide").boundingBox();
+    if (box === null) throw new Error("Слайда нет на экране.");
+    const client = await page.context().newCDPSession(page);
+    const y = Math.round(box.y + box.height * 0.3);
+    const swipe = async (from: number, to: number) => {
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from, y }] });
+      for (let step = 1; step <= 8; step += 1) {
+        await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: Math.round(from + ((to - from) * step) / 8), y }] });
+      }
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    };
+    const right = Math.round(box.x + box.width - 30);
+    const left = Math.round(box.x + 30);
+    await swipe(right, left);
+    await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+    await swipe(right, left);
+    await expect(page.getByRole("img", { name: "Шаг 3 из 3" })).toBeVisible();
+    await swipe(left, right);
+    await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+  });
 });
 
 test("«Удалить данные» стирает память первого запуска, а пример её обнуляет", async ({ page }) => {

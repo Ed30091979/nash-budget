@@ -81,3 +81,12 @@ describe("L-1: бюджет уже создан в другой вкладке",
   });
 });
 
+describe("M-3: взмах пальцем по слайду", () => {
+  it("горизонтальный жест слайда не забирает браузер, а отменённый указатель сбрасывает взмах", () => {
+    const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+    expect(styles).toMatch(/\.intro-slide \{[^}]*touch-action: pan-y;/u);
+    const source = readFileSync(new URL("../../onboarding/Onboarding.tsx", import.meta.url), "utf8");
+    expect(source).toContain("onPointerCancel={");
+  });
+});
+

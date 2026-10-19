@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { BudgetState } from "@family-budget/domain";
+import { categoryNameKey, type BudgetState } from "@family-budget/domain";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { AddCategorySheet } from "../overview/AddCategorySheet";
 import { AccountsQuestion } from "./AccountsQuestion";
@@ -56,6 +56,16 @@ function focusScreenHeading(): void {
 export function QuestionHost({ budget, today, write, blocked, onAddAccount, store = firstRunStore() }: QuestionHostProps) {
   const state = useFirstRun(store, budget);
   const [custom, setCustom] = useState(false);
+  // Чип, на который вернётся фокус, когда лист «Своя категория» закроется: заведённая категория.
+  const [returnFocusTo, setReturnFocusTo] = useState<string | null>(null);
+  const closeCustom = (key: string | null) => {
+    setReturnFocusTo(key);
+    setCustom(false);
+  };
+  const keyOf = (categoryId: string) => {
+    const category = budget.categories.find((item) => item.id === categoryId);
+    return category === undefined ? null : categoryNameKey(category.name);
+  };
   const question = state === null || blocked ? null : nextQuestion(state, today);
   const shown = useRef<QuestionId | null>(null);
 
@@ -77,6 +87,7 @@ export function QuestionHost({ budget, today, write, blocked, onAddAccount, stor
           budget={budget}
           write={write}
           hidden={custom}
+          returnFocusTo={returnFocusTo}
           onAnswered={() => answer("categories")}
           onLater={() => later("categories")}
           onCustom={() => setCustom(true)}
@@ -87,9 +98,9 @@ export function QuestionHost({ budget, today, write, blocked, onAddAccount, stor
             type="expense"
             description="Новая категория встанет на «Обзоре» и в этом списке — уже отмеченной."
             onChange={(change) => write.run(change)}
-            onDone={() => setCustom(false)}
-            onChoose={() => setCustom(false)}
-            onClose={() => setCustom(false)}
+            onDone={(_categoryId, name) => closeCustom(categoryNameKey(name))}
+            onChoose={(categoryId) => closeCustom(keyOf(categoryId))}
+            onClose={() => closeCustom(null)}
           />
         ) : null}
       </>;

@@ -158,8 +158,14 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
       go(index - 1);
     }
   };
+  // Взмах пальцем. Горизонтальный жест слайд оставляет себе (`touch-action: pan-y` в стилях), иначе
+  // браузер забирал его на прокрутку и вместо `pointerup` присылал `pointercancel` (ревью R2, M-3);
+  // вертикальная прокрутка по-прежнему его, и её отмена сбрасывает начатый взмах.
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     swipe.current = event.pointerType === "mouse" ? null : { x: event.clientX, y: event.clientY };
+  };
+  const onPointerCancel = () => {
+    swipe.current = null;
   };
   const onPointerUp = (event: PointerEvent<HTMLElement>) => {
     const from = swipe.current;
@@ -177,7 +183,7 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
         <span className="intro-brand"><BrandMark />Наш бюджет</span>
         {last ? null : <button className="intro-skip" type="button" aria-disabled={busy || undefined} onClick={() => void start()}>Пропустить</button>}
       </header>
-      <section className="intro-slide" key={slide.key} aria-roledescription="слайд" aria-label={`${index + 1} из ${INTRO_SLIDES.length}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+      <section className="intro-slide" key={slide.key} aria-roledescription="слайд" aria-label={`${index + 1} из ${INTRO_SLIDES.length}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
         <div className="intro-art"><slide.Illustration /></div>
         <p className="intro-dots" role="img" aria-label={`Шаг ${index + 1} из ${INTRO_SLIDES.length}`}>
           {INTRO_SLIDES.map((item, dot) => <span key={item.key} className={dot === index ? "current" : undefined} />)}
