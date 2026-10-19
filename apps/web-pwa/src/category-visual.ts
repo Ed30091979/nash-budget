@@ -1,14 +1,25 @@
-import { categoryNameKey, resolveCategoryGroup, type CategoryGroup, type CategoryType, type StoredCategoryGroup } from "@family-budget/domain";
-import type { IconName } from "./components/Icon";
+import {
+  categoryNameKey,
+  resolveCategoryGroup,
+  type AccountType,
+  type CategoryGroup,
+  type CategoryType,
+  type DisplayKey,
+  type StoredCategoryGroup,
+} from "@family-budget/domain";
+import { ICON_NAMES, type IconName } from "./components/Icon";
 
 /**
- * Иконка и тон категории (DESIGN §3 «Тона категорий», §6 «Плитка категории»).
+ * Иконка и тон категории (DESIGN §3 «Тона сущностей», §6 «Плитка категории»).
  *
- * Карта живёт в слое представления и только в нём. У сущности `Category` нет полей иконки и
- * цвета и не будет: они превратили бы вид в данные — миграцию хранилища, новое поле в формате
- * резервной копии и запись в семейном журнале ради того, что рисуется на экране. Домен здесь
- * читается и не меняется: имя приводится к ключу через `categoryNameKey` (та же нормализация,
- * что у поиска дубликатов), группа — через `resolveCategoryGroup`.
+ * С D-036 у категории есть поля `icon` и `color` — синхронизируемые ключи оформления, которые
+ * выбирает семья (экраны выбора — подволна 2c). Они читаются первыми; без них — или с ключом,
+ * которого эта сборка не знает, — вид выводится, как прежде, по имени (`categoryNameKey`, та же
+ * нормализация, что у поиска дубликатов) и по группе (`resolveCategoryGroup`).
+ *
+ * Ключ оформления — данные чужого устройства (SECURITY §7.2). Поэтому таблицы здесь — `Map`, а не
+ * обычные объекты: имя категории «constructor» или «__proto__» и ключ «toString» не находят в них
+ * ничего унаследованного, и неизвестный ключ даёт запасной вид, а не исключение.
  *
  * Тон кодирует категорию, а не величину: NN/g прямо предупреждает, что цветом нельзя передавать
  * количество. Поэтому «Продукты» окрашены одинаково и в перерасходе, и в норме, а состояние
@@ -30,9 +41,13 @@ export interface CategoryLike {
   readonly name: string;
   readonly type: CategoryType;
   readonly group: StoredCategoryGroup;
+  /** Ключ глифа из спрайта, выбранный семьёй (D-036); необязателен. */
+  readonly icon?: DisplayKey;
+  /** Ключ тона, выбранный семьёй (D-036); необязателен. */
+  readonly color?: DisplayKey;
 }
 
-const BY_NAME: Readonly<Record<string, CategoryVisual>> = {
+const BY_NAME: ReadonlyMap<string, CategoryVisual> = new Map(Object.entries({
   // Обязательные платежи
   "жильё": { icon: "house", tone: "sage" },
   "жкх": { icon: "zap", tone: "amber" },
@@ -84,28 +99,98 @@ const BY_NAME: Readonly<Record<string, CategoryVisual>> = {
   "возврат долга": { icon: "arrow-down-left", tone: "mint" },
   "компенсации": { icon: "rotate-ccw", tone: "sage" },
   "выигрыш": { icon: "award", tone: "peach" },
-};
+} satisfies Record<string, CategoryVisual>));
 
 /** Запасной вариант по группе: своя категория семьи опознаётся хотя бы группой. */
-const BY_GROUP: Readonly<Record<CategoryGroup, CategoryVisual>> = {
-  mandatory: { icon: "tag", tone: "sage" },
-  everyday: { icon: "tag", tone: "mint" },
-  personal: { icon: "tag", tone: "lilac" },
-  other: { icon: "tag", tone: "neutral" },
-  income: { icon: "tag", tone: "peach" },
-};
+const BY_GROUP: ReadonlyMap<CategoryGroup, CategoryVisual> = new Map<CategoryGroup, CategoryVisual>([
+  ["mandatory", { icon: "tag", tone: "sage" }],
+  ["everyday", { icon: "tag", tone: "mint" }],
+  ["personal", { icon: "tag", tone: "lilac" }],
+  ["other", { icon: "tag", tone: "neutral" }],
+  ["income", { icon: "tag", tone: "peach" }],
+]);
 
+const NEUTRAL: CategoryVisual = { icon: "tag", tone: "neutral" };
+
+/**
+ * Ключи тона, которые читаются из данных. Ключи прежние — G-003 пишет `"sage"` и `"mint"`; имена
+ * макета `sand` и `rose` — это наши `amber` и `coral` (DESIGN §3).
+ */
+const TONE_KEYS: ReadonlyMap<string, CategoryTone> = new Map<string, CategoryTone>([
+  ["mint", "mint"],
+  ["lilac", "lilac"],
+  ["peach", "peach"],
+  ["amber", "amber"],
+  ["sage", "sage"],
+  ["coral", "coral"],
+  ["neutral", "neutral"],
+  ["sand", "amber"],
+  ["rose", "coral"],
+]);
+
+/** Глифы спрайта по ключу: ключ из данных находит только то, что в спрайте действительно есть. */
+const ICON_KEYS: ReadonlyMap<string, IconName> = new Map(ICON_NAMES.map((name) => [name, name]));
+
+/** Тон по ключу из данных, или `null`: чужой и незнакомый ключ — не тон. */
+export function toneOfKey(key: unknown): CategoryTone | null {
+  return typeof key === "string" ? TONE_KEYS.get(key) ?? null : null;
+}
+
+/** Глиф по ключу из данных, или `null`. */
+export function iconOfKey(key: unknown): IconName | null {
+  return typeof key === "string" ? ICON_KEYS.get(key) ?? null : null;
+}
+
+/** Поле сущности, только если оно её собственное: унаследованное `toString` полем не бывает. */
+function ownField(entity: object, field: "icon" | "color"): unknown {
+  return Object.hasOwn(entity, field) ? (entity as Readonly<Record<string, unknown>>)[field] : undefined;
+}
+
+/**
+ * Вид категории: выбранное семьёй — если эта сборка знает такой ключ, иначе — по имени, по группе
+ * и, наконец, нейтральный. Пустой плитки не бывает, исключения — тоже.
+ */
 export function categoryVisual(category: CategoryLike): CategoryVisual {
-  return BY_NAME[categoryNameKey(category.name)] ?? BY_GROUP[resolveCategoryGroup(category)];
+  let derived: CategoryVisual = NEUTRAL;
+  try {
+    derived = BY_NAME.get(categoryNameKey(category.name)) ?? BY_GROUP.get(resolveCategoryGroup(category)) ?? NEUTRAL;
+  } catch {
+    // Имя или группа, которые домен не смог разобрать, — тоже не повод оставить плитку пустой.
+    derived = NEUTRAL;
+  }
+  return {
+    icon: iconOfKey(ownField(category, "icon")) ?? derived.icon,
+    tone: toneOfKey(ownField(category, "color")) ?? derived.tone,
+  };
+}
+
+/** То немногое от счёта, что нужно для его вида. */
+export interface AccountLike {
+  readonly type: AccountType;
+  readonly currency: string;
+  readonly icon?: DisplayKey;
+}
+
+/** Глиф счёта по его виду: карта, наличные, копилка, резерв. Ключ семьи (D-036) — первым. */
+const ACCOUNT_ICONS: ReadonlyMap<string, IconName> = new Map<string, IconName>([
+  ["current", "credit-card"],
+  ["cash", "banknote"],
+  ["savings", "piggy-bank"],
+  ["reserve", "shield"],
+]);
+
+export function accountIcon(account: AccountLike): IconName {
+  return iconOfKey(ownField(account, "icon")) ?? ACCOUNT_ICONS.get(account.type) ?? "wallet";
 }
 
 /** Имена глифов, которые карта обещает интерфейсу. Спрайт обязан содержать каждое. */
 export const CATEGORY_ICON_NAMES: readonly IconName[] = [
   ...new Set([
-    ...Object.values(BY_NAME).map((visual) => visual.icon),
-    ...Object.values(BY_GROUP).map((visual) => visual.icon),
+    ...[...BY_NAME.values()].map((visual) => visual.icon),
+    ...[...BY_GROUP.values()].map((visual) => visual.icon),
+    ...ACCOUNT_ICONS.values(),
   ]),
 ];
 
 /** Сколько категорий названы поимённо — число для отчёта и для проверки полноты. */
-export const NAMED_CATEGORY_COUNT = Object.keys(BY_NAME).length;
+export const NAMED_CATEGORY_COUNT = BY_NAME.size;
