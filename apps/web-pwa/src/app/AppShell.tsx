@@ -52,7 +52,7 @@ import {
 import { createBudgetRepository } from "../storage-repository";
 import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 import { useBudgetWrite } from "../write/useBudgetWrite";
-import { HOLD_DETAILS_LABEL, writeFormRefusal } from "../write/hold-gate";
+import { createHoldGate, HOLD_DETAILS_LABEL, writeFormRefusal } from "../write/hold-gate";
 import { ReadOnlyBanner } from "../components/ReadOnlyBanner";
 import { WriteRefusalNotice } from "../components/WriteRefusalNotice";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
@@ -266,6 +266,8 @@ export default function App() {
   const hold = family.inFamily ? family.status?.hold ?? null : null;
   const holdRef = useRef(hold);
   holdRef.current = hold;
+  const holdKnown = family.inFamily && family.status !== null;
+  const [holdGate] = useState(createHoldGate);
   const refuseWriteForm = useCallback((text: string) => {
     setMessage(text);
     setMessageToFamily(text);
@@ -368,11 +370,21 @@ export default function App() {
   // задержан: форма не открывается, маршрут уходит к родителю, и человек слышит почему. Только по
   // приходу: черновик, уже открытый, когда задержка началась, остаётся на месте.
   useEffect(() => {
-    const refusal = writeFormRefusal(holdRef.current, router.current());
+    const refusal = holdGate.arrived(router.current(), holdRef.current);
     if (refusal === null) return;
     router.redirect(refusal.fallback);
     refuseWriteForm(refusal.message);
-  }, [currentRouteKey, router, refuseWriteForm]);
+  }, [currentRouteKey, router, refuseWriteForm, holdGate]);
+  // Статус семьи приходит позже первого прихода: перезагрузка или ссылка на форму при задержке
+  // открыли её, пока о задержке не знали. Один раз, когда статус пришёл, — та же проверка, если в
+  // форму ещё ничего не набрано (ревью 2a, круг 2, LOW 4).
+  useEffect(() => {
+    if (!holdKnown) return;
+    const refusal = holdGate.statusKnown(router.current(), holdRef.current, !drafts.hasUnsavedDrafts("navigation"));
+    if (refusal === null) return;
+    router.redirect(refusal.fallback);
+    refuseWriteForm(refusal.message);
+  }, [holdKnown, holdGate, router, drafts, refuseWriteForm]);
 
   // §6 исследования, пункт 30: порог индикатора — секунда. Локальное чтение в неё укладывается,
   // и слово «открываем» появляется только тогда, когда чтение в неё не уложилось.
