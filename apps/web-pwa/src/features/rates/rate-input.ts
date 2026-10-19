@@ -55,3 +55,22 @@ export function parseRateInput(text: string, quote: CurrencyCode, base: Currency
   if (!bounds(baseMinor) || !bounds(quoteMinor)) return { kind: "error", message: "Такой курс модель не хранит: проверьте число." };
   return { kind: "rate", rate: { baseMinor: Number(baseMinor), quoteMinor: Number(quoteMinor) } };
 }
+
+/**
+ * Курс модели — числом, как его набирают: «92,50» за `per` единиц `quote` в `base`. Точное деление
+ * целых: не меньше двух знаков после запятой и не больше {@link RATE_FRACTION_DIGITS}, последний —
+ * половиной вверх, лишние нули справа убраны. Что набрал человек, то и прочтёт: `parseRateInput`
+ * этой строки даёт тот же курс.
+ */
+export function formatRateValue(rate: ExchangeRateValue, quote: CurrencyCode, base: CurrencyCode, per: number = ratePer(quote)): string {
+  const scale = 10n ** BigInt(RATE_FRACTION_DIGITS);
+  // value = baseMinor / 10^baseExp за quoteMinor / 10^quoteExp единиц, умноженное на `per`.
+  const numerator = BigInt(rate.baseMinor) * BigInt(per) * 10n ** BigInt(exponentOf(quote)) * scale;
+  const denominator = BigInt(rate.quoteMinor) * 10n ** BigInt(exponentOf(base));
+  let scaled = numerator / denominator;
+  if ((numerator % denominator) * 2n >= denominator) scaled += 1n;
+  const whole = scaled / scale;
+  const fraction = String(scaled % scale).padStart(RATE_FRACTION_DIGITS, "0").replace(/0+$/u, "").padEnd(2, "0");
+  const grouped = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(whole);
+  return `${grouped},${fraction}`;
+}
