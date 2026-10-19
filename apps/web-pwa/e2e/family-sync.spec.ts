@@ -8,7 +8,7 @@
  * половины уже проверяют у себя.
  *
  * Канонические величины G-002, которые сверяются буквально:
- * «Можно на повседневные расходы» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
+ * «Можно на повседневные» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
  * дно горизонта `13 191 ₽` в сентябре 2026.
  */
 import type { Locator, Page, APIRequestContext } from "@playwright/test";
@@ -19,6 +19,7 @@ import {
   makeG002BackupBuffer,
 } from "./canonical-budget";
 import { helloShot } from "./hello-shot";
+import { entrySheet, recordExpense as recordOnSheet, reachAmount } from "./sheet";
 
 const FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const FLEXIBLE_AFTER_TRANSPORT = /23\s*000\s*₽/u;
@@ -58,9 +59,9 @@ async function setSyncServer(
 
 /* ───────────────────────────── Экраны и величины ───────────────────────────── */
 
-/** Герой «Обзора»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
+/** Строка «Можно на повседневные»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
 function flexibleRemaining(page: Page): Locator {
-  return page.locator(".hero-card > strong");
+  return reachAmount(page);
 }
 
 async function restoreCanonicalBudget(page: Page): Promise<void> {
@@ -114,20 +115,16 @@ async function openYearPlan(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^План на год/u }).click();
 }
 
-/** Покупка на табло: сумма, дата за «Изменить», конверт касанием — и отдельная кнопка записи. */
+/**
+ * Покупка с плитки «Обзора»: категория — лист, дата — «Другой день», сумма — и кнопка записи.
+ * Записано — когда тост это сказал, а не когда кнопку нажали: следующий шаг теста не должен застать
+ * запись в полёте.
+ */
 async function recordExpense(
   page: Page,
   options: { readonly date: string; readonly amount: string; readonly category: string },
 ): Promise<void> {
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
-  await page.getByRole("button", { name: "Изменить", exact: true }).click();
-  await page.getByLabel("Дата").fill(options.date);
-  await page.getByLabel("Сумма, ₽").fill(options.amount);
-  await page.getByRole("button", { name: new RegExp(`^${options.category}:`, "u") }).click();
-  await page.getByRole("button", { name: new RegExp(`^Записать .* в «${options.category}»$`, "u") }).click();
-  // Записано — когда квитанция это сказала, а не когда кнопку нажали: следующий шаг теста не
-  // должен застать запись в полёте.
-  await expect(page.getByRole("status").filter({ hasText: /Записано: расход/u })).toBeVisible();
+  await recordOnSheet(page, options);
 }
 
 /** Тревоги главного потока — без тех, что бюджет ставит сам (перерасход категории). */
@@ -274,9 +271,13 @@ test("при недоступном сервере приложение оста
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
 
-  // Переключение экранов: горизонт по-прежнему считается и рисуется.
+  // Переключение экранов: горизонт по-прежнему считается и рисуется; лист «+» открывается и
+  // закрывается без набранного.
   await expectJulyRow(page);
   await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await expect(entrySheet(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
 

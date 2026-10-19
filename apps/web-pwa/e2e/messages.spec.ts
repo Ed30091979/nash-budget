@@ -1,8 +1,8 @@
 /**
  * §12: ни одно сообщение не накрывает цель нажатия — измерено, а не отмечено галочкой.
  *
- * Маршруты: с первого шага онбординга до «Выписки», включая «Историю» внутри «Ещё». На
- * «Записать» полоса записи держит клавиатуру суммы — самый высокий из липких блоков.
+ * Маршруты: с первого шага онбординга до «Выписки», включая «Операции». Лист ввода стоит поверх
+ * экрана и плашек: в нём каждая цель обязана быть доматываемой внутри листа и не накрытой ничем.
  *
  * Пункт стоял пройденным годами, а проверки под ним не было; дефект при этом был: на маршруте
  * онбординга нет навигации, `--nav-space` держал проектные 56, и плашка «готово работать без
@@ -27,6 +27,7 @@ import { designTouchTargetMinimum } from "../src/design-contract";
 import { makeG002BackupBuffer } from "./canonical-budget";
 import { applyFontScale, FONT_SCALES } from "./font-scale";
 import { helloShot } from "./hello-shot";
+import { amountField, entrySheet, leaveDialog, measureSheetTargets, tile } from "./sheet";
 
 const OFFLINE_READY = "Приложение готово работать без интернета.";
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
@@ -61,8 +62,8 @@ const TARGET_SELECTOR = [
   ".file-button:not(:has(input:disabled))",
 ].join(",");
 
-/** Всё, что может стоять над содержимым: шапка, навигация, полоса записи и обе плашки. */
-const BLOCKER_SELECTOR = ".app-header, .bottom-nav, .record-action, .update-toast, .message-toast";
+/** Всё, что может стоять над содержимым: шапка, навигация, полоса действия выписки и обе плашки. */
+const BLOCKER_SELECTOR = ".app-header, .bottom-nav, .import-action, .update-toast, .message-toast";
 
 interface MessageClearance {
   readonly clientWidth: number;
@@ -128,7 +129,7 @@ async function measureMessageClearance(page: Page): Promise<MessageClearance> {
       scrollTo(Math.round(maxScroll * fraction));
       const toasts = [...document.querySelectorAll<HTMLElement>(".update-toast, .message-toast")].filter(isVisible).map(rectOf);
       for (const target of targets) {
-        const holder = target.closest<HTMLElement>(".record-action");
+        const holder = target.closest<HTMLElement>(".import-action");
         if (!holder || !pinnedAtBottom(holder)) continue;
         if (toasts.some((toast) => intersects(rectOf(target), toast))) {
           pinnedUnderToast.push(`${nameOf(target)} @${Math.round(scrollY)}`);
@@ -177,6 +178,14 @@ async function expectMessageClearance(page: Page, label: string): Promise<void> 
   expect(geometry.scrollWidth, `${label}: горизонтальная прокрутка`).toBeLessThanOrEqual(geometry.clientWidth);
   expect(geometry.unreachable, `${label}: каждая цель обязана быть доматываемой мимо шапки, навигации, полосы и плашки`).toEqual([]);
   expect(geometry.pinnedUnderToast, `${label}: плашка не смеет стоять на прилипшей полосе записи`).toEqual([]);
+}
+
+/** Лист ввода: каждую цель можно домотать внутри листа, и ни плашка, ни что-то ещё её не накрывает. */
+async function expectSheetClearance(page: Page, label: string): Promise<void> {
+  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM);
+  expect(geometry.targets, `${label}: цели листа найдены`).toBeGreaterThan(5);
+  expect(geometry.scrollWidth, `${label}: горизонтальная прокрутка`).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.unreachable, `${label}: каждая цель листа доматывается и ничем не накрыта`).toEqual([]);
 }
 
 /** Переход вкладкой навигации; уже активная вкладка — не переход, и фокус на заголовок она не переводит. */
@@ -241,7 +250,7 @@ test("плашка сервис-воркера не накрывает ни од
   await page.locator(".step-progress-step.done").first().click();
   await expect(page.getByText("Шаг 1 из 4")).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   // Плашка пережила смену маршрута: сообщение, которое никто не закрывал, не пропало само.
   await expect(toast).toContainText(OFFLINE_READY);
 
@@ -258,13 +267,14 @@ test("плашка сервис-воркера не накрывает ни од
       await page.getByRole("button", { name: "Настроить план" }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Планирование"));
-      // «Записать» с черновиком: полоса записи с двумя кнопками — самый высокий её вариант.
-      await goToRoute(page, "Записать");
-      await page.getByLabel("Сумма, ₽").fill("1234");
-      await expect(page.getByRole("button", { name: "Очистить черновик" })).toBeVisible();
-      await expectMessageClearance(page, label("Записать"));
-      await page.getByRole("button", { name: "Очистить черновик" }).click();
-      await expect(page.getByRole("button", { name: "Очистить черновик" })).toHaveCount(0);
+      // Лист ввода с черновиком поверх «Обзора»: плашка уходит под затемнение, а не на лист.
+      await goToRoute(page, "Обзор");
+      await tile(page, "Продукты").click();
+      await amountField(page).fill("1234");
+      await expectSheetClearance(page, label("Лист ввода"));
+      await page.keyboard.press("Escape");
+      await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+      await expect(entrySheet(page)).toHaveCount(0);
       // «Операции» — вкладка с поиском над списком: своя раскладка, свои цели. «Отчёты» — тоже.
       await goToRoute(page, "Операции");
       await expectMessageClearance(page, label("Операции"));
@@ -303,7 +313,7 @@ test("плашка сервис-воркера не накрывает ни од
   await expect(message).toContainText(/открыт/u);
   // Потолок: пока стоит сообщение, плашки обновления на экране нет — они не встают друг на друга.
   await expect(toast).toHaveCount(0);
-  await expectMessageClearance(page, "Сегодня с сообщением приложения");
+  await expectMessageClearance(page, "Обзор с сообщением приложения");
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(message).toHaveCount(0);
   // И спрятанная плашка вернулась — с тем же состоянием.

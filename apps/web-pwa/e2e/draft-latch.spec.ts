@@ -3,20 +3,16 @@
  *
  * A draft sent to the store stops being "unsaved" from the same tap, and comes back the moment the
  * write is over: dirty again when it failed, clean once the reset form is drawn when it succeeded.
- * Unit tests drive the latch by hand; here the screens drive it — the operation form, the three
- * planning editors and the statement import — through success, failure and "saved, then started
- * on something else". An opened and untouched edit is not a draft at all. `fixtures.ts` fails the
- * test on any system dialog, so every question asked here is the app's own.
+ * Unit tests drive the latch by hand; here the screens drive it — the entry sheet (since 2b the
+ * operation form is a sheet over «Обзор», closed on «Записать»), the three planning editors and the
+ * statement import — through success, failure and "saved, then started on something else". An
+ * opened and untouched edit is not a draft at all. `fixtures.ts` fails the test on any system
+ * dialog, so every question asked here is the app's own.
  */
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { sampleStatementText } from "../src/features/import/test-fixture";
-
-async function loadDemo(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
-}
+import { amountField, entrySheet, loadDemo, recordExpense, submitButton, tile, toast } from "./sheet";
 
 const tab = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const leaveDialog = (page: Page) => page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
@@ -38,6 +34,24 @@ async function asksAbout(page: Page, name: string, label: string): Promise<void>
   await expect(dialog).toHaveCount(0);
 }
 
+/** «Закрыть» листа — и ждать вопроса приложения о `label`; ответ «Продолжить ввод». */
+async function closeAsksAbout(page: Page, label: string): Promise<void> {
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
+  const dialog = leaveDialog(page);
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(label);
+  await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(entrySheet(page)).toBeVisible();
+}
+
+/** «Закрыть» листа — и он закрывается без вопроса. */
+async function closesWithoutQuestion(page: Page): Promise<void> {
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(leaveDialog(page)).toHaveCount(0);
+}
+
 async function openMonthPlan(page: Page): Promise<void> {
   await tab(page, "Ещё").click();
   await page.getByRole("button", { name: /^План месяца/u }).click();
@@ -46,42 +60,53 @@ async function openMonthPlan(page: Page): Promise<void> {
 
 test("операция: записанная — не спрашивает; набранная после — спрашивает; не записавшаяся — спрашивает", async ({ page }) => {
   await loadDemo(page);
-  await tab(page, "Записать").click();
-  const amount = page.getByLabel("Сумма, ₽");
-  await amount.fill("1200");
-  await page.getByRole("button", { name: /^Продукты: останется/u }).click();
-  await page.getByRole("button", { name: /^Записать 1\s200\s₽ в «Продукты»$/u }).click();
-  await expect(page.getByRole("status").filter({ hasText: /Записано: расход 1\s200\s₽/u })).toBeVisible();
+  await tile(page, "Продукты").click();
+  await amountField(page).fill("1200");
+  await submitButton(page).click();
+  // Записанный черновик ушёл с тем же касанием: лист закрыт, и вкладка — без вопроса.
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(toast(page, /Записано: расход 1\s200\s₽/u)).toBeVisible();
+  await leavesWithoutQuestion(page, "Отчёты", "Отчёты");
+  await tab(page, "Обзор").click();
 
-  // Записано и сброшено, затем набрано новое: защёлка снята, новое — несохранённое.
-  await amount.fill("350");
-  await asksAbout(page, "Отчёты", "операция, которую вы набирали");
+  // Записано, затем набрано новое: защёлка снята, новое — несохранённое.
+  await tile(page, "Продукты").click();
+  await amountField(page).fill("350");
+  await closeAsksAbout(page, "операция, которую вы набирали");
 
   // Неудача: сумма, которую домен не принимает, — черновик на месте и снова несохранённый.
-  await amount.fill("0");
-  await page.getByRole("button", { name: "Записать покупку", exact: true }).click();
-  await expect(page.locator("#operation-form-error")).toBeVisible();
-  await asksAbout(page, "Обзор", "операция, которую вы набирали");
+  await amountField(page).fill("0");
+  await submitButton(page).click();
+  await expect(page.locator("#entry-error")).toBeVisible();
+  await expect(entrySheet(page)).toBeVisible();
+  await closeAsksAbout(page, "операция, которую вы набирали");
 
-  // Очищенный — не спрашивает.
-  await page.getByRole("button", { name: "Очистить черновик" }).click();
+  // Стёртый до того, с чем лист открыли, — не спрашивает.
+  await amountField(page).fill("");
+  await closesWithoutQuestion(page);
   await leavesWithoutQuestion(page, "Отчёты", "Отчёты");
 });
 
 test("правка операции: открытая и нетронутая — не черновик; тронутая — черновик", async ({ page }) => {
   await loadDemo(page);
   await tab(page, "Операции").click();
-  const row = page.locator('button[aria-label^="Изменить операцию «"]').first();
+  const row = page.locator('button[aria-label^="Изменить операцию «Расход"]').first();
   await row.click();
-  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
+  await closesWithoutQuestion(page);
   await leavesWithoutQuestion(page, "Обзор", /.+/u);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 
   await tab(page, "Операции").click();
-  await page.locator('button[aria-label^="Изменить операцию «"]').first().click();
-  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
-  await page.getByLabel("Сумма, ₽").fill("777");
-  await asksAbout(page, "Обзор", "изменения в операции");
+  await page.locator('button[aria-label^="Изменить операцию «Расход"]').first().click();
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
+  await amountField(page).fill("777");
+  await closeAsksAbout(page, "изменения в операции");
+  // Системное «Назад» с тронутой правкой — тот же вопрос.
+  await page.goBack();
+  await expect(leaveDialog(page)).toContainText("изменения в операции");
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
 });
 
 test("план месяца: крупный и регулярный платёж — удача, новое после неё, неудача; нетронутая правка — не черновик", async ({ page }) => {
@@ -197,12 +222,9 @@ test("выписка: добавленная — не спрашивает; сл
   // снова несохранённый.
   const other = await page.context().newPage();
   await other.goto("/");
-  await expect(other.locator(".hero-card")).toBeVisible();
-  await other.getByRole("button", { name: "Записать", exact: true }).click();
-  await other.getByLabel("Сумма, ₽").fill("10");
-  await other.getByRole("button", { name: /^Продукты: останется/u }).click();
-  await other.getByRole("button", { name: /^Записать 10\s₽ в «Продукты»$/u }).click();
-  await expect(other.getByRole("status").filter({ hasText: /Записано: расход 10\s₽/u })).toBeVisible();
+  await expect(other.locator(".reach-line")).toBeVisible();
+  await recordExpense(other, { category: "Продукты", amount: "10" });
+  await expect(toast(other, /Записано: расход 10\s₽/u)).toBeVisible();
   await other.close();
 
   await add.click();
