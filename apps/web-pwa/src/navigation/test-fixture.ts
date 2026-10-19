@@ -11,6 +11,8 @@ export const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 export const ACCOUNT = "22222222-2222-4222-8222-222222222221";
 export const RESERVE = "22222222-2222-4222-8222-222222222222";
 export const CATEGORY = "73333333-3333-4333-8333-333333333335";
+export const TAG = "7e888888-8888-4888-8888-888888888882";
+export const MEMBER = "c6666666-6666-4666-8666-666666666601";
 
 /**
  * Every address form, per route. The type makes a route without fixtures a compile error; the
@@ -27,17 +29,28 @@ export const ROUTE_FIXTURES = {
     { name: "overview", sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
     { name: "overview", sheet: "entry", edit: OPERATION },
   ],
+  // Фильтры «Операций» (2d): дни, UUID и вид из перечня; лист правки — поверх отфильтрованного экрана.
   operations: [
     { name: "operations" },
     { name: "operations", sheet: "entry" },
     { name: "operations", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
     { name: "operations", sheet: "entry", edit: OPERATION },
+    { name: "operations", from: "2026-10-01", to: "2026-10-31" },
+    { name: "operations", acc: ACCOUNT, cat: CATEGORY, tag: TAG, member: MEMBER, kind: "expense" },
+    { name: "operations", from: "2026-10-01", to: "2026-10-31", cat: CATEGORY, sheet: "entry", edit: OPERATION },
+    { name: "operations", to: "2026-10-19", kind: "debt_out" },
   ],
+  // «Отчёты» (2d): вкладка, период, дни периода и счёт.
   reports: [
     { name: "reports" },
     { name: "reports", sheet: "entry" },
     { name: "reports", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
     { name: "reports", sheet: "entry", edit: OPERATION },
+    { name: "reports", view: "income" },
+    { name: "reports", view: "tags", period: "quarter" },
+    { name: "reports", period: "month", from: "2026-09-01" },
+    { name: "reports", period: "custom", from: "2026-10-01", to: "2026-10-15", acc: ACCOUNT },
+    { name: "reports", view: "expense", period: "year", acc: RESERVE, sheet: "entry", edit: OPERATION },
   ],
   more: [
     { name: "more" },
@@ -135,18 +148,42 @@ export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 /** A month of the domain's calendar window, 1900-01 … 2199-12. */
 const MONTH = "(?:19|20|21)\\d{2}-(?:0[1-9]|1[0-2])";
+/** A day of the domain's calendar window, 1900-01-01 … 2199-12-31. */
+const DAY = "(?:19|20|21)\\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])";
 /** The sheet and what it was opened with: a kind from the list and tile UUIDs, or an operation's UUID. */
 const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:&dst=${UUID})?|&edit=${UUID})?`;
 
 /**
+ * Pairs in this order, each optional, at least one, joined by «&» — how a screen's query reads when
+ * several of its keys are set. Only the joining is generic here: the pairs themselves are written
+ * out by hand below, not taken from the grammar they check.
+ */
+function inOrder(pairs: readonly string[]): string {
+  return `(?:${pairs.map((first, at) => `${first}${pairs.slice(at + 1).map((next) => `(?:&${next})?`).join("")}`).join("|")})`;
+}
+
+/** «Операции» (2d): the period's days, a record by UUID, a kind of operation from the list — then the sheet. */
+const OPERATIONS_QUERY = inOrder([
+  `from=${DAY}`, `to=${DAY}`, `acc=${UUID}`, `cat=${UUID}`, `tag=${UUID}`, `member=${UUID}`,
+  "kind=(?:income|expense|refund|transfer|goal_contribution|debt_out|debt_in)", SHEET,
+]);
+/** «Отчёты» (2d): a view and a period from their lists, the period's days, an account — then the sheet. */
+const REPORTS_QUERY = inOrder([
+  "view=(?:expense|income|tags)", "period=(?:month|quarter|year|custom)", `from=${DAY}`, `to=${DAY}`, `acc=${UUID}`, SHEET,
+]);
+
+/**
  * The whole address language, written out by hand rather than derived from the grammar it checks:
- * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month, the kind of
- * a category list, the kind of a new account. A record of a directory is a UUID in the path, never its name. No free text fits.
- * A new query key or path is a deliberate edit here.
+ * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month, a day, the
+ * kind of a category list, the kind of a new account, the view and period of «Отчёты». A record of a
+ * directory is a UUID in the path, never its name. No free text fits — the search of «Операции» least
+ * of all. A new query key or path is a deliberate edit here.
  */
 export const ROUTE_FRAGMENT = new RegExp(
   `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
-    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags|debts|goals|recurring))(?:\\?${SHEET})?` +
+    `|operations(?:\\?${OPERATIONS_QUERY})?` +
+    `|reports(?:\\?${REPORTS_QUERY})?` +
+    `|(?:more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags|debts|goals|recurring))(?:\\?${SHEET})?` +
     `|more/accounts/new\\?type=(?:current|cash|savings|reserve)(?:&${SHEET})?` +
     `|more/categories(?:/${UUID})?(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
   "u",
