@@ -48,6 +48,16 @@ written without an Android SDK: run `verify:android` and press Back on an
 emulator (a subscreen, a tab, «Обзор», and a typed amount on «+») before the
 release.
 
+Known cost, kept on purpose: the callback is always enabled, so on Android 13+
+the system's predictive-back animation (the peek at the home screen) does not
+play on «Обзор» either, even though Back there does leave the app — the press
+reaches the callback first, and the callback hands it on. Showing the
+animation at the root would mean disabling the callback exactly while the
+WebView cannot go back: toggling `setEnabled(webView.canGoBack())` from
+`WebViewClient.doUpdateVisitedHistory`, which the hash router triggers on every
+push and traversal. That is a future change, to be made together with a
+device test of Back and of the animation, not without one (review of 2a).
+
 ## Family sync: configuring the server address
 
 The address of the family sync server is configuration of the **web** build and
