@@ -203,14 +203,16 @@ describe("запись бюджета подключена к журналу", (
   });
 
   it("чужие операции доходят до экрана, а не только до базы", () => {
-    expect(source).toContain("publishRemoteBudget: (value, revision) => {");
-    // Пока идёт своя запись, показ откладывается: её сравнение ревизии — источник истины.
-    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,700}if \(budgetSave\.locked\) return;/u);
+    // Экран догоняет документ на диске по ревизии — через координатор записи, в его очереди: своя
+    // запись, начатая раньше, идёт первой, а показ ждёт её, а не пропадает (прогон проверки 2b:
+    // показ, пропущенный однажды, больше не повторялся, и экран отставал до перезапуска).
+    expect(source).toContain("showStoredBudget: () => budgetSave.catchUp((next, revision) => {");
+    expect(source).not.toContain("budgetSave.locked");
+    expect(source).not.toContain("publishRemoteBudget");
     // Без бюджета показ идёт только на экран ожидания семьи — не поверх онбординга.
     expect(source).toMatch(
-      /publishRemoteBudget[\s\S]{0,900}const waiting = budgetRef\.current === null && loadStateRef\.current === "empty" && inFamilyRef\.current;\s*if \(budgetRef\.current === null && !waiting\) return;/u,
+      /showStoredBudget[\s\S]{0,900}const waiting = budgetRef\.current === null && loadStateRef\.current === "empty" && inFamilyRef\.current;\s*if \(budgetRef\.current === null && !waiting\) return false;/u,
     );
-    expect(source).toMatch(/publishRemoteBudget[\s\S]{0,1100}prepareBudgetState\(value\)/u);
   });
 });
 

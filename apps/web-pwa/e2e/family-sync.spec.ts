@@ -11,7 +11,7 @@
  * «Можно на повседневные» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
  * дно горизонта `13 191 ₽` в сентябре 2026.
  */
-import type { Locator, Page, APIRequestContext } from "@playwright/test";
+import type { APIRequestContext, BrowserContext, Locator, Page, Route } from "@playwright/test";
 import { expect, test, watchDialogs } from "./fixtures";
 
 import {
@@ -318,8 +318,8 @@ test("два клиента одной семьи сходятся до копе
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
   try {
-    const anna = await annaContext.newPage();
-    const boris = await borisContext.newPage();
+    let anna = await annaContext.newPage();
+    let boris = await borisContext.newPage();
 
     await restoreCanonicalBudget(anna);
     await signIn(anna, baseURL, "anna-two@example.org");
@@ -362,12 +362,20 @@ test("два клиента одной семьи сходятся до копе
     await recordExpense(anna, { date: "2026-07-09", amount: "4000", category: "Продукты" });
     await recordExpense(boris, { date: "2026-07-10", amount: "1500", category: "Продукты" });
 
-    // Сеть вернулась: обе записи встречаются в журнале, и обе стороны показывают одно число.
+    // Оба закрывают приложение ещё офлайн и открывают его, когда сеть вернулась: обе записи
+    // встречаются в журнале, и обе стороны показывают одно число. Не перезагрузка поверх живой
+    // страницы: страница, застигнутая возвращением сети, своим кругом опроса успевала забрать
+    // чужую запись до перезагрузки, и новость пропадала по правилу §6 — «прошлый раз» после
+    // открытия есть бюджет, прочитанный с диска, а запись в нём уже лежала. Человек её при этом не
+    // видел, а тест падал при сошедшихся числах.
+    await anna.close();
+    await boris.close();
     await annaContext.setOffline(false);
     await borisContext.setOffline(false);
-    await anna.reload();
-    await boris.reload();
-    // Перезагрузка оставляет каждого на том же адресе — на записи; новость живёт на «Обзоре».
+    anna = await annaContext.newPage();
+    boris = await borisContext.newPage();
+    await anna.goto("/");
+    await boris.goto("/");
     await anna.getByRole("button", { name: "Обзор", exact: true }).click();
     await boris.getByRole("button", { name: "Обзор", exact: true }).click();
 
@@ -402,6 +410,163 @@ test("два клиента одной семьи сходятся до копе
       await expectOperationCount(client, G002_INITIAL_OPERATION_COUNT + 2);
       await expectJulyRow(client);
     }
+  } finally {
+    await annaContext.close();
+    await borisContext.close();
+  }
+});
+
+/* ───────────────────────────── Приём, который не дошёл до экрана ───────────────────────────── */
+
+/** Создать семью на первом устройстве и вступить в неё вторым — тот же путь, что выше. */
+async function formFamily(
+  anna: Page,
+  boris: Page,
+  baseURL: string,
+  emails: { readonly anna: string; readonly boris: string },
+): Promise<void> {
+  await restoreCanonicalBudget(anna);
+  await signIn(anna, baseURL, emails.anna);
+  await expect(anna.getByRole("heading", { name: "Создать семью" })).toBeVisible({ timeout: 20_000 });
+  await anna.getByRole("button", { name: "Создать семью", exact: true }).click();
+  await expect(anna.getByRole("heading", { name: "Участники" })).toBeVisible({ timeout: 20_000 });
+  await expectSyncIndicator(anna, /синхронизировано$/u);
+
+  await openFamilyScreen(anna);
+  await anna.getByRole("button", { name: /Выпустить код/u }).click();
+  const invite = anna.locator(".invite-code code");
+  await expect(invite).toBeVisible({ timeout: 10_000 });
+  const code = (await invite.innerText()).replace(/-/gu, "");
+  expect(code).toHaveLength(12);
+
+  await boris.goto("/");
+  await boris.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await signIn(boris, baseURL, emails.boris);
+  await expect(boris.getByRole("heading", { name: "Вступить по коду" })).toBeVisible({ timeout: 20_000 });
+  await boris.getByLabel("Код приглашения").fill(code);
+  await boris.getByRole("button", { name: "Вступить", exact: true }).click();
+  await boris.getByRole("button", { name: /Вступить/u }).last().click();
+  await expect(boris.getByRole("heading", { name: "Участники" })).toBeVisible({ timeout: 30_000 });
+  await expect(syncIndicator(boris)).toHaveAttribute("aria-label", /синхронизировано$/u, { timeout: 45_000 });
+  await boris.getByRole("button", { name: "Обзор", exact: true }).click();
+  await expect(flexibleRemaining(boris)).toHaveText(FLEXIBLE_REMAINING);
+}
+
+/** Что было с первой выборкой после открытия: какие `seq` она принесла и сколько выборок нового круга оборвано, пока она ждала. */
+interface InterruptedDelivery {
+  readonly delivered: readonly number[];
+  readonly dropped: number;
+}
+
+/**
+ * Первая выборка конвертов после открытия приложения придержана, пока круг, который её начал, не
+ * снят.
+ *
+ * Снимает его то, что снимает его в жизни: на старте приходит список устройств семьи, и цикл опроса
+ * начинается заново. Список устройств придерживается, пока первая выборка не ушла, и отпускается
+ * сразу после неё, — так круг с приёмом в руках оказывается снятым всегда, а не тогда, когда сеть
+ * так легла. Выборка нового круга, пока первая придержана, обрывается — обычный сбой сети: иначе
+ * новый круг сам принёс бы тот же конверт и показал его, и прогон ничего бы не проверил. Первая
+ * выборка уходит на сервер, когда новый круг уже начался (или через две секунды, если его нет), и
+ * отдаёт приложению ответ сервера как есть — её конверт ложится в документ кругом, которого больше
+ * нет.
+ */
+function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: string): Promise<InterruptedDelivery> {
+  const origin = syncOrigin.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const envelopes = new RegExp(`^${origin}/v1/families/[^/]+/envelopes\\?`, "u");
+  const devices = new RegExp(`^${origin}/v1/families/[^/]+/devices$`, "u");
+  let first: Route | null = null;
+  let firstReleased = false;
+  let devicesReleased = false;
+  let dropped = 0;
+  const heldDevices: Route[] = [];
+  let finish!: (delivery: InterruptedDelivery) => void;
+  let fail!: (reason: unknown) => void;
+  const done = new Promise<InterruptedDelivery>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  const releaseFirst = () => {
+    const route = first;
+    if (route === null || firstReleased) return;
+    firstReleased = true;
+    void (async () => {
+      const response = await route.fetch();
+      const body = (await response.json()) as { readonly envelopes: readonly { readonly seq: number }[] };
+      await route.fulfill({ response });
+      finish({ delivered: body.envelopes.map((envelope) => envelope.seq), dropped });
+    })().catch(fail);
+  };
+  void context.route(devices, async (route) => {
+    if (devicesReleased) await route.continue();
+    else heldDevices.push(route);
+  });
+  void context.route(envelopes, async (route) => {
+    if (route.request().method() !== "GET" || firstReleased) {
+      await route.continue();
+      return;
+    }
+    if (first === null) {
+      first = route;
+      devicesReleased = true;
+      for (const held of heldDevices.splice(0)) await held.continue();
+      setTimeout(releaseFirst, 2_000);
+      return;
+    }
+    dropped += 1;
+    await route.abort("connectionreset");
+    releaseFirst();
+  });
+  return done;
+}
+
+/**
+ * Конверт, применённый кругом, который успели снять, всё равно доходит до экрана.
+ *
+ * Прежде экран узнавал о чужой операции только от того круга, который её применил, и только если
+ * этот круг доживал до конца. На старте цикл опроса начинается заново, как только приходит список
+ * устройств, — и круг, уже применивший конверт, уходил молча. Документ и курсор на диске были
+ * правильными, следующий круг ничего нового не находил, и экран до перезапуска показывал бюджет
+ * без чужой покупки — со «синхронизировано» в шапке и без семейной новости (прогон проверки 2b).
+ */
+test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs }) => {
+  if (!baseURL) throw new Error("Playwright baseURL is required.");
+  const annaContext = await browser.newContext();
+  const borisContext = await browser.newContext();
+  watchDialogs(annaContext, nativeDialogs);
+  watchDialogs(borisContext, nativeDialogs);
+  try {
+    const anna = await annaContext.newPage();
+    const firstBoris = await borisContext.newPage();
+    const syncOrigin = await anna.request
+      .get(`${baseURL}/__e2e__/health`)
+      .then(async (response) => ((await response.json()) as { syncServerUrl: string }).syncServerUrl);
+    await formFamily(anna, firstBoris, baseURL, { anna: "anna-three@example.org", boris: "boris-three@example.org" });
+
+    // Борис закрыл приложение. Анна записывает, и запись принята сервером — у неё есть свой `seq`.
+    await firstBoris.close();
+    const accepted = anna.waitForResponse(
+      (response) => response.request().method() === "POST" && /\/v1\/families\/[^/]+\/envelopes$/u.test(response.url()) && response.ok(),
+    );
+    await recordExpense(anna, { date: "2026-07-09", amount: "4000", category: "Продукты" });
+    const purchase = ((await (await accepted).json()) as { readonly accepted: readonly { readonly seq: number }[] }).accepted;
+    expect(purchase).toHaveLength(1);
+
+    // Борис открывает приложение — и первый круг, который принесёт покупку Анны, снимается.
+    const interrupted = holdFirstDeliveryUntilRestart(borisContext, syncOrigin);
+    const boris = await borisContext.newPage();
+    await boris.goto("/");
+    const delivery = await interrupted;
+    // Покупку Анны принесла именно придержанная выборка, и, пока она ждала, цикл опроса начался
+    // заново — круг, сложивший покупку в документ, был снят.
+    expect(delivery.delivered).toContain(purchase[0]!.seq);
+    expect(delivery.dropped).toBeGreaterThan(0);
+
+    // На экране — то, что лежит в документе: покупка Анны, новость о ней и остаток после неё.
+    await boris.getByRole("button", { name: "Обзор", exact: true }).click();
+    await expect(boris.locator(".family-news")).toContainText(/4\s*000\s*₽/u);
+    await expect(flexibleRemaining(boris)).toHaveText(/23\s*000\s*₽/u);
+    await expectOperationCount(boris, G002_INITIAL_OPERATION_COUNT + 1);
   } finally {
     await annaContext.close();
     await borisContext.close();

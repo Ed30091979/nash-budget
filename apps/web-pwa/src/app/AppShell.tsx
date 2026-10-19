@@ -232,7 +232,7 @@ export default function App() {
   // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
   // начинает вести журнал сразу, без перезагрузки.
   const journalWriteRef = useRef<BudgetJournalWrite | null>(null);
-  // Семья ли сейчас на устройстве — для приёма документа на экране ожидания (см. publishRemoteBudget).
+  // Семья ли сейчас на устройстве — для приёма документа на экране ожидания (см. showStoredBudget).
   const inFamilyRef = useRef(false);
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
@@ -269,29 +269,25 @@ export default function App() {
       }), { silent: true });
     },
     // Чужие операции уже записаны в документ одной транзакцией с курсором; здесь они попадают на
-    // экран. Пока идёт собственная запись, показ откладывается: её сравнение ревизии — источник
-    // истины, и подменять состояние у неё под руками нельзя.
-    publishRemoteBudget: (value, revision) => {
+    // экран — после каждого круга, по ревизии документа, а не по тому, что круг успел сообщить.
+    // Сверка стоит в очереди координатора: собственную запись, начатую раньше, она ждёт и читает
+    // диск после неё — её сравнение ревизии остаётся источником истины, а показ не пропадает.
+    showStoredBudget: () => budgetSave.catchUp((next, revision) => {
       // Обновляется тот бюджет, который экран показывает. Без бюджета приложение стоит на онбординге
       // — подменять его состоянием из журнала означало бы онбординг поверх готового бюджета, — или,
       // в семье, на экране ожидания (`FamilyHoldScreen`), и тогда пришедший документ семьи и есть
       // то, чего он ждал.
-      if (budgetSave.locked) return;
       const waiting = budgetRef.current === null && loadStateRef.current === "empty" && inFamilyRef.current;
-      if (budgetRef.current === null && !waiting) return;
-      try {
-        const next = prepareBudgetState(value);
-        budgetRef.current = next;
-        revisionRef.current = revision;
-        setBudget(next);
-        if (waiting) {
-          setSeenTransactionIds(transactionIds(next));
-          setLoadState("ready");
-        }
-      } catch {
-        // Пришедшее состояние не собирается в показуемый бюджет — экран остаётся на прежнем.
+      if (budgetRef.current === null && !waiting) return false;
+      budgetRef.current = next;
+      revisionRef.current = revision;
+      setBudget(next);
+      if (waiting) {
+        setSeenTransactionIds(transactionIds(next));
+        setLoadState("ready");
       }
-    },
+      return true;
+    }),
   });
   journalWriteRef.current = family.writeBudget;
   // Задержка документа семьи: устройство только читает, и форма записи не открывается (ревью 2a, п. 6).

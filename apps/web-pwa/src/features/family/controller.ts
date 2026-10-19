@@ -385,13 +385,16 @@ export interface FamilyControllerOptions {
    */
   readonly registerLocalMember?: (member: LocalMember) => Promise<void>;
   /**
-   * Показывает состояние, которое принесли чужие операции.
+   * Экран догоняет документ на диске: показывает его, если показанное — другая ревизия.
    *
-   * Приём уже записал его в документ одной транзакцией с курсором и журналом — экрану остаётся
-   * узнать, что документ изменился. Без этого вызова операция, введённая на другом устройстве,
-   * лежала бы в базе и не появлялась бы на экране до перезапуска.
+   * Приём записал чужие операции в документ одной транзакцией с курсором и журналом — экрану
+   * остаётся его показать. Зовётся после каждого круга, а не только после того, что сообщил
+   * «применено»: сообщение теряется (круг снят, конверт применила другая вкладка), а курсор уже за
+   * конвертом, и ни один следующий круг его не принесёт. Без этого вызова операция, введённая на
+   * другом устройстве, лежала бы в базе и не появлялась бы на экране до перезапуска. Отвечает,
+   * показан ли новый документ.
    */
-  readonly publishRemoteBudget?: (value: unknown, revision: string) => void;
+  readonly showStoredBudget?: () => Promise<boolean>;
 }
 
 /**
@@ -746,6 +749,93 @@ export async function runSyncRound(engine: SyncRoundEngine): Promise<SyncRoundRe
   }
 }
 
+/** Всё, что круг опроса берёт у хука, — без React: тест подставляет сюда свои функции. */
+export interface FamilyPollRound<E extends SyncRoundEngine> {
+  /** Движок семьи, собранный заново, или `null`, когда журнала нет. */
+  readonly engineFor: () => Promise<E | null>;
+  /** Приём новой эпохи по 5.4.1 после отказа сервера; `true` — ключ сменился. */
+  readonly acceptIncomingEpoch: () => Promise<boolean>;
+  /**
+   * Эффект, начавший круг, уже снят: сменилась сессия, пришёл список устройств, и цикл опроса
+   * начался заново. Тогда круг не пишет ни исхода, ни отчёта — они принадлежат новому циклу.
+   */
+  readonly cancelled: () => boolean;
+  readonly setSyncRound: (outcome: SyncRoundOutcome) => void;
+  /**
+   * Отчёт движка — на экран, и участник этого устройства — в документ семьи, если его там нет.
+   * Идёт после {@link showStored}: запись участника строится из показанного бюджета.
+   */
+  readonly refreshSyncState: (engine: E) => Promise<void>;
+  /**
+   * Экран догоняет то, что лежит на диске: документ, если показана другая ревизия
+   * (`createAppBudgetSaveCoordinator().catchUp` в оболочке), и журнал при нём — целостность и
+   * авторы операций. Ничего не пишет. `complete` — круг дошёл до отчёта, и журнал перечитывается
+   * всегда; снятый или упавший круг перечитывает его, только если показал новый документ.
+   */
+  readonly showStored: (complete: boolean) => Promise<unknown>;
+}
+
+/**
+ * Один круг опроса семьи — и после него, всегда, сверка экрана с тем, что лежит на диске.
+ *
+ * Прежде экран узнавал о чужой операции только от того круга, который её применил, — по
+ * `applied > 0` его же результата, — и только если этот круг доживал до конца: снятый круг
+ * уходил молча. А снимается он на каждом старте: список устройств и пины приходят, пока первый
+ * круг ждёт ответа, и цикл опроса начинается заново. Приём тем временем уже записал конверт в
+ * документ одной транзакцией с курсором, курсор ушёл за конверт, следующий круг ничего нового не
+ * находил — и экран до перезапуска показывал бюджет без чужой покупки, со «синхронизировано» в
+ * шапке и без семейной новости (прогон проверки 2b). То же — с конвертом, который применила
+ * другая вкладка.
+ *
+ * Поэтому показ больше не ждёт сообщения: после каждого круга — удачного, неудачного, снятого —
+ * экран сверяется с документом по ревизии и перечитывает журнал при нём. Сообщение можно потерять;
+ * ревизию на диске — нет.
+ */
+export async function pollFamilyRound<E extends SyncRoundEngine>(poll: FamilyPollRound<E>): Promise<void> {
+  let shown = false;
+  const show = async (complete: boolean) => {
+    shown = true;
+    await poll.showStored(complete).catch(() => undefined);
+  };
+  try {
+    const engine = await poll.engineFor();
+    if (engine === null || poll.cancelled()) return;
+    let result = await runSyncRound(engine);
+    // Снятый круг не пишет ни исхода, ни отчёта: они принадлежат циклу, который его сменил.
+    if (poll.cancelled()) return;
+    if (result.outcome === "refused") {
+      // Сервер отказал — и один из отказов, `409 epoch_mismatch`, лечится не повтором, а приёмом
+      // новой эпохи по 5.4.1. Попытка идёт на любой отказ: она стоит одного запроса и ничего не
+      // решает сама — решает цепочка подтверждений.
+      const moved = await poll.acceptIncomingEpoch().catch(() => false);
+      if (poll.cancelled()) return;
+      if (moved) {
+        const next = await poll.engineFor();
+        if (next !== null && !poll.cancelled()) {
+          result = await runSyncRound(next);
+          if (poll.cancelled()) return;
+          poll.setSyncRound(result.outcome);
+          await show(true);
+          await poll.refreshSyncState(next);
+          return;
+        }
+      }
+    }
+    // Исход круга — состояние, а не пустое место: без него шапка говорила бы «синхронизировано»
+    // при лежащем сервере, умершем токене и отозванном устройстве, потому что отчёт собирается из
+    // записей, которых неудавшийся круг не делает.
+    poll.setSyncRound(result.outcome);
+    // Экран — до отчёта: отчёт вписывает участника этого устройства в документ семьи записью,
+    // которая строится из показанного бюджета, и бюджет, отставший от диска, дал бы ей конфликт.
+    await show(true);
+    await poll.refreshSyncState(engine);
+  } finally {
+    // И снятый круг тоже: документ на диске — устройства, а не сессии, и то, что круг в него
+    // записал, экран обязан показать, кто бы ни писал отчёт.
+    if (!shown) await show(false);
+  }
+}
+
 /**
  * Участник этого устройства, которого ещё нет в документе семьи, — или `null`, когда вписывать
  * некого или некуда.
@@ -964,8 +1054,8 @@ export function useFamily(
   /** `${familyId}:${memberId}` участника, которого круг уже нашёл в документе семьи. */
   const memberPresentRef = useRef<string | null>(null);
   registerLocalMemberRef.current = options.registerLocalMember;
-  const publishRemoteBudgetRef = useRef(options.publishRemoteBudget);
-  publishRemoteBudgetRef.current = options.publishRemoteBudget;
+  const showStoredBudgetRef = useRef(options.showStoredBudget);
+  showStoredBudgetRef.current = options.showStoredBudget;
   const apiRef = useRef<FamilyApi | null>(null);
   /** Одно обновление на все запросы сразу: refresh-токен поворачивается, и второй с тем же не пройдёт. */
   const refreshingRef = useRef<Promise<boolean> | null>(null);
@@ -1112,14 +1202,14 @@ export function useFamily(
   }, [serverUrl, store, reload]);
 
   /**
-   * Сообщает экрану, что журнал и очередь изменились, и подаёт состояние наверх.
+   * Сообщает экрану, что очередь и отчёт движка изменились.
    *
-   * Читается настоящее состояние движка, а не догадка: отчёт берётся из `status()`, целостность —
-   * из записанного журнала, а показанное состояние — из документа, который приём уже записал одной
-   * транзакцией с курсором. Ни одна из трёх величин здесь не выводится из другой.
+   * Читается настоящее состояние движка, а не догадка: отчёт берётся из `status()`. Документ и
+   * журнал при нём сюда не входят: их экран догоняет сам, после каждого круга и до этого отчёта
+   * (`showStored`), — участник ниже вписывается записью, которая строится из показанного бюджета.
    */
   const refreshSyncState = useCallback(
-    async (engine: SyncEngine, publishDocument: boolean): Promise<void> => {
+    async (engine: SyncEngine): Promise<void> => {
       let report: SyncStatusReport | null = null;
       try {
         report = await engine.status();
@@ -1146,6 +1236,49 @@ export function useFamily(
       } catch {
         setStatus(null);
       }
+      // Участник этого устройства вписывается в документ семьи, как только он есть и писать в него
+      // можно (`missingLocalMember`). Документ читается для этого, пока участник не найден в нём
+      // хотя бы раз для этой семьи; дальше круг его не перечитывает.
+      const current = sessionRef.current;
+      const memberKey = current?.familyId != null && current.memberId != null ? `${current.familyId}:${current.memberId}` : null;
+      const checkMember = memberKey !== null && memberPresentRef.current !== memberKey && report !== null && report.familyDocument && report.hold === null;
+      if (!checkMember) return;
+      try {
+        const document = await store.loadVersioned();
+        if (document !== null) {
+          const member = missingLocalMember(document.value as BudgetState, report, current);
+          if (member === null) memberPresentRef.current = memberKey;
+          else await registerLocalMember(member);
+        }
+      } catch {
+        // Документ не прочитался — экран остаётся на том состоянии, которое уже показывает.
+      }
+    },
+    [registerLocalMember, store],
+  );
+
+  /**
+   * Экран догоняет то, что лежит на диске: документ — и журнал при нём, целостность и авторы
+   * операций. После каждого круга — удачного, неудачного, снятого (`pollFamilyRound`) — и после
+   * каждой отправки.
+   *
+   * Документ и журнал приём пишет одной транзакцией, и показываются они вместе: семейная новость —
+   * это операция бюджета и её автор из журнала, и бюджет, показанный без журнала при нём, — это
+   * чужая покупка без новости о ней. Журнал читается после документа, поэтому авторы на экране не
+   * старше показанного бюджета.
+   *
+   * `familyId` — семья, ради которой шёл круг. Снятый сменой семьи или выходом круг документ
+   * показывает (документ — устройства, а не сессии), а журнала ушедшей семьи на экран не кладёт.
+   * `always` — перечитать журнал, даже если документ на экране уже тот же: так делает каждый
+   * круг, дошедший до отчёта. Снятый круг перечитывает журнал, только если показал новый документ, —
+   * полный проход по журналу на каждый перезапуск цикла был бы платой за то, что и так покажет
+   * следующий круг.
+   */
+  const showStored = useCallback(
+    async (familyId: string | null, always: boolean): Promise<void> => {
+      const adopted = (await showStoredBudgetRef.current?.()) === true;
+      if (!always && !adopted) return;
+      if ((sessionRef.current?.familyId ?? null) !== familyId) return;
       try {
         const journal = await store.readSyncState(SYNC_STATE_KEYS.journal);
         if (journal === undefined) {
@@ -1161,26 +1294,8 @@ export function useFamily(
         setIntegrity(null);
         setTransactionAuthors(new Map());
       }
-      // Участник этого устройства вписывается в документ семьи, как только он есть и писать в него
-      // можно (`missingLocalMember`). Документ читается для этого, пока участник не найден в нём
-      // хотя бы раз для этой семьи; дальше круг его не перечитывает.
-      const current = sessionRef.current;
-      const memberKey = current?.familyId != null && current.memberId != null ? `${current.familyId}:${current.memberId}` : null;
-      const checkMember = memberKey !== null && memberPresentRef.current !== memberKey && report !== null && report.familyDocument && report.hold === null;
-      if (!publishDocument && !checkMember) return;
-      try {
-        const document = await store.loadVersioned();
-        if (document !== null && publishDocument) publishRemoteBudgetRef.current?.(document.value, document.revision);
-        if (document !== null && checkMember) {
-          const member = missingLocalMember(document.value as BudgetState, report, current);
-          if (member === null) memberPresentRef.current = memberKey;
-          else await registerLocalMember(member);
-        }
-      } catch {
-        // Документ не прочитался — экран остаётся на том состоянии, которое уже показывает.
-      }
     },
-    [registerLocalMember, store],
+    [store],
   );
 
   /**
@@ -1264,12 +1379,15 @@ export function useFamily(
           void (async () => {
             // Офлайн — не ошибка сценария, но и не «синхронизировано»: исход круга запоминается
             // здесь тем же способом, что и в опросе, и индикатор показывает именно его.
+            // Семья запоминается до сети: вышедшему за время круга журнал ушедшей семьи не показывается.
+            const familyId = sessionRef.current?.familyId ?? null;
             setSyncRound((await runSyncRound(engine)).outcome);
-            await refreshSyncState(engine, true);
+            await showStored(familyId, true);
+            await refreshSyncState(engine);
           })();
         },
       }),
-    [engineFor, refreshSyncState, repository, store],
+    [engineFor, refreshSyncState, repository, showStored, store],
   );
 
 
@@ -1284,36 +1402,19 @@ export function useFamily(
     }
     let cancelled = false;
     let running = false;
+    const familyId = session.familyId;
     const round = async () => {
       if (running || cancelled) return;
       running = true;
       try {
-        const engine = await engineFor();
-        if (engine === null || cancelled) return;
-        let result = await runSyncRound(engine);
-        if (cancelled) return;
-        if (result.outcome === "refused") {
-          // Сервер отказал — и один из отказов, `409 epoch_mismatch`, лечится не повтором, а
-          // приёмом новой эпохи по 5.4.1. Попытка идёт на любой отказ: она стоит одного запроса и
-          // ничего не решает сама — решает цепочка подтверждений.
-          const moved = await acceptIncomingEpoch().catch(() => false);
-          if (cancelled) return;
-          if (moved) {
-            const next = await engineFor();
-            if (next !== null && !cancelled) {
-              result = await runSyncRound(next);
-              if (cancelled) return;
-              setSyncRound(result.outcome);
-              await refreshSyncState(next, result.applied > 0 || result.settled);
-              return;
-            }
-          }
-        }
-        // Исход круга — состояние, а не пустое место: без него шапка говорила бы
-        // «синхронизировано» при лежащем сервере, умершем токене и отозванном устройстве, потому
-        // что отчёт ниже собирается из записей, которых неудавшийся круг не делает.
-        setSyncRound(result.outcome);
-        await refreshSyncState(engine, result.applied > 0 || result.settled);
+        await pollFamilyRound({
+          engineFor,
+          acceptIncomingEpoch,
+          cancelled: () => cancelled,
+          setSyncRound,
+          refreshSyncState,
+          showStored: (complete) => showStored(familyId, complete),
+        });
       } finally {
         running = false;
       }
@@ -1342,6 +1443,7 @@ export function useFamily(
     serverUrl,
     session?.familyId,
     session?.deviceId,
+    showStored,
     reload,
   ]);
 
@@ -1504,7 +1606,8 @@ export function useFamily(
         // догоняет курсор, а курсором меряется `freezeSeq` (5.5 шаг 2). Неудача круга ротацию не
         // отменяет — переносимый набор всё равно читается с сервера заново.
         setSyncRound((await runSyncRound(engine)).outcome);
-        await refreshSyncState(engine, true);
+        await showStored(familyId, true);
+        await refreshSyncState(engine);
         const report = await engine.status();
         const stored = await store.readSyncState<StoredFamilyKey>(FAMILY_KEY_STATE_KEY);
         if (stored === undefined) {
@@ -1610,6 +1713,7 @@ export function useFamily(
       refreshAccess,
       refreshSyncState,
       serverUrl,
+      showStored,
       store,
     ],
   );
