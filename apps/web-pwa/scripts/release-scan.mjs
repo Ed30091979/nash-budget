@@ -223,6 +223,32 @@ const HISTORY_CALL_SITES = { pushState: 1, replaceState: 1 };
 const HISTORY_METHOD_DEFINITIONS = { pushState: 1, replaceState: 1 };
 const HISTORY_TRAVERSALS = 1;
 
+/**
+ * Names next to the address, pinned by number across the application bundles
+ * (re-review of 2a, round 2). Each number is what the shipped code needs today,
+ * listed by who needs it; a mistake that names one of them anywhere else — an
+ * alias of location, a helper it is passed to, the Navigation API, a link
+ * built in a variable — changes the number, and the scan stops. A dependency
+ * upgrade may change them too: then the list is re-read and the number edited
+ * here, deliberately.
+ */
+const PINNED_MENTIONS = [
+  // The router: frame.location.hash read four times; memoryRouterWindow's
+  // `location:` key. React DOM: the same-origin iframe check
+  // (`contentWindow.location.href`) and the keyboard event's `location` field.
+  // The PWA update flow: `window.location.reload()` twice.
+  { label: "mentions of location", pattern: /\blocation\b/gu, count: 9 },
+  // React DOM's transition tracking (addEventListener ×3, removeEventListener
+  // ×3, currentEntry, navigate, transition). The app itself has none.
+  { label: "Navigation API members", pattern: /\bnavigation\s*(?:\?\.|\.)\s*[A-Za-z_$]/gu, count: 9 },
+  // React DOM's preloaded script; the backup download link (an object URL).
+  { label: "href assignments", pattern: /\.href\s*=(?!=)/gu, count: 2 },
+  // React DOM's resource hints (six); the icon sprite's <use>; the skip link.
+  { label: "href properties", pattern: /\bhref\s*:/gu, count: 8 },
+  // The router's one traversal, under any name (`past.go(-1)` too).
+  { label: "history traversals (.go)", pattern: /\.go\s*\(/gu, count: HISTORY_TRAVERSALS },
+];
+
 function count(text, pattern) {
   return [...text.matchAll(pattern)].length;
 }
@@ -279,6 +305,18 @@ for (const { name, text } of applicationBundles) {
     /\[\s*["'`]location["'`]\s*\]/u,
     /\bhistory\s*\.\s*(?:back|forward)\s*\(/u,
     /\bhistory\s*\[/u,
+    // The title is in the history list and the app switcher, as the address is.
+    /\bdocument\s*\.\s*title\b/u,
+    // window.open(url, "_self") navigates this window; a bare open( is the same global.
+    /\b(?:window|globalThis|self|top|parent)\s*(?:\?\.|\.)\s*open\s*\(/u,
+    /(?<![.\w$])open\(/u,
+    // A global destructured or aliased hides the names the counts look for.
+    /\{[^{}]*\}\s*=\s*(?:window|globalThis|self|document)\b/u,
+    /=\s*(?:window|globalThis|self|top|parent)\s*[;,)]/u,
+    // A link straight into the route fragment, and a form with no handler,
+    // which submits by GET into the query string (`?q=…` in the address).
+    /\bhref\s*:\s*["'`]#\//u,
+    /\(\s*["'`]form["'`]\s*,\s*\{(?![^{}]*\bonSubmit\s*:)/u,
   ].find((pattern) => pattern.test(text));
   if (locationChannel !== undefined) {
     fail(`URL state channel found in ${name}: ${locationChannel.source}`);
@@ -311,9 +349,11 @@ for (const method of ["pushState", "replaceState"]) {
     );
   }
 }
-const traversals = count(applicationCode, /history\s*\.\s*go\s*\(/gu);
-if (traversals !== HISTORY_TRAVERSALS) {
-  fail(`URL state channel: the bundle has ${traversals} history traversals; the scanner pins ${HISTORY_TRAVERSALS}`);
+for (const { label, pattern, count: pinned } of PINNED_MENTIONS) {
+  const found = count(applicationCode, pattern);
+  if (found !== pinned) {
+    fail(`URL state channel: the bundle has ${found} ${label}; the scanner pins ${pinned}`);
+  }
 }
 
 const serviceWorker = readFileSync(join(distDirectory, "sw.js"), "utf8");

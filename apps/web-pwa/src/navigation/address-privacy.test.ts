@@ -26,7 +26,11 @@ import {
  * 1. the grammar itself — every route, every key, and a fuzz over every field: `formatRoute`
  *    either throws or writes something in the hand-written address language;
  * 2. the sources — one module, the router, touches history and the address, in every shipped
- *    package, whatever the syntax (bracket access, `.call`, destructuring);
+ *    package. The model is a mistake, not an attacker: the names (`location`, `pushState`, the
+ *    Navigation API, `open`, `document.title`) are refused wherever they appear, globals may not be
+ *    destructured or aliased, and only an allow-list of files writes an `href`. Deliberate
+ *    obfuscation — a name assembled from strings at run time — is out of the model (docs/SECURITY.md
+ *    §7.3) and left to review;
  * 3. the history the router builds — after every path, entries hold `{ mark, stack }` and nothing
  *    else, and every address in them is in the address language.
  *
@@ -57,8 +61,9 @@ function sources(): { readonly path: string; readonly text: string }[] {
       for (const name of readdirSync(dir)) {
         const path = join(dir, name);
         if (statSync(path).isDirectory()) walk(path);
-        // Test files and their fixtures never ship (the first test keeps it so).
-        else if (/\.tsx?$/u.test(name) && !/\.test\.tsx?$/u.test(name) && name !== "test-fixture.ts") {
+        // Test files and their fixtures never ship (the first test keeps it so). Every script
+        // extension counts: a `.js` or `.mjs` module ships as surely as a `.tsx` one.
+        else if (/\.[cm]?[jt]sx?$/u.test(name) && !/\.test\.[cm]?[jt]sx?$/u.test(name) && name !== "test-fixture.ts") {
           files.push({ path: `${label}/${relative(rootDir, path).split(sep).join("/")}`, text: readFileSync(path, "utf8") });
         }
       }
@@ -70,16 +75,77 @@ function sources(): { readonly path: string; readonly text: string }[] {
 
 const ROUTER = "web/navigation/router.ts";
 
-/** Every way shipped code could reach history or the address, whatever the syntax. */
+/**
+ * Every way a mistake in shipped code could reach history or the address. The names themselves are
+ * refused wherever they appear — bracket access, `.call`, an alias and a string all carry them —
+ * and the router is the one module allowed them.
+ */
 const ADDRESS_ACCESS: readonly (readonly [string, RegExp])[] = [
-  // The names themselves: bracket access, `.call`, destructuring and strings all carry them.
+  // `location` by name, read or written, aliased, passed to a helper, assigned into: the router
+  // reads `frame.location.hash`, and nothing else in the app has any business with it.
+  ["the location object, by name", /\blocation\b/u],
   ["pushState/replaceState/scrollRestoration", /\b(?:pushState|replaceState|scrollRestoration)\b/u],
   ["history via a global", /\b(?:window|globalThis|self|top|parent|frames)\s*(?:\?\.|\.)\s*history\b|\[\s*["'`]history["'`]\s*\]/u],
   ["history traversal or state", /\bhistory\s*(?:\?\.|\.)\s*(?:go|back|forward|state)\b|\bhistory\s*\[\s*["'`]/u],
-  ["location, read or written", /\blocation\s*(?:\?\.|\.|\[)|\b(?:window|globalThis|self|document|top|parent)\s*(?:\?\.|\.)\s*location\b|\[\s*["'`]location["'`]\s*\]/u],
-  ["location destructured", /\{[^{}]*\blocation\b[^{}]*\}\s*=/u],
-  ["document address", /\bdocument\s*(?:\?\.|\.)\s*(?:URL|documentURI|baseURI)\b/u],
-  ["link into the route fragment", /\bhref\s*=\s*\{?\s*["'`]#\/|\bhref\s*=\s*\{\s*(?:formatRoute|routeKey)\b/u],
+  // `const { history: past } = window` hides the name the rule above looks for.
+  ["a global destructured or aliased", /\{[^{}]*\}\s*=\s*(?:window|globalThis|self|document|top|parent)\b|=\s*(?:window|globalThis|self|top|parent|history)\s*[;,)]/u],
+  ["the Navigation API", /\bnavigation(?:\?\.|\.)[A-Za-z_$]|\bnavigation\s*\[|\b(?:window|globalThis|self|top|parent)\s*(?:\?\.|\.)\s*navigation\b/u],
+  // `window.open(url, "_self")` navigates this window; a bare `open(` is the same global. A
+  // method of something else (`indexedDB.open(`) is not.
+  ["open() of a window", /\b(?:window|globalThis|self|top|parent)\s*(?:\?\.|\.)\s*open\b|(?<![.\w$])open\(/u],
+  // The title is in the history list and the app switcher just as the address is.
+  ["the document title", /\bdocument\s*(?:\?\.|\.)\s*title\b/u],
+  ["the document address", /\bdocument\s*(?:\?\.|\.)\s*(?:URL|documentURI|baseURI)\b/u],
+  // A form without a handler submits by GET into the query string — `?q=кофе` in the address.
+  ["a form that submits into the address", /<form\b(?![^>]*\bonSubmit=)/u],
+];
+
+/**
+ * The files allowed to write an `href`, with how many writers each has: the sprite reference of
+ * `Icon`, the skip link, the download link (an object URL, not the page's address) and the iOS
+ * launch-image markup the build writes into `index.html`. Anywhere else — a link built in a
+ * variable above, a `.href =` before `.click()` — an `href` is a way into the address. Changing
+ * this list is a deliberate edit.
+ */
+const HREF_WRITERS: Readonly<Record<string, number>> = {
+  "web/components/Icon.tsx": 1,
+  "web/app/AppShell.tsx": 1,
+  "web/features/data-management/download.ts": 1,
+  "web/splash.ts": 1,
+};
+const HREF_WRITE = /\bhref\s*=(?!=)|\bhref\s*:|setAttribute\(\s*["'`]href|\[\s*["'`]href["'`]\s*\]/gu;
+
+/** What the tripwire says about one shipped file. */
+function violations(path: string, text: string): string[] {
+  const found = path === ROUTER ? [] : ADDRESS_ACCESS.filter(([, pattern]) => pattern.test(text)).map(([label]) => label);
+  const writers = [...text.matchAll(HREF_WRITE)].length;
+  if (writers !== (HREF_WRITERS[path] ?? 0)) found.push(`${writers} href writers, allowed ${HREF_WRITERS[path] ?? 0}`);
+  return found;
+}
+
+/**
+ * The bypasses of the re-review of 2a (round 2), as the source they were written in, put into a
+ * screen that has no business with the address. Each is refused here; the built bundle refuses
+ * them again (`release-scan.test.ts`). A10 — a name assembled from strings at run time — is the
+ * kind of deliberate obfuscation the model leaves to review, and is not listed.
+ */
+const REVIEW_BYPASSES: readonly (readonly [string, string])[] = [
+  ["A01 the amount in the document title", 'document.title = `${draft.amount} ₽ — Наш бюджет`;'],
+  ["A02 a link built in a variable, then clicked", '{ const target = `#/operations?q=${encodeURIComponent(draft.amount)}`; const link = document.createElement("a"); link.href = target; link.click(); }'],
+  ["A03 window.open into this window", 'window.open(`#/operations?q=${encodeURIComponent(draft.amount)}`, "_self");'],
+  ["A04 the Navigation API", 'void navigation.navigate(`#/operations?q=${encodeURIComponent(draft.amount)}`, { history: "replace", state: { amount: draft.amount } });'],
+  ["A05 location under another name", '{ const here = location; here.hash = `#/operations?q=${draft.amount}`; }'],
+  ["A06 Object.assign over location", 'Object.assign(location, { hash: `#/operations?q=${draft.amount}` });'],
+  ["A07 history destructured under another name", '{ const { history: past } = window; past.go(-1); }'],
+  ["A08 Reflect.apply of pushState", 'Reflect.apply(History.prototype.pushState, history, [null, "", `#/operations?q=${draft.amount}`]);'],
+  ["A09 history through a globalThis alias", '{ const h = globalThis.history; h.replaceState(history.state, "", `#/operations?q=${draft.amount}`); }'],
+  ["A11 history destructured, method name joined", '{ const { history: h } = window; const m = ["push", "State"].join("") as "pushState"; h[m](null, "", `#/operations?q=${draft.amount}`); }'],
+  ["A12 a URL object and location.replace", '{ const url = new URL(document.baseURI); url.hash = `/operations?q=${draft.amount}`; window.location.replace(url); }'],
+  ["A13 optional chaining", 'globalThis?.history?.pushState?.(null, "", `#/operations?q=${draft.amount}`);'],
+  ["A14 document.location", 'document.location.hash = `#/operations?q=${draft.amount}`;'],
+  ["A15 location passed to a helper", '{ const setHash = (target: { hash: string }, value: string) => { target.hash = value; }; setHash(location, `#/operations?q=${draft.amount}`); }'],
+  ["A16 a JSX link whose href is built above", 'const searchHref = `#/operations?q=${encodeURIComponent(draft.amount)}`;\n<a hidden href={searchHref}>Поиск</a>'],
+  ["A17 a form that submits by GET", '<form role="search"><label htmlFor="report-search">Поиск</label><input id="report-search" name="q" type="search" /></form>'],
 ];
 
 describe("адрес — только маршрут: исходники", () => {
@@ -88,17 +154,27 @@ describe("адрес — только маршрут: исходники", () =>
     expect(importing).toEqual([]);
   });
 
-  it("историю и адрес трогает один модуль — роутер, во всех пакетах, что едут в сборку, и любым синтаксисом", () => {
+  it("историю, адрес и заголовок трогает один модуль — роутер; `href` пишут только файлы из списка", () => {
     const all = sources();
     expect(all.some(({ path }) => path.startsWith("packages/domain/"))).toBe(true);
     expect(all.some(({ path }) => path === ROUTER)).toBe(true);
-    const touching = all
-      .filter(({ path }) => path !== ROUTER)
-      .flatMap(({ path, text }) => ADDRESS_ACCESS.filter(([, pattern]) => pattern.test(text)).map(([label]) => `${path}: ${label}`));
+    for (const path of Object.keys(HREF_WRITERS)) expect(all.some((file) => file.path === path), path).toBe(true);
+    const touching = all.flatMap(({ path, text }) => violations(path, text).map((label) => `${path}: ${label}`));
     expect(touching).toEqual([]);
   });
 
-  it("правило ловит каждую форму обхода, а не одну", () => {
+  it("каждый обход повторного ревью 2a отвергается, вставленный в экран операции", () => {
+    const screen = sources().find(({ path }) => path === "web/features/operations/OperationsScreen.tsx");
+    expect(screen).toBeDefined();
+    const at = screen?.text.indexOf("    if (busy) return;") ?? -1;
+    expect(at).toBeGreaterThan(0);
+    for (const [label, snippet] of REVIEW_BYPASSES) {
+      const patched = `${screen?.text.slice(0, at) ?? ""}    ${snippet}\n${screen?.text.slice(at) ?? ""}`;
+      expect(violations("web/features/operations/OperationsScreen.tsx", patched), label).not.toEqual([]);
+    }
+  });
+
+  it("правило ловит и прежние формы обхода, и не трогает то, что не адрес", () => {
     const evasions = [
       'history.pushState({ amount: 1200, note }, "", "#/");',
       'history["pushState"](null, "", "#/spent?amount=" + amount);',
@@ -116,15 +192,30 @@ describe("адрес — только маршрут: исходники", () =>
       'const where = globalThis["location"].hash;',
       'const { location } = window;',
       'const url = document.URL;',
-      '<a href="#/new?note=кофе">',
-      '<a href={formatRoute(route)}>',
+      'const w = window;',
+      'const past = history;',
+      'globalThis.navigation.navigate("#/x");',
+      'open("#/spent", "_self");',
+      'self.open(url);',
+      'document.title = note;',
     ];
     for (const evasion of evasions) {
       expect(ADDRESS_ACCESS.some(([, pattern]) => pattern.test(evasion)), evasion).toBe(true);
     }
-    // And it leaves alone what is not the address: a local list called `history`, a download link.
-    for (const innocent of ["if (history.length < CONFIDENT_REPEATS) return [];", "anchor.href = objectUrl;", '<use href={`#${ICON_ID_PREFIX}${name}`} />']) {
-      expect(ADDRESS_ACCESS.some(([, pattern]) => pattern.test(innocent)), innocent).toBe(false);
+    for (const writer of ['<a href="#/new?note=кофе">', "<a href={formatRoute(route)}>", "link.href = target;", "{ href: target }", 'link.setAttribute("href", target);', 'link["href"] = target;']) {
+      expect(violations("web/features/operations/OperationsScreen.tsx", writer), writer).not.toEqual([]);
+    }
+    // And it leaves alone what is not the address: a local list called `history`, a database
+    // opened by name, a word in a comment, a draft scope.
+    for (const innocent of [
+      "if (history.length < CONFIDENT_REPEATS) return [];",
+      "const opening = indexedDB.open(name, VERSION);",
+      "// The guard asks during navigation. Then the screen changes.",
+      'drafts.hasUnsavedDrafts("navigation")',
+      "<form onSubmit={submit} noValidate>",
+      "const isOpen = sheet !== null;",
+    ]) {
+      expect(violations("web/features/operations/OperationsScreen.tsx", innocent), innocent).toEqual([]);
     }
   });
 
