@@ -131,6 +131,8 @@
      только `min-height` самой панели. Полоса записи стояла на воображаемой навигации в 80 px, а
      настоящая — 56, и в зазоре между ними просвечивала карточка. */
   --nav-height: 72px;
+  /* Короткий экран (ниже 38em, iPhone SE — 568 pt): панель сжимается до 4 + 48 + 4, см. правило ниже. */
+  --nav-height-compact: 56px;
   /* §6 Место под навигацию и шапку. Отступ оболочки, полоса записи и тост считаются отсюда, а не
      от `--nav-height`: панель растёт с системным шрифтом — при ×2.7 подписи переносятся, и на
      320 pt она занимает 188 pt, на 390 — 150, а не проектные, — и полоса на 56 уводила кнопку записи под
@@ -1164,6 +1166,14 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .quick-grid { grid-template-columns: 1fr; }
   .bottom-nav { gap: 8px; padding-right: max(4px, env(safe-area-inset-right)); padding-left: max(4px, env(safe-area-inset-left)); }
   .nav-button { min-width: 0; }
+}
+
+/* §5 Короткий экран. На 320×568 при открытой клавиатуре суммы шапка, полоса записи (306 pt) и
+   панель в 72 pt оставляли под конверт 134 pt — меньше конверта, и набор суммы снова шёл вслепую
+   (`keypad.spec.ts`). Ниже 38em в высоту панель возвращается к 56: 16 pt на таком экране — это
+   разница между конвертом на виду и конвертом под панелью. */
+@media (max-height: 38em) {
+  .bottom-nav { min-height: calc(var(--nav-height-compact) + env(safe-area-inset-bottom)); }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
