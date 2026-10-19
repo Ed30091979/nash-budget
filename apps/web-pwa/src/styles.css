@@ -786,7 +786,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .data-management > p[role="status"] { color: var(--ink); background: var(--surface-sunken); border: 0; }
 .data-management > p[role="alert"] { color: var(--red-ink); background: var(--red-soft); border: 0; }
 .data-management > .list-danger { margin-top: 24px; }
-.confirmation-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; padding: 16px; place-items: center; background: var(--scrim); animation: scrim-in var(--motion-surface) var(--ease-enter); }
+/* Вопрос выше экрана (×2.7 на 320×568) доматывается внутри затемнения: `safe` не даёт центровке
+   увести его верх за край, откуда его уже не достать. */
+.confirmation-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; padding: 16px; place-items: safe center; overflow-y: auto; overscroll-behavior: contain; background: var(--scrim); animation: scrim-in var(--motion-surface) var(--ease-enter); }
 .confirmation-dialog { width: min(520px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-sheet); animation: dialog-in var(--motion-surface) var(--ease-enter); }
 .confirmation-dialog h2, .confirmation-dialog h3 { margin: 0; }
 .confirmation-dialog p { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
@@ -1012,7 +1014,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .sheet-foot { display: grid; gap: 8px; padding: 8px 16px 16px; border-top: 1px solid var(--border); }
 .entry-sheet .keypad button { min-height: 52px; }
 .from-to { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: 8px; align-items: stretch; }
-.from-to-arrow { display: grid; place-items: center; color: var(--ink-muted); }
+.from-to-arrow { display: grid; place-items: center; color: var(--ink-muted); pointer-events: none; }
 .tile.endpoint { min-height: 64px; justify-content: flex-start; gap: 2px; }
 .endpoint-word { color: var(--ink-muted); }
 .tile-account .endpoint-word, .tile-account .endpoint-balance { color: var(--on-tile-account-muted); }
@@ -1068,7 +1070,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 @media (max-width: 18em) {
   .chip, .chip .chip-face { width: 100%; border-radius: var(--radius-control); }
   .from-to { grid-template-columns: minmax(0, 1fr); }
-  .from-to-arrow { transform: rotate(90deg); }
+  /* Стрелка поворачивается глифом, а не коробкой: коробка во всю ширину, повёрнутая, легла бы на плитки. */
+  .from-to-arrow .icon { transform: rotate(90deg); }
   .overview-totals > div:last-child { text-align: left; }
   .tag-new { grid-template-columns: minmax(0, 1fr); }
 }
