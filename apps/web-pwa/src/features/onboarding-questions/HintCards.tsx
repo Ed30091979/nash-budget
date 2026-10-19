@@ -31,7 +31,7 @@ export interface HintCardsProps {
  * не сообщение: она не всплывает, не мигает и не уходит сама, а стоит в потоке под плитками.
  */
 export function HintCards({ budget, today, lastSuccessfulBackup, inFamily, onAction, store = firstRunStore() }: HintCardsProps) {
-  const state = useFirstRun(store);
+  const state = useFirstRun(store, budget);
   const [running, setRunning] = useState<HintId | null>(null);
   const totalInBaseMinor = useMemo(() => calculateHoldings(budget, today).totalInBaseMinor, [budget, today]);
   if (state === null) return null;

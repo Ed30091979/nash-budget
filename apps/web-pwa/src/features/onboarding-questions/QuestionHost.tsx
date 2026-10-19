@@ -6,14 +6,22 @@ import { AccountsQuestion } from "./AccountsQuestion";
 import { CategoriesQuestion } from "./CategoriesQuestion";
 import { firstRunStore, type FirstRunState, type FirstRunStore, type QuestionId } from "./memory";
 import { PaydayQuestion } from "./PaydayQuestion";
-import { markAnswered, markAsked, markLater, nextQuestion } from "./questions-model";
+import { finishFirstRun, firstRunBelongsTo, markAnswered, markAsked, markLater, nextQuestion } from "./questions-model";
 
-/** Состояние первого запуска этого устройства — с перерисовкой, когда оно меняется; `null` — ещё читается. */
-export function useFirstRun(store: FirstRunStore = firstRunStore()): FirstRunState | null {
+/**
+ * Состояние первого запуска этого устройства — с перерисовкой, когда оно меняется; `null` — ещё
+ * читается. С бюджетом — только если первый запуск про него: над чужим бюджетом (копия, документ
+ * семьи) он закончен сразу, в этом же кадре, а память дописывается следом (`firstRunBelongsTo`).
+ */
+export function useFirstRun(store: FirstRunStore = firstRunStore(), budget?: BudgetState): FirstRunState | null {
   // Хранилище живёт только в браузере; разметка проверок читает тот же снимок.
   const state = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
   useEffect(() => store.load(), [store]);
-  return state;
+  const foreign = state !== null && budget !== undefined && !firstRunBelongsTo(state, budget);
+  useEffect(() => {
+    if (foreign && budget !== undefined) void store.update((current) => (firstRunBelongsTo(current, budget) ? current : finishFirstRun(current)));
+  }, [foreign, budget, store]);
+  return foreign ? finishFirstRun(state) : state;
 }
 
 export interface QuestionHostProps {
@@ -46,7 +54,7 @@ function focusScreenHeading(): void {
  * нет (отложенный — по правилу повтора, `LATER_RETURN_DAYS`).
  */
 export function QuestionHost({ budget, today, write, blocked, onAddAccount, store = firstRunStore() }: QuestionHostProps) {
-  const state = useFirstRun(store);
+  const state = useFirstRun(store, budget);
   const [custom, setCustom] = useState(false);
   const question = state === null || blocked ? null : nextQuestion(state, today);
   const shown = useRef<QuestionId | null>(null);

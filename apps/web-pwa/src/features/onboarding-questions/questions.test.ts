@@ -214,6 +214,9 @@ describe("память первого запуска — IndexedDB этого у
       questions: { categories: { status: "maybe", on: TODAY }, payday: { status: "later", on: TODAY, postponed: -1 }, __proto__: { x: 1 } },
       coach: "sometimes",
       closedHints: ["backup", "unknown", 5],
-    })).toEqual({ startedOn: null, questions: { payday: { status: "later", on: TODAY, postponed: 0 } }, coach: null, closedHints: ["backup"] });
+    })).toEqual({ startedOn: null, budgetId: null, questions: { payday: { status: "later", on: TODAY, postponed: 0 } }, coach: null, closedHints: ["backup"] });
+    // Привязка к месяцу плана — только идентификатор: чужая строка забывается.
+    expect(readFirstRunState({ budgetId: "00000000-0000-4000-8000-000000000042" }).budgetId).toBe("00000000-0000-4000-8000-000000000042");
+    expect(readFirstRunState({ budgetId: "../etc" }).budgetId).toBeNull();
   });
 });

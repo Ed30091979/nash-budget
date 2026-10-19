@@ -38,8 +38,28 @@ export const FREE_PROMISE = INTRO_SLIDES[2]!.text;
 /** Сдвиг пальца по горизонтали, после которого слайд перелистывается. */
 const SWIPE_DISTANCE = 56;
 
+/** Что стало с набором: сохранён — или в другой вкладке бюджет уже был, и открыт он (`createIfAbsent`). */
+export type OnboardingOutcome = "created" | "existing";
+
+/**
+ * Набор и память первого запуска. Память — до публикации бюджета: «Обзор» спрашивает её в первом же
+ * кадре. Если бюджет уже создан в другой вкладке (там, например, открыли пример), набор не записан, и
+ * память первого запуска обнуляется: вопросы над чужим бюджетом не задаются ни здесь, ни там
+ * (ревью R2, L-1). Сбой памяти набору не мешает — вопросы тогда просто не зададутся.
+ */
+export async function startFirstRun(
+  state: BudgetState,
+  day: string,
+  firstRun: FirstRunStore,
+  onComplete: (state: BudgetState) => Promise<OnboardingOutcome | void>,
+): Promise<void> {
+  await firstRun.replace(beginFirstRun(day, state.activeBudgetId)).catch(() => undefined);
+  const outcome = await onComplete(state);
+  if (outcome === "existing") await firstRun.replace(EMPTY_FIRST_RUN).catch(() => undefined);
+}
+
 interface OnboardingProps {
-  readonly onComplete: (state: BudgetState) => Promise<void>;
+  readonly onComplete: (state: BudgetState) => Promise<OnboardingOutcome | void>;
   readonly onDemo: () => Promise<void>;
   /** Память первого запуска этого устройства (по умолчанию — общая на вкладку). */
   readonly firstRun?: FirstRunStore;
@@ -100,10 +120,7 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
       await operationLock.current.run(async () => {
         const day = today();
         const state = buildOnboardingBudgetState({ today: day, currency: currencyForLocale(language()) });
-        // Память первого запуска — до публикации бюджета: «Обзор» спрашивает её в первом же кадре.
-        // Сбой памяти набору не мешает — вопросы тогда просто не зададутся.
-        await firstRun.replace(beginFirstRun(day)).catch(() => undefined);
-        await onComplete(state);
+        await startFirstRun(state, day, firstRun, onComplete);
       });
     } catch {
       setError(onboardingFailureMessage("save"));

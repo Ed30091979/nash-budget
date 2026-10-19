@@ -9,7 +9,7 @@ import { HintCards } from "../features/onboarding-questions/HintCards";
 import { coachCategoryId, coachDone, coachVisible, finishCoach } from "../features/onboarding-questions/hints-model";
 import { firstRunStore, type HintId } from "../features/onboarding-questions/memory";
 import { QuestionHost, useFirstRun } from "../features/onboarding-questions/QuestionHost";
-import { nextQuestion } from "../features/onboarding-questions/questions-model";
+import { finishFirstRun, nextQuestion } from "../features/onboarding-questions/questions-model";
 import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
@@ -96,7 +96,7 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
   const thisMonth = currentMonth(today);
   // Первый запуск (R2, DIRECTION §e): вопросы листами, подсказка на первую трату и карточки в конце.
   // Ждут, пока поверх «Обзора» лист, показан другой месяц или документ семьи задержан (только чтение).
-  const firstRun = useFirstRun();
+  const firstRun = useFirstRun(undefined, budget);
   const held = app.family.inFamily && (app.family.status?.hold ?? null) !== null;
   const blocked = adding !== null || sheetOpen || (month ?? thisMonth) !== thisMonth || held;
   const questionPending = firstRun !== null && nextQuestion(firstRun, today) !== null;
@@ -221,6 +221,9 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 () => undefined,
                 (repair) => { repairs.push(repair); },
               );
+              // Восстановленный бюджет — уже не тот, что создал набор: первый запуск над ним закончен,
+              // и через неделю «На что вы тратите?» не откроется над его категориями (ревью R2, M-1).
+              await firstRunStore().update(finishFirstRun);
               // Каждый вид ремонта называется своими словами: снятая метка — не снятый участник.
               const notice = describeBackupRepairs(repairs);
               if (notice !== null) setMessage(notice);

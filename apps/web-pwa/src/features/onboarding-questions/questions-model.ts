@@ -11,7 +11,7 @@ import { ALWAYS_ACTIVE_EXPENSE, ARCHIVED_STARTERS, PRESET_EXPENSES } from "../..
 import { daysBetween } from "../../reach";
 import { archiveCategoryWithLimits } from "../categories/category-model";
 import { createOperationCategory, restoreCategory } from "../operations/model";
-import { QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord } from "./memory";
+import { EMPTY_FIRST_RUN, QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord } from "./memory";
 
 /*
  * Вопросы первого запуска (§e, пп. 3–5): какой задать сейчас и что сделает ответ. Чистые функции —
@@ -22,15 +22,38 @@ import { QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord 
 export const LATER_RETURN_DAYS = 7;
 export const LATER_LIMIT = 2;
 
-/** Набор этого устройства: вопросы, подсказка и всё остальное §e начинаются отсюда. */
-export function beginFirstRun(today: string): FirstRunState {
+/**
+ * Набор этого устройства: вопросы, подсказка и всё остальное §e начинаются отсюда. `budgetId` —
+ * месяц плана, который создал набор: по нему видно, что бюджет на устройстве всё ещё тот самый.
+ */
+export function beginFirstRun(today: string, budgetId: string | null = null): FirstRunState {
   const pending: QuestionRecord = { status: "pending", on: today, postponed: 0 };
   return {
     startedOn: today,
+    budgetId,
     questions: Object.fromEntries(QUESTION_IDS.map((id) => [id, pending])),
     coach: "pending",
     closedHints: [],
   };
+}
+
+/**
+ * Первый запуск — про бюджет, который создал набор. Восстановленная копия, документ семьи на
+ * устройстве участника, пример, загруженный в другой вкладке, — другой бюджет: месяца плана набора в
+ * нём нет, и спрашивать «На что вы тратите?» над чужими категориями нельзя (ревью R2, M-1).
+ * Память без привязки (`budgetId === null`) ни о каком бюджете не спрашивает и считается своей.
+ */
+export function firstRunBelongsTo(state: FirstRunState, budget: BudgetState): boolean {
+  return state.budgetId === null || budget.budgets.some((item) => item.id === state.budgetId);
+}
+
+/**
+ * Первый запуск закончен: вопросов и подсказки на первую трату больше нет, а закрытые карточки
+ * остаются закрытыми — их закрыл человек, а не набор.
+ */
+export function finishFirstRun(state: FirstRunState): FirstRunState {
+  if (state.startedOn === null && state.budgetId === null && state.coach === null && Object.keys(state.questions).length === 0) return state;
+  return { ...EMPTY_FIRST_RUN, closedHints: state.closedHints };
 }
 
 /** Можно ли задать этот вопрос сегодня. */

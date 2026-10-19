@@ -574,6 +574,7 @@ export default function App() {
     if (result.status === "existing") {
       setMessage("Бюджет уже создан в другой вкладке. Открыли сохранённую там версию; введённые здесь данные её не перезаписали.");
     }
+    return result.status;
   };
 
   const loadDemo = async () => {
