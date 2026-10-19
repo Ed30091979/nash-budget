@@ -376,8 +376,9 @@ test("месяц плана закрыт — «Открыть …» залито
     expect(box.height, `${viewport.width}px: высота кнопки`).toBeLessThan(TOUCH_TARGET_MINIMUM * 1.5);
     expect(label.width, `${viewport.width}px: ширина подписи`).toBeGreaterThan(120);
     // Кнопка — основное действие карточки, а не прозрачная строка-ссылка.
-    const fill = await open.evaluate((element) => getComputedStyle(element).backgroundColor);
-    expect(fill, `${viewport.width}px: заливка`).not.toBe("rgba(0, 0, 0, 0)");
+    // Основная кнопка — акцент с белым, а не чернильная плита (дизайн 5.0, §g).
+    const colors = await open.evaluate((element) => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]);
+    expect(colors, `${viewport.width}px: заливка и подпись`).toEqual(["rgb(196, 66, 26)", "rgb(255, 255, 255)"]);
   }
 });
 
@@ -432,7 +433,7 @@ test("месяц и итоги закреплены при прокрутке; �
   await applyFontScale(page, 1);
 });
 
-test("карточка «Хватает до …»: лимиты исчерпаны — словами и кругом; без лимитов — пустое состояние, а итог не выдумывает «0 ₽»", async ({ page }) => {
+test("карточка «Хватает до …»: лимиты исчерпаны — словами и кругом; без лимитов — «Сколько можно тратить?», а итог не выдумывает «0 ₽»", async ({ page }) => {
   await loadDemo(page);
   await page.setViewportSize({ width: 390, height: 844 });
   // Перерасход повседневных лимитов: факт и срок до выплаты, без «хватает».
@@ -449,11 +450,12 @@ test("карточка «Хватает до …»: лимиты исчерпа�
     budgets: withoutLimits.budgets.map((budget) => ({ ...budget, lines: [] })),
   });
   await goToOverview(page);
-  await expect(page.locator(".reach-card.empty")).toContainText("Лимитов на этот месяц нет");
+  // Макеты 03b, 05: компактная строка — вопрос и что сделать; состояние названо итогом над ней и,
+  // для диктора, в начале имени кнопки.
   expect(await totalText(page, "Можно тратить")).toBe("Можно тратить лимитов нет");
-  const plan = page.locator(".reach-card.empty").getByRole("button", { name: "Задать лимиты в плане" });
-  // Основная кнопка — акцент с белым, а не чернильная плита (дизайн 5.0, §g).
-  expect(await plan.evaluate((element) => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color])).toEqual(["rgb(196, 66, 26)", "rgb(255, 255, 255)"]);
+  const plan = page.locator(".reach-card.empty").getByRole("button", { name: /^Лимитов на этот месяц нет\.\s*Сколько можно тратить\?\s*Задайте лимиты — покажем, хватит ли до /u });
+  await expect(plan.locator(".reach-title")).toHaveText("Сколько можно тратить?");
+  await expect(plan.locator(".reach-plate use")).toHaveAttribute("href", "#glyph-circle-dashed");
   await plan.click();
   expect(await hash(page)).toBe("#/more/plan-month");
 });

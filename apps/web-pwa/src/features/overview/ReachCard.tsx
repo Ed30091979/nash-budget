@@ -35,7 +35,8 @@ export interface ReachCardProps {
  * Голос о нехватке — факт и путь (DESIGN §6): «Хватает до 12 октября», а под ним «до 20 октября не
  * дотянет · чтобы дотянуть — 400 ₽ в день». Закрытый месяц плана назван закрытым, и выход из него —
  * «Открыть октябрь» — стоит здесь же, со словами о том, что при этом произойдёт. Без лимитов
- * карточка — пустое состояние с дорогой в план, а не «0 ₽ · исчерпаны».
+ * карточка — «Сколько можно тратить? Задайте лимиты — покажем, хватит ли до …» с дорогой в план, а
+ * не «0 ₽ · исчерпаны».
  */
 export function ReachCard({ line, clock, monthToOpen, openingMonth, onOpenMonth, onPlan }: ReachCardProps) {
   const { today, payday, elapsedDays } = clock;
@@ -63,16 +64,22 @@ export function ReachCard({ line, clock, monthToOpen, openingMonth, onOpenMonth,
     );
   }
   if (!line.hasLimits) {
-    // Пустое состояние (§6 исследования, пункт 29): назвать, объяснить, дать дорогу. «Можно 0 ₽ ·
-    // лимиты исчерпаны» было бы неправдой: исчерпывать нечего, лимитов просто нет.
+    // Пустое состояние (§6 исследования, пункт 29): назвать, объяснить, дать дорогу — компактной
+    // строкой той же анатомии, что и карточка с лимитами (макеты v5 03b, 05): вопрос, на который
+    // ответят лимиты, и что для этого сделать; вся строка ведёт в план. Состояние названо итогом
+    // «Можно тратить · лимитов нет» прямо над карточкой и, для диктора, в начале самой кнопки.
+    // «Можно 0 ₽ · лимиты исчерпаны» было бы неправдой: исчерпывать нечего, лимитов просто нет.
     return (
       <section className="card reach-card empty" aria-label="Повседневные лимиты">
-        <div className="empty-state">
-          <span className="empty-state-mark"><Icon name="target" size={32} /></span>
-          <h3>Лимитов на этот месяц нет</h3>
-          <p>С лимитами здесь видно, сколько ещё можно потратить и хватит ли до выплаты.</p>
-          <button className="primary-button" type="button" onClick={onPlan}>Задать лимиты в плане</button>
-        </div>
+        <button className="reach-open" type="button" onClick={onPlan}>
+          <span className="reach-plate" aria-hidden="true"><Icon name="circle-dashed" size={24} /></span>
+          <span className="reach-copy">
+            <span className="visually-hidden">Лимитов на этот месяц нет. </span>
+            <span className="reach-title">Сколько можно тратить?</span>
+            <span className="reach-caption">Задайте лимиты — покажем, хватит ли до {until}</span>
+          </span>
+          <Icon name="chevron-right" size={24} className="row-chevron" />
+        </button>
       </section>
     );
   }
