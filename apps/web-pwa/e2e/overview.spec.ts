@@ -151,6 +151,31 @@ test("месяц — в адресе: стрелка листает плитки
   expect(await hash(page)).toBe("#/");
 });
 
+test("месяц за краем календаря в адресе — «Запись не найдена» и текущий месяц; у края стрелка выключена", async ({ page }) => {
+  // Ревью 2b, MEDIUM-7: `#/?month=0000-01` ронял приложение в пустую страницу, и перезагрузка тоже.
+  await loadDemo(page);
+  const heading = page.getByRole("heading", { level: 1 });
+  const current = (await heading.innerText()).trim();
+  for (const month of ["0000-01", "9999-12", "1899-12", "2200-01"]) {
+    await page.goto(`/#/?month=${month}`);
+    await expect(page.locator(".message-toast"), month).toContainText("Запись не найдена");
+    await expect(heading).toHaveText(current);
+    expect(await hash(page)).toBe("#/");
+  }
+  await page.goto("/#/?month=0000-01");
+  await page.reload();
+  await expect(heading).toHaveText(current);
+
+  await page.goto("/#/?month=1900-01");
+  await expect(heading).toHaveText(/Январь 1900/u);
+  await expect(page.getByRole("button", { name: /^Предыдущий месяц: нет/u })).toBeDisabled();
+  await page.goto("/#/?month=2199-12");
+  await expect(heading).toHaveText(/Декабрь 2199/u);
+  await expect(page.getByRole("button", { name: /^Следующий месяц: нет/u })).toBeDisabled();
+  await page.getByRole("button", { name: /^Предыдущий месяц: ноябрь 2199$/u }).click();
+  await expect(heading).toHaveText(/Ноябрь 2199/u);
+});
+
 test("на 320 pt и при ×2.7 ничего не выезжает за экран — ни «Обзор», ни лист поверх него", async ({ page }) => {
   test.setTimeout(180_000);
   await loadDemo(page);

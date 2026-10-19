@@ -91,6 +91,11 @@ describe("адреса маршрутов", () => {
       ["#/?month=2026-08&sheet=entry&edit=Продукты", { name: "overview", month: "2026-08" }],
       ["#/?sheet=unknown", { name: "overview" }],
       ["#/?month=2026-13", { name: "overview" }],
+      // Месяц вне окна календаря домена (1900–2199) — тоже «не найдена» (ревью 2b, MEDIUM-7).
+      ["#/?month=0000-01", { name: "overview" }],
+      ["#/?month=9999-12", { name: "overview" }],
+      ["#/?month=1899-12", { name: "overview" }],
+      ["#/?month=2200-01", { name: "overview" }],
       ["#/?month=август", { name: "overview" }],
       ["#/operations?sheet=entry&sheet=entry", { name: "operations" }],
       // Вид не из перечня и плитка не UUID — ключ отброшен, лист без него, и это тоже «не найдена».
@@ -165,8 +170,11 @@ describe("значения закрытых типов", () => {
     for (const day of ["2026-02-29", "2026-13-01", "2026-10-32", "2026-1-19", "19.10.2026", "2026-10-19T00:00", 20261019]) {
       expect(canonicalValue({ kind: "day" }, day), String(day)).toBeNull();
     }
-    for (const month of ["2026-10", "2026-01"]) expect(canonicalValue({ kind: "month" }, month)).toBe(month);
-    for (const month of ["2026-13", "2026-1", "2026-10-01", "октябрь"]) expect(canonicalValue({ kind: "month" }, month), month).toBeNull();
+    for (const month of ["2026-10", "2026-01", "1900-01", "2199-12"]) expect(canonicalValue({ kind: "month" }, month)).toBe(month);
+    for (const month of ["2026-13", "2026-1", "2026-10-01", "октябрь", "0000-01", "9999-12", "1899-12", "2200-01"]) expect(canonicalValue({ kind: "month" }, month), month).toBeNull();
+    // День и месяц — в окне календаря домена: за его краем приложению с ними делать нечего.
+    for (const day of ["1900-01-01", "2199-12-31"]) expect(canonicalValue({ kind: "day" }, day)).toBe(day);
+    for (const day of ["1899-12-31", "2200-01-01", "0000-01-01"]) expect(canonicalValue({ kind: "day" }, day), day).toBeNull();
   });
 
   it("число — небольшое целое без знака и лишних нулей, не больше предела", () => {

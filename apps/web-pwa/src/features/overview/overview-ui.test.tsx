@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BaseCurrencyProvider } from "../../components/Money";
 import { periodClock } from "../../reach";
+import { MonthSwitch } from "./MonthSwitch";
 import { OverviewScreen, type OverviewScreenProps } from "./OverviewScreen";
 
 const SALARY = "a2000000-0000-4000-8000-0000000000c1";
@@ -112,5 +113,18 @@ describe("«Обзор»: разметка", () => {
     expect(text).toContain("Открыть октябрь");
     expect(text).toContain("Потрачено0 ₽");
     expect(markup).not.toMatch(/\sstyle=/u);
+  });
+});
+
+describe("«Обзор»: месяц на краю календаря", () => {
+  it("у первого и последнего месяца окна домена стрелка за край выключена, а не бросает", () => {
+    // Ревью 2b, MEDIUM-7: стрелка у 0000-01 и 9999-12 бросала исключение и роняла приложение.
+    const first = renderToStaticMarkup(<MonthSwitch month="1900-01" onMonth={vi.fn()} />);
+    expect(first).toMatch(/<button class="month-arrow" type="button" disabled="" aria-label="Предыдущий месяц: нет — раньше 1900 года месяцев нет">/u);
+    expect(first).toMatch(/<button class="month-arrow" type="button" aria-label="Следующий месяц: февраль 1900">/u);
+    const last = renderToStaticMarkup(<MonthSwitch month="2199-12" onMonth={vi.fn()} />);
+    expect(last).toMatch(/<button class="month-arrow" type="button" disabled="" aria-label="Следующий месяц: нет — позже 2199 года месяцев нет">/u);
+    expect(() => render({ month: "1900-01" })).not.toThrow();
+    expect(() => render({ month: "2199-12" })).not.toThrow();
   });
 });

@@ -74,7 +74,8 @@ export const ROUTE_FIXTURES = {
 export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const MONTH = "\\d{4}-(?:0[1-9]|1[0-2])";
+/** A month of the domain's calendar window, 1900-01 … 2199-12. */
+const MONTH = "(?:19|20|21)\\d{2}-(?:0[1-9]|1[0-2])";
 /** The sheet and what it was opened with: a kind from the list and tile UUIDs, or an operation's UUID. */
 const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:&dst=${UUID})?|&edit=${UUID})?`;
 

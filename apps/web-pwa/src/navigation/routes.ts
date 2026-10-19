@@ -1,4 +1,4 @@
-import { isUuid } from "@family-budget/domain";
+import { isUuid, isWithinDateWindow, MAX_LOCAL_DATE, MIN_LOCAL_DATE } from "@family-budget/domain";
 
 /**
  * Маршруты приложения и их адреса (план волны 2, §2.1).
@@ -201,12 +201,20 @@ const DAY_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/u;
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
 const COUNT_PATTERN = /^(?:0|[1-9]\d{0,5})$/u;
 
+/**
+ * The months the domain's calendar knows, 1900-01 … 2199-12. A month outside it passed the pattern
+ * and took the app down: the month arrows step from it with `shiftMonth`, which throws past the
+ * window, and a reload kept the address (review of 2b, MEDIUM-7). Outside is «Запись не найдена».
+ */
+export const FIRST_ROUTE_MONTH = MIN_LOCAL_DATE.slice(0, 7);
+export const LAST_ROUTE_MONTH = MAX_LOCAL_DATE.slice(0, 7);
+
 function isCalendarDay(text: string): boolean {
   const match = DAY_PATTERN.exec(text);
   if (match === null) return false;
   const [, year, month, day] = match.map(Number);
   if (year === undefined || month === undefined || day === undefined) return false;
-  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate() && isWithinDateWindow(text);
 }
 
 /** The canonical text of a valid value, or `null`. One check for writing and for reading. */
@@ -219,7 +227,7 @@ export function canonicalValue(spec: QueryValue, value: unknown): string | null 
     case "day":
       return typeof value === "string" && isCalendarDay(value) ? value : null;
     case "month":
-      return typeof value === "string" && MONTH_PATTERN.test(value) ? value : null;
+      return typeof value === "string" && MONTH_PATTERN.test(value) && value >= FIRST_ROUTE_MONTH && value <= LAST_ROUTE_MONTH ? value : null;
     case "count": {
       const text = typeof value === "number" ? String(value) : value;
       return typeof text === "string" && COUNT_PATTERN.test(text) && Number(text) <= spec.max ? text : null;

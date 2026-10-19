@@ -2,7 +2,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { MonthSwitch } from "../features/overview/MonthSwitch";
 import { createRouter } from "./router";
 import { formatRoute, parseRoute, QUERY_GRAMMAR, type Route, type RouteName } from "./routes";
 import {
@@ -349,6 +352,29 @@ describe("адрес — только маршрут: грамматика", () 
       const hash = query === "" ? random.pick(heads) : `${random.pick(heads)}?${query}`;
       const parsed = parseRoute(hash);
       expect(formatRoute(parsed.route), hash).toMatch(ROUTE_FRAGMENT);
+    }
+  });
+});
+
+describe("адрес — только маршрут: месяц на краю календаря", () => {
+  it("месяц любого года 0000–9999 читается, только если он в окне домена, — и «Обзор» с ним рисуется", () => {
+    // Ревью 2b, MEDIUM-7: `#/?month=0000-01` проходил грамматику, стрелка месяца бросала исключение,
+    // и приложение вставало пустой страницей — и после перезагрузки тоже.
+    const random = generator(23);
+    let accepted = 0;
+    for (let attempt = 0; attempt < 600; attempt += 1) {
+      const year = String(attempt < 4 ? [0, 1899, 2200, 9999][attempt] : random.next(10_000)).padStart(4, "0");
+      const month = `${year}-${String(1 + random.next(12)).padStart(2, "0")}`;
+      const parsed = parseRoute(`#/?month=${month}`);
+      const inWindow = month >= "1900-01" && month <= "2199-12";
+      expect(parsed, month).toEqual(inWindow ? { route: { name: "overview", month }, notFound: false } : { route: { name: "overview" }, notFound: true });
+      if (!inWindow) continue;
+      accepted += 1;
+      expect(() => renderToStaticMarkup(createElement(MonthSwitch, { month, onMonth: () => undefined })), month).not.toThrow();
+    }
+    expect(accepted).toBeGreaterThan(10);
+    for (const edge of ["1900-01", "2199-12"]) {
+      expect(() => renderToStaticMarkup(createElement(MonthSwitch, { month: edge, onMonth: () => undefined })), edge).not.toThrow();
     }
   });
 });
