@@ -208,14 +208,40 @@ function topLevelArguments(text, start) {
   return null;
 }
 
-/** Literal addresses (third argument) of every pushState/replaceState call. */
-function historyLiteralAddresses(text) {
-  const addresses = [];
-  for (const match of text.matchAll(/history\.(?:pushState|replaceState)\(/gu)) {
-    const address = topLevelArguments(text, match.index + match[0].length)?.[2]?.trim();
-    if (address !== undefined && /^["'`]/u.test(address)) addresses.push(address);
-  }
-  return addresses;
+/**
+ * The history calls the app is allowed to make, pinned by number. They are the
+ * hash router's own (src/navigation/router.ts): the push that grows history,
+ * the re-push that puts an address back when a draft holds Back, and the
+ * replace of an entry that has nothing above it. memoryRouterWindow, the
+ * in-memory history the shell renders with when there is no window, defines
+ * one method of each name. A new call site, a new definition, or the names
+ * appearing in any other form (`history["pushState"]`, `.pushState.call`,
+ * destructuring) changes these numbers, and changing them must be a deliberate
+ * edit here, next to the reason (docs/SECURITY.md, "The app's address").
+ */
+const HISTORY_CALL_SITES = { pushState: 2, replaceState: 1 };
+const HISTORY_METHOD_DEFINITIONS = { pushState: 1, replaceState: 1 };
+const HISTORY_TRAVERSALS = 1;
+
+function count(text, pattern) {
+  return [...text.matchAll(pattern)].length;
+}
+
+/**
+ * What is wrong with one pushState/replaceState call, or null. The state must
+ * be built by a function (the router's stateOf), never a literal; the unused
+ * title is an empty string; the address is an expression with no literal and
+ * no concatenation in it — the router passes keys formatRoute made, and a
+ * literal, a template or a `+` is how an amount or a note would get in.
+ */
+function historyCallProblem(text, start) {
+  const args = topLevelArguments(text, start)?.map((argument) => argument.trim());
+  if (args === null || args === undefined || args.length !== 3) return "a history call without exactly three arguments";
+  const [state, title, address] = args;
+  if (!/^[A-Za-z_$][\w$]*\(/u.test(state)) return "history state that is not built by the router";
+  if (!/^(?:""|''|``)$/u.test(title)) return "a history title that is not empty";
+  if (/["'`+]/u.test(address)) return "a history address with a literal or concatenation in it";
+  return null;
 }
 
 const applicationBundles = javascriptArtifacts.filter(
@@ -231,27 +257,35 @@ for (const { name, text } of applicationBundles) {
   // defect.
   //
   // Wave 2 (plans/ui-wave2.md §2.1) gives the app one sanctioned use of it: the
-  // hash router keeps the route in the fragment, and only opaque UUIDs and
-  // filter keys may appear there. The fragment never reaches a server or a
-  // referer. That address is written by one module, src/navigation/router.ts,
-  // with keys made by formatRoute (which refuses anything but a UUID), and the
-  // source test navigation/address-privacy.test.ts pins both. What stays
-  // forbidden here, in the built code: the query string (location.search),
-  // writing the fragment around the router (location.hash = …), and any
-  // pushState/replaceState whose address is a literal other than a fragment —
-  // path-shaped state like "/budget/january" or "/spent".
+  // hash router keeps the route in the fragment, in the closed grammar of
+  // src/navigation/routes.ts — opaque UUIDs and closed-type filter values, no
+  // free text. The source test navigation/address-privacy.test.ts pins who
+  // writes it and what; here, in the built code, nothing may write the address
+  // around the router: no query string (location.search), no location writes
+  // or navigations, no history traversal but the router's one, and every
+  // history call is one of the pinned call sites below with a clean address.
   //
   // Building a query string is deliberately NOT forbidden here. The sync
   // transport assembles `keyEpoch`/`after`/`limit` for its outgoing calls;
   // that is ordinary HTTP carrying values the server already knows, not a
   // channel that outlives the request. Banning `URLSearchParams` banned the
   // technique instead of the risk. Do not restore it as one rule.
-  if (
-    /location\.search/u.test(text) ||
-    /location\.hash\s*=(?!=)/u.test(text) ||
-    historyLiteralAddresses(text).some((address) => !/^["'`]#/u.test(address))
-  ) {
-    fail(`URL state channel found in ${name}`);
+  const locationChannel = [
+    /location\s*\.\s*search/u,
+    /location\s*\.\s*(?:hash|href|pathname|search|host|hostname|port|protocol)\s*(?:\+|-)?=(?!=)/u,
+    /\blocation\s*=(?!=)/u,
+    /location\s*\.\s*(?:assign|replace)\s*\(/u,
+    /\blocation\s*\[/u,
+    /\[\s*["'`]location["'`]\s*\]/u,
+    /\bhistory\s*\.\s*(?:back|forward)\s*\(/u,
+    /\bhistory\s*\[/u,
+  ].find((pattern) => pattern.test(text));
+  if (locationChannel !== undefined) {
+    fail(`URL state channel found in ${name}: ${locationChannel.source}`);
+  }
+  for (const match of text.matchAll(/\.(?:pushState|replaceState)\(/gu)) {
+    const problem = historyCallProblem(text, match.index + match[0].length);
+    if (problem !== null) fail(`URL state channel found in ${name}: ${problem}`);
   }
   if (
     /\beval\s*\(/u.test(text) ||
@@ -260,6 +294,26 @@ for (const { name, text } of applicationBundles) {
   ) {
     fail(`dynamic string execution found in ${name}`);
   }
+}
+
+// The pinned numbers hold across all application bundles together: code
+// splitting may move the router, but not add to it.
+const applicationCode = applicationBundles.map(({ text }) => text).join("\n");
+for (const method of ["pushState", "replaceState"]) {
+  const calls = count(applicationCode, new RegExp(`\\.${method}\\(`, "gu"));
+  const definitions = count(applicationCode, new RegExp(`(?<![.\\w$])${method}\\([^()]*\\)\\{`, "gu"));
+  const mentions = count(applicationCode, new RegExp(`${method}`, "gu"));
+  if (calls !== HISTORY_CALL_SITES[method] || definitions !== HISTORY_METHOD_DEFINITIONS[method] || mentions !== calls + definitions) {
+    fail(
+      `URL state channel: the bundle has ${calls} ${method} call sites, ${definitions} definitions and ` +
+        `${mentions} mentions; the scanner pins ${HISTORY_CALL_SITES[method]} call sites and ` +
+        `${HISTORY_METHOD_DEFINITIONS[method]} definitions (src/navigation/router.ts)`,
+    );
+  }
+}
+const traversals = count(applicationCode, /history\s*\.\s*go\s*\(/gu);
+if (traversals !== HISTORY_TRAVERSALS) {
+  fail(`URL state channel: the bundle has ${traversals} history traversals; the scanner pins ${HISTORY_TRAVERSALS}`);
 }
 
 const serviceWorker = readFileSync(join(distDirectory, "sw.js"), "utf8");

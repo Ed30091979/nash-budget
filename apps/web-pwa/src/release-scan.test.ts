@@ -29,6 +29,19 @@ function write(path: string, contents: string) {
   writeFileSync(path, contents, "utf8");
 }
 
+/**
+ * The hash router as the production build minifies it (src/navigation/router.ts): the in-memory
+ * history's two method definitions, the two push call sites, the one replace and the one traversal
+ * the scanner pins. Every fixture carries it, because a bundle without exactly these is refused.
+ */
+const ROUTER_BUNDLE =
+  "function DS(e=``){let t=[{state:null,hash:e}],n=new Set,r=0;return{location:{get hash(){return t[r]?.hash??``}}," +
+  "history:{get state(){return t[r]?.state??null},pushState(e,n,i){t.splice(r+1,t.length,{state:e,hash:i??t[r]?.hash??``}),r+=1}," +
+  "replaceState(e,n,i){t[r]={state:e,hash:i??t[r]?.hash??``}},go(e){let i=r+e;i<0||i>=t.length||i===r||(r=i)}}}}" +
+  "function kS(e){let{window:t}=e,i=[MS],l=(e,n)=>{for(let r=n;r<e.length;r+=1)t.history.pushState(FS(e.slice(0,r+1)),``,e[r]??MS)}," +
+  "u=e=>{t.history.replaceState(FS(e),``,e[e.length-1]??MS)},f=(e,n)=>{let o=n-1;t.history.go(o-(i.length-1))}," +
+  "g=(l,h)=>{let n=[...l,h];t.history.pushState(FS(n),``,h),i=n},s=_S(t.location.hash);return{l,u,f,g,s}}";
+
 function createScanFixture(): ScanFixture {
   const root = mkdtempSync(join(tmpdir(), "family-budget-release-scan-test-"));
   temporaryDirectories.push(root);
@@ -41,7 +54,7 @@ function createScanFixture(): ScanFixture {
   );
   write(
     join(dist, "assets/index-safe.js"),
-    'const diagnostic = "https://react.dev/errors/418"; export { diagnostic };',
+    `const diagnostic = "https://react.dev/errors/418"; ${ROUTER_BUNDLE} export { diagnostic };`,
   );
   write(
     join(dist, "sw.js"),
@@ -147,9 +160,24 @@ describe("production release scanner", () => {
   it.each([
     ["location.search", 'const filter = new URL(location.search, "http://x").search;'],
     ["location.hash written around the router", 'location.hash = "#/spent/" + amount;'],
-    ["history.pushState", 'history.pushState(null, "", "/budget/january");'],
-    ["history.replaceState", 'history.replaceState({ amount: 1200 }, "", "/spent");'],
+    ["location.hash appended to", 'location.hash+="/1200";'],
+    ["location.assign", 'location.assign("#/spent?amount=1200");'],
+    ["location.replace", 'location.replace("/budget/" + month);'],
+    ["location.href written", 'location.href="/spent?amount=1200";'],
+    ["location replaced whole", 'window.location="/spent";'],
+    ["location by bracket", 'location["hash"]="#/x";'],
+    ["history traversal", "history.back();"],
+    ["a second history traversal", "t.history.go(-1);"],
+    ["history.pushState with a path", 'history.pushState(null, "", "/budget/january");'],
+    ["history.replaceState with state", 'history.replaceState({ amount: 1200 }, "", "/spent");'],
     ["history.pushState through another object", 'frame.history.pushState(state, "", `/budget/${month}`);'],
+    ["state that is not the router's", 'history.pushState({amount:1200,note:n},"","#/");'],
+    ["a fragment with an interpolated amount", 'history.pushState(null,"",`#/spent?amount=${a}`);'],
+    ["a fragment with a concatenated amount", 'history.pushState(null,"","#/spent?amount="+a);'],
+    ["an address built before the call", 'const u="/budget/"+m;history.pushState(null,"",u);'],
+    ["bracket access", 'history["pushState"](null,"","#/");'],
+    ["a call through .call", 'history.pushState.call(history,null,"","#/");'],
+    ["a destructured method", "const{replaceState:x}=window.history;x(null,``,a);"],
   ])("rejects the address bar as a state channel: %s", (_label, contents) => {
     const fixture = createScanFixture();
     write(join(fixture.dist, "assets/router-abc123.js"), contents);
@@ -157,26 +185,53 @@ describe("production release scanner", () => {
     const result = runScan(fixture);
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain(
-      "URL state channel found in assets/router-abc123.js",
-    );
+    expect(result.stderr).toContain("URL state channel");
   });
 
-  it("accepts the hash router: it reads the fragment and writes only fragment addresses it formatted", () => {
+  it.each([
+    ["state written as a literal", "t.history.pushState(FS(n),``,h)", "t.history.pushState({mark:`nash-budget/route`,stack:n,amount:a},``,h)"],
+    ["an address concatenated", "t.history.pushState(FS(n),``,h)", 't.history.pushState(FS(n),``,"#/new?edit="+h)'],
+    ["an address interpolated", "t.history.pushState(FS(n),``,h)", "t.history.pushState(FS(n),``,`#/new?note=${h}`)"],
+    ["an address that is a literal", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", 't.history.replaceState(FS(e),``,"#/spent")'],
+    ["a title that is not empty", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", 't.history.replaceState(FS(e),"кофе",e[e.length-1]??MS)'],
+    ["a call site fewer", "t.history.pushState(FS(n),``,h),", ""],
+    ["a call site more", "t.history.pushState(FS(n),``,h),", "t.history.pushState(FS(n),``,h),t.history.pushState(FS(n),``,h),"],
+  ])("rejects a router whose history calls changed: %s", (_label, original, changed) => {
+    const fixture = createScanFixture();
+    expect(ROUTER_BUNDLE).toContain(original);
+    write(
+      join(fixture.dist, "assets/index-safe.js"),
+      `const diagnostic = "https://react.dev/errors/418"; ${ROUTER_BUNDLE.replace(original, changed)} export { diagnostic };`,
+    );
+
+    const result = runScan(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("URL state channel");
+  });
+
+  it("accepts the hash router in its own chunk: the pins hold across bundles together", () => {
     // План волны 2, §2.1: маршрут живёт в решётке адреса, и пишет её один модуль — роутер, ключами
-    // `formatRoute` (только UUID и ключи фильтров). Так выглядит его собранный код.
+    // `formatRoute` (закрытая грамматика, без свободного текста). Так выглядит его собранный код.
     const fixture = createScanFixture();
     write(
-      join(fixture.dist, "assets/index-router123.js"),
-      'const key = e.location.hash; e.history.pushState(o(n.slice(0,r+1)),"",n[r]??"#/");' +
-        ' e.history.replaceState(o(n),"",key); e.history.replaceState(o(c),"","#/more");' +
-        ' if (e.location.hash === t) return;',
+      join(fixture.dist, "assets/index-safe.js"),
+      'const diagnostic = "https://react.dev/errors/418"; export { diagnostic };',
     );
+    write(join(fixture.dist, "assets/router-abc123.js"), ROUTER_BUNDLE);
 
     const result = runScan(fixture);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("Release scan passed");
+  });
+
+  it("the pinned call sites are the ones the router source has", () => {
+    const router = readFileSync(join(appDirectory, "src/navigation/router.ts"), "utf8");
+    const scanner = readFileSync(scannerPath, "utf8");
+    const calls = (method: string) => [...router.matchAll(new RegExp(`\\.${method}\\(`, "gu"))].length;
+    expect(scanner).toContain(`const HISTORY_CALL_SITES = { pushState: ${calls("pushState")}, replaceState: ${calls("replaceState")} };`);
+    expect(scanner).toContain(`const HISTORY_TRAVERSALS = ${[...router.matchAll(/history\.go\(/gu)].length};`);
   });
 
   it("accepts a query string built for an outgoing sync request", () => {
