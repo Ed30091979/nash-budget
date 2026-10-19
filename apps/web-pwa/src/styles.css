@@ -1151,116 +1151,20 @@ button.endpoint { border-radius: var(--radius-control); }
 .toast-receipt small { color: var(--on-ink); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .toast-receipt-value { --odometer-line: var(--lh-title); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 
-/* §6 Выбор иконки и тона (подволна 2c): радиогруппа плиток 48 × 48 со словом под образцом. Выбор —
-   кольцо акцента (5.07:1 на белом), галочка и полужирное слово; образец тона на белом почти не виден
-   краем (1.19–1.24:1, §3 «Запреты») и опознаётся словом. Подложка глифа — роль `--radius-plate`. */
-.picker { display: grid; min-width: 0; gap: 8px; margin: 0; padding: 0; border: 0; }
-.picker > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.picker:disabled { opacity: .62; }
-.picker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px), 1fr)); gap: 8px; font-size: var(--size-tile); line-height: var(--lh-tile); }
-label.picker-option { position: relative; display: grid; min-width: 0; min-height: 48px; gap: 4px; justify-items: center; align-content: start; padding: 4px 2px; color: var(--ink); text-align: center; overflow-wrap: anywhere; hyphens: auto; border-radius: var(--radius-control); cursor: pointer; }
-.picker-option input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; }
-label.picker-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; }
-/* Фон подложки — её тон (`.tone-*`): образец показывает иконку в том цвете, что выбран рядом. */
-.picker-option .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
-.picker-option:has(input:checked) .icon-plate { box-shadow: 0 0 0 3px var(--accent); }
-.picker-option:has(input:checked) .picker-word { font-weight: 700; }
-label.picker-option .picker-check { position: absolute; top: 0; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); }
-label.picker-option .picker-check svg { width: 14px; height: 14px; }
-/* Глиф на подложке тона — его собственные чернила (5.05–6.50:1, §3). */
-.icon-plate.tone-mint { color: var(--tone-mint-ink); }
-.icon-plate.tone-lilac { color: var(--tone-lilac-ink); }
-.icon-plate.tone-peach { color: var(--tone-peach-ink); }
-.icon-plate.tone-amber { color: var(--tone-amber-ink); }
-.icon-plate.tone-sage { color: var(--tone-sage-ink); }
-.icon-plate.tone-coral { color: var(--tone-coral-ink); }
-.icon-plate.tone-neutral { color: var(--ink); }
-/* «Выше / Ниже»: две цели по 48 рядом, зазор 8 (§9). На краю кнопка говорит «нет» и остаётся в фокусе. */
-.reorder { display: flex; flex-wrap: wrap; gap: 8px; }
-.reorder .secondary-button { min-width: 48px; padding: 13px 16px; }
-.reorder [aria-disabled="true"] { color: var(--ink-muted); cursor: default; opacity: 1; }
-
-/* §8 Справочники «Учёта» (подволна 2c): «назад», заголовок с подписью, главное действие, список-
-   карточка строк и форма. Строка — цель нажатия «Изменить»; «Выше / Ниже» — под ней, справа: рядом
-   на 320 pt им не хватило бы места с именем и остатком. Карточка прямая (§5), скруглено то, что
-   нажимают, и подложка глифа. */
+/* §8 Справочники «Учёта»: экран — колонка с ритмом 16; строка состояния — тихая подпись. Карточки,
+   листы, выборы тона, значка, валюты и порядка — в блоке «Дизайн 5.0, R3: справочники» в конце
+   файла. Здесь — то, чем пользуются и другие экраны: колонка (заглушки 2e), отметка, плашки. */
 .manage-screen { display: grid; min-width: 0; gap: 16px; }
-.manage-head { display: grid; min-width: 0; gap: 4px; }
-.manage-head p, .manage-lead { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.manage-add { justify-self: start; }
 .manage-status { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .manage-status:empty { margin-top: -16px; }
-.manage-group { display: grid; min-width: 0; gap: 8px; }
-.manage-group > .list-kicker { margin: 0 0 0 16px; }
-.manage-group > .field-hint { margin: 0 0 0 16px; }
-.manage-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 12px; align-items: center; padding: 8px 0; }
-.manage-row > .reorder, .manage-row > .secondary-button { justify-self: end; }
-.manage-row .row-open { min-height: 56px; }
-.manage-copy { min-width: 0; }
-.manage-copy > strong, .manage-copy > small { display: block; }
-.manage-copy > strong { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; }
-.manage-copy > small { margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.manage-row .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
 /* Счёт без своего тона — подложка цвета тёмной плитки «Обзора», глиф белым (15.37:1). */
 .account-plate { color: var(--on-tile-account); background: var(--tile-account); }
-.manage-form { display: grid; min-width: 0; gap: 20px; }
-.manage-form > .primary-button { margin-top: 4px; }
 .manage-notice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: var(--size-caption); line-height: var(--lh-caption); --money-currency-ink: currentColor; }
-/* «Курсы валют»: карточка базовой валюты и карточка на каждую валюту семьи — курс сегодня крупно,
-   история строками с «Удалить», группа «Новый курс» на утопленной плашке (`.rate-quick`). */
-.manage-screen > .section-card { margin-top: 0; }
-.rate-card, .base-currency { display: grid; min-width: 0; gap: 8px; }
-.rate-card > h2, .base-currency > h2 { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 0; }
-.rate-code { padding: 2px 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; background: var(--surface-sunken); }
-.rate-now { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 0; }
-.rate-now > strong { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
-.rate-now > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.rate-now.missing { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; color: var(--amber-ink); }
-.rate-now.missing > span { color: var(--amber-ink); }
-.rate-card > .list-kicker { margin: 8px 0 0; }
-.rate-history { display: grid; margin: 0; padding: 0; list-style: none; }
-.rate-history > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: center; padding: 4px 0; border-top: 1px solid var(--border); }
-.rate-history-day { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.rate-history-value { grid-column: 1; font-weight: 700; overflow-wrap: normal; }
-.rate-history .quiet-button { grid-column: 2; grid-row: 1 / span 2; }
-.rate-card > .secondary-button, .base-currency .secondary-button { justify-self: start; }
-.base-currency-form { display: grid; gap: 12px; }
-/* «Категории и доходы»: та же плитка, что на «Обзоре», — с лимитом месяца плана вместо трат и
-   карандашом в углу: касание открывает категорию для правки. Над формой — плитка-образец. */
-.manage-preview { width: max(104px, 8.5em); justify-self: start; }
-.manage-row .row-open:only-child { grid-column: 1 / -1; }
-/* «Метки»: строка — знак «#», имя и число операций; под ней «Изменить», «В архив», «Удалить».
-   Переименование — на месте строки, полем и двумя кнопками. «Удалить» — тихая кнопка красными
-   чернилами (6.84:1 на белом): на метку с операциями она отвечает словами домена у самой строки. */
-.tag-row { grid-template-columns: minmax(0, 1fr); }
-.tag-copy { display: grid; min-width: 0; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; }
-.tag-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-.tag-rename { display: grid; min-width: 0; gap: 8px; }
-.tag-notice { margin: 0; }
-.quiet-button.danger-text { color: var(--red-ink); }
 .manage-hint { display: grid; gap: 8px; justify-items: start; }
-.manage-new-tag { margin: 0; }
-/* Выбор из немногих — вид счёта: кнопки 48 в две колонки, выбранная — чернильная, как чип (§6). */
-.option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
-.option-grid > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.option-grid label { position: relative; display: flex; min-width: 0; min-height: 48px; align-items: center; justify-content: center; padding: 12px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); cursor: pointer; }
-.option-grid input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; }
-.option-grid label:has(input:checked) { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
-.option-grid label:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; }
-.option-grid:disabled { opacity: .62; }
 /* Отметка: квадрат 24 внутри цели 48 с подписью, кольцо фокуса — на всей строке. */
 label.check-row, .field label.check-row { display: flex; min-height: 48px; gap: 12px; align-items: center; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); cursor: pointer; }
 .check-row input { width: 24px; height: 24px; flex: none; margin: 0; accent-color: var(--ink); }
 label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; border-radius: var(--radius-control); }
-@media (max-width: 18em) {
-  .option-grid { grid-template-columns: minmax(0, 1fr); }
-  .manage-row > .reorder, .manage-row > .secondary-button { justify-self: stretch; }
-  .manage-row .reorder .secondary-button { flex: 1; }
-  /* История курса — одной колонкой: день, курс, под ними «Удалить». Рядом с кнопкой день и курс
-     на 320 pt при ×2.7 сжимались до буквы в строке (ревью 2c, MEDIUM-2). */
-  .rate-history > li { grid-template-columns: minmax(0, 1fr); }
-  .rate-history .quiet-button { grid-column: 1; grid-row: auto; justify-self: start; }
-}
 
 /* §5 Крупный шрифт и короткий экран — то же условие, что прячет клавиатуру суммы
    (`KEYPAD_HIDDEN_MEDIA`): лист становится прокручиваемой страницей во весь экран, а «Записать»
@@ -1631,3 +1535,241 @@ button.intro-skip { border-radius: var(--radius-control); }
 .empty-note { margin: 20px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .placeholder-list { margin: 16px 0 0; padding: 0; font-weight: 700; list-style: none; }
 .placeholder-list li + li { margin-top: 4px; }
+
+/* ═════════════ Дизайн 5.0, R3: справочники ═════════════
+   Макеты 11–14 и 16 (DIRECTION §c, §h): «Счета», «Категории и доходы», «Метки», «Курсы валют».
+   Абзацев под строкой заголовка нет — одна строка там, где её показывает макет. Строки — белые
+   карточки со скруглением карточки; формы — листы с разделами (`components/FormSheet.tsx`); валюта —
+   чипами и поиском (`CurrencyPicker`), порядок — отдельным режимом (`ReorderList`). Блок пользуется
+   токенами `:root` и не объявляет своих. */
+
+/* «Всего на счетах» над списком (макет 11): подпись, сумма ступенью `hero-step`, курс строкой. */
+.dir-total { display: grid; min-width: 0; gap: 2px; padding: 0 4px; }
+.dir-total p { margin: 0; }
+.dir-total-label, .dir-total-note, .dir-note { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.dir-total-sum { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 700; letter-spacing: -0.02em; }
+.dir-warn { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; }
+.dir-warn > .icon { color: var(--amber-ink); }
+.dir-note { margin: 0; padding: 0 4px; }
+.dir-hint { padding: 0 4px; }
+
+/* Карточка строк: белая, скругление карточки, тень карточки; разделитель — линия от начала текста,
+   а не граница. Строка — цель нажатия не ниже 64: подложка 40, имя и подпись, сумма справа. */
+.dir-card { margin: 0; padding: 0; list-style: none; background: var(--surface); box-shadow: var(--shadow-card); }
+.dir-card > li { position: relative; display: flex; min-width: 0; align-items: center; }
+.dir-card > li + li::before { content: ""; position: absolute; top: 0; right: 0; left: 68px; height: 1px; background: var(--border); }
+.dir-row { display: grid; width: 100%; min-width: 0; min-height: 64px; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; color: var(--ink); text-align: left; background: transparent; border: 0; }
+.dir-copy { display: grid; min-width: 0; }
+/* Имя переносится по мягким переносам приложения (`hyphenation.ts`); слово без мест переноса — где угодно,
+   но не за край: колонки экрана и карточки объявлены с нулевым минимумом. */
+.dir-copy > strong { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: manual; }
+.dir-screen, .dir-group, .dir-card > li { grid-template-columns: minmax(0, 1fr); }
+.dir-copy > small, .dir-amount > small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.dir-amount { display: grid; justify-items: end; text-align: right; overflow-wrap: normal; }
+.dir-amount > b { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.icon-plate.dir-plate { display: grid; width: 40px; height: 40px; flex: none; place-items: center; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; border-radius: var(--radius-plate); }
+.icon-plate.dir-plate-sunken { color: var(--ink); background: var(--surface-sunken); }
+.dir-row .row-chevron { color: var(--ink-muted); }
+/* Архивная строка: строка открывает лист, «Вернуть» — отдельная цель справа. */
+.dir-archived > .dir-row { flex: 1; grid-template-columns: 40px minmax(0, 1fr); }
+.dir-archived > .dir-restore { flex: none; margin-right: 4px; }
+.dir-group { display: grid; min-width: 0; gap: 6px; }
+.dir-kicker { margin: 0 0 0 20px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.dir-mode { justify-self: center; }
+.categories-screen .dir-kicker { margin-left: 4px; }
+.dir-mode .icon { flex: none; }
+
+/* Режим «Изменить порядок»: ручка (только у точного указателя), подложка, имя и стрелки 48. */
+/* Строка режима — сетка, а не флекс строки списка: селектор сильнее `.dir-card > li`. */
+.reorder-list > li.reorder-row { display: grid; width: 100%; min-height: 64px; grid-template-columns: 24px 40px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 8px 8px 12px; }
+.reorder-row > .reorder { flex-wrap: nowrap; gap: 0; }
+.reorder-list > li + li::before { left: 92px; }
+.reorder-grip { display: grid; width: 24px; height: 48px; place-items: center; color: var(--ink-muted); cursor: grab; touch-action: none; }
+.reorder-list.reordering .reorder-grip { cursor: grabbing; }
+.reorder-list > li.reorder-row.dragging { position: relative; z-index: 2; background: var(--surface); box-shadow: var(--shadow-sheet); transform: translateY(var(--drag-y, 0)); }
+.reorder-list > li.reorder-row[data-drop="before"] { box-shadow: inset 0 3px 0 var(--accent); }
+.reorder-list > li.reorder-row[data-drop="after"] { box-shadow: inset 0 -3px 0 var(--accent); }
+@media (pointer: coarse), (pointer: none) {
+  .reorder-grip { display: none; }
+  .reorder-list > li.reorder-row { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; padding-left: 16px; }
+  .reorder-list > li + li::before { left: 68px; }
+}
+.reorder { display: flex; flex-wrap: wrap; gap: 8px; }
+.reorder .secondary-button { min-width: 48px; padding: 13px 16px; }
+.reorder .reorder-step { color: var(--ink); }
+.reorder [aria-disabled="true"] { color: var(--ink-muted); cursor: default; opacity: 1; }
+.reorder .reorder-step[aria-disabled="true"] { opacity: .45; }
+
+/* Лист справочника (макеты 12, 13): во всю ширину телефона, скруглён сверху, «Закрыть» 48 слева,
+   заголовок по центру; тело прокручивается, подвал с «Сохранить» акцентом закреплён внизу. */
+.sheet-backdrop.dir-backdrop { padding: 8px 0 0; }
+.sheet.dir-sheet { width: min(560px, 100%); max-height: calc(100dvh - 40px); border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.dir-sheet-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 4px; align-items: center; padding: 4px 4px 0; }
+.dir-sheet-head > h1, .dir-sheet-head > h2 { min-width: 0; margin: 0; font-size: var(--size-title); line-height: var(--lh-title); text-align: center; overflow-wrap: anywhere; hyphens: auto; }
+.dir-sheet-form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.dir-sheet-body { display: grid; min-height: 0; flex: 1; gap: 16px; align-content: start; overflow-y: auto; overscroll-behavior: contain; padding: 8px max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
+.dir-sheet-foot { display: grid; gap: 8px; padding: 12px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--surface); box-shadow: 0 -1px 0 var(--border); }
+.dir-sheet-foot > .field-error { margin: 0; }
+.dir-save { min-height: 52px; font-size: var(--size-title); line-height: var(--lh-title); }
+.sheet-status { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.sheet-status:empty { display: none; }
+/* Образец над разделами: квадрат 52, имя ступенью заголовка и подпись — на холсте внутри листа. */
+.dir-preview { display: grid; min-width: 0; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px 12px; background: var(--canvas); }
+.dir-preview .tile-square { width: var(--tile-square); height: var(--tile-square); }
+.dir-preview-copy { display: grid; min-width: 0; }
+.dir-preview-name { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: anywhere; hyphens: manual; }
+.dir-preview-note { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.dir-field { display: grid; min-width: 0; gap: 6px; }
+.dir-label, .dir-field > label, .dir-options > legend, .picker > legend { margin: 0 4px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+/* Сумма в поле со знаком валюты внутри, светлее цифр (§7.7): «1 200 $». */
+.dir-money-field { position: relative; display: grid; min-width: 0; }
+.dir-money-field > input { padding-right: 48px; font-weight: 700; }
+.dir-money-field > input::placeholder { font-weight: 400; }
+.dir-money-sign { position: absolute; top: 50%; right: 16px; color: var(--ink-muted); pointer-events: none; transform: translateY(-50%); }
+/* Разрушающее действие — последним в теле листа, тихой красной строкой (§d). */
+.dir-archive { display: grid; min-width: 0; gap: 4px; justify-items: start; padding-top: 8px; border-top: 1px solid var(--border); }
+.dir-archive > .field-hint { margin: 0 4px; }
+.quiet-button.dir-danger { padding-right: 4px; padding-left: 4px; color: var(--red-ink); }
+.dir-archive > .quiet-button:not(.dir-danger) { padding-right: 4px; padding-left: 4px; }
+
+/* Выбор из немногих карточками 2×2 (вид счёта, группа категории): рамка `--line`, выбранная —
+   рамка акцента 2 pt, полужирное слово и галочка; ниже 18em — одной колонкой. */
+.dir-options { display: grid; min-width: 0; gap: 6px; margin: 0; padding: 0; border: 0; }
+.dir-options:disabled { opacity: .62; }
+.dir-options-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+label.dir-option { position: relative; display: flex; min-width: 0; min-height: 52px; gap: 8px; align-items: center; padding: 8px 10px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); cursor: pointer; }
+.dir-option > input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; }
+.dir-option > .icon { flex: none; }
+.dir-options .dir-option-word { min-width: 0; overflow-wrap: normal; hyphens: manual; }
+label.dir-option:has(input:checked) { font-weight: 700; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.dir-option-check { display: grid; margin-left: auto; flex: none; color: var(--accent); }
+.dir-option-check > .icon { width: 20px; height: 20px; }
+label.dir-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+/* Выбор тона (макет 13): образцы 40 со словами под ними, по четыре в ряд на телефоне и по восемь на
+   широком; выбранный — кольцо акцента через зазор, галочка и полужирное слово. «Авто» — пунктир. */
+.picker { display: grid; min-width: 0; gap: 6px; margin: 0; padding: 0; border: 0; }
+.picker:disabled { opacity: .62; }
+.picker-grid { display: grid; gap: 4px 8px; font-size: var(--size-tile); line-height: var(--lh-tile); }
+.tone-picker .picker-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (min-width: 600px) {
+  .tone-picker .picker-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+}
+label.picker-option { position: relative; display: grid; min-width: 0; min-height: 48px; gap: 4px; justify-items: center; align-content: start; padding: 4px 2px; color: var(--ink-muted); text-align: center; overflow-wrap: anywhere; hyphens: auto; border-radius: var(--radius-control); cursor: pointer; }
+.picker-option > input { position: absolute; top: 0; left: 0; width: 1px; height: 1px; margin: 0; opacity: 0; }
+label.picker-option:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: 3px; }
+.picker-option .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
+.picker-option .icon-plate.auto { outline: 1.5px dashed var(--line); outline-offset: 2px; }
+.picker-option:has(input:checked) { color: var(--ink); }
+.picker-option:has(input:checked) .icon-plate { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.picker-option:has(input:checked) .picker-word { font-weight: 700; }
+/* Глиф на подложке тона — его собственные чернила (5.05–6.50:1, §3). */
+.icon-plate.tone-mint { color: var(--tone-mint-ink); }
+.icon-plate.tone-lilac { color: var(--tone-lilac-ink); }
+.icon-plate.tone-peach { color: var(--tone-peach-ink); }
+.icon-plate.tone-amber { color: var(--tone-amber-ink); }
+.icon-plate.tone-sage { color: var(--tone-sage-ink); }
+.icon-plate.tone-coral { color: var(--tone-coral-ink); }
+.icon-plate.tone-neutral { color: var(--ink); }
+/* Выбор значка (макет 13): квадраты 48 тона, выбранного рядом, по шесть в ряд (на 320 — по четыре);
+   «Авто» — на две колонки, со словом: его глиф выведен, а не выбран. */
+.icon-picker .picker-grid { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 8px; }
+.icon-picker label.picker-option { min-height: 52px; align-content: center; padding: 2px; }
+.icon-picker .picker-option .icon-plate { width: 48px; height: 48px; }
+.icon-picker label.picker-auto { grid-column: span 2; display: flex; gap: 8px; align-items: center; justify-content: flex-start; padding-left: 2px; text-align: left; }
+label.picker-option .picker-check { position: absolute; top: -2px; right: 2px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); box-shadow: 0 0 0 2px var(--surface); }
+label.picker-option .picker-check svg { width: 14px; height: 14px; }
+.icon-picker label.picker-auto .picker-check { right: auto; left: 40px; }
+.tone-swatch > .icon { width: 24px; height: 24px; }
+
+/* Переключатель «Считать во „Всего на счетах“» (макет 12): строка 56, подпись слева, флажок-переключатель
+   51×31 справа; выключенный — `--line` (3.30:1), включённый — акцент. */
+label.check-row.dir-toggle { justify-content: space-between; min-height: 56px; padding: 4px; }
+.dir-toggle > input[role="switch"] { position: relative; width: 51px; height: 31px; flex: none; margin: 0; appearance: none; -webkit-appearance: none; background: var(--line); border-radius: var(--radius-pill); cursor: pointer; transition: background-color var(--motion-press) var(--ease-standard); }
+.dir-toggle > input[role="switch"]::before { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; background: var(--surface); border-radius: 50%; box-shadow: var(--shadow-pill); transition: transform var(--motion-press) var(--ease-standard); }
+.dir-toggle > input[role="switch"]:checked { background: var(--accent); }
+.dir-toggle > input[role="switch"]:checked::before { transform: translateX(20px); }
+
+/* Валюта чипами и «Другая» (макет 12): чипы и «Другая» текут одной строкой и переносятся вместе;
+   выбранный чип — чернильная пилюля (§3), знак валюты — полужирный. Поиск раскрывается на месте. */
+.cur-picker { min-width: 0; }
+.cur-chips { display: inline; }
+.cur-chips > .chip, .cur-picker > .cur-other { display: inline-grid; margin: 0 8px 0 0; vertical-align: top; }
+.cur-chip[aria-checked="true"] .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.cur-chip .chip-face { gap: 8px; }
+.cur-sym { min-width: 14px; font-weight: 700; text-align: center; }
+.cur-chips[aria-disabled="true"] .cur-chip:not([aria-checked="true"]) { opacity: .62; }
+.cur-other .chip-face .icon { flex: none; }
+.cur-search { display: grid; min-width: 0; gap: 6px; margin-top: 8px; padding: 12px; background: var(--surface-sunken); }
+.cur-search-label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.cur-search-field { position: relative; display: grid; min-width: 0; }
+.cur-search-field > .icon { position: absolute; top: 50%; left: 14px; color: var(--ink-muted); pointer-events: none; transform: translateY(-50%); }
+.cur-search-field > input { width: 100%; min-height: 48px; padding: 12px 14px 12px 44px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-input); }
+.cur-list { display: grid; max-height: min(17rem, 40dvh); margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; background: var(--surface); }
+.cur-option { display: grid; min-height: 48px; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 12px; cursor: pointer; }
+.cur-option + .cur-option { border-top: 1px solid var(--border); }
+.cur-option[aria-selected="true"] { color: var(--on-ink); background: var(--ink); }
+.cur-option-code { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.cur-option[aria-selected="true"] .cur-option-code { color: var(--on-ink); }
+.cur-found { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+
+/* «Курсы валют» (макет 16): основная валюта одной строкой, карточка валюты — курс крупно и история
+   строками; «Новый курс» — карточка над ними. */
+.dir-base { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; padding: 12px 16px; background: var(--surface); box-shadow: var(--shadow-card); }
+.dir-base:has(> .quiet-button) { grid-template-columns: 40px minmax(0, 1fr) auto; padding-right: 8px; }
+.dir-base h2 { margin: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.dir-base-form, .dir-rate-new { display: grid; gap: 12px; padding: 16px; background: var(--surface); box-shadow: var(--shadow-card); }
+.dir-rate-new > .rate-quick { margin: 0; padding: 0; background: transparent; }
+.dir-rate > .rate-quick { margin: 8px -4px 12px; }
+/* Глиф пустого состояния — на подложке роли подложки (R2 рисует его квадратом). */
+.icon-plate.empty-glyph { border-radius: var(--radius-plate); }
+.dir-rate { display: grid; min-width: 0; gap: 4px; padding: 16px 16px 4px; background: var(--surface); box-shadow: var(--shadow-card); }
+.dir-rate-head { display: flex; flex-wrap: wrap; gap: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.dir-rate-head > h2 { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.dir-rate-now { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 700; letter-spacing: -0.02em; overflow-wrap: normal; }
+.dir-rate .rate-now.missing { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; margin: 4px 0; color: var(--amber-ink); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.rate-history { display: grid; margin: 8px -16px 0; padding: 0; list-style: none; }
+/* Курсы — столбцом по правому краю (§7.4): колонка курса одной ширины во всех строках истории. */
+.rate-history > li { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(5em, auto) 48px; gap: 0 8px; align-items: center; min-height: 48px; padding: 0 4px 0 16px; }
+.rate-history > li + li::before { content: ""; position: absolute; top: 0; right: 0; left: 16px; height: 1px; background: var(--border); }
+.rate-history-day { color: var(--ink); }
+.rate-history-value { font-weight: 700; text-align: right; overflow-wrap: normal; }
+.rate-history .quiet-button { width: 48px; padding: 0; color: var(--ink-muted); }
+.dir-rate-add { justify-self: start; margin-left: -12px; }
+.rate-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Курс и суммы не рвутся посреди числа (§7.3): общее правило маршрута рвёт слова где угодно, а курс
+   переносится только по пробелам — между знаком и числом (DIRECTION §c, «Курсы»). */
+.route-screen .dir-rate-now, .route-screen .rate-history-value, .route-screen .dir-amount, .route-screen .dir-total-sum { overflow-wrap: normal; }
+
+@media (max-width: 18em) {
+  /* Курс крупно при ×2.7 — ступенью заголовка: «100,00 ₽» кеглем `hero-step` шире карточки на 320. */
+  .dir-rate-now { font-size: var(--size-title); line-height: var(--lh-title); }
+  .dir-options-grid { grid-template-columns: minmax(0, 1fr); }
+  .tone-picker .picker-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Строка счёта: сумма под именем во всю ширину — в три колонки на таком кегле она не влезет (§1). */
+  .dir-row { grid-template-columns: 40px minmax(0, 1fr); }
+  .dir-amount { grid-column: 1 / -1; justify-items: start; text-align: left; }
+  .dir-row .row-chevron { display: none; }
+  .dir-archived { flex-wrap: wrap; }
+  .dir-archived > .dir-restore { margin: 0 16px 8px; }
+  /* Режим порядка: стрелки под именем во всю ширину строки. */
+  .reorder-list > li.reorder-row { grid-template-columns: 40px minmax(0, 1fr); padding-left: 16px; }
+  .reorder-row .reorder-grip { display: none; }
+  .reorder-row > .reorder { grid-column: 1 / -1; justify-content: flex-end; }
+  .dir-base, .dir-base:has(> .quiet-button) { grid-template-columns: 40px minmax(0, 1fr); }
+  .dir-base > .quiet-button { grid-column: 1 / -1; justify-self: start; }
+  .reorder-row > .reorder { flex-wrap: wrap; }
+  /* История курса — одной колонкой: день, курс, под ними «Удалить». Рядом с кнопкой день и курс
+     на 320 pt при ×2.7 сжимались до буквы в строке (ревью 2c, MEDIUM-2). */
+  .rate-history > li { grid-template-columns: minmax(0, 1fr); padding: 4px 16px; }
+  .rate-history-value { text-align: left; }
+  .rate-history .quiet-button { grid-column: 1; justify-self: start; }
+  .cur-chips > .chip, .cur-picker > .cur-other { display: grid; width: 100%; margin: 0; }
+  .cur-chips { display: grid; }
+}
+@media (max-width: 18em), (max-height: 34em) {
+  /* Лист — во весь экран и прокручивается целиком, как лист ввода (§6): «Сохранить» — в потоке. */
+  .sheet-backdrop.dir-backdrop { align-items: stretch; padding: 0; }
+  .sheet.dir-sheet { max-height: none; }
+  .dir-sheet-form, .dir-sheet-body { flex: none; overflow: visible; }
+}

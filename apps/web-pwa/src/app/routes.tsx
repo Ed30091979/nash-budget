@@ -279,29 +279,36 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onMessage={setMessage}
             />
           ) : null}
-          {route.name === "category" ? (
+          {route.name === "category" ? <>
+            {/* Лист категории (дизайн 5.0, макет 13) — поверх своего списка: лист первым, чтобы `h1`
+                маршрута был его заголовком; список под затемнением выключен. */}
             <CategoryScreen
               key={route.id}
               budget={budget}
               categoryId={route.id}
               write={write}
               // К своему списку — родителю маршрута: вид списка записан в адресе категории, и
-              // запись истории под формой — этот список (ревью 2c, MEDIUM-1).
+              // запись истории под листом — этот список (ревью 2c, MEDIUM-1).
               onBack={back}
               onDone={(message) => { setMessage(message); back(); }}
             />
-          ) : null}
+            <div className="dir-under" inert aria-hidden="true">
+              <CategoriesScreen background budget={budget} type={route.type ?? "expense"} write={write} onBack={back} onType={() => undefined} onOpen={() => undefined} onMessage={() => undefined} />
+            </div>
+          </> : null}
           {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}
           {/* Заглушки до подволны 2e: пустое состояние той же анатомии, что у меток (R2). */}
           {route.name === "debts" || route.name === "goals" || route.name === "recurring" ? <PlaceholderScreen budget={budget} kind={route.name} onBack={back} /> : null}
-          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
+          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} onNewAccount={() => navigate({ name: "account-new" })} /> : null}
           {route.name === "account" || route.name === "account-new" ? (() => {
             // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
-            // и «назад», и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
+            // и крестик, и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
             // по истории), а не в список счетов (ревью R2, L-5).
             const fromQuestion = route.name === "account-new" && route.type !== undefined;
             const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
-            return (
+            // Лист счёта (дизайн 5.0, макет 12) — поверх списка: лист первым, чтобы `h1` маршрута был
+            // его заголовком; список под затемнением выключен вместе со всем вокруг листа.
+            return <>
               <AccountScreen
                 key={route.name === "account" ? route.id : "new"}
                 budget={budget}
@@ -310,10 +317,12 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
                 write={write}
                 onBack={leave}
-                {...(fromQuestion ? { backLabel: "Обзор" } : {})}
                 onDone={(message) => { setMessage(message); leave(); }}
               />
-            );
+              <div className="dir-under" inert aria-hidden="true">
+                <AccountsScreen background budget={budget} today={app.today} write={write} onBack={back} onOpen={() => undefined} onCreate={() => undefined} />
+              </div>
+            </>;
           })() : null}
   </>;
 }

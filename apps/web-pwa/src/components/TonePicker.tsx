@@ -4,6 +4,8 @@ import { Icon } from "./Icon";
 
 /**
  * Выбор тона счёта или категории (D-036): радиогруппа со словами — «Мята», «Сирень», — первым «Авто».
+ * Дизайн 5.0 (макет 13): образцы 40 со словами под ними, по четыре в ряд на телефоне; «Авто» — тон,
+ * выведенный по имени или группе, в пунктирной рамке: ключа в данных у него нет.
  *
  * Тон метит сущность, а не величину (DESIGN §3), и выбор цвета не держится на одном цвете: у каждого
  * образца — слово, у выбранного — кольцо акцента, галочка и полужирное слово. Образец на белом
@@ -41,15 +43,15 @@ export function TonePicker({ legend, value, fallback, disabled, onChange }: Tone
     ...TONE_CHOICES.map((choice) => ({ key: choice.tone, tone: choice.tone, word: choice.word, choice: choice.tone })),
   ];
   return (
-    <fieldset className="picker" disabled={disabled}>
-      <legend>{legend}</legend>
+    <fieldset className="picker tone-picker" disabled={disabled}>
+      <legend className="dir-label">{legend}</legend>
       <div className="picker-grid">
         {options.map((option) => {
           const checked = option.choice === value;
           return (
             <label key={option.key} className="picker-option">
               <input type="radio" name={name} value={option.key} checked={checked} onChange={() => onChange(option.choice)} />
-              <span className={`icon-plate tone-swatch tone-${option.tone}`} aria-hidden="true">{checked ? <Icon name="check" size={24} /> : null}</span>
+              <span className={`icon-plate tone-swatch tone-${option.tone}${option.choice === null ? " auto" : ""}`} aria-hidden="true">{checked ? <Icon name="check" size={24} /> : null}</span>
               <span className="picker-word">{option.word}</span>
             </label>
           );

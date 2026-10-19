@@ -24,12 +24,14 @@ import {
   categoryLimit,
   categoryPosition,
   categoryPositionWords,
+  categoryPreviewWords,
   categorySave,
+  nextMonthWord,
   planMonthWord,
   restoreCategory,
 } from "./category-model";
-import { CategoryFormView } from "./CategoryScreen";
-import { currencyName } from "../../components/CurrencySelect";
+import { CategoryFormView, CategoryScreen } from "./CategoryScreen";
+import { currencyName } from "../../components/CurrencyPicker";
 import { blankEntryDraft } from "../entry/entry-model";
 import { pickOptions } from "../entry/TargetPicker";
 
@@ -269,62 +271,106 @@ describe("категории: разметка", () => {
     <CategoriesScreen budget={state()} type={type} write={{ run: vi.fn() }} onBack={vi.fn()} onType={vi.fn()} onOpen={vi.fn()} onMessage={vi.fn()} />,
   );
 
-  it("расходы: переключатель видов, «Новая категория», плитки по группам с лимитом и карандашом, архив с «Вернуть»", () => {
+  it("расходы (макет 13): чипы видов, «+» и плитка «Своя» вместо чёрной кнопки, сетки по группам D-041, архив с «Вернуть»", () => {
     const markup = render("expense");
     expect(markup).toContain('aria-pressed="true"><span class="chip-face">Расходы</span>');
     expect(markup).toContain('aria-pressed="false"><span class="chip-face">Доходы</span>');
-    expect(markup).toContain("Новая категория");
-    for (const title of ["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]) expect(markup).toContain(`>${title}</h2>`);
+    // Новая — «+» строки заголовка и пунктирная плитка «Своя» последней в сетке; чёрной кнопки нет.
+    expect(markup).toContain('<div class="title-bar-action"><button class="icon-button" type="button" aria-label="Новая категория">');
+    expect(markup).not.toContain("primary-button manage-add");
+    expect(markup).toMatch(/<button class="add-tile" type="button" aria-label="Своя категория"><span class="tile-square add" aria-hidden="true">[^]*?<span class="tile-name" aria-hidden="true">Своя<\/span><\/button><\/li><\/ul><\/section>/u);
+    expect(markup.match(/class="add-tile"/gu)).toHaveLength(1);
+    // Абзаца-пояснения под строкой заголовка нет (R3, п. 1).
+    expect(markup).not.toContain("manage-head");
+    expect(markup).not.toContain("Коснитесь категории, чтобы");
+    // Группы — в порядке D-041: «Каждый день» первой.
+    const titles = [...markup.matchAll(/class="dir-kicker">([^<]+)<\/h2>/gu)].map((match) => match[1]);
+    expect(titles).toEqual(["Каждый день", "Обязательные платежи", "Личное и досуг", "Прочее", "В архиве"]);
     expect(markup).toMatch(/aria-label="Продукты: лимит [^"]+ на июль\. Изменить"/u);
     expect(markup).toContain('aria-label="Дети: без лимита. Изменить"');
+    // Анатомия плитки «Обзора»: под именем — лимит суммой и подпись «лимит».
+    expect(markup).toMatch(/<span class="tile-sum" aria-hidden="true"><span class="money">[^]*?<\/span><\/span><span class="tile-limit" aria-hidden="true">лимит<\/span>/u);
     expect(markup).toContain('href="#glyph-pencil"');
     expect(markup).toContain('aria-label="Вернуть «Старая» из архива"');
-    expect(plain(markup)).toContain("Архивная категория не стоит на «Обзоре»");
+    expect(markup).toContain("Изменить порядок");
   });
 
-  it("доходы: та же сетка без лимитов; плитка называет источник и действие", () => {
+  it("доходы: та же сетка без лимитов; плитка называет источник и действие; «+ Свой»", () => {
     const markup = render("income");
-    expect(markup).toContain("Новый источник дохода");
+    expect(markup).toContain('aria-label="Новый источник дохода"');
+    expect(markup).toContain('aria-label="Свой источник дохода"');
     expect(markup).toContain('aria-label="Зарплата. Изменить"');
     expect(markup).not.toContain("без лимита");
+    // Группа одна — её имя повторило бы чип «Доходы»: только для слуха.
+    expect(markup).toMatch(/<h2 id="categories-income" class="sr-only">/u);
     const card = categoriesView(state(), "income").groups[0]!.cards[0]!;
     expect(categoryCardLabel(card, "RUB", "июль")).toBe("Зарплата. Изменить");
   });
 });
 
-describe("форма категории: разметка", () => {
+describe("лист категории: разметка", () => {
   const view = (id: string, overrides: Partial<Parameters<typeof CategoryFormView>[0]> = {}) => {
     const budget = state();
     const item = category(budget, id);
     return renderToStaticMarkup(
-      <CategoryFormView budget={budget} category={item} draft={categoryDraftOf(budget, item)} error={null} busy={false} onPatch={vi.fn()} onSubmit={vi.fn()} {...overrides} />,
+      <CategoryFormView budget={budget} category={item} draft={categoryDraftOf(budget, item)} error={null} busy={false} onPatch={vi.fn()} {...overrides} />,
     );
   };
 
-  it("расходная: плитка-образец, название, группа, лимит месяца плана, цвет и иконка — радиогруппы", () => {
+  it("расходная (макет 13): образец, название, лимит с одной строкой подсказки, цвет, значок, группа 2×2", () => {
     const markup = view(LEISURE);
-    const order = ['class="tile tile-expense', 'for="category-name"', 'for="category-group"', 'for="category-limit"', "<legend>Цвет</legend>", "<legend>Иконка</legend>", ">Сохранить</button>"];
+    const order = ['class="card dir-preview"', 'for="category-name"', 'for="category-limit"', '<legend class="dir-label">Цвет</legend>', '<legend class="dir-label">Значок</legend>', '<legend class="dir-label">Группа</legend>'];
     const at = order.map((piece) => markup.indexOf(piece));
-    expect(at.every((index) => index >= 0)).toBe(true);
+    expect(at.every((index) => index >= 0), JSON.stringify(at)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
-    expect(markup).toContain("Лимит на июль, ₽ — не обязательно");
-    expect(markup).toContain('<option value="personal" selected="">Личное и досуг</option>');
+    expect(markup).toContain('for="category-limit">Лимит на июль<span class="sr-only">, ₽ — не обязательно</span>');
+    expect(markup).toContain('<p class="field-hint" id="category-limit-hint">Пусто — без лимита. Лимит перейдёт и на август.</p>');
+    // Группа — карточки-радиокнопки, а не <select>.
+    expect(markup).not.toContain("<select");
+    expect(markup).toMatch(/<input id="category-group-personal" type="radio" name="[^"]+" checked="" value="personal"\/>/u);
+    expect(markup.match(/id="category-group-[a-z]+"/gu)).toHaveLength(4);
   });
 
   it("источник дохода — без группы и без лимита; архивная — без лимита", () => {
     const income = view(SALARY);
-    expect(income).not.toContain('for="category-group"');
+    expect(income).not.toContain("Группа");
     expect(income).not.toContain('for="category-limit"');
-    expect(income).toContain('class="tile tile-income');
+    expect(income).toContain("Источник дохода");
     expect(view(OLD)).not.toContain('for="category-limit"');
+    expect(view(OLD)).toContain("В архиве");
   });
 
-  it("отказ у поля связан с полем; образец показывает набранное имя и выбранные иконку и тон", () => {
+  it("отказ у поля связан с полем; образец — набранное имя с переносами для глаза и целое для слуха, иконка и тон", () => {
     const budget = state();
-    const draft = { ...categoryDraftOf(budget, category(budget, FOOD)), name: "Еда", icon: "cup" as const, tone: "coral" as const };
+    const draft = { ...categoryDraftOf(budget, category(budget, FOOD)), name: "Благотворительность", icon: "cup" as const, tone: "coral" as const };
     const markup = view(FOOD, { draft, error: { field: "limit", message: "Введите положительную сумму в рублях, не более двух знаков после запятой." } });
     expect(markup).toMatch(/<input id="category-limit"[^>]*aria-invalid="true" aria-describedby="category-limit-hint category-limit-error"/u);
     expect(markup).toContain('id="category-limit-error" role="alert"');
-    expect(markup).toMatch(/class="tile tile-expense manage-preview" aria-hidden="true"><span class="tile-square tone-coral" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
+    expect(markup).toMatch(/<div class="card dir-preview"><span class="tile-square tone-coral" aria-hidden="true">[^]*?glyph-cup[^]*?<span class="dir-preview-name" aria-hidden="true"><bdi dir="auto">Бла[^<]*\u00ad[^<]*<\/bdi><\/span><span class="sr-only"><bdi dir="auto">Благотворительность<\/bdi>: <\/span>/u);
+  });
+
+  it("подпись образца: потрачено против лимита в месяце плана, без лимита — так и сказано", () => {
+    const budget = state();
+    const spent = calculateBudget(budget).categoryMetrics[FOOD]?.actualMinor ?? 0;
+    const limit = categoryLimit(budget, FOOD)!;
+    expect(categoryPreviewWords(budget, category(budget, FOOD), "RUB")).toBe(`${(spent / 100).toLocaleString("ru-RU").replace(/\s/gu, "\u00a0")} из ${(limit / 100).toLocaleString("ru-RU").replace(/\s/gu, "\u00a0")}\u00a0₽ в июле`);
+    expect(categoryPreviewWords(budget, category(budget, CHILDREN), "RUB")).toMatch(/^\d[\d\u00a0]*\u00a0₽ в июле, без лимита$/u);
+    expect(categoryPreviewWords(budget, category(budget, SALARY), "RUB")).toBe("Источник дохода");
+    expect(nextMonthWord(budget)).toBe("август");
+  });
+
+  it("лист — модальный диалог маршрута: «Категория», «Сохранить» в подвале, архив последним в теле", () => {
+    const budget = state();
+    const sheet = renderToStaticMarkup(<CategoryScreen budget={budget} categoryId={FOOD} write={{ run: vi.fn() }} onBack={vi.fn()} onDone={vi.fn()} />);
+    expect(sheet).toMatch(/^<div class="sheet-backdrop dir-backdrop" role="presentation"><section class="sheet dir-sheet" role="dialog" aria-modal="true" aria-labelledby="category-sheet-title"/u);
+    expect(sheet).toContain('<h1 id="category-sheet-title" tabindex="-1">Категория</h1>');
+    expect(sheet).toMatch(/<section class="dir-archive" aria-label="Архив"><button id="category-archive" class="quiet-button dir-danger" type="button">/u);
+    expect(sheet).toContain("Удалить категорию нельзя: прошлые месяцы ссылаются на неё.");
+    expect(sheet.indexOf("dir-archive")).toBeLessThan(sheet.indexOf("dir-sheet-foot"));
+    // Порядок в группе — режимом в списке, а не «Выше / Ниже» в листе.
+    expect(sheet).not.toContain("— выше");
+    const income = renderToStaticMarkup(<CategoryScreen budget={budget} categoryId={SALARY} write={{ run: vi.fn() }} onBack={vi.fn()} onDone={vi.fn()} />);
+    expect(income).toContain('<h1 id="category-sheet-title" tabindex="-1">Источник дохода</h1>');
+    expect(income).toContain("Удалить источник дохода нельзя: прошлые месяцы ссылаются на него.");
   });
 });

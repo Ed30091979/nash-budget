@@ -9,38 +9,48 @@ import {
   type ExchangeRateCreation,
   type ExchangeRateDraft,
 } from "@family-budget/domain";
-import { TitleBar } from "../../components/TitleBar";
+import { TitleBar, TitleBarAction } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { CurrencySelect, currencyLabel, currencyName } from "../../components/CurrencySelect";
+import { CurrencyPicker, currencyLabel, currencyName, currencyShortName, currencySymbol } from "../../components/CurrencyPicker";
+import { EmptyState } from "../../components/EmptyState";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
-import { formatDayYear, formatDayYearLine } from "../../date-words";
+import { formatDay, formatDayYear, formatDayYearLine } from "../../date-words";
 import { useFormDraft } from "../../navigation/draft-guard";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { currencySign, RateQuickSheet } from "./RateQuickSheet";
-import { baseCurrencyState, currencyRates, familyCurrencies, NON_BASE_CURRENCIES, rateSavedText, rateWords, ratesErrorText, type CurrencyRates } from "./rates-model";
+import { formatRateValue } from "./rate-input";
+import { baseCurrencyState, currencyRates, familyCurrencies, NON_BASE_CURRENCIES, rateSavedText, ratesErrorText, type CurrencyRates } from "./rates-model";
 
 export interface RatesScreenProps {
   readonly budget: BudgetState;
   readonly today: string;
   readonly write: BudgetWriter;
   readonly onBack: () => void;
+  /** Пустое состояние «Счетов в другой валюте нет» ведёт к новому счёту. */
+  readonly onNewAccount: () => void;
 }
 
 /** `id` заголовка карточки валюты и кнопок «Добавить курс»: по ним фокус находит, куда вернуться. */
 const cardTitleId = (currency: CurrencyCode) => `rates-${currency}`;
 const addButtonId = (where: "top" | CurrencyCode) => `rates-add-${where}`;
 
-/** Где открыта группа «Новый курс»: над списком — для любой валюты, или в карточке своей валюты. */
+/** Где открыта группа «Новый курс»: над карточками — для любой валюты, или в карточке своей валюты. */
 type Adding = { readonly where: "top" | CurrencyCode; readonly currency: CurrencyCode } | null;
 
+/** «с 15 октября» — день курса; год — только у курса другого года, и он может уйти на новую строку. */
+export function rateDayWords(date: string, today: string): string {
+  return `с ${date.slice(0, 4) === today.slice(0, 4) ? formatDay(date) : formatDayYearLine(date)}`;
+}
+
 /**
- * «Курсы валют» (план волны 2, §1.6): базовая валюта и почему её не сменить; по каждой валюте
- * семьи — курс на сегодня, его дата и история с удалением; «Добавить курс» — та же группа, что
- * «Задать курс» в листе ввода (`RateQuickSheet`), с выбором валюты и дня. Курс задаётся вручную и
- * записанное не переоценивает — экран говорит это словами.
+ * «Курсы валют» (дизайн 5.0, макет 16): «‹ Ещё · Курсы валют · +», карточка основной валюты одной
+ * строкой, по карточке на каждую валюту семьи — счета в ней, курс сегодня крупно («1 $ = 92,50 ₽»)
+ * и история по датам с удалением, — и одна строка о том, что курс ручной и записанное не
+ * пересчитывается. «+» — группа «Новый курс» над карточками (`RateQuickSheet`, та же, что «Задать
+ * курс» в листе ввода); поправка курса того же дня заменяет его (`addExchangeRate`).
  */
-export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) {
+export function RatesScreen({ budget, today, write, onBack, onNewAccount }: RatesScreenProps) {
   const base = baseCurrencyState(budget);
   const cards = useMemo(() => currencyRates(budget, today), [budget, today]);
   const preferred = useMemo(() => familyCurrencies(budget), [budget]);
@@ -104,42 +114,43 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
       currency={currency}
       baseCurrency={base.currency}
       date={today}
-      screen={{ preferred, draftLabel: "курс, который не записан", onDirtyChange: setPanelDirty }}
+      screen={{ preferred, draftLabel: "курс, который не записан", onDirtyChange: setPanelDirty, autoFocus: true }}
       onSave={saveRate}
       onCancel={cancel}
     />
   );
 
   return (
-    <div className="manage-screen rates-screen">
-      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Курсы валют" />
-      <header className="manage-head">
-        <p>Курс задаётся вручную и действует с его даты, пока не задан новый. Он не переоценивает записанное: у каждой операции — свой курс на день записи.</p>
-      </header>
+    <div className="manage-screen dir-screen rates-screen">
+      <TitleBar
+        back={{ label: "Ещё", onClick: onBack }}
+        title="Курсы валют"
+        action={<TitleBarAction id={addButtonId("top")} icon="plus" label="Добавить курс" onClick={() => openGroup({ where: "top", currency: firstForeign })} />}
+      />
 
       <BaseCurrencySection budget={budget} lockText={base.lockText} write={write} onDone={setStatus} focusAfterRender={focusAfterRender} />
 
       <p className="manage-status" role="status">{status}</p>
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}
 
-      {adding?.where === "top" ? panel("top", adding.currency) : (
-        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => openGroup({ where: "top", currency: firstForeign })}>
-          <span className="icon-label"><Icon name="plus" size={20} />Добавить курс</span>
-        </button>
-      )}
+      {adding?.where === "top" ? <section className="card dir-rate-new" aria-label="Новый курс">{panel("top", adding.currency)}</section> : null}
 
       {cards.length === 0 ? (
-        <p className="field-hint">Счетов в другой валюте и курсов пока нет. Курс понадобится, когда появится счёт в долларах, евро или другой валюте: операции по нему записываются и в {currencySign(base.currency)}.</p>
-      ) : cards.map((card) => (
-        <CurrencyCard
-          key={card.currency}
-          card={card}
-          adding={adding?.where === card.currency}
-          panel={panel(card.currency, card.currency)}
-          onAdd={() => openGroup({ where: card.currency, currency: card.currency })}
-          onRemove={setRemoving}
-        />
-      ))}
+        <EmptyState glyph="scale" title="Счетов в другой валюте нет" text="Курс понадобится для счёта в $ или €." action={{ id: "rates-new-account", label: "Новый счёт", onClick: onNewAccount }} />
+      ) : <>
+        {cards.map((card) => (
+          <CurrencyCard
+            key={card.currency}
+            card={card}
+            today={today}
+            adding={adding?.where === card.currency}
+            panel={panel(card.currency, card.currency)}
+            onAdd={() => openGroup({ where: card.currency, currency: card.currency })}
+            onRemove={setRemoving}
+          />
+        ))}
+        <p className="dir-note">Курс вводите сами. Уже записанное не пересчитывается.</p>
+      </>}
 
       {switching === null ? null : (
         <ConfirmDialog
@@ -171,50 +182,66 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
   );
 }
 
-function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
+/** Знак валюты в крупном курсе: «$», «₸»; без своего знака — код. */
+function symbolOf(currency: CurrencyCode): string {
+  return currencySymbol(currency) ?? currency;
+}
+
+function CurrencyCard({ card, today, adding, panel, onAdd, onRemove }: {
   readonly card: CurrencyRates;
+  readonly today: string;
   readonly adding: boolean;
   readonly panel: ReactNode;
   readonly onAdd: () => void;
   readonly onRemove: (rate: ExchangeRate) => void;
 }) {
   const titleId = cardTitleId(card.currency);
+  const value = (rate: ExchangeRate) => formatRateValue(rate.rate, rate.currency, rate.baseCurrency, card.per);
   return (
-    <section className="section-card rate-card" aria-labelledby={titleId}>
-      <h2 id={titleId}><span className="rate-code">{card.currency}</span> {currencyName(card.currency)}</h2>
+    <section className="card dir-rate" aria-labelledby={titleId}>
+      <div className="dir-rate-head">
+        <h2 id={titleId}>{currencyName(card.currency)}</h2>
+        {card.accountNames.length === 0 ? null : (
+          <span>{" · "}{card.accountNames.length === 1 ? "счёт" : "счета"} {card.accountNames.map((name, index) => <span key={`${name}-${index}`}>{index > 0 ? ", " : ""}«<bdi dir="auto">{name}</bdi>»</span>)}</span>
+        )}
+      </div>
       {card.current === undefined ? (
         <p className="rate-now missing"><Icon name="triangle-alert" size={20} /><span>Курса на сегодня нет: операция по счёту в {card.currency} попросит его при записи, а «Всего на счетах» его не учтёт.</span></p>
       ) : (
-        <p className="rate-now"><strong>{rateWords(card.current)}</strong><span> с {formatDayYearLine(card.current.date)}</span></p>
+        <p className="dir-rate-now">{card.per} {symbolOf(card.currency)} = {value(card.current)}<span className="money-currency">{"\u00a0"}{currencySign(card.current.baseCurrency)}</span></p>
       )}
-      {card.accountNames.length === 0 ? null : (
-        <p className="field-hint">Счета: {card.accountNames.map((name, index) => <span key={`${name}-${index}`}>{index > 0 ? ", " : ""}«<bdi dir="auto">{name}</bdi>»</span>)}</p>
-      )}
-      {card.history.length === 0 ? null : <>
-        <h3 className="list-kicker">История</h3>
-        <ul className="rate-history">
+      {card.history.length === 0 ? null : (
+        <ul className="rate-history" aria-label={`История курса ${card.currency}`}>
           {card.history.map((rate) => (
             <li key={rate.id}>
-              <span className="rate-history-day">{formatDayYearLine(rate.date)}</span>
-              <span className="rate-history-value">{rateWords(rate)}</span>
-              <button className="quiet-button" type="button" aria-label={`Удалить курс ${rate.currency} от ${formatDayYear(rate.date)}`} onClick={() => onRemove(rate)}>Удалить</button>
+              <span className="rate-history-day">{rateDayWords(rate.date, today)}</span>
+              <span className="rate-history-value">{value(rate)}{"\u00a0"}{currencySign(rate.baseCurrency)}{card.per === 1 ? "" : ` за\u00a0${card.per}`}</span>
+              <button className="quiet-button rate-delete" type="button" aria-label={`Удалить курс ${rate.currency} от ${formatDayYear(rate.date)}`} onClick={() => onRemove(rate)}>
+                <Icon name="trash-2" size={24} />
+              </button>
             </li>
           ))}
         </ul>
-      </>}
+      )}
       {adding ? panel : (
-        <button id={addButtonId(card.currency)} className="secondary-button" type="button" onClick={onAdd}>
-          <span className="icon-label"><Icon name="plus" size={20} />Добавить курс {card.currency}</span>
+        <button id={addButtonId(card.currency)} className="quiet-button dir-rate-add" type="button" onClick={onAdd}>
+          <span className="icon-label"><Icon name="plus" size={24} />Добавить курс {card.currency}</span>
         </button>
       )}
     </section>
   );
 }
 
+/** Почему базу не сменить — короче, для строки карточки: «уже записаны операции». */
+export function baseLockWords(lockText: string): string {
+  const reason = lockText.replace(/^Базовую валюту не сменить:\s*/u, "").split(/\.\s/u)[0] ?? "";
+  return reason.replace(/\.$/u, "");
+}
+
 /**
- * Базовая валюта — та, в которой считается весь бюджет. Меняется, только пока бюджет пуст (домен:
- * `setBaseCurrency`, `baseCurrencyLock`): ни операций, ни планов, ни долгов, ни счетов в другой
- * валюте, ни курсов. Иначе — слова домена о том, что её держит.
+ * Основная валюта — одной строкой (макет 16): знак на подложке, «Основная валюта — рубль», «В ней
+ * все итоги и лимиты». Меняется, только пока бюджет пуст (домен: `setBaseCurrency`,
+ * `baseCurrencyLock`): тогда в карточке «Сменить», иначе строка говорит, что её держит.
  */
 function BaseCurrencySection({ budget, lockText, write, onDone, focusAfterRender }: {
   readonly budget: BudgetState;
@@ -239,7 +266,7 @@ function BaseCurrencySection({ budget, lockText, write, onDone, focusAfterRender
       saving.succeed(ticket);
       setEditing(false);
       onDone(`Базовая валюта — ${currencyLabel(choice)}.`);
-      // Форма закрылась: фокус — на заголовок раздела, под которым названа новая база.
+      // Форма закрылась: фокус — на заголовок карточки, где названа новая база.
       focusAfterRender("base-currency-title");
     } catch (cause) {
       saving.fail(ticket);
@@ -248,30 +275,30 @@ function BaseCurrencySection({ budget, lockText, write, onDone, focusAfterRender
       setBusy(false);
     }
   };
-  return (
-    <section className="section-card base-currency" aria-labelledby="base-currency-title">
-      <h2 id="base-currency-title">Базовая валюта</h2>
-      <p className="rate-now"><strong>{currencySign(current)} {currencyLabel(current)}</strong></p>
-      <p className="field-hint">В ней считаются бюджет, лимиты и итоги; операция по счёту в другой валюте записывается и в ней — по курсу дня.</p>
-      {lockText !== null ? <p className="field-hint" id="base-currency-lock">{lockText}</p> : editing ? (
-        <div className="base-currency-form">
-          <div className="field">
-            <label htmlFor="base-currency-select">Новая базовая валюта</label>
-            <CurrencySelect id="base-currency-select" value={choice} disabled={busy} exclude={NON_BASE_CURRENCIES} describedBy="base-currency-digits" onChange={setChoice} />
-            <p className="field-hint" id="base-currency-digits">Только валюты с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги считаются в сотых долях.</p>
-          </div>
-          {error === null ? null : <p className="field-error" role="alert">{error}</p>}
-          <div className="rate-quick-actions">
-            <button className="primary-button" type="button" aria-disabled={busy || choice === current || undefined} aria-busy={busy} onClick={() => { if (choice !== current) void save(); }}>Сохранить</button>
-            <button className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (busy) return; setChoice(current); setEditing(false); setError(null); focusAfterRender("base-currency-change"); }}>Отмена</button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <p className="field-hint">Её можно сменить, пока в бюджете нет ни операций, ни планов: потом она задана раз и навсегда.</p>
-          <button id="base-currency-change" className="secondary-button" type="button" onClick={() => { setEditing(true); focusAfterRender("base-currency-select"); }}>Сменить базовую валюту</button>
-        </>
+  return <>
+    <section className="card dir-base" aria-labelledby="base-currency-title">
+      <span className="icon-plate dir-plate dir-plate-sunken" aria-hidden="true">{currencySymbol(current) ?? current}</span>
+      <span className="dir-copy">
+        <h2 id="base-currency-title">Основная валюта — {currencyShortName(current).toLocaleLowerCase("ru-RU")}</h2>
+        <small id="base-currency-lock">В ней все итоги и лимиты{lockText === null ? "" : ` · сменить нельзя: ${baseLockWords(lockText)}`}</small>
+      </span>
+      {lockText !== null || editing ? null : (
+        <button id="base-currency-change" className="quiet-button" type="button" aria-label="Сменить основную валюту" onClick={() => { setEditing(true); focusAfterRender(`base-currency-select-${current}`); }}>Сменить</button>
       )}
     </section>
-  );
+    {lockText === null && editing ? (
+      <section className="card dir-base-form" aria-label="Новая основная валюта">
+        <div className="field">
+          <span className="dir-label" id="base-currency-label">Новая основная валюта</span>
+          <CurrencyPicker id="base-currency-select" labelledBy="base-currency-label" value={choice} disabled={busy} exclude={NON_BASE_CURRENCIES} describedBy="base-currency-digits" onChange={setChoice} />
+          <p className="field-hint" id="base-currency-digits">Только валюты с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги считаются в сотых долях. Её можно сменить, пока в бюджете нет ни операций, ни планов.</p>
+        </div>
+        {error === null ? null : <p className="field-error" role="alert">{error}</p>}
+        <div className="rate-quick-actions">
+          <button className="primary-button" type="button" aria-disabled={busy || choice === current || undefined} aria-busy={busy} onClick={() => { if (choice !== current) void save(); }}>Сохранить</button>
+          <button className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (busy) return; setChoice(current); setEditing(false); setError(null); focusAfterRender("base-currency-change"); }}>Отмена</button>
+        </div>
+      </section>
+    ) : null}
+  </>;
 }

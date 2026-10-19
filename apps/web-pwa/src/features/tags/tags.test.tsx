@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BudgetWriteRefusal } from "../../write-refusal";
 import { archivedNamesake, deleteRefusal, tagCountWords, tagErrorText, tagsView } from "./tags-model";
-import { QUICK_TAGS, TagsScreen } from "./TagsScreen";
+import { QUICK_TAGS, tagRowLabel, TagsScreen } from "./TagsScreen";
 
 const TRIP = "e2c00000-0000-4000-8000-0000000000c1";
 const REPAIR = "e2c00000-0000-4000-8000-0000000000c2";
@@ -80,20 +80,26 @@ describe("метки: модель", () => {
 describe("метки: разметка", () => {
   const markup = () => renderToStaticMarkup(<TagsScreen budget={state()} write={{ run: vi.fn() }} onBack={vi.fn()} />);
 
-  it("новая метка — форма с обработчиком; список — имя, число операций и три действия у каждой", () => {
-    const html = markup();
+  it("список (5.0): «#», имя, число операций и шеврон; строка — одна цель «Изменить»; архив ниже; поля на экране нет", () => {
+    const hyphenated = markup();
+    expect(hyphenated).toMatch(/<span class="dir-copy" aria-hidden="true"><strong><bdi dir="auto">От\u00ad?пуск<\/bdi>/u);
+    const html = hyphenated.replace(/\u00ad/gu, "");
     expect(html).toContain("<h1>Метки</h1>");
-    expect(html).toMatch(/<form class="tag-new manage-new-tag" noValidate=""><div class="field"><label for="tag-new-name">Новая метка<\/label>/u);
-    expect(html).toContain(">Добавить</button>");
-    expect(html).toMatch(/<bdi dir="auto">Отпуск<\/bdi><\/strong><small>2 операции<\/small>/u);
-    for (const label of ["Переименовать метку «Отпуск»", "Убрать метку «Отпуск» в архив", "Удалить метку «Отпуск»", "Вернуть метку «Дача» из архива", "Удалить метку «Дача»"]) {
-      expect(html, label).toContain(`aria-label="${label}"`);
-    }
-    expect(html).toContain("Архивная метка не предлагается при записи, но остаётся на своих операциях.");
-    // Без меток — пустое состояние с тем, где и как их завести (подробно — ниже, «пустое состояние»).
-    const empty = renderToStaticMarkup(<TagsScreen budget={makePlanningSeed()} write={{ run: vi.fn() }} onBack={vi.fn()} />);
-    expect(empty).toContain("Меток пока нет</span></h2>");
-    expect(empty).toContain(">Создать метку</button>");
+    // Новая метка — листом по «+», а не полем над списком.
+    expect(html).toContain('<button id="tags-add" class="icon-button" type="button" aria-label="Новая метка">');
+    expect(html).not.toContain('id="tag-new-name"');
+    expect(html).not.toContain("<form");
+    // Абзаца-пояснения под строкой заголовка нет (R3, п. 1).
+    expect(html).not.toContain("manage-head");
+    expect(html).toMatch(/<ul class="card dir-card"><li><button id="tag-row-[^"]+" class="dir-row" type="button" aria-label="Арбуз: ни одной операции\. Изменить">/u);
+    expect(html).toMatch(/<span class="icon-plate dir-plate tone-peach" aria-hidden="true">[^]*?glyph-hash[^]*?<bdi dir="auto">Отпуск<\/bdi><\/strong><small>2 операции<\/small>/u);
+    expect(html).toContain('href="#glyph-chevron-right"');
+    expect(html).toContain('<h2 id="tags-archived-title" class="dir-kicker">В архиве</h2>');
+    expect(html).toContain('aria-label="Дача: ни одной операции. Изменить"');
+    // Три действия у каждой строки ушли в лист метки: в списке их нет.
+    expect(html).not.toContain("Переименовать метку");
+    expect(html).not.toContain("Удалить метку");
+    expect(tagRowLabel({ tag: { id: TRIP, name: "Отпуск", active: true }, count: 12 })).toBe("Отпуск: 12 операций. Изменить");
   });
 });
 
@@ -110,13 +116,14 @@ describe("метки: пустое состояние (дизайн v5, 14)", ()
     expect(markup).not.toContain('id="tag-new-name"');
     // Строка заголовка — «‹ Ещё · Метки · +»: единственный `h1` и «+» с именем словами (макет 14).
     expect(markup.match(/<h1/gu)).toHaveLength(1);
-    expect(markup).toContain('<button class="icon-button" type="button" aria-label="Добавить метку">');
+    expect(markup).toContain('<button id="tags-add" class="icon-button" type="button" aria-label="Новая метка">');
   });
 
-  it("есть хоть одна метка, пусть в архиве, — прежний список и поле новой метки, без пустого состояния", () => {
+  it("есть хоть одна метка, пусть в архиве, — список, без пустого состояния", () => {
     const seed = makePlanningSeed();
     const markup = renderToStaticMarkup(<TagsScreen budget={{ ...seed, tags: [{ id: DACHA, name: "Дача", active: false }] }} write={{ run: vi.fn() }} onBack={vi.fn()} />);
-    expect(markup).toContain('id="tag-new-name"');
     expect(markup).not.toContain("Меток пока нет</span></h2>");
+    expect(markup).toContain("Активных меток нет.");
+    expect(markup).toContain('aria-label="Дача: ни одной операции. Изменить"');
   });
 });

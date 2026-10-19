@@ -1,6 +1,6 @@
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { isWithinDateWindow, type CurrencyCode, type ExchangeRateDraft } from "@family-budget/domain";
-import { CurrencySelect } from "../../components/CurrencySelect";
+import { CurrencyPicker } from "../../components/CurrencyPicker";
 import { formatDay } from "../../date-words";
 import { moneyParts } from "../../money";
 import { useFormDraft } from "../../navigation/draft-guard";
@@ -24,6 +24,8 @@ export interface RateQuickSheetProps {
     readonly draftLabel: string;
     /** Набрано ли число: экран спрашивает, прежде чем открыть другую группу на месте этой. */
     readonly onDirtyChange?: (dirty: boolean) => void;
+    /** Фокус при открытии — на выбранную валюту: кнопка, что открыла группу, остаётся или исчезает. */
+    readonly autoFocus?: boolean;
   };
 }
 
@@ -61,6 +63,12 @@ export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel,
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  const groupRef = useRef<HTMLDivElement>(null);
+  const autoFocus = screen?.autoFocus === true;
+  useEffect(() => {
+    if (autoFocus) groupRef.current?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"], input')?.focus();
+    // Once per opening.
+  }, []);
   const save = async () => {
     if (busy) return;
     if (screen !== undefined && !isWithinDateWindow(day)) {
@@ -87,12 +95,12 @@ export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel,
     void save();
   };
   return (
-    <div className="rate-quick" role="group" aria-labelledby={titleId}>
+    <div ref={groupRef} className="rate-quick" role="group" aria-labelledby={titleId}>
       <h3 id={titleId}>{screen === undefined ? <>Курс {currency} с {formatDay(date)}</> : "Новый курс"}</h3>
       {screen === undefined ? null : <>
         <div className="field">
-          <label htmlFor={`${id}-currency`}>Валюта</label>
-          <CurrencySelect id={`${id}-currency`} value={selected} exclude={[baseCurrency]} preferred={screen.preferred} disabled={busy} onChange={(code) => { setSelected(code); setError(null); }} />
+          <span className="dir-label" id={`${id}-currency-label`}>Валюта</span>
+          <CurrencyPicker id={`${id}-currency`} labelledBy={`${id}-currency-label`} value={selected} exclude={[baseCurrency]} preferred={screen.preferred} disabled={busy} onChange={(code) => { setSelected(code); setError(null); }} />
         </div>
         <div className="field">
           <label htmlFor={`${id}-date`}>С какого дня</label>

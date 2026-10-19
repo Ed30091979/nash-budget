@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BudgetWriteRefusal } from "../../write-refusal";
 import { RateQuickSheet } from "./RateQuickSheet";
-import { RatesScreen } from "./RatesScreen";
+import { baseLockWords, rateDayWords, RatesScreen } from "./RatesScreen";
 import { formatDayYear, formatDayYearLine } from "../../date-words";
 import { baseCurrencyState, currencyRates, familyCurrencies, NON_BASE_CURRENCIES, rateSavedText, rateWords, ratesErrorText, ratesNote } from "./rates-model";
 
@@ -84,8 +84,10 @@ describe("курсы: модель", () => {
   it("дата строкой экрана: день с месяцем неразрывны, год может уйти на новую строку — число не рвётся", () => {
     expect(formatDayYear("2026-10-14")).toBe("14\u00a0октября\u00a02026");
     expect(formatDayYearLine("2026-10-14")).toBe("14\u00a0октября 2026");
-    const markup = renderToStaticMarkup(<RatesScreen budget={state()} today={TODAY} write={{ run: vi.fn() } as never} onBack={() => undefined} />);
-    expect(markup).toContain('<span class="rate-history-day">15\u00a0октября 2026</span>');
+    const markup = renderToStaticMarkup(<RatesScreen budget={state()} today={TODAY} write={{ run: vi.fn() } as never} onBack={() => undefined} onNewAccount={() => undefined} />);
+    // Макет 16: «с 15 октября» — у курса этого года без года, у курса прошлых лет год может уйти на строку.
+    expect(markup).toContain('<span class="rate-history-day">с 15\u00a0октября</span>');
+    expect(rateDayWords("2025-12-31", TODAY)).toBe("с 31\u00a0декабря 2025");
   });
 
   it("базовая валюта: пока бюджет пуст — меняется, иначе — словами того, что её держит", () => {
@@ -125,51 +127,66 @@ describe("курсы: модель", () => {
 const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/\u00a0/gu, " ").trim();
 
 describe("курсы: разметка", () => {
-  const render = (budget = state()) => renderToStaticMarkup(<RatesScreen budget={budget} today={TODAY} write={{ run: vi.fn() }} onBack={vi.fn()} />);
+  const render = (budget = state()) => renderToStaticMarkup(<RatesScreen budget={budget} today={TODAY} write={{ run: vi.fn() }} onBack={vi.fn()} onNewAccount={vi.fn()} />);
 
-  it("говорит, что курс ручной и записанное не переоценивает; база — с причиной, по которой её не сменить", () => {
-    const text = plain(render());
-    expect(text).toContain("Курс задаётся вручную и действует с его даты, пока не задан новый. Он не переоценивает записанное");
-    expect(text).toContain("₽ Российский рубль — RUB");
-    expect(text).toContain("Базовую валюту не сменить: уже записаны операции.");
-    expect(render()).not.toContain("Сменить базовую валюту");
-  });
-
-  it("по каждой валюте — курс сегодня с датой, счета в ней и история с «Удалить»; без курса — предупреждение", () => {
+  it("макет 16: «+» в заголовке, основная валюта одной строкой с причиной, одна строка о ручном курсе; абзаца под заголовком нет", () => {
     const markup = render();
     const text = plain(markup);
-    expect(text).toContain("USD Доллар США 1 USD = 93,00 ₽ с 15 октября 2026");
-    expect(text).toContain("Счета: « Доллары »");
+    expect(markup).toContain('<button id="rates-add-top" class="icon-button" type="button" aria-label="Добавить курс">');
+    expect(text).not.toContain("Курс задаётся вручную и действует с его даты");
+    expect(text).toContain("Курс вводите сами. Уже записанное не пересчитывается.");
+    expect(markup).toMatch(/<section class="card dir-base" aria-labelledby="base-currency-title"><span class="icon-plate dir-plate dir-plate-sunken" aria-hidden="true">₽<\/span>/u);
+    expect(markup).toContain('<h2 id="base-currency-title">Основная валюта — рубль</h2>');
+    expect(text).toContain("В ней все итоги и лимиты · сменить нельзя: уже записаны операции");
+    expect(baseLockWords("Базовую валюту не сменить: заданы курсы к нынешней базовой валюте. Удалите их сначала.")).toBe("заданы курсы к нынешней базовой валюте");
+    expect(markup).not.toContain("Сменить основную валюту");
+  });
+
+  it("по каждой валюте — счета в ней, курс сегодня крупно знаком, история по датам с «Удалить»; без курса — предупреждение", () => {
+    const markup = render();
+    const text = plain(markup);
+    expect(markup).toContain('<h2 id="rates-USD">Доллар США</h2>');
+    expect(text).toContain("Доллар США · счёт « Доллары »");
+    expect(markup).toContain('<p class="dir-rate-now">1 $ = 93,00<span class="money-currency">\u00a0₽</span></p>');
+    expect(markup).toContain('<p class="dir-rate-now">100 ₸ = 18,40<span class="money-currency">\u00a0₽</span></p>');
+    expect(text).toContain("с 15 октября 93,00 ₽");
+    expect(text).toContain("18,40 ₽ за 100");
     // Дата — одна величина: пробелы в ней неразрывные.
     expect(markup).toContain('aria-label="Удалить курс USD от 15\u00a0октября\u00a02026"');
     expect(markup).toContain('aria-label="Удалить курс USD от 1\u00a0ноября\u00a02026"');
-    expect(text).toContain("100 KZT = 18,40 ₽");
+    expect(markup).toContain('href="#glyph-trash-2"');
     expect(text).toContain("Курса на сегодня нет: операция по счёту в EUR попросит его при записи");
     expect(markup.match(/Добавить курс (?:USD|KZT|EUR|GBP)</gu)).toHaveLength(4);
   });
 
-  it("пустой бюджет может сменить базу; без валют — подсказка, зачем курсы", () => {
+  it("пустой бюджет может сменить основную валюту; без валют — пустое состояние с «Новый счёт»", () => {
     const seed = makePlanningSeed();
     const empty: BudgetState = { ...seed, transactions: [], budgets: seed.budgets.map((budget) => ({ ...budget, lines: [], plannedIncomeMinor: 0 })), annualCommitments: [], scheduledExpenses: [], goals: [] };
     const markup = render(empty);
-    expect(markup).toContain(">Сменить базовую валюту</button>");
-    expect(plain(markup)).toContain("Счетов в другой валюте и курсов пока нет.");
+    expect(markup).toContain('aria-label="Сменить основную валюту">Сменить</button>');
+    expect(plain(markup)).toContain("В ней все итоги и лимиты");
+    expect(plain(markup)).not.toContain("сменить нельзя");
+    expect(markup).toContain(">Счетов в другой валюте нет<");
+    expect(plain(markup)).toContain("Курс понадобится для счёта в $ или €.");
+    expect(markup).toContain('id="rates-new-account"');
   });
 
-  it("группа «Новый курс» на экране: валюта на выбор без базы, день, «Сколько ₽ за 100 KZT»", () => {
+  it("группа «Новый курс» на экране: валюта чипами без базы, день, «Сколько ₽ за 100 KZT»", () => {
     const markup = renderToStaticMarkup(
       <RateQuickSheet currency="KZT" baseCurrency="RUB" date={TODAY} screen={{ preferred: ["USD", "KZT"], draftLabel: "курс" }} onSave={vi.fn(async () => null)} onCancel={vi.fn()} />,
     );
     expect(markup).toContain(">Новый курс</h3>");
-    expect(markup).toMatch(/<select id="[^"]+-currency">/u);
-    expect(markup).not.toContain('value="RUB"');
+    expect(markup).not.toContain("<select");
+    expect(markup).toMatch(/role="radiogroup" tabindex="-1" aria-labelledby="[^"]+-currency-label"/u);
+    expect(markup).toContain('aria-checked="true" aria-label="Тенге — KZT"');
+    expect(markup).not.toContain("Рубль — RUB");
     expect(markup).toMatch(/<input id="[^"]+-date" type="date" value="2026-10-19"/u);
     expect(plain(markup)).toContain("Сколько ₽ за 100 KZT");
     expect(markup).toContain('placeholder="18,40"');
     // В листе ввода — прежняя группа: валюта и день операции, без выбора.
     const sheet = renderToStaticMarkup(<RateQuickSheet currency="USD" baseCurrency="RUB" date={TODAY} onSave={vi.fn(async () => null)} onCancel={vi.fn()} />);
     expect(plain(sheet)).toContain("Курс USD с 19 октября");
-    expect(sheet).not.toContain("<select");
+    expect(sheet).not.toContain('role="radiogroup"');
     expect(sheet).not.toContain('type="date"');
   });
 });

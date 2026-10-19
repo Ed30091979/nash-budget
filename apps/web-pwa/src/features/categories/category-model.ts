@@ -1,4 +1,5 @@
 import {
+  calculateBudget,
   CATEGORY_GROUPS,
   CATEGORY_NAME_MAX_LENGTH,
   categoriesInGroupOrder,
@@ -12,10 +13,12 @@ import {
   type CategoryGroup,
   type CategoryPatch,
   type CategoryType,
+  type CurrencyCode,
 } from "@family-budget/domain";
 import { categoryVisual, iconOfKey, toneOfKey, type CategoryTone, type CategoryVisual } from "../../category-visual";
 import type { IconName } from "../../components/Icon";
 import { monthName } from "../../date-words";
+import { formatMoney } from "../../money";
 import { writeFailureText } from "../../write/useBudgetWrite";
 import { archiveCategory, OperationsValidationError, restoreCategory } from "../operations/model";
 import {
@@ -54,6 +57,47 @@ export function categoryLimit(state: BudgetState, categoryId: string): number | 
 export function planMonthWord(state: BudgetState): string | null {
   const budget = activeBudgetOf(state);
   return budget === undefined ? null : monthName(monthOfDate(budget.startDate));
+}
+
+/** «в октябре» — предложный падеж месяца: подпись образца категории (макет 13). */
+const MONTH_PREPOSITIONAL = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"] as const;
+
+/** Месяц плана: `ГГГГ-ММ`, или `null` — плана нет. */
+function planMonth(state: BudgetState): string | null {
+  const budget = activeBudgetOf(state);
+  return budget === undefined ? null : monthOfDate(budget.startDate);
+}
+
+/** «ноябрь» — месяц после месяца плана: туда перейдёт лимит, когда его откроют. */
+export function nextMonthWord(state: BudgetState): string | null {
+  const month = planMonth(state);
+  if (month === null) return null;
+  const [year, number] = month.split("-").map(Number) as [number, number];
+  const next = number === 12 ? `${year + 1}-01` : `${year}-${String(number + 1).padStart(2, "0")}`;
+  return monthName(next);
+}
+
+/**
+ * Подпись образца над листом категории (макет 13): «22 000 из 30 000 ₽ в октябре» — потрачено в
+ * месяце плана против лимита, «4 000 ₽ в октябре, без лимита» — без лимита; у источника дохода —
+ * «Источник дохода», у архивной — «В архиве». Суммы — в базовой валюте, как у плитки «Обзора».
+ */
+export function categoryPreviewWords(state: BudgetState, category: Category, currency: CurrencyCode): string {
+  if (!category.active) return "В архиве";
+  if (category.type === "income") return "Источник дохода";
+  const budget = activeBudgetOf(state);
+  const month = planMonth(state);
+  if (budget === undefined || month === null) return "Категория расходов";
+  let spent = 0;
+  try {
+    spent = calculateBudget(state, budget.id).categoryMetrics[category.id]?.actualMinor ?? 0;
+  } catch {
+    spent = 0;
+  }
+  const where = `в ${MONTH_PREPOSITIONAL[Number(month.slice(5, 7)) - 1] ?? monthName(month)}`;
+  const limit = categoryLimit(state, category.id);
+  if (limit === null) return `${formatMoney(spent, currency)} ${where}, без лимита`;
+  return `${formatMoney(spent, currency).replace(/\u00a0\S+$/u, "")} из ${formatMoney(limit, currency)} ${where}`;
 }
 
 export interface CategoryCard {

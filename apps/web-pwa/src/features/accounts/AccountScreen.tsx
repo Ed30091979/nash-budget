@@ -1,11 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ACCOUNT_TYPES,
-  accountsInOrder,
   archiveAccount,
   baseCurrencyOf,
-  calculateHoldings,
-  moveAccount,
   restoreAccount,
   type Account,
   type AccountType,
@@ -13,14 +10,16 @@ import {
   type CurrencyCode,
 } from "@family-budget/domain";
 import { accountIcon, type CategoryTone } from "../../category-visual";
-import { TitleBar } from "../../components/TitleBar";
-import { CurrencySelect } from "../../components/CurrencySelect";
+import { CurrencyPicker } from "../../components/CurrencyPicker";
+import { FormSheet } from "../../components/FormSheet";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon, type IconName } from "../../components/Icon";
 import { ACCOUNT_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { Money } from "../../components/Money";
-import { ReorderControls, type ReorderDirection } from "../../components/ReorderControls";
+import { OptionCards } from "../../components/OptionCards";
+import { TileSquare } from "../../components/tiles/Tile";
 import { TonePicker } from "../../components/TonePicker";
+import { softHyphenate } from "../../hyphenation";
 import { useFormDraft } from "../../navigation/draft-guard";
 import { plainInputValue } from "../../plain-text";
 import { currencySign } from "../rates/RateQuickSheet";
@@ -31,9 +30,11 @@ import {
   accountDraftDiffers,
   accountDraftOf,
   accountFormError,
+  accountOffset,
   accountSave,
   blankAccountDraft,
   currencyLock,
+  accountEstimate,
   parseOpening,
   type AccountFormDraft,
   type AccountFormError,
@@ -53,8 +54,17 @@ const FIELD_IDS: Readonly<Record<AccountFormError["field"], string>> = {
   form: ACCOUNT_FORM_ERROR_ID,
 };
 
+/** Вид счёта карточкой 2×2 (макет 12): глиф — тот же, что у плитки счёта этого вида. */
+const ACCOUNT_TYPE_ICONS: Readonly<Record<AccountType, IconName>> = {
+  current: "credit-card",
+  cash: "banknote",
+  savings: "piggy-bank",
+  reserve: "shield",
+};
+
 export interface AccountFormViewProps {
   readonly budget: BudgetState;
+  readonly today: string;
   /** Счёт, открытый для правки; `null` — новый. */
   readonly account: Account | null;
   readonly draft: AccountFormDraft;
@@ -62,16 +72,16 @@ export interface AccountFormViewProps {
   readonly error: AccountFormError | null;
   readonly busy: boolean;
   readonly onPatch: (patch: Partial<AccountFormDraft>) => void;
-  readonly onSubmit: () => void;
 }
 
 /**
- * Форма счёта (план волны 2, §1.5) без состояния: что набрано и какой отказ — приходит сверху.
- * Валюта заперта, пока на счёт что-то ссылается; начальный остаток предупреждает, что двигает
- * остатки в прошлом; иконка и тон — радиогруппы со словами; «Учитывать в итоге» — отметка.
+ * Разделы листа счёта (дизайн 5.0, макет 12) без состояния: что набрано и какой отказ — приходит
+ * сверху. Образец — квадрат счёта, имя и остаток с пересчётом; дальше название, вид карточками 2×2,
+ * валюта чипами (`CurrencyPicker`), «Сколько сейчас на счёте» с пересчётом в базовую валюту, цвет,
+ * значок и переключатель «Считать во «Всего на счетах»». Правила 2c на месте: валюта заперта, пока на
+ * счёт ссылаются, и говорит почему (D-032); правка остатка называет сдвиг прошлых дней суммой.
  */
-export function AccountFormView({ budget, account, draft, pristine, error, busy, onPatch, onSubmit }: AccountFormViewProps) {
-  const id = useId();
+export function AccountFormView({ budget, today, account, draft, pristine, error, busy, onPatch }: AccountFormViewProps) {
   const lock = currencyLock(budget, account);
   const base = baseCurrencyOf(budget);
   const own = useMemo(() => [...new Set(budget.accounts.map((item) => item.currency))], [budget.accounts]);
@@ -79,19 +89,31 @@ export function AccountFormView({ budget, account, draft, pristine, error, busy,
   const saved = parseOpening(pristine);
   const shift = account !== null && opening.kind === "amount" && saved.kind === "amount" ? opening.minor - saved.minor : 0;
   const fieldError = (field: AccountFormError["field"]) => (error?.field === field ? error.message : null);
-  const described = (field: AccountFormError["field"], hint?: string) => {
-    const ids = [hint, fieldError(field) === null ? undefined : `${FIELD_IDS[field]}-error`].filter(Boolean).join(" ");
+  const described = (field: AccountFormError["field"], ...hints: (string | undefined)[]) => {
+    const ids = [...hints, fieldError(field) === null ? undefined : `${FIELD_IDS[field]}-error`].filter(Boolean).join(" ");
     return ids === "" ? undefined : ids;
   };
   const fallbackIcon: IconName = accountIcon({ type: draft.type, currency: draft.currency });
   const fallbackTone: CategoryTone = "neutral";
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    onSubmit();
-  };
+  const sign = currencySign(draft.currency);
+  const foreign = draft.currency !== base;
+  const estimate = opening.kind === "amount" ? accountEstimate(budget, draft.currency, opening.minor, today) : null;
+  const name = draft.name.trim() === "" ? (account === null ? "Новый счёт" : account.name) : draft.name;
   return (
-    <form className="manage-form" onSubmit={submit} noValidate aria-describedby={error?.field === "form" ? ACCOUNT_FORM_ERROR_ID : undefined}>
-      <div className="field">
+    <>
+      {/* Образец — эхо полей для глаза: имя, остаток и пересчёт названы полями ниже. */}
+      <div className="card dir-preview" aria-hidden="true">
+        <TileSquare icon={draft.icon ?? fallbackIcon} tone={draft.tone ?? "account"} />
+        <span className="dir-preview-copy">
+          <span className="dir-preview-name"><bdi dir="auto">{softHyphenate(name)}</bdi></span>
+          <span className="dir-preview-note">
+            {opening.kind === "amount" ? <Money value={opening.minor} currency={draft.currency} /> : "—"}
+            {estimate === null ? null : <> ≈ <Money value={estimate.inBaseMinor} currency={base} /></>}
+          </span>
+        </span>
+      </div>
+
+      <div className="field dir-field">
         <label htmlFor="account-name">Название</label>
         <input
           id="account-name"
@@ -108,56 +130,64 @@ export function AccountFormView({ budget, account, draft, pristine, error, busy,
         <FieldError id="account-name" message={fieldError("name")} />
       </div>
 
-      <fieldset className="option-grid" disabled={busy}>
-        <legend>Вид счёта</legend>
-        {ACCOUNT_TYPES.map((type: AccountType) => (
-          <label key={type}>
-            <input id={`account-type-${type}`} type="radio" name={`${id}-type`} value={type} checked={draft.type === type} onChange={() => onPatch({ type })} />
-            <span>{ACCOUNT_TYPE_WORDS[type]}</span>
-          </label>
-        ))}
-      </fieldset>
+      <OptionCards
+        legend="Вид"
+        options={ACCOUNT_TYPES.map((type: AccountType) => ({ value: type, label: ACCOUNT_TYPE_WORDS[type], icon: ACCOUNT_TYPE_ICONS[type], id: `account-type-${type}` }))}
+        value={draft.type}
+        disabled={busy}
+        describedBy={described("type")}
+        onChange={(type) => onPatch({ type })}
+      />
+      <FieldError id={FIELD_IDS.type} message={fieldError("type")} />
 
-      <div className="field">
-        <label htmlFor="account-currency">Валюта</label>
-        <CurrencySelect
+      <div className="dir-field">
+        <p className="dir-label" id="account-currency-label">Валюта</p>
+        <CurrencyPicker
           id="account-currency"
+          labelledBy="account-currency-label"
           value={draft.currency}
           preferred={[base, ...own]}
-          disabled={busy || lock !== null}
-          describedBy={described("currency", lock === null ? undefined : "account-currency-lock")}
+          disabled={busy}
+          locked={lock !== null}
+          describedBy={described("currency", lock === null ? (foreign ? "account-currency-foreign" : undefined) : "account-currency-lock")}
           onChange={(currency: CurrencyCode) => onPatch({ currency })}
         />
         {lock === null ? null : <p className="field-hint" id="account-currency-lock">{lock}</p>}
-        {lock === null && draft.currency !== base ? (
-          <p className="field-hint" id="account-currency-foreign">Счёт в {draft.currency}: каждая операция по нему запишется и в {base} — по курсу дня или суммой, которую вы назовёте. Цели и платежи плана на нём не ведутся.</p>
+        {lock === null && foreign ? (
+          <p className="field-hint" id="account-currency-foreign">Счёт в {draft.currency}: операции по нему запишутся и в {base} по курсу дня, а цели и платежи плана на нём не ведутся.</p>
         ) : null}
         <FieldError id="account-currency" message={fieldError("currency")} />
       </div>
 
-      <div className="field">
-        <label htmlFor="account-opening">Начальный остаток, {currencySign(draft.currency)}</label>
-        <input
-          id="account-opening"
-          inputMode="decimal"
-          autoComplete="off"
-          maxLength={24}
-          placeholder="0"
-          value={draft.opening}
-          disabled={busy}
-          aria-invalid={fieldError("opening") === null ? undefined : true}
-          aria-describedby={described("opening", "account-opening-hint")}
-          onChange={(event) => onPatch({ opening: event.target.value })}
-        />
+      <div className="field dir-field">
+        <label htmlFor="account-opening">Сколько сейчас на счёте<span className="sr-only">, {sign}</span></label>
+        <span className="dir-money-field">
+          <input
+            id="account-opening"
+            inputMode="decimal"
+            autoComplete="off"
+            maxLength={24}
+            placeholder="0"
+            value={draft.opening}
+            disabled={busy}
+            aria-invalid={fieldError("opening") === null ? undefined : true}
+            aria-describedby={described("opening", foreign ? "account-opening-estimate" : undefined, account === null ? undefined : "account-opening-hint")}
+            onChange={(event) => onPatch({ opening: event.target.value })}
+          />
+          <span className="dir-money-sign" aria-hidden="true">{sign}</span>
+        </span>
+        {foreign ? (
+          <p className="field-hint" id="account-opening-estimate">
+            {estimate?.words ?? `Курса ${draft.currency} на сегодня нет: «Всего на счетах» учтёт счёт, когда курс будет задан в «Курсах валют».`}
+          </p>
+        ) : null}
         <label className="check-row" htmlFor="account-negative">
           <input id="account-negative" type="checkbox" checked={draft.negative} disabled={busy} onChange={(event) => onPatch({ negative: event.target.checked })} />
           <span>Остаток ниже нуля — долг по карте</span>
         </label>
-        <p className="field-hint" id="account-opening-hint">
-          {account === null
-            ? "Сколько на счёте сейчас: с этой суммы начнётся его остаток."
-            : "Начальный остаток меняет остатки в прошлом: остаток счёта на каждый прошлый день сдвинется на ту же сумму."}
-        </p>
+        {account === null ? null : (
+          <p className="field-hint" id="account-opening-hint">Остаток считается от начального: правка сдвинет и остатки всех прошлых дней.</p>
+        )}
         {shift !== 0 ? (
           <p className="entry-notice manage-notice" role="status">
             <span><Icon name="triangle-alert" size={20} /></span>
@@ -167,21 +197,18 @@ export function AccountFormView({ budget, account, draft, pristine, error, busy,
         <FieldError id="account-opening" message={fieldError("opening")} />
       </div>
 
-      <div id="account-tone">
-        <TonePicker legend="Цвет на «Обзоре»" value={draft.tone} fallback={fallbackTone} disabled={busy} onChange={(tone) => onPatch({ tone })} />
+      <div id="account-tone" className="dir-field">
+        <TonePicker legend="Цвет" value={draft.tone} fallback={fallbackTone} disabled={busy} onChange={(tone) => onPatch({ tone })} />
       </div>
-      <div id="account-icon">
-        <IconPicker legend="Иконка" icons={ACCOUNT_ICON_CHOICES} value={draft.icon} fallback={fallbackIcon} tone={draft.tone ?? fallbackTone} disabled={busy} onChange={(icon) => onPatch({ icon })} />
+      <div id="account-icon" className="dir-field">
+        <IconPicker legend="Значок" icons={ACCOUNT_ICON_CHOICES} value={draft.icon} fallback={fallbackIcon} tone={draft.tone ?? fallbackTone} disabled={busy} onChange={(icon) => onPatch({ icon })} />
       </div>
 
-      <label className="check-row" htmlFor="account-include">
-        <input id="account-include" type="checkbox" checked={draft.includeInTotal} disabled={busy} onChange={(event) => onPatch({ includeInTotal: event.target.checked })} />
-        <span>Учитывать в итоге «Всего на счетах»</span>
+      <label className="check-row dir-toggle" htmlFor="account-include">
+        <span>Считать во «Всего на счетах»</span>
+        <input id="account-include" type="checkbox" role="switch" checked={draft.includeInTotal} disabled={busy} onChange={(event) => onPatch({ includeInTotal: event.target.checked })} />
       </label>
-
-      {error?.field === "form" ? <p className="field-error" id={ACCOUNT_FORM_ERROR_ID} role="alert" tabIndex={-1}>{error.message}</p> : null}
-      <button className="primary-button wide" type="submit" disabled={busy} aria-busy={busy}>{account === null ? "Завести счёт" : "Сохранить"}</button>
-    </form>
+    </>
   );
 }
 
@@ -198,10 +225,12 @@ export interface AccountScreenProps {
   /** Вид нового счёта из адреса (`?type=savings` — вопрос первого запуска); у правки не читается. */
   readonly initialType?: AccountType;
   readonly write: BudgetWriter;
+  /**
+   * Крестик и Esc: к родителю — списку счетов, а из вопроса первого запуска — на «Обзор». Набранное
+   * спрашивает реестр черновиков, как при любом уходе с экрана.
+   */
   readonly onBack: () => void;
-  /** Слово родителя в строке заголовка: «‹ Счета» — или «‹ Обзор», откуда форму открыл вопрос первого запуска. */
-  readonly backLabel?: string;
-  /** Записано: назад к списку, со словами о сделанном. */
+  /** Записано: назад, со словами о сделанном. */
   readonly onDone: (message: string) => void;
 }
 
@@ -209,17 +238,20 @@ const ACCOUNT_ARCHIVE_ID = "account-archive";
 const ACCOUNT_RESTORE_ID = "account-restore";
 
 /**
- * «Новый счёт» и правка счёта. Черновик — в реестре (слой экрана): уход с набранным спрашивает
- * диалог приложения; отправленный — «записывается» до первого `await`, отказ записи оставляет его
- * на месте с отказом у поля. Порядок и архив — отдельные записи сразу, черновик они не трогают.
+ * Лист «Новый счёт» и правка счёта (дизайн 5.0, макет 12) — маршрут `#/more/accounts/<id>` поверх
+ * списка счетов. Черновик — в реестре (слой экрана): уход с набранным — крестиком, Esc или системным
+ * «Назад» — спрашивает диалог приложения; отправленный — «записывается» до первого `await`, отказ
+ * записи оставляет его на месте с отказом у поля. Архив — отдельная запись сразу, черновик он не
+ * трогает; порядок счетов меняется в списке, режимом «Изменить порядок».
  */
-export function AccountScreen({ budget, today, accountId, initialType, write, onBack, backLabel = "Счета", onDone }: AccountScreenProps) {
+export function AccountScreen({ budget, today, accountId, initialType, write, onBack, onDone }: AccountScreenProps) {
   const account = accountId === null ? null : budget.accounts.find((item) => item.id.toLowerCase() === accountId.toLowerCase()) ?? null;
   // Снимок при открытии — не пересчитывается от бюджета: правка с другого устройства не делает
-  // форму «грязной» и не стирает набранное.
+  // форму «грязной» и не стирает набранное. Движения к сегодняшнему дню — того же снимка.
+  const [offset] = useState(() => (account === null ? 0 : accountOffset(budget, account, today)));
   const [pristine] = useState<AccountFormDraft>(() => (account === null
     ? { ...blankAccountDraft(budget), ...(initialType === undefined ? {} : { type: initialType }) }
-    : accountDraftOf(account)));
+    : accountDraftOf(account, offset)));
   const [draft, setDraft] = useState<AccountFormDraft>(pristine);
   const [error, setError] = useState<AccountFormError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -247,7 +279,7 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
   };
   const submit = () => {
     if (busy) return;
-    const plan = accountSave(draft, account === null ? null : { account, pristine });
+    const plan = accountSave(draft, account === null ? null : { account, pristine, offsetMinor: offset });
     if (plan.kind === "error") {
       fail(plan.error);
       return;
@@ -266,9 +298,6 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
       fail(accountFormError(cause));
     });
   };
-
-  const active = accountsInOrder(budget.accounts.filter((item) => item.active));
-  const position = account === null ? 0 : active.findIndex((item) => item.id === account.id) + 1;
   const sideWrite = async (change: (state: BudgetState) => BudgetState, done: string, then?: string) => {
     if (busy) return;
     setBusy(true);
@@ -283,27 +312,24 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
       setBusy(false);
     }
   };
-  const move = (direction: ReorderDirection) => account === null ? undefined : sideWrite(
-    (state) => moveAccount(state, account.id, direction),
-    `Теперь «${account.name}» — ${direction === "up" ? position - 1 : position + 1}-й из ${active.length}.`,
-  );
-  const balance = account === null ? null : calculateHoldings(budget, today).accountBalancesMinor[account.id] ?? null;
 
   return (
-    <div className="manage-screen account-screen">
-      <TitleBar back={{ label: backLabel, onClick: onBack }} title={account === null ? "Новый счёт" : <bdi dir="auto">{account.name}</bdi>} />
-      <header className="manage-head">
-        {account === null ? <p>Счёт — место, где лежат деньги: карта, наличные, накопления. Его остаток виден на «Обзоре» плиткой.</p> : (
-          <p>
-            {ACCOUNT_TYPE_WORDS[account.type]} · {account.currency}
-            {balance === null ? null : <> · остаток <Money value={balance} currency={account.currency} /></>}
-            {account.active ? null : " · в архиве"}
-          </p>
-        )}
-      </header>
-      <p className="manage-status" role="status">{notice}</p>
+    <FormSheet
+      id="account-sheet"
+      titleLevel={1}
+      title={account === null ? "Новый счёт" : "Счёт"}
+      onClose={onBack}
+      busy={busy}
+      onSubmit={submit}
+      describedBy={error?.field === "form" ? ACCOUNT_FORM_ERROR_ID : undefined}
+      footer={<>
+        {error?.field === "form" ? <p className="field-error" id={ACCOUNT_FORM_ERROR_ID} role="alert" tabIndex={-1}>{error.message}</p> : null}
+        <button className="primary-button wide dir-save" type="submit" disabled={busy} aria-busy={busy}>Сохранить</button>
+      </>}
+    >
       <AccountFormView
         budget={budget}
+        today={today}
         account={account}
         draft={draft}
         pristine={pristine}
@@ -313,32 +339,23 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
           setDraft((current) => ({ ...current, ...patch }));
           if (error !== null && error.field !== "form") setError(null);
         }}
-        onSubmit={submit}
       />
-
-      {account === null ? null : <>
-        {account.active ? (
-          <section className="manage-group" aria-labelledby="account-order-title">
-            <h2 id="account-order-title" className="list-kicker">Место в списке</h2>
-            <p className="field-hint">{position}-й из {active.length} — в этом порядке счета стоят на «Обзоре» и в выборе счёта.</p>
-            <ReorderControls id={`account-${account.id}`} name={account.name} position={position} count={active.length} busy={busy} onMove={move} />
-          </section>
-        ) : null}
-        <section className="manage-group" aria-labelledby="account-archive-title">
-          <h2 id="account-archive-title" className="list-kicker">Архив</h2>
+      {account === null ? null : (
+        <section className="dir-archive" aria-label="Архив">
           {account.active ? <>
-            <p className="field-hint">Счёт в архиве не предлагается для новых операций и уходит с «Обзора». Его остаток, операции и история остаются в итогах и отчётах; вернуть его можно в любой момент. Удаления нет: прошлые месяцы ссылаются на счёт.</p>
-            <button id={ACCOUNT_ARCHIVE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => archiveAccount(state, account.id), `«${account.name}» в архиве. Остаток и история на месте.`, ACCOUNT_RESTORE_ID)}>
-              <span className="icon-label"><Icon name="archive" size={20} />Убрать в архив</span>
+            <button id={ACCOUNT_ARCHIVE_ID} className="quiet-button dir-danger" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => archiveAccount(state, account.id), `«${account.name}» в архиве. Остаток и история на месте.`, ACCOUNT_RESTORE_ID)}>
+              <span className="icon-label"><Icon name="archive" size={24} />Убрать в архив</span>
             </button>
+            <p className="field-hint">Счёт уйдёт с «Обзора» и из выбора, а остаток и история останутся в итогах. Удаления нет: прошлые месяцы ссылаются на счёт.</p>
           </> : <>
-            <p className="field-hint">Счёт в архиве: для новых операций он не предлагается. Его остаток и история — в итогах и отчётах.</p>
             <button id={ACCOUNT_RESTORE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => restoreAccount(state, account.id), `«${account.name}» снова среди активных.`, ACCOUNT_ARCHIVE_ID)}>
               Вернуть из архива
             </button>
+            <p className="field-hint">Счёт в архиве: для новых операций он не предлагается. Остаток и история — в итогах и отчётах.</p>
           </>}
         </section>
-      </>}
-    </div>
+      )}
+      <p className="sheet-status" role="status">{notice}</p>
+    </FormSheet>
   );
 }

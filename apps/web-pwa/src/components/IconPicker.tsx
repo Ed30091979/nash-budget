@@ -10,9 +10,13 @@ import { Icon, type IconName } from "./Icon";
  * Группа — настоящие радиокнопки: стрелки переходят между вариантами, Tab входит в группу один раз,
  * читающий с экрана слышит слово глифа («Корзина, 3 из 20, выбрано»). Выбор — не цвет: кольцо
  * акцента, галочка и полужирное слово (§9).
+ *
+ * Дизайн 5.0 (макет 13): сетка квадратов 48 тона, выбранного рядом, по шесть в ряд (на 320 — по
+ * четыре); слово глифа — доступное имя варианта, а видна только подпись «Авто» у первого: его глиф
+ * выведен по имени или виду, а не выбран. Выбор — кольцо акцента вокруг квадрата и галочка в углу.
  */
 
-/** Слово глифа — доступное имя варианта и подпись под ним. Только для глифов, которые предлагаются. */
+/** Слово глифа — доступное имя варианта. Только для глифов, которые предлагаются. */
 export const ICON_WORDS: ReadonlyMap<IconName, string> = new Map<IconName, string>([
   ["credit-card", "Карта"],
   ["banknote", "Купюра"],
@@ -92,16 +96,18 @@ export function IconPicker({ legend, icons, value, fallback, tone, disabled, onC
     ...icons.map((icon) => ({ key: icon, icon, word: iconWord(icon), choice: icon })),
   ];
   return (
-    <fieldset className="picker" disabled={disabled}>
-      <legend>{legend}</legend>
+    <fieldset className="picker icon-picker" disabled={disabled}>
+      <legend className="dir-label">{legend}</legend>
       <div className="picker-grid">
         {options.map((option) => {
           const checked = option.choice === value;
+          const auto = option.choice === null;
           return (
-            <label key={option.key} className="picker-option">
+            <label key={option.key} className={auto ? "picker-option picker-auto" : "picker-option"}>
               <input type="radio" name={name} value={option.key} checked={checked} onChange={() => onChange(option.choice)} />
-              <span className={`icon-plate tone-${tone}`} aria-hidden="true"><Icon name={option.icon} size={24} /></span>
-              <span className="picker-word">{option.word}</span>
+              <span className={`icon-plate tone-${tone}${auto ? " auto" : ""}`} aria-hidden="true"><Icon name={option.icon} size={24} /></span>
+              {/* Слово глифа — для слуха; на глаз глиф и есть слово. «Авто» видно: его глиф выведен, а не выбран. */}
+              <span className={auto ? "picker-word" : "sr-only"}>{option.word}</span>
               {checked ? <span className="picker-check" aria-hidden="true"><Icon name="check" size={20} /></span> : null}
             </label>
           );

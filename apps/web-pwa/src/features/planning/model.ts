@@ -14,7 +14,7 @@ import {
   type ScheduleMode,
   type ScheduledExpense,
 } from "@family-budget/domain";
-import { positiveAmountMessage } from "../../components/CurrencySelect";
+import { positiveAmountMessage } from "../../components/CurrencyPicker";
 import { parseMoney } from "../../money";
 import { BudgetWriteRefusal } from "../../write-refusal";
 
