@@ -8,7 +8,7 @@ import { formatMoney } from "../money";
 import { routeKey, withoutSheet, type Route } from "../navigation/routes";
 import { BudgetWriteRefusal, WRITE_REFUSAL_TEXT } from "../write-refusal";
 import type { BudgetChange, BudgetWriter } from "../write/useBudgetWrite";
-import { createEntryController } from "./entry-controller";
+import { createEntryController, PREVIOUS_WRITE_PENDING } from "./entry-controller";
 import { createEntryDraftStore } from "./entry-draft-store";
 
 const MAIN = SEED_IDS.accounts.main;
@@ -87,8 +87,11 @@ describe("запись из листа ввода", () => {
     expect(shell.redirects).toEqual([withoutSheet(SHEET)]);
     expect(shell.store.current()?.status).toBe("saving");
     expect(shell.store.isDirty()).toBe(false);
-    // Второе нажатие, пока запись летит, — не вторая запись.
-    expect(shell.controller.submit(food())).toBeNull();
+    // Второе нажатие, пока запись летит, — не вторая запись, и не тишина: лист называет причину
+    // (ревью 2b, LOW-5). «Удалить» в это время — то же.
+    expect(shell.controller.submit(food())).toBe(PREVIOUS_WRITE_PENDING);
+    const expense = shell.budget().transactions.find((item) => item.kind === "expense")!;
+    await expect(shell.controller.remove(expense)).resolves.toBe(PREVIOUS_WRITE_PENDING);
     shell.releaseWrites();
     await settle();
     expect(shell.writes).toHaveLength(1);

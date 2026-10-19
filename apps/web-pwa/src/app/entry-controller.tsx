@@ -59,6 +59,12 @@ export interface EntryControllerOptions {
   readonly makeId?: () => string;
 }
 
+/**
+ * Касание «Записать» или «Удалить», пока прежняя запись ещё летит: шлюз второй записи не пускает, и
+ * лист говорит почему, а не молчит (ревью 2b, LOW-5).
+ */
+export const PREVIOUS_WRITE_PENDING = "Предыдущая запись ещё сохраняется. Нажмите снова через секунду.";
+
 /** Отказ словами поля или общей фразой — текст произвольной ошибки на экран не попадает. */
 export function entryErrorText(error: unknown): string {
   if (error instanceof OperationsValidationError || error instanceof RateValidationError || error instanceof TagValidationError) return error.message;
@@ -121,7 +127,7 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
 
   return {
     submit(draft) {
-      if (gate.locked) return null;
+      if (gate.locked) return PREVIOUS_WRITE_PENDING;
       const before = options.current();
       if (before === null) return null;
       try {
@@ -168,7 +174,8 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
 
     async remove(transaction) {
       const before = options.current();
-      if (before === null || gate.locked) return null;
+      if (gate.locked) return PREVIOUS_WRITE_PENDING;
+      if (before === null) return null;
       try {
         deleteTransaction(before, transaction.id);
       } catch (error) {
