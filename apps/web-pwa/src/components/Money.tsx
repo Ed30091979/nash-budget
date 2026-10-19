@@ -1,10 +1,28 @@
+import { createContext, useContext, type ReactNode } from "react";
+import { DEFAULT_BASE_CURRENCY, type CurrencyCode } from "@family-budget/domain";
 import { moneyParts } from "../money";
+
+/**
+ * Базовая валюта семьи — та, в которой считаются бюджет, итоги и лимиты (D-031). Оболочка ставит её
+ * из `household` один раз; сумма без своей валюты набирается в ней, а не в рублях по умолчанию.
+ * Сумма операции и остаток счёта называют свою валюту сами (`currency`).
+ */
+const BaseCurrencyContext = createContext<CurrencyCode>(DEFAULT_BASE_CURRENCY);
+
+export function BaseCurrencyProvider({ currency, children }: { readonly currency: CurrencyCode; readonly children: ReactNode }) {
+  return <BaseCurrencyContext.Provider value={currency}>{children}</BaseCurrencyContext.Provider>;
+}
+
+/** Базовая валюта, в которой набираются итоги на этом экране. */
+export function useBaseCurrency(): CurrencyCode {
+  return useContext(BaseCurrencyContext);
+}
 
 /**
  * §7 документа дизайна: сумма набирается табличными цифрами, минус — знаком U+2212, а знак
  * валюты — светлее самих цифр.
  *
- * Компонент существует ровно ради последнего: приглушить «₽» можно только отдельным элементом,
+ * Компонент существует ровно ради последнего: приглушить знак валюты можно только отдельным элементом,
  * а вырезать его из готовой строки руками нельзя — разделитель разрядов и отбивка перед знаком
  * набраны неразрывным пробелом, и поиск по строке рано или поздно спутает их. Разбор делает
  * платформа (`money.ts`, `formatToParts`), компонент только расставляет части по местам.
@@ -13,8 +31,13 @@ import { moneyParts } from "../money";
  * ту же сумму, что и глаз.
  */
 export interface MoneyProps {
-  /** Сумма в минимальных единицах. */
+  /** Сумма в минимальных единицах своей валюты. */
   readonly value: number;
+  /**
+   * Валюта суммы: валюта счёта у операции и остатка, базовая — у итогов и лимитов. Без неё сумма
+   * набирается в базовой валюте семьи (`BaseCurrencyProvider`).
+   */
+  readonly currency?: CurrencyCode;
   /**
    * Знак направления операции, когда он несёт смысл строки, а не самой суммы: «+» у прихода,
    * «−» у расхода. Сумма операции хранится положительной, направление задаёт строка. Минус
@@ -39,8 +62,9 @@ export interface MoneyProps {
 /** Пробелы, которыми `Intl` отбивает разряды: обычный неразрывный и узкий неразрывный. */
 const GROUP_SEPARATOR = /[    ]/u;
 
-export function Money({ value, sign, breakDigits, className }: MoneyProps) {
-  const parts = moneyParts(value);
+export function Money({ value, currency, sign, breakDigits, className }: MoneyProps) {
+  const base = useBaseCurrency();
+  const parts = moneyParts(value, currency ?? base);
   const separator = parts.value.match(GROUP_SEPARATOR)?.[0] ?? "";
   const groups = breakDigits && separator ? parts.value.split(GROUP_SEPARATOR) : [parts.value];
   return (

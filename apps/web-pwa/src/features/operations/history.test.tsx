@@ -217,7 +217,8 @@ describe("строка истории по счёту в другой валют
 
   it("подписана валютой своего счёта, а не рублями", () => {
     const markup = plainText(renderToStaticMarkup(<HistoryScreen budget={withDollarExpense()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />));
-    expect(markup).toContain("−40,50 $");
+    // The sum is set by `Money` like a rouble one: the currency sign muted in its own element.
+    expect(markup).toContain('−40,50<span class="money-currency"> $</span>');
     expect(markup).toContain("Изменить операцию «Расход 40,50 $ от 2026-07-10»");
     expect(markup).not.toContain("40,50 ₽");
     // A rouble row next to it is drawn exactly as before.

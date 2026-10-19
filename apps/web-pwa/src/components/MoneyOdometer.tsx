@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import type { CurrencyCode } from "@family-budget/domain";
 
 import { moneyParts } from "../money";
+import { useBaseCurrency } from "./Money";
 
 const DIGITS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
 const DIGIT_SET = new Set<string>(DIGITS);
@@ -20,6 +22,8 @@ export interface MoneyOdometerProps {
   readonly from: number;
   /** Значение после изменения — оно и остаётся на экране. */
   readonly to: number;
+  /** Валюта величины; без неё — базовая валюта семьи. */
+  readonly currency?: CurrencyCode;
 }
 
 /**
@@ -41,7 +45,8 @@ export interface MoneyOdometerProps {
  * При `prefers-reduced-motion` кадра «до» не бывает вовсе: компонент монтируется сразу с итогом,
  * то есть движение выключено полностью, а не ослаблено.
  */
-export function MoneyOdometer({ from, to }: MoneyOdometerProps) {
+export function MoneyOdometer({ from, to, currency }: MoneyOdometerProps) {
+  const base = useBaseCurrency();
   const [shown, setShown] = useState(() => (prefersReducedMotion() ? to : from));
 
   useEffect(() => {
@@ -55,7 +60,7 @@ export function MoneyOdometer({ from, to }: MoneyOdometerProps) {
     return () => cancelAnimationFrame(frame);
   }, [from, to]);
 
-  const parts = moneyParts(shown);
+  const parts = moneyParts(shown, currency ?? base);
   const characters = [...`${parts.sign}${parts.value}`];
 
   return (

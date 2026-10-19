@@ -5,8 +5,8 @@ import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { categoryVisual } from "../../category-visual";
 import { searchOperations } from "../dashboard";
+import { OperationAmount } from "./OperationAmount";
 import {
-  amountText,
   kindIcons,
   kindLabels,
   kindSign,
@@ -18,6 +18,12 @@ import {
 } from "./transaction-words";
 
 const PAGE_SIZE = 25;
+
+/** Знак направления строки, если он у вида есть: перевод знака не несёт. */
+function signOf(kind: TransactionKind): { readonly sign?: "+" | "−" } {
+  const sign = kindSign(kind);
+  return sign === undefined ? {} : { sign };
+}
 
 type BudgetMetrics = ReturnType<typeof calculateBudget>;
 
@@ -83,9 +89,7 @@ export function HistoryScreen({ budget, onEdit, onAdd, onBack, busy = false }: H
             <span className={`transaction-icon ${visual ? `tone-${visual.tone}` : "tone-neutral"}`}><Icon name={visual ? visual.icon : kindIcons[transaction.kind]} size={24} /></span>
             <span className="transaction-copy"><strong>{category ? category.name : kindLabels[transaction.kind]}</strong><small>{transaction.occurredOn} · {category ? kindLabels[transaction.kind] : transactionDetail(transaction, budget)}</small></span>
             {/* Сумма строки — в валюте её счёта и с её знаком: «₽» у счёта в долларах был бы неправдой. */}
-            <b>{transactionCurrency(transaction, budget) === "RUB"
-              ? <Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} />
-              : <span className="money">{kindSign(transaction.kind)}{amountText(transaction, budget)}</span>}</b>
+            <b><OperationAmount value={transaction.amountMinor} currency={transactionCurrency(transaction, budget)} {...signOf(transaction.kind)} /></b>
           </button>
         </li>;
       })}</ul> : <div className="empty-state">
@@ -123,6 +127,6 @@ export function TotalsFact({ budget, metrics }: { readonly budget: BudgetState; 
       <article className="quick-card"><span className="quick-label">Расходы с учётом возвратов</span><strong><Money value={metrics.expensesMinor} /></strong></article>
       <article className="quick-card"><span className="quick-label">Капитал</span><strong><Money value={metrics.capitalMinor} /></strong></article>
     </div>
-    <dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd><Money value={metrics.accountBalancesMinor[account.id] ?? 0} /></dd></div>)}</dl>
+    <dl className="summary-list">{budget.accounts.map((account) => <div key={account.id}><dt>{account.name}{account.active ? "" : " (в архиве)"}</dt><dd><Money value={metrics.accountBalancesMinor[account.id] ?? 0} currency={account.currency} /></dd></div>)}</dl>
   </details>;
 }

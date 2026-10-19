@@ -1,13 +1,12 @@
 import {
-  currencyExponent,
-  isSupportedCurrency,
+  DEFAULT_BASE_CURRENCY,
   type BudgetState,
   type DebtDirection,
   type Transaction,
   type TransactionKind,
 } from "@family-budget/domain";
 import type { IconName } from "../../components/Icon";
-import { formatCurrencyAmount, formatMoney } from "../../money";
+import { formatMoney } from "../../money";
 import { plural } from "../../plural";
 
 /**
@@ -68,7 +67,7 @@ export function transactionCurrency(transaction: Transaction, budget: Pick<Budge
   const accountId = transaction.kind === "transfer" || transaction.kind === "goal_contribution"
     ? transaction.fromAccountId
     : transaction.accountId;
-  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? DEFAULT_BASE_CURRENCY;
 }
 
 /**
@@ -87,10 +86,9 @@ export function operationLabel(transaction: Transaction, budget: Pick<BudgetStat
   return `${kindLabels[transaction.kind]} ${amountText(transaction, budget)} от ${transaction.occurredOn}`;
 }
 
-/** Сумма в минимальных единицах валюты `currency`, словами экрана: рубли — `formatMoney`, как везде. */
+/** Сумма в минимальных единицах валюты `currency`, словами экрана — тем же `formatMoney`, что и везде. */
 export function moneyIn(minor: number, currency: string): string {
-  if (currency === "RUB") return formatMoney(minor);
-  return formatCurrencyAmount(minor, currency, isSupportedCurrency(currency) ? currencyExponent(currency) : 2);
+  return formatMoney(minor, currency);
 }
 
 /**
@@ -102,7 +100,7 @@ export function draftCurrency(
   budget: Pick<BudgetState, "accounts">,
 ): string {
   const accountId = draft.kind === "transfer" || draft.kind === "goal_contribution" ? draft.fromAccountId : draft.accountId;
-  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? DEFAULT_BASE_CURRENCY;
 }
 
 /** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
