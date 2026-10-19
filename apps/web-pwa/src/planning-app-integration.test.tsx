@@ -97,7 +97,7 @@ describe("planning app integration", () => {
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     expect(source).toContain('{route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}');
     expect(source).toContain('<BackButton label="К разделу «Ещё»" onClick={onBack} />');
-    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} />');
+    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => write.run(change)} />');
     // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
@@ -113,7 +113,7 @@ describe("planning app integration", () => {
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);
-    expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
+    expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
     expect(source).toContain("() => undefined,");
     expect(source).not.toMatch(/location\.|URLSearchParams|localStorage|sessionStorage/);
     expect(source.match(/buildDemoBudgetState\(\)/g)).toHaveLength(1);

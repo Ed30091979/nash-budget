@@ -115,7 +115,7 @@ describe("operations app integration", () => {
       expect(start, `${screen} нет в разметке приложения`).toBeGreaterThan(-1);
       const element = source.slice(start, source.indexOf("/>", start));
       expect(element, `${screen} обязан писать через общий координатор`)
-        .toContain("onChange={(change) => budgetSave.apply(change)}");
+        .toContain("onChange={(change) => write.run(change)}");
       expect(readFileSync(new URL(file, import.meta.url), "utf8"), `${screen} обязан держать несохранённый черновик в реестре`)
         .toContain("useDraftGuard(");
     }
@@ -123,7 +123,7 @@ describe("operations app integration", () => {
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
-    expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
+    expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);

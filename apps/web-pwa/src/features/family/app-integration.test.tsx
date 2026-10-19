@@ -111,11 +111,12 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain("const hold = family.inFamily ? family.status?.hold ?? null : null;");
     expect(source).toContain("const holdNotice = documentHoldNotice(hold);");
     expect(source).toContain("{hold !== null && holdNotice !== null && route.name !== \"family\" ? (");
-    const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && route.name !== \"family\" ? ("));
     // The words follow the reason: «обновите приложение» for a version skew, «дождитесь бюджета»
     // for a journal with nothing to show.
-    expect(banner).toContain("{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}");
-    expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
+    expect(source).toContain('<ReadOnlyBanner title={holdNotice.title} body={WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]} onDetails={() => navigate({ name: "family" })} />');
+    const banner = readFileSync(new URL("../../components/ReadOnlyBanner.tsx", import.meta.url), "utf8");
+    expect(banner).toContain('<section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">');
+    expect(banner.slice(banner.indexOf("export function"))).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 
   it("предупреждение о смене бюджета получает и бюджет, и дату копии, и саму копию", () => {
@@ -175,7 +176,9 @@ describe("участник в локальном бюджете", () => {
 
   it("приложение записывает участника тем же CAS, что и любое изменение бюджета", () => {
     expect(source).toContain("registerLocalMember: async (member) => {");
-    expect(source).toContain("await budgetSave.apply((state) => ({");
+    // Тот же путь записи, что у всех, — только молча: запись начинает синхронизация, не человек.
+    expect(source).toContain("await write.run((state) => ({");
+    expect(source).toMatch(/members: \[\.\.\.\(state\.members \?\? \[\]\)\.filter\(\(item\) => item\.id !== member\.id\), member\],\s*\}\), \{ silent: true \}\);/u);
     expect(source).toContain("memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}");
   });
 });
@@ -186,9 +189,13 @@ describe("запись бюджета подключена к журналу", (
     // журнал, начинающий вестись только после перезагрузки.
     expect(source).toContain("journalWrite: () => journalWriteRef.current");
     expect(source).toContain("journalWriteRef.current = family.writeBudget;");
-    // Единственный funnel записи остался единственным: экраны по-прежнему зовут budgetSave.apply.
-    const applies = source.match(/budgetSave\.apply\(/gu) ?? [];
-    expect(applies.length).toBeGreaterThanOrEqual(4);
+    // Единственный путь записи остался единственным: экраны и оболочка зовут `write.run`, а он —
+    // координатор; мимо него координатора не зовёт никто.
+    expect(source).toContain("const { write, unseenFailure, dismissUnseenFailure } = useBudgetWrite(budgetSave, place);");
+    expect((source.match(/write\.run\(/gu) ?? []).length).toBeGreaterThanOrEqual(6);
+    expect(source).not.toContain("budgetSave.apply(");
+    const writer = readFileSync(new URL("../../write/useBudgetWrite.ts", import.meta.url), "utf8");
+    expect(writer).toContain("return await options.coordinator.apply(change);");
   });
 
   it("чужие операции доходят до экрана, а не только до базы", () => {

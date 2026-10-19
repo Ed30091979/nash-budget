@@ -16,7 +16,7 @@ import type { NavigateOptions } from "../navigation/router";
 import type { Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
-import type { AppBudgetSaveCoordinator } from "./budget-store";
+import type { BudgetWriter } from "../write/useBudgetWrite";
 
 /**
  * Всё, что маршрутам нужно от оболочки: бюджет и его производные, единственный путь записи и
@@ -49,7 +49,8 @@ export interface AppRouteContext {
   readonly back: () => void;
   /** Переход без вопроса о черновике — адрес догоняет то, что уже случилось на экране. */
   readonly redirect: (route: Route, options?: NavigateOptions) => void;
-  readonly budgetSave: AppBudgetSaveCoordinator;
+  /** Единственный путь записи (§2.3): координатор, отказы и неудачи, которых некому показать. */
+  readonly write: BudgetWriter;
   readonly budgetRef: { readonly current: BudgetState | null };
   readonly storageHealth: StorageHealth | null;
   readonly isIos: boolean;
@@ -81,7 +82,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
   const {
     budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
     recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, redirect, budgetSave, budgetRef, storageHealth, isIos,
+    openingMonth, openMonth, familyNewsText, navigate, back, redirect, write, budgetRef, storageHealth, isIos,
     isStandalone, lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family,
     familyScreen, syncIndicator,
   } = app;
@@ -92,7 +93,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {route.name === "overview" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate({ name: "entry" })} onYear={() => navigate({ name: "plan-year" })} onPlanning={() => navigate({ name: "plan-month" })} onImport={() => navigate({ name: "import" })} familyNews={familyNewsText} /> : null}
           {/* «Операции» — вкладка: строка открывает операцию в форме записи, и адрес это называет. */}
           {route.name === "operations" ? <HistoryScreen budget={budget} onEdit={(transaction) => navigate({ name: "entry", edit: transaction.id })} onAdd={() => navigate({ name: "entry" })} /> : null}
-          {route.name === "entry" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onPlanning={() => navigate({ name: "plan-month" })} editRequest={editRequest} onEditFinished={() => redirect({ name: "entry" }, { replace: true })} /> : null}
+          {route.name === "entry" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => write.run(change)} onPlanning={() => navigate({ name: "plan-month" })} editRequest={editRequest} onEditFinished={() => redirect({ name: "entry" }, { replace: true })} /> : null}
           {route.name === "reports" ? <ReportsScreen budget={budget} metrics={metrics} /> : null}
           {route.name === "more" ? <MoreScreen
             budget={budget}
@@ -108,7 +109,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               const repairs: BackupRepair[] = [];
               await restoreBudgetBackup(
                 file,
-                (restored) => budgetSave.apply(() => restored).then(() => undefined),
+                (restored) => write.run(() => restored).then(() => undefined),
                 () => undefined,
                 (repair) => { repairs.push(repair); },
               );
@@ -128,9 +129,9 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
-          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /></> : null}
+          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
           {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
-          {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onBack={back} /> : null}
+          {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
   </>;
 }

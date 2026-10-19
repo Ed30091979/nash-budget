@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -51,6 +51,9 @@ import {
 } from "../reach";
 import { createBudgetRepository } from "../storage-repository";
 import { WRITE_REFUSAL_TEXT } from "../write-refusal";
+import { useBudgetWrite } from "../write/useBudgetWrite";
+import { ReadOnlyBanner } from "../components/ReadOnlyBanner";
+import { WriteRefusalNotice } from "../components/WriteRefusalNotice";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
@@ -211,16 +214,23 @@ export default function App() {
     },
     journalWrite: () => journalWriteRef.current,
   }), [repository]);
+  // §2.3 Единственный путь записи для экранов и оболочки — через координатор. «Где человек» —
+  // маршрут и номер перехода: запись, не удавшаяся после ухода с её экрана, показывается оболочкой.
+  const navigationCount = useRef(0);
+  useEffect(() => router.subscribe(() => { navigationCount.current += 1; }), [router]);
+  const place = useCallback(() => `${routeKey(router.current())}#${navigationCount.current}`, [router]);
+  const { write, unseenFailure, dismissUnseenFailure } = useBudgetWrite(budgetSave, place);
 
   const family = useFamily(repository, syncServerUrl, {
     // 2.2 keeps names off the server, so the participant is written into the local budget instead.
     // It is an ordinary budget change and goes through the same compare-and-set as every other.
     registerLocalMember: async (member) => {
       if (!budgetRef.current) return;
-      await budgetSave.apply((state) => ({
+      // Молча: запись начинает синхронизация, а не человек, и следующий круг её повторит.
+      await write.run((state) => ({
         ...state,
         members: [...(state.members ?? []).filter((item) => item.id !== member.id), member],
-      }));
+      }), { silent: true });
     },
     // Чужие операции уже записаны в документ одной транзакцией с курсором; здесь они попадают на
     // экран. Пока идёт собственная запись, показ откладывается: её сравнение ревизии — источник
@@ -553,7 +563,7 @@ export default function App() {
     setOpeningMonth(true);
     try {
       const opened = findBudgetForMonth(budget, month) === undefined;
-      await budgetSave.apply((state) => carryBudgetForward(state, month).state);
+      await write.run((state) => carryBudgetForward(state, month).state);
       setMessage(opened
         ? `${monthNominative(month)} открыт: лимиты перенесены, остатки конвертов легли в них сверху. Всё это можно поправить в плане.`
         : `${monthNominative(month)} уже был в плане — открыли его.`);
@@ -613,7 +623,7 @@ export default function App() {
   const routeContext: AppRouteContext = {
     budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
     recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, redirect, budgetSave, budgetRef,
+    openingMonth, openMonth, familyNewsText, navigate, back, redirect, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
@@ -640,15 +650,9 @@ export default function App() {
           {/* Второе ревью: пока документ задержан, устройство только читает, и человек узнаёт об этом
               до того, как запись откажет, на любом экране, кроме «Семьи», где задержка названа сама. */}
           {hold !== null && holdNotice !== null && route.name !== "family" ? (
-            <section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">
-              <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
-              <div>
-                <h2 id="app-hold-title">{holdNotice.title}</h2>
-                <p>{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}</p>
-                <button className="primary-button" type="button" onClick={() => navigate({ name: "family" })}>Подробнее</button>
-              </div>
-            </section>
+            <ReadOnlyBanner title={holdNotice.title} body={WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]} onDetails={() => navigate({ name: "family" })} />
           ) : null}
+          {unseenFailure !== null ? <WriteRefusalNotice message={unseenFailure.message} onDismiss={dismissUnseenFailure} /> : null}
           {keyAlarm && route.name !== "family" ? (
             <section className="key-alarm" role="alert" aria-labelledby="app-key-alarm-title">
               <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
