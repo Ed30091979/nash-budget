@@ -38,6 +38,7 @@ import { editAmount, evaluateAmount, settleAmount, type AmountSelection, type Ke
 import { Keypad, useKeypadAvailable } from "./Keypad";
 import { amountText, draftCurrency, kindLabels, moneyIn, operationLabel, rubles, transactionDetail } from "./transaction-words";
 import { OperationAmount } from "./OperationAmount";
+import { createDraftSaving, useDraftGuard } from "../../navigation/draft-guard";
 
 /** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
@@ -48,7 +49,6 @@ export interface EditRequest {
 interface OperationsScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
-  readonly onDirtyChange?: (dirty: boolean) => void;
   /**
    * Прямой путь из пустого состояния «Конверты»: лимиты задают в плане.
    *
@@ -465,7 +465,7 @@ function Envelope({ row, amountMinor, applies, selected, clock, onSelect }: { ro
  * от задетого пальцем экрана. Счёт и дата стоят строкой факта с «Изменить»; доход и перевод —
  * строкой под конвертами, и та же форма ведёт их до конца.
  */
-export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, clock: givenClock, editRequest = null, onEditRequestHandled }: OperationsScreenProps) {
+export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClock, editRequest = null, onEditRequestHandled }: OperationsScreenProps) {
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   // Часы периода те же, что на «Сегодня». Без переданных — свои, по календарю семьи.
   const clock = useMemo<PeriodClock>(() => {
@@ -492,7 +492,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const [sheet, setSheet] = useState<CategorySheetDraft | null>(null);
   const [sheetError, setSheetError] = useState<string | null>(null);
   const gate = useRef(createOperationsSubmissionGate());
-  const pristineDraft = useMemo(() => defaultDraft(draft.kind, budget, today), [budget, draft.kind, today]);
+  // «Грязно» — отличается от снимка, сделанного при открытии и при каждом сбросе, а не от черновика
+  // по умолчанию, пересчитанного от бюджета: счёт или категория, пришедшие от семьи, и смена дня
+  // не делают нетронутую форму несохранённой (план волны 2, §2.4).
+  const [pristineDraft, setPristineDraft] = useState<TransactionDraft>(draft);
   const dirty = editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristineDraft);
   const metrics = useMemo(() => calculateBudget(budget), [budget]);
   const envelopeIds = new Set(
@@ -532,30 +535,21 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const previewApplies = draft.kind === "expense" && editingId === null && amountMinor > 0 && dateInPeriod;
   const detailsOpen = factOpen || draft.kind !== "expense" || editingId !== null;
 
-  // Черновик, ушедший в запись, — уже не несохранённый черновик (третье ревью, e2e b1). Флаг
-  // приложения прежде шёл только через этот пассивный эффект, а черновик оставался «грязным» весь
-  // полёт записи: касание вкладки сразу после «Записать» спрашивало «Несохранённый черновик будет
-  // удалён», хотя покупка уже записывалась. Поэтому запись снимает флаг сама и синхронно, до
-  // первого `await` (`beginSaving`), а неудача возвращает его (`endSaving`).
-  const savingRef = useRef(false);
-  const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
-  useEffect(() => {
-    onDirtyChange?.(dirty && !savingRef.current);
-  }, [dirty, onDirtyChange]);
-  const beginSaving = () => {
-    savingRef.current = true;
-    onDirtyChange?.(false);
-  };
-  const endSaving = (failed: boolean) => {
-    if (!savingRef.current) return;
-    savingRef.current = false;
-    if (failed) onDirtyChange?.(dirtyRef.current);
-  };
-
-  useEffect(() => () => {
-    onDirtyChange?.(false);
-  }, [onDirtyChange]);
+  // Черновик, ушедший в запись, — уже не несохранённый черновик (третье ревью, e2e b1). Реестр
+  // черновиков спрашивает `isDirty` синхронно в момент нажатия, поэтому запись переводит черновик в
+  // «записывается» сама и до первого `await` (`beginSaving`). Неудача возвращает его: содержимое
+  // формы никуда не делось. Удача держит «записывается», пока сброшенная форма не нарисована: между
+  // ответом координатора и этой отрисовкой старая, грязная отрисовка ответила бы реестру неправду.
+  const [saving] = useState(createDraftSaving);
+  const beginSaving = () => saving.begin();
+  useLayoutEffect(() => {
+    if (!dirty) saving.end();
+  }, [dirty, saving]);
+  useDraftGuard({
+    label: editingId === null ? "операция, которую вы набирали" : "изменения в операции",
+    isDirty: () => dirty && !saving.saving,
+    discard: () => reset(),
+  });
 
   const clearTransient = () => {
     setError(null);
@@ -566,7 +560,9 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     clearTransient();
   };
   const chooseKind = (kind: FormKind) => {
-    setDraft((current) => ({ ...defaultDraft(kind, budget, today), amount: current.amount, occurredOn: current.occurredOn }));
+    const fresh = defaultDraft(kind, budget, today);
+    setPristineDraft(fresh);
+    setDraft((current) => ({ ...fresh, amount: current.amount, occurredOn: current.occurredOn }));
     setEditingId(null);
     setSheet(null);
     setSheetError(null);
@@ -578,10 +574,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       setError(null);
       try {
         await onChange(change);
-        endSaving(false);
         success();
       } catch (cause) {
-        endSaving(true);
+        // Не записалось: черновик на месте и снова несохранённый.
+        saving.end();
         const view = toOperationsErrorView(cause);
         setError(view.message);
         // Квитанция утверждает, что запись прошла. Рядом с сообщением об ошибке это ложь.
@@ -621,7 +617,9 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     window.setTimeout(() => document.getElementById(SAVE_RECEIPT_ID)?.scrollIntoView({ block: "center" }), 0);
   };
   const reset = (kind: FormKind = draft.kind) => {
-    setDraft(defaultDraft(kind, budget, today));
+    const fresh = defaultDraft(kind, budget, today);
+    setDraft(fresh);
+    setPristineDraft(fresh);
     setEditingId(null);
     setConfirmation(null);
     setFactOpen(false);

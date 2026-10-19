@@ -1,4 +1,4 @@
-import { type ChangeEvent, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type BudgetState, type CategoryType } from "@family-budget/domain";
 import { BackButton } from "../../components/BackButton";
 import { Icon } from "../../components/Icon";
@@ -13,6 +13,7 @@ import { createImportMemory, type ImportMemory } from "./memory";
 import { applyImportPlan, buildImportPlan, undoImport, type Assignment, type ImportChoices, type ImportPlan } from "./plan";
 import { parseStatement, type ParsedStatement } from "./statement";
 import { plural } from "../../plural";
+import { createDraftSaving, useDraftGuard } from "../../navigation/draft-guard";
 
 /**
  * Экран «Выписка банка»: файл → предпросмотр → бюджет, с отменой.
@@ -28,7 +29,6 @@ export interface ImportScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
   readonly onBack: () => void;
-  readonly onDirtyChange?: (dirty: boolean) => void;
   /** Память назначений; без неё экран спрашивает про каждого незнакомого продавца каждый раз. */
   readonly memory?: ImportMemory;
   /** Начальная стадия — для проверок, которые рисуют предпросмотр без файла. */
@@ -148,20 +148,24 @@ function defaultChoices(budget: BudgetState): ImportChoices {
   };
 }
 
-export function ImportScreen({ budget, onChange, onBack, onDirtyChange, memory, initialStage, now = () => new Date() }: ImportScreenProps) {
+export function ImportScreen({ budget, onChange, onBack, memory, initialStage, now = () => new Date() }: ImportScreenProps) {
   const [stage, setStage] = useState<ImportStage>(initialStage ?? { kind: "pick", notice: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const store = useMemo(() => memory ?? createImportMemory(), [memory]);
   const dirty = stage.kind === "review";
-
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
-  useEffect(() => () => {
-    onDirtyChange?.(false);
-  }, [onDirtyChange]);
+  // Предпросмотр с выбранными назначениями — черновик: уход с экрана его теряет. «Добавить»
+  // переводит его в «записывается» до первого `await`; неудача возвращает, удача сменяет стадию.
+  const [saving] = useState(createDraftSaving);
+  useLayoutEffect(() => {
+    if (!dirty) saving.end();
+  }, [dirty, saving]);
+  useDraftGuard({
+    label: "выписка, ещё не добавленная в бюджет",
+    isDirty: () => dirty && !saving.saving,
+    discard: () => setStage({ kind: "pick", notice: null }),
+  });
   useEffect(() => {
     titleRef.current?.focus({ preventScroll: false });
   }, [stage.kind]);
@@ -226,6 +230,7 @@ export function ImportScreen({ budget, onChange, onBack, onDirtyChange, memory, 
 
   const confirm = async () => {
     if (stage.kind !== "review" || plan === null || busy || plan.drafts.length === 0) return;
+    saving.begin();
     setBusy(true);
     setError(null);
     let ids: readonly string[] = [];
@@ -249,6 +254,7 @@ export function ImportScreen({ budget, onChange, onBack, onDirtyChange, memory, 
         transferMinor: plan.totals.transferMinor,
       });
     } catch (cause) {
+      saving.end();
       setError(toOperationsErrorView(cause).message);
     } finally {
       setBusy(false);

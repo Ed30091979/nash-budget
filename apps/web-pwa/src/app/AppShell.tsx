@@ -52,13 +52,13 @@ import {
 import { createBudgetRepository } from "../storage-repository";
 import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
+import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
+import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext, type Screen } from "./routes";
 
 export type { Screen } from "./routes";
 
 type LoadState = "loading" | "empty" | "ready" | "error";
-
-export const DISCARD_DRAFT_CONFIRMATION = "Несохранённый черновик будет удалён. Перейти в другой раздел?";
 
 export const MAIN_CONTENT_ID = "main-content";
 /**
@@ -74,16 +74,6 @@ export function focusRouteHeading(root: ParentNode | null): boolean {
   if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
   heading.focus({ preventScroll: true });
   return true;
-}
-
-export function shouldChangeScreen(
-  current: Screen,
-  destination: Screen,
-  hasUnsavedDraft: boolean,
-  confirmDiscard: () => boolean,
-): boolean {
-  if (current === destination) return false;
-  return !hasUnsavedDraft || confirmDiscard();
 }
 
 export function protectUnsavedDraftOnUnload(event: BeforeUnloadEvent, hasUnsavedDraft: boolean): void {
@@ -112,8 +102,14 @@ function SkipLink() {
  * обновления прячется. Две плашки с одним и тем же прилипанием к низу вставали друг на друга, и
  * верхняя накрывала кнопку «Закрыть» нижней.
  */
-function AppFrame({ className, hasUnsavedChanges, messageShown, children }: { className: string; hasUnsavedChanges: boolean; messageShown: boolean; children: ReactNode }) {
-  return <div className={className}>{children}<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} /></div>;
+function AppFrame({ className, drafts, messageShown, children }: { className: string; drafts: DraftRegistry; messageShown: boolean; children: ReactNode }) {
+  return <div className={className}><DraftRegistryProvider registry={drafts}>{children}</DraftRegistryProvider><UpdatePrompt drafts={drafts} suppressed={messageShown} /></div>;
+}
+
+/** Вопрос о несохранённом черновике: что потеряется и что сделать, если человек решил уйти. */
+interface LeaveRequest {
+  readonly labels: readonly string[];
+  readonly proceed: () => void;
 }
 
 export default function App() {
@@ -142,9 +138,10 @@ export default function App() {
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [openingMonth, setOpeningMonth] = useState(false);
-  const [operationDraftDirty, setOperationDraftDirty] = useState(false);
-  const [planningDraftDirty, setPlanningDraftDirty] = useState(false);
-  const [importDraftDirty, setImportDraftDirty] = useState(false);
+  // Реестр несохранённых черновиков: экраны регистрируют свои, а переход, `beforeunload` и плашка
+  // обновления спрашивают их синхронно — в момент нажатия, а не по флагу, отставшему на отрисовку.
+  const drafts = useMemo(() => createDraftRegistry(), []);
+  const [leaveRequest, setLeaveRequest] = useState<LeaveRequest | null>(null);
   // Просьба открыть операцию из истории на «Ещё» в форме «Записать»; экран записи её гасит.
   const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
@@ -166,7 +163,6 @@ export default function App() {
     if (!header || !nav) return undefined;
     return observeLayoutSpace(document.documentElement, header, nav);
   }, [loadState]);
-  const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;
   budgetRef.current = budget;
   // Экран семьи собирается ниже, а координатор записи — выше него: путь записи через журнал
   // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
@@ -275,12 +271,22 @@ export default function App() {
     return () => { cancelled = true; };
   }, [loadAttempt, repository]);
 
+  // Перезагрузка и закрытие спрашивают тот же реестр, что и переход, — в самый момент ухода.
   useEffect(() => {
-    if (!hasUnsavedDraft) return;
-    const beforeUnload = (event: BeforeUnloadEvent) => protectUnsavedDraftOnUnload(event, true);
+    const beforeUnload = (event: BeforeUnloadEvent) => protectUnsavedDraftOnUnload(event, drafts.hasUnsavedDrafts("unload"));
     window.addEventListener("beforeunload", beforeUnload);
     return () => window.removeEventListener("beforeunload", beforeUnload);
-  }, [hasUnsavedDraft]);
+  }, [drafts]);
+
+  // Начатый вход в «Семью»: код из письма запрошен, и форма кода живёт в контроллере семьи, а не в
+  // экране, — переход внутри приложения её не теряет, а перезагрузка и обновление теряют.
+  const awaitingLoginCode = family.awaitingLoginCode;
+  const signIn = useRef<DraftEntry>({ label: "вход в «Семью» по коду из письма", isDirty: () => false, guardsNavigation: false });
+  useEffect(() => drafts.register(signIn), [drafts]);
+  useLayoutEffect(() => {
+    signIn.current = { ...signIn.current, isDirty: () => awaitingLoginCode };
+    drafts.refresh();
+  }, [drafts, awaitingLoginCode]);
 
   useEffect(() => {
     if (!message) return;
@@ -441,14 +447,14 @@ export default function App() {
   // локального хранилища укладывается в первый кадр: пока порог не перейдён, экран молчит, но
   // `aria-busy` уже говорит читающему с экрана, что здесь ещё не готово. Слово появляется только
   // тогда, когда ждать действительно пришлось, — и тогда оно уже не мельтешение, а объяснение.
-  if (loadState === "loading") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main></AppFrame>;
-  if (loadState === "error") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main></AppFrame>;
+  if (loadState === "loading") return <AppFrame className="loading-route" drafts={drafts} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main></AppFrame>;
+  if (loadState === "error") return <AppFrame className="loading-route" drafts={drafts} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main></AppFrame>;
   // Второе ревью, LOW-5 и MEDIUM-3: в семье без документа семьи — нет документа вовсе или на
   // устройстве всё ещё бюджет, который был до вступления, — на месте бюджета стоит экран ожидания,
   // а не онбординг и не прежний бюджет, выданный за семейный.
   if (showsFamilyHoldScreen(family.inFamily, loadState !== "empty", family.status)) {
     return (
-      <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}>
+      <AppFrame className="loading-route" drafts={drafts} messageShown={false}>
         <IconSprite />
         <SkipLink />
         <main id={MAIN_CONTENT_ID} tabIndex={-1} className={holdFamilyOpen ? "content" : "loading-state storage-error-state"}>
@@ -464,8 +470,8 @@ export default function App() {
       </AppFrame>
     );
   }
-  if (loadState === "empty") return <AppFrame className="onboarding-route" hasUnsavedChanges={false} messageShown={false}><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div></AppFrame>;
-  if (!budget || !metrics || !plan) return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
+  if (loadState === "empty") return <AppFrame className="onboarding-route" drafts={drafts} messageShown={false}><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div></AppFrame>;
+  if (!budget || !metrics || !plan) return <AppFrame className="loading-route" drafts={drafts} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
   const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
@@ -524,17 +530,34 @@ export default function App() {
   const keyAlarm = syncAlarm(family.status?.stop ?? null);
   const hold = family.inFamily ? family.status?.hold ?? null : null;
   const holdNotice = documentHoldNotice(hold);
+  /**
+   * Переход между экранами. Несохранённый черновик спрашивается синхронно, в момент нажатия, и
+   * вопрос задаёт диалог приложения, а не системное окно: «Продолжить ввод» оставляет всё как
+   * было, «Не сохранять» забывает черновики и переходит.
+   */
   const navigate = (destination: Screen) => {
-    if (shouldChangeScreen(
-      screen,
-      destination,
-      hasUnsavedDraft,
-      () => window.confirm(DISCARD_DRAFT_CONFIRMATION),
-    )) {
+    if (screen === destination) return;
+    const proceed = () => {
       if (newsOnScreen) markNewsSeen();
       setScreen(destination);
+    };
+    if (drafts.hasUnsavedDrafts("navigation")) {
+      setLeaveRequest({ labels: drafts.dirtyLabels("navigation"), proceed });
+      return;
     }
+    proceed();
   };
+  const leaveQuestion = leaveRequest === null ? null : (
+    <ConfirmDialog
+      {...draftLeaveQuestion(leaveRequest.labels)}
+      onCancel={() => setLeaveRequest(null)}
+      onConfirm={() => {
+        setLeaveRequest(null);
+        drafts.discardAll("navigation");
+        leaveRequest.proceed();
+      }}
+    />
+  );
 
   const persistClear = async () => {
     await repository.clear();
@@ -553,13 +576,13 @@ export default function App() {
     budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
     recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
     openingMonth, openMonth, familyNewsText, navigate, budgetSave, budgetRef, editRequest, setEditRequest,
-    setOperationDraftDirty, setPlanningDraftDirty, setImportDraftDirty, storageHealth, isIos, isStandalone,
+    storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
   };
 
   return (
-    <AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>
+    <AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>
       <IconSprite />
       <SkipLink />
       <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
@@ -608,6 +631,7 @@ export default function App() {
       </main>
 
       {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
+      {leaveQuestion}
     </AppFrame>
   );
 }

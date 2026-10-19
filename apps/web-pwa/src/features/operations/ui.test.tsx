@@ -124,17 +124,23 @@ describe("operations UI", () => {
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
 
-  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает флаг", () => {
+  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает его", () => {
     // Третье ревью (e2e b1): после «Записать» касание вкладки спрашивало «Несохранённый черновик
     // будет удалён», потому что флаг доходил до приложения только пассивным эффектом.
     const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
     const submit = source.slice(source.indexOf("const submit = (event: FormEvent<HTMLFormElement>) => {"), source.indexOf("const confirm = () => {"));
     expect(submit.indexOf("beginSaving();")).toBeGreaterThan(0);
     expect(submit.indexOf("beginSaving();")).toBeLessThan(submit.indexOf("void runChange((state) => createTransaction(state, pending)"));
-    expect(source).toContain("onDirtyChange?.(dirty && !savingRef.current);");
-    expect(source).toMatch(/const beginSaving = \(\) => \{\s*savingRef\.current = true;\s*onDirtyChange\?\.\(false\);/u);
-    expect(source).toMatch(/await onChange\(change\);\s*endSaving\(false\);\s*success\(\);\s*\} catch \(cause\) \{\s*endSaving\(true\);/u);
-    expect(source).toContain("if (failed) onDirtyChange?.(dirtyRef.current);");
+    // Реестр черновиков читает `isDirty` в момент нажатия; пассивного флага больше нет.
+    expect(source).not.toContain("onDirtyChange");
+    expect(source).toContain("isDirty: () => dirty && !saving.saving,");
+    expect(source).toContain("const beginSaving = () => saving.begin();");
+    // Неудача возвращает черновик в несохранённые; удача держит «записывается» до отрисовки сброса.
+    expect(source).toMatch(/await onChange\(change\);\s*success\(\);\s*\} catch \(cause\) \{\s*\/\/[^\n]*\n\s*saving\.end\(\);/u);
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!dirty\) saving\.end\(\);/u);
+    // «Грязно» — против снимка при сбросе, а не против умолчаний, пересчитанных от бюджета.
+    expect(source).not.toMatch(/useMemo\(\(\) => defaultDraft\(/u);
+    expect(source).toMatch(/const fresh = defaultDraft\(kind, budget, today\);\s*setDraft\(fresh\);\s*setPristineDraft\(fresh\);/u);
   });
 
   it("показывает под суммой, что останется в каждом конверте, — до записи, а не после", () => {

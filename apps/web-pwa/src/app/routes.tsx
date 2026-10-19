@@ -47,9 +47,6 @@ export interface AppRouteContext {
   readonly budgetRef: { readonly current: BudgetState | null };
   readonly editRequest: EditRequest | null;
   readonly setEditRequest: (request: EditRequest | null) => void;
-  readonly setOperationDraftDirty: (dirty: boolean) => void;
-  readonly setPlanningDraftDirty: (dirty: boolean) => void;
-  readonly setImportDraftDirty: (dirty: boolean) => void;
   readonly storageHealth: StorageHealth | null;
   readonly isIos: boolean;
   readonly isStandalone: boolean;
@@ -70,15 +67,15 @@ export function RouteView({ screen, app }: { readonly screen: Screen; readonly a
     budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
     recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
     openingMonth, openMonth, familyNewsText, navigate, budgetSave, budgetRef, editRequest, setEditRequest,
-    setOperationDraftDirty, setPlanningDraftDirty, setImportDraftDirty, storageHealth, isIos, isStandalone,
+    storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
   } = app;
   return <>
           {screen === "today" ? <TodayScreen budget={budget} plan={plan} flexibleRows={flexibleRows} safeToSpendMinor={safeToSpendMinor} flexibleSpentMinor={flexibleSpentMinor} clock={clock} recentTransactions={recentTransactions} categoryById={categoryById} memberById={memberById} memberOptions={memberOptions} memberFilter={memberFilter} onMemberFilterChange={setMemberFilter} hasRecords={postedTransactions.length > 0} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={(month) => void openMonth(month)} onAdd={() => navigate("operations")} onYear={() => navigate("year")} onPlanning={() => navigate("planning")} onImport={() => navigate("import")} familyNews={familyNewsText} /> : null}
           {screen === "year" ? <YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate("planning")} categoryById={categoryById} /> : null}
-          {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} /></> : null}
-          {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setOperationDraftDirty} onPlanning={() => navigate("planning")} editRequest={editRequest} onEditRequestHandled={() => setEditRequest(null)} /> : null}
+          {screen === "planning" ? <><div className="planning-toolbar"><BackButton label="К горизонту" onClick={() => navigate("year")} /></div><PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} /></> : null}
+          {screen === "operations" ? <OperationsScreen budget={budget} clock={clock} onChange={(change) => budgetSave.apply(change)} onPlanning={() => navigate("planning")} editRequest={editRequest} onEditRequestHandled={() => setEditRequest(null)} /> : null}
           {screen === "more" ? <MoreScreen
             budget={budget}
             metrics={metrics}
@@ -116,7 +113,7 @@ export function RouteView({ screen, app }: { readonly screen: Screen; readonly a
           /> : null}
           {/* Вся история — маршрут внутри «Ещё»; строка истории открывает операцию в форме записи. */}
           {screen === "history" ? <HistoryScreen budget={budget} onEdit={(transaction) => { setEditRequest({ id: transaction.id, nonce: Date.now() }); navigate("operations"); }} onAdd={() => navigate("operations")} onBack={() => navigate("more")} /> : null}
-          {screen === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setImportDraftDirty} onBack={() => navigate("more")} /> : null}
+          {screen === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onBack={() => navigate("more")} /> : null}
           {screen === "family" ? familyScreen(() => navigate("more")) : null}
   </>;
 }
