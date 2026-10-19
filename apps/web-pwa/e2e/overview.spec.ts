@@ -176,6 +176,64 @@ test("месяц за краем календаря в адресе — «Зап
   await expect(heading).toHaveText(/Ноябрь 2199/u);
 });
 
+/**
+ * Где строки имени плитки ломают слово: для каждого переноса строки внутри имени — символ перед
+ * ним. Перенос честный, если перед ним пробел, дефис или мягкий перенос (он и рисуется дефисом);
+ * иначе слово разорвано посередине без знака переноса. Строки находятся по прямоугольникам
+ * каждого символа (`Range.getClientRects`), а не по ширине: так видно то, что видит глаз.
+ */
+async function wordSplits(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() => {
+    const splits: string[] = [];
+    for (const name of document.querySelectorAll<HTMLElement>(".overview-screen .tile-name")) {
+      const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
+      const chars: { readonly char: string; readonly top: number | null }[] = [];
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const text = node.textContent ?? "";
+        for (let index = 0; index < text.length; index += 1) {
+          const range = document.createRange();
+          range.setStart(node, index);
+          range.setEnd(node, index + 1);
+          // The glyph's own box is the last one: at a taken soft hyphen the next character's
+          // range also covers the drawn hyphen at the end of the line above.
+          const rect = [...range.getClientRects()].filter((item) => item.width > 0).at(-1);
+          chars.push({ char: text[index] ?? "", top: rect === undefined ? null : rect.top });
+        }
+      }
+      let lastTop: number | null = null;
+      for (let index = 0; index < chars.length; index += 1) {
+        const { top } = chars[index]!;
+        if (top === null) continue;
+        if (lastTop !== null && top > lastTop + 1) {
+          const before = chars[index - 1]?.char ?? "";
+          if (!/[\s\u00ad-]/u.test(before)) {
+            const text = chars.map((item) => item.char).join("").replace(/\u00ad/gu, "");
+            splits.push(`${text}: «${chars.slice(0, index).map((item) => item.char).join("").replace(/\u00ad/gu, "")}|…»`);
+          }
+        }
+        lastTop = top;
+      }
+    }
+    return splits;
+  });
+}
+
+test("на 390 pt имена плиток не рвутся посреди слова: перенос — только по слогам и с дефисом", async ({ page }) => {
+  // Ревью 2b, LOW-9: «Продук|ты», «Трансп|орт», «Здоров|ье», «Подработ|ка» — пять колонок по 65 и
+  // `overflow-wrap: anywhere` рвали слова без знака переноса.
+  await loadDemo(page);
+  for (const [width, scale] of [[390, 1], [320, 1], [430, 1], [390, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await wordSplits(page), `${width} pt ×${scale}`).toEqual([]);
+  }
+  await applyFontScale(page, 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // До 400 pt — не больше четырёх колонок расходов: на пяти по 65 имени остаётся 49 pt.
+  const columns = await page.locator(".tile-grid-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
+  expect(columns).toBe(4);
+});
+
 test("на 320 pt и при ×2.7 ничего не выезжает за экран — ни «Обзор», ни лист поверх него", async ({ page }) => {
   test.setTimeout(180_000);
   await loadDemo(page);

@@ -2,6 +2,7 @@ import { calculateAnnualPlan, calculateBudget, makePlanningSeed, PLANNING_IDS, t
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BaseCurrencyProvider } from "../../components/Money";
+import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import { buildDemoBudgetState } from "../../onboarding/demo";
 import { categorySpend } from "../reports/ReportsScreen";
@@ -172,7 +173,7 @@ describe("«Обзор»: имена, набранные семьёй, — из�
     const markup = render({}, named);
     expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">مطبخ</bdi></span>');
     expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">حساب 2</bdi></span>');
-    expect(markup).toContain('<span class="tile-name"><bdi dir="auto">Подработка и самозанятость</bdi></span>');
+    expect(markup).toContain(`<span class="tile-name"><bdi dir="auto">${softHyphenate("Подработка и самозанятость")}</bdi></span>`);
     expect(markup).toContain('«<bdi dir="auto">حساب 2</bdi>» — нет курса USD');
     const selected = { ...PICK_IDLE, selected: { kind: "account" as const, id: RTL_ACCOUNT } };
     const hint = renderToStaticMarkup(<PickHintText parts={pickHintParts(selected, { account: () => "حساب 2", income: () => "" })} />);

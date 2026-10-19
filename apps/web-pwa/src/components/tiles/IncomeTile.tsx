@@ -1,6 +1,7 @@
 import { DEFAULT_BASE_CURRENCY } from "@family-budget/domain";
 import { Icon } from "../Icon";
 import { Money, useBaseCurrency } from "../Money";
+import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import type { IncomeTile as IncomeTileModel } from "../../features/overview/overview-model";
 import { Tile, type TileDrag } from "./Tile";
@@ -23,7 +24,7 @@ export function ArchivedIncomeTile({ tile, monthWord }: { readonly tile: IncomeT
   const currency = useBaseCurrency();
   return (
     <div className="tile tile-income tile-static" role="group" aria-label={archivedIncomeLabel(tile, monthWord, currency)}>
-      <span className="tile-label" aria-hidden="true"><Icon name={tile.icon} size={20} /><span className="tile-name"><bdi dir="auto">{tile.name}</bdi></span></span>
+      <span className="tile-label" aria-hidden="true"><Icon name={tile.icon} size={20} /><span className="tile-name"><bdi dir="auto">{softHyphenate(tile.name)}</bdi></span></span>
       <span className="tile-sum" aria-hidden="true"><Money value={tile.amountMinor} /></span>
       <small className="tile-archived" aria-hidden="true">в архиве</small>
     </div>
@@ -35,7 +36,7 @@ export function IncomeTile({ tile, monthWord, pressed, onPick, drag }: { readonl
   const currency = useBaseCurrency();
   return (
     <Tile variant="income" label={incomeTileLabel(tile, monthWord, currency)} pressed={pressed} onClick={onPick} drag={drag} tileKey={`income:${tile.id ?? "none"}`}>
-      <span className="tile-label" aria-hidden="true"><Icon name={tile.icon} size={20} /><span className="tile-name"><bdi dir="auto">{tile.name}</bdi></span></span>
+      <span className="tile-label" aria-hidden="true"><Icon name={tile.icon} size={20} /><span className="tile-name"><bdi dir="auto">{softHyphenate(tile.name)}</bdi></span></span>
       <span className="tile-sum" aria-hidden="true"><Money value={tile.amountMinor} /></span>
     </Tile>
   );

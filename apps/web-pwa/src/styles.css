@@ -950,6 +950,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tile-grid { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: var(--size-tile); line-height: var(--lh-tile); }
 .tile-grid > li { display: flex; min-width: 0; }
 .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px), 1fr)); }
+/* До 400 pt — не больше четырёх колонок: на пяти по 65 имени оставалось 49 pt (ревью 2b, LOW-9).
+   Четверть ширины — нижняя граница колонки; при крупном шрифте 4.5em больше, и колонок меньше. */
+@media (max-width: 400px) {
+  .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px, calc((100% - 24px) / 4)), 1fr)); }
+}
 .tile-grid-accounts { grid-template-columns: repeat(auto-fill, minmax(max(8.5em, 104px), 1fr)); }
 .tile-grid-row { display: flex; min-width: 0; margin: -8px; padding: 8px; overflow-x: auto; overscroll-behavior-x: contain; }
 .tile-grid-row > li { flex: none; width: max(104px, 8.5em); }
@@ -964,7 +969,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tile.tone-sage .tile-glyph { color: var(--tone-sage-ink); }
 .tile.tone-coral .tile-glyph { color: var(--tone-coral-ink); }
 /* Имя — до двух строк с переносом по слогам; полное — в доступном имени плитки и в листе (§6). */
-.tile-name { display: -webkit-box; overflow: hidden; font-weight: 700; overflow-wrap: anywhere; hyphens: auto; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* Перенос — по мягким переносам, которые ставит `hyphenation.ts`, и рисуется дефисом; словарь
+   браузера не нужен. `overflow-wrap: anywhere` — последнее средство для слова без гласных или
+   слога шире плитки: ни одно имя стартового набора до него не доходит (e2e `overview.spec.ts`). */
+.tile-name { display: -webkit-box; overflow: hidden; font-weight: 700; overflow-wrap: anywhere; hyphens: manual; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .tile-sum { font-weight: 700; overflow-wrap: normal; }
 .tile-sum small { color: var(--ink-muted); font-size: inherit; font-weight: 400; }
 .tile-note { color: var(--on-tile-account-muted); font-size: inherit; }

@@ -1,6 +1,7 @@
 import { DEFAULT_BASE_CURRENCY } from "@family-budget/domain";
 import { Icon } from "../Icon";
 import { Money, useBaseCurrency } from "../Money";
+import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import type { CategoryTile as CategoryTileModel } from "../../features/overview/overview-model";
 import { Tile, type TileDrag } from "./Tile";
@@ -36,7 +37,7 @@ export function CategoryTile({ tile, onPick, drag }: { readonly tile: CategoryTi
         {tile.status === "near" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="triangle-alert" size={20} /></span> : null}
         {tile.status === "over" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="circle-alert" size={20} /></span> : null}
       </span>
-      <span className="tile-name" aria-hidden="true"><bdi dir="auto">{tile.name}</bdi></span>
+      <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(tile.name)}</bdi></span>
       <span className="tile-sum" aria-hidden="true">
         <Money value={tile.spentMinor} />
         {tile.limitMinor === null ? null : <small> / <Money value={tile.limitMinor} /></small>}
