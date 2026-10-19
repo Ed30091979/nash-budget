@@ -306,6 +306,29 @@ export function draftReady(state: BudgetState, draft: EntryDraft): boolean {
   }
 }
 
+/**
+ * Что делать с нажатием «Записать», до всякой записи: документ семьи задержан — отказ его словами, и
+ * лист не закрывается, черновик остаётся (план волны 2, §2.3, п. 3); черновик не готов — что именно
+ * дописать; иначе — писать. Домен проверит остальное сам.
+ */
+export type SubmitCheck =
+  | { readonly kind: "refused"; readonly message: string }
+  | { readonly kind: "incomplete"; readonly message: string }
+  | { readonly kind: "write" };
+
+export function submitCheck(state: BudgetState, draft: EntryDraft, writeRefusal: string | null): SubmitCheck {
+  if (writeRefusal !== null) return { kind: "refused", message: writeRefusal };
+  if (draftReady(state, draft)) return { kind: "write" };
+  const amount = evaluateAmount(draft.amount, draftExponent(state, draft));
+  if (amount.kind !== "value") return { kind: "incomplete", message: amount.kind === "error" ? amount.message : "Введите сумму." };
+  if (draft.accountId === "") return { kind: "incomplete", message: "Выберите счёт." };
+  switch (draft.mode) {
+    case "expense": return { kind: "incomplete", message: "Выберите категорию." };
+    case "transfer": return { kind: "incomplete", message: "Выберите другой счёт назначения." };
+    default: return { kind: "incomplete", message: "Выберите расход, который возвращают." };
+  }
+}
+
 /** «Сегодня», «Вчера» или другой день — по местному календарю семьи. */
 export type DateChoice = "today" | "yesterday" | "other";
 

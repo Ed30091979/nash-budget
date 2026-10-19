@@ -229,7 +229,7 @@ describe("черновик вне листа", () => {
   it("переживает закрытие листа и неудачную запись, а «грязно» — только против снимка открытия", () => {
     const store = createEntryDraftStore();
     const init = () => newEntryDraft(state(), { kind: "expense", accountId: MAIN, categoryId: PLANNING_IDS.categories.food }, TODAY);
-    const opened = store.open("#/?sheet=entry", init);
+    const opened = store.openEntry("#/?sheet=entry", init);
     expect(store.isDirty()).toBe(false);
     store.update((draft) => ({ ...draft, amount: "100" }));
     expect(store.isDirty()).toBe(true);
@@ -242,7 +242,7 @@ describe("черновик вне листа", () => {
     expect(store.failed()).toMatchObject({ status: "failed", failure: "Сервер семьи недоступен.", draft: { amount: "100" } });
     expect(store.isDirty()).toBe(true);
     // «Вернуться к черновику» — то же открытие: тот же черновик и снимок.
-    const back = store.open("#/?sheet=entry", init);
+    const back = store.openEntry("#/?sheet=entry", init);
     expect(back.draft.amount).toBe("100");
     expect(back.pristine).toEqual(opened.pristine);
     expect(store.current()?.status).toBe("editing");
@@ -250,8 +250,8 @@ describe("черновик вне листа", () => {
     const second = store.beginSaving();
     store.succeed(second);
     expect(store.current()).toBeNull();
-    store.open("#/?sheet=entry", init);
+    store.openEntry("#/?sheet=entry", init);
     store.update((draft) => ({ ...draft, amount: "5" }));
-    expect(store.open("#/operations?sheet=entry", init).draft.amount).toBe("");
+    expect(store.openEntry("#/operations?sheet=entry", init).draft.amount).toBe("");
   });
 });

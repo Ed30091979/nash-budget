@@ -34,7 +34,7 @@ export interface EntryDraftStore {
    * Лист открыт адресом `key`. Черновик того же открытия возвращается как был (лист открыли снова
    * «Вперёд» или «Вернуться к черновику»); другой открытие — новый черновик из `init`.
    */
-  open(key: string, init: () => EntryDraft): StoredEntry;
+  openEntry(key: string, init: () => EntryDraft): StoredEntry;
   update(change: (draft: EntryDraft) => EntryDraft): void;
   /** Заменить черновик целиком и снять снимок заново: смена вида на «Оформить возврат». */
   replace(draft: EntryDraft): void;
@@ -65,7 +65,7 @@ export function createEntryDraftStore(): EntryDraftStore {
 
   return {
     current: () => entry,
-    open(key, init) {
+    openEntry(key, init) {
       if (entry !== null && entry.key === key && entry.status !== "saving") {
         // То же открытие: черновик возвращается к правке, не записанный — со своей причиной.
         if (entry.status === "failed") set({ ...entry, status: "editing" });
