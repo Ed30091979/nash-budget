@@ -152,7 +152,11 @@ describe("запись из листа ввода", () => {
     const shell = harness();
     const expense = shell.budget().transactions.find((item) => item.kind === "expense")!;
     shell.open(food(), { name: "operations", sheet: "entry", edit: expense.id });
-    await expect(shell.controller.remove(expense)).resolves.toBeNull();
+    const removing = shell.controller.remove(expense);
+    // Пока лист сам удаляет операцию, её пропажа — не «удалили на другом устройстве».
+    expect(shell.controller.isRemoving(expense.id)).toBe(true);
+    await expect(removing).resolves.toBeNull();
+    expect(shell.controller.isRemoving(expense.id)).toBe(false);
     expect(shell.budget().transactions.some((item) => item.id === expense.id)).toBe(false);
     expect(shell.redirects).toEqual([{ name: "operations" }]);
     expect(shell.store.current()).toBeNull();

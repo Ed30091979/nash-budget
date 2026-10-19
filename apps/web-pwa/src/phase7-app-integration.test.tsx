@@ -143,6 +143,7 @@ describe("phase 7 App composition", () => {
         onCategoryChange={async () => undefined}
         isDirty={() => false}
         onDiscard={() => undefined}
+        fallbackFocus={() => undefined}
       />,
     );
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);

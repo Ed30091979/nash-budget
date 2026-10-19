@@ -49,6 +49,7 @@ function sheet(budget: BudgetState, draft: EntryDraft, overrides: Partial<EntryS
       onCategoryChange={vi.fn(async () => undefined)}
       isDirty={() => false}
       onDiscard={vi.fn()}
+      fallbackFocus={vi.fn()}
       {...overrides}
     />,
   );
@@ -122,7 +123,7 @@ describe("лист ввода: одно дело и все виды", () => {
     // Операцию по долгу лист не правит: отказ словами и только «Удалить».
     const refused = draftFromTransaction(state, debt);
     if (refused.kind !== "refused") throw new Error("debt must be refused");
-    const markup = renderToStaticMarkup(<RefusedEntrySheet budget={state} transaction={debt} message={refused.message} onClose={vi.fn()} onDelete={vi.fn(async () => null)} />);
+    const markup = renderToStaticMarkup(<RefusedEntrySheet budget={state} transaction={debt} message={refused.message} onClose={vi.fn()} onDelete={vi.fn(async () => null)} fallbackFocus={vi.fn()} />);
     expect(plain(markup)).toContain("Операцию по долгу этот лист пока не изменяет.");
     expect(markup).not.toContain('id="entry-amount"');
   });

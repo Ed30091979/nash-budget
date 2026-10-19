@@ -41,6 +41,8 @@ export interface EntryController {
   change(change: BudgetChange): Promise<BudgetState>;
   /** Открыть не записанный черновик там, откуда его записывали. */
   returnToDraft(): void;
+  /** Удаляет ли лист эту операцию сам прямо сейчас: её пропажа тогда — не «удалили на другом устройстве». */
+  isRemoving(id: string): boolean;
 }
 
 export interface EntryControllerOptions {
@@ -112,6 +114,7 @@ function withoutUnusedTags(state: BudgetState, ids: readonly string[]): BudgetSt
 
 export function createEntryController(options: EntryControllerOptions): EntryController {
   const gate = createOperationsSubmissionGate();
+  const removing = new Set<string>();
   const makeId = options.makeId ?? (() => crypto.randomUUID());
 
   const undo = (label: string, change: (state: BudgetState) => BudgetState) => {
@@ -183,6 +186,7 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
       }
       const opened = options.route();
       let refusal: string | null = null;
+      removing.add(transaction.id);
       await gate.run(async () => {
         try {
           await options.write.run((state) => deleteTransaction(state, transaction.id), { ownsFailure: true });
@@ -197,7 +201,7 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
           text: label,
           action: { label: "Отменить", run: () => undo(label.slice(label.indexOf(":") + 2), (state) => recreateTransaction(state, transaction, makeId).state) },
         });
-      });
+      }).finally(() => removing.delete(transaction.id));
       return refusal;
     },
 
@@ -220,5 +224,7 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
     change: (change) => options.write.run(change),
 
     returnToDraft,
+
+    isRemoving: (id) => removing.has(id),
   };
 }

@@ -19,6 +19,15 @@ function idField<K extends "src" | "dst">(key: K, id: string | null): Partial<Re
   return id !== null && isUuid(id) ? { [key]: id.toLowerCase() } as Partial<Record<K, string>> : {};
 }
 
+/**
+ * Операцию, открытую в листе, удалили не из этого листа — на другом устройстве (ревью 2b, LOW-6):
+ * лист её видел (`seen` — её идентификатор), теперь её нет, и удаляет её не сам лист. Пришли на
+ * адрес, а операции нет с самого начала, — это «Запись не найдена» оболочки, а не пропажа.
+ */
+export function editVanished(seen: string | null, editId: string | undefined, present: boolean, removing: boolean): boolean {
+  return editId !== undefined && seen === editId && !present && !removing;
+}
+
 /** Касания плиток «Обзора» — ключами адреса. */
 export function sheetOpeningOf(request: SheetRequest): SheetOpening {
   switch (request.kind) {

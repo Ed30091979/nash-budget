@@ -61,6 +61,11 @@ export interface EntryDraftStore {
   failed(): StoredEntry | null;
   /** Забыть не записанный черновик: человек начал новую операцию вместо него. */
   discardFailed(): void;
+  /**
+   * Положить набранное как не записанное, под адресом `key` и с причиной: так ждёт правка операции,
+   * которую удалили на другом устройстве, — «Записать как новую» откроет её (ревью 2b, LOW-6).
+   */
+  adoptFailed(key: string, draft: EntryDraft, pristine: EntryDraft, failure: string): void;
   /** Забыть черновик листа («Не сохранять», удалённая операция). Не записанный — ждёт дальше. */
   clear(): void;
   subscribe(listener: () => void): () => void;
@@ -154,6 +159,11 @@ export function createEntryDraftStore(): EntryDraftStore {
     clear() {
       saving = createDraftSaving();
       set(null);
+    },
+    adoptFailed(key, draft, pristine, failure) {
+      saving = createDraftSaving();
+      waiting = null;
+      set({ key, draft, pristine, status: "failed", failure });
     },
     subscribe(listener) {
       listeners.add(listener);

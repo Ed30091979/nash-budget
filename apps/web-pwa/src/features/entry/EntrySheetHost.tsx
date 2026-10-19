@@ -1,11 +1,11 @@
-import { useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { calculateHoldings, type BudgetState } from "@family-budget/domain";
 import type { EntryController } from "../../app/entry-controller";
 import type { EntryDraftStore } from "../../app/entry-draft-store";
 import { routeKey, sameRecordId, type Route } from "../../navigation/routes";
 import { EntrySheet, RefusedEntrySheet } from "./EntrySheet";
 import { draftFromTransaction, refundDraftFor, type EntryDraft } from "./entry-model";
-import { draftOfSheet, sheetChoosesMode } from "./sheet-address";
+import { draftOfSheet, editVanished, sheetChoosesMode } from "./sheet-address";
 
 export interface EntrySheetHostProps {
   /** Маршрут с открытым листом (`sheet=entry`). */
@@ -17,6 +17,13 @@ export interface EntrySheetHostProps {
   /** Документ семьи задержан, пока лист открыт: «Записать» ответит этими словами. */
   readonly writeRefusal: string | null;
   readonly onClose: () => void;
+  /**
+   * Операцию, открытую в листе, удалили на другом устройстве: оболочка уводит с листа, снимает
+   * `edit=` с адреса и говорит это словами; `typed` — набранное, если в правке что-то тронули.
+   */
+  readonly onVanished: (typed: EntryDraft | null) => void;
+  /** Фокус, когда плитки или строки, открывшей лист, уже нет. */
+  readonly fallbackFocus: () => void;
 }
 
 /**
@@ -27,7 +34,7 @@ export interface EntrySheetHostProps {
  * каждом открытии. Пока запись уходит, листа нет: он закрылся в момент нажатия, и адрес догоняет
  * это возвратом по истории.
  */
-export function EntrySheetHost({ route, budget, today, store, controller, writeRefusal, onClose }: EntrySheetHostProps) {
+export function EntrySheetHost({ route, budget, today, store, controller, writeRefusal, onClose, onVanished, fallbackFocus }: EntrySheetHostProps) {
   const key = routeKey(route);
   const stored = useSyncExternalStore(store.subscribe, store.current, store.current);
   const editId = route.edit;
@@ -58,10 +65,29 @@ export function EntrySheetHost({ route, budget, today, store, controller, writeR
     return () => store.close(key);
   }, [store, key, openable]);
 
+  // Операция была в листе и пропала не из-за него — её удалили на другом устройстве (LOW-6).
+  const seen = useRef<string | null>(null);
+  const vanished = useRef(onVanished);
+  vanished.current = onVanished;
+  useEffect(() => {
+    if (editId === undefined) {
+      seen.current = null;
+      return;
+    }
+    if (editing !== null) {
+      seen.current = editId;
+      return;
+    }
+    if (!editVanished(seen.current, editId, false, controller.isRemoving(editId))) return;
+    seen.current = null;
+    const current = store.current();
+    vanished.current(current !== null && current.key === key && current.status === "editing" && store.isDirty() ? current.draft : null);
+  }, [editId, editing, key, store, controller]);
+
   // Операции из адреса нет: оболочка уводит с листа и говорит «Запись не найдена».
   if (editId !== undefined && editing === null) return null;
   if (opening?.kind === "refused") {
-    return <RefusedEntrySheet budget={budget} transaction={opening.transaction} message={opening.message} onClose={onClose} onDelete={controller.remove} />;
+    return <RefusedEntrySheet budget={budget} transaction={opening.transaction} message={opening.message} onClose={onClose} onDelete={controller.remove} fallbackFocus={fallbackFocus} />;
   }
   if (stored === null || stored.key !== key || stored.status === "saving") return null;
   return (
@@ -83,6 +109,7 @@ export function EntrySheetHost({ route, budget, today, store, controller, writeR
       onCategoryChange={controller.change}
       isDirty={store.isDirty}
       onDiscard={store.clear}
+      fallbackFocus={fallbackFocus}
     />
   );
 }

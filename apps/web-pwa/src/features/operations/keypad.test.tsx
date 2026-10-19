@@ -41,6 +41,7 @@ function sheet(draft = newEntryDraft(makePlanningSeed(), { kind: "expense", acco
       onCategoryChange={vi.fn(async () => undefined)}
       isDirty={() => false}
       onDiscard={vi.fn()}
+      fallbackFocus={vi.fn()}
     />,
   );
 }

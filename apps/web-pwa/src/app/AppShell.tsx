@@ -65,6 +65,7 @@ import { createRouter, memoryRouterWindow } from "../navigation/router";
 import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
 import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
+import { blankEntryDraft, carriedDraft, draftSummary, EDIT_VANISHED_TEXT, type EntryDraft } from "../features/entry/entry-model";
 import { createEntryController } from "./entry-controller";
 import { createEntryDraftStore } from "./entry-draft-store";
 
@@ -681,6 +682,27 @@ export default function App() {
     }
     navigate(destination);
   };
+  /**
+   * Операцию, открытую в листе, удалили на другом устройстве (ревью 2b, LOW-6): лист закрывается,
+   * `edit=` уходит из адреса, фокус — на заголовок экрана, и это сказано словами. Набранное не
+   * пропадает: оно ждёт как не записанное под адресом «+» этого экрана, и «Записать как новую»
+   * открывает его — тем же путём, что и «Вернуться к черновику».
+   */
+  const editVanished = (typed: EntryDraft | null) => {
+    const screen = withoutSheet(router.current());
+    router.redirect(screen);
+    if (typed === null) {
+      entryStore.clear();
+      showToast({ text: EDIT_VANISHED_TEXT });
+      return;
+    }
+    const carried = carriedDraft(typed);
+    const plus = { ...screen, sheet: "entry" } as Route;
+    const words = draftSummary(budget, carried);
+    entryStore.adoptFailed(routeKey(plus), carried, blankEntryDraft(budget, carried.mode === "refund" ? "expense" : carried.mode, today), `${EDIT_VANISHED_TEXT} Набранное — ${words} — можно записать новой операцией.`);
+    showToast({ text: `${EDIT_VANISHED_TEXT} Набранное: ${words}.`, action: { label: "Записать как новую", run: entryController.returnToDraft } });
+  };
+  const fallbackFocus = () => focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
   const openEdit = (transaction: BudgetState["transactions"][number]) => {
     const opening = sheetEditOf(transaction);
     if (opening === null) setMessage(ROUTE_NOT_FOUND_MESSAGE);
@@ -786,6 +808,8 @@ export default function App() {
           controller={entryController}
           writeRefusal={hold === null ? null : WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}
           onClose={back}
+          onVanished={editVanished}
+          fallbackFocus={fallbackFocus}
         />
       ) : null}
       {/* Тост гасится своим таймером (`components/Toast.tsx`), и время его стоит, пока на нём
@@ -796,7 +820,7 @@ export default function App() {
           toast={toast}
           paused={route.sheet !== undefined || leaveRequest !== null || replaceFailed !== null}
           onClose={() => setToast(null)}
-          fallbackFocus={() => focusRouteHeading(document.getElementById(MAIN_CONTENT_ID))}
+          fallbackFocus={fallbackFocus}
         />
       ) : null}
       {leaveQuestion}

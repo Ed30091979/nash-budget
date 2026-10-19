@@ -591,6 +591,22 @@ export function foreignValueLine(value: ForeignValue): string | null {
   }
 }
 
+/** Что лист говорит, когда операцию, которую правят, удалили на другом устройстве (ревью 2b, LOW-6). */
+export const EDIT_VANISHED_TEXT = "Операцию удалили на другом устройстве.";
+
+/** Набранное в правке удалённой операции — новой операцией: без `editId`, проведённой. */
+export function carriedDraft(draft: EntryDraft): EntryDraft {
+  return { ...draft, editId: null, status: "posted" };
+}
+
+/** «расход 48 123 ₽, «сверено»» — что было набрано, словами для сообщения. */
+export function draftSummary(state: BudgetState, draft: EntryDraft): string {
+  const minor = draftAmountMinor(state, draft);
+  const note = draft.note.trim();
+  const amount = minor === null ? "без суммы" : formatMoney(minor, draftCurrency(state, draft));
+  return `${MODE_LABELS[draft.mode].toLowerCase()} ${amount}${note === "" ? "" : `, «${note}»`}`;
+}
+
 /** Черновик, отличный от снимка при открытии, — несохранённый (§2.4): сравнение по содержимому. */
 export function draftDiffers(draft: EntryDraft, pristine: EntryDraft): boolean {
   return JSON.stringify(draft) !== JSON.stringify(pristine);

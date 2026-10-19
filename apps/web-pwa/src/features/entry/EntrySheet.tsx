@@ -68,6 +68,8 @@ export interface EntrySheetProps {
   /** Черновик листа для реестра несохранённого: спрашивается синхронно в момент ухода. */
   readonly isDirty: () => boolean;
   readonly onDiscard: () => void;
+  /** Фокус, когда плитки или строки, открывшей лист, уже нет (операцию удалили): заголовок экрана. */
+  readonly fallbackFocus: () => void;
 }
 
 /**
@@ -144,7 +146,9 @@ export function EntrySheet(props: EntrySheetProps) {
     return () => {
       restore();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
+      else props.fallbackFocus();
     };
+    // Once per opening: the focus that was there before the sheet, and the way back to it.
   }, []);
 
   // Выбор закрылся — фокус возвращается на плитку той стороны, с которой его открыли.
@@ -423,12 +427,13 @@ export function EntrySheet(props: EntrySheetProps) {
  * Лист, который операцию не правит: долг и взнос в цель — подволна 2e. Он говорит это словами и не
  * открывает форму, которая записала бы что-то другое; удалить такую операцию можно.
  */
-export function RefusedEntrySheet({ budget, transaction, message, onClose, onDelete }: {
+export function RefusedEntrySheet({ budget, transaction, message, onClose, onDelete, fallbackFocus }: {
   readonly budget: BudgetState;
   readonly transaction: Transaction;
   readonly message: string;
   readonly onClose: () => void;
   readonly onDelete: (transaction: Transaction) => Promise<string | null>;
+  readonly fallbackFocus: () => void;
 }) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
@@ -443,7 +448,9 @@ export function RefusedEntrySheet({ budget, transaction, message, onClose, onDel
     return () => {
       restore();
       if (opener?.isConnected) opener.focus({ preventScroll: true });
+      else fallbackFocus();
     };
+    // Once per opening, as the entry sheet.
   }, []);
   return (
     <div ref={backdropRef} className="sheet-backdrop entry-backdrop" role="presentation">

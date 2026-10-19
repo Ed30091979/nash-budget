@@ -39,6 +39,7 @@ function render(draft: EntryDraft, overrides: Partial<EntrySheetProps> = {}): st
     onCategoryChange: vi.fn(async () => undefined),
     isDirty: () => false,
     onDiscard: vi.fn(),
+    fallbackFocus: vi.fn(),
     ...overrides,
   };
   return renderToStaticMarkup(<EntrySheet {...props} />);
@@ -131,7 +132,7 @@ describe("лист ввода: разметка", () => {
   it("долг и взнос в цель лист не правит: отказ словами и только «Удалить»", () => {
     const budget = state();
     const debt = { id: "e2000000-0000-4000-8000-0000000000f2", kind: "debt_out" as const, status: "posted" as const, occurredOn: TODAY, amountMinor: 100, accountId: MAIN, debtId: "e2000000-0000-4000-8000-0000000000f3" };
-    const markup = renderToStaticMarkup(<RefusedEntrySheet budget={budget} transaction={debt} message="Операцию по долгу этот лист пока не изменяет." onClose={vi.fn()} onDelete={vi.fn(async () => null)} />);
+    const markup = renderToStaticMarkup(<RefusedEntrySheet budget={budget} transaction={debt} message="Операцию по долгу этот лист пока не изменяет." onClose={vi.fn()} onDelete={vi.fn(async () => null)} fallbackFocus={vi.fn()} />);
     expect(markup).toContain('role="dialog" aria-modal="true"');
     expect(plain(markup)).toContain("Операцию по долгу этот лист пока не изменяет. Удалить её можно.");
     expect(markup).not.toContain('id="entry-amount"');

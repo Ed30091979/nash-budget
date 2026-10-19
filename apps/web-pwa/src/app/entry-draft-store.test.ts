@@ -151,4 +151,15 @@ describe("черновик листа ввода живёт вне листа", 
     expect(store.current()).toBeNull();
     expect(store.isDirty()).toBe(false);
   });
+
+  it("набранное в правке удалённой операции ждёт как не записанное — с причиной, под новым адресом", () => {
+    // Ревью 2b, LOW-6: операцию удалили на другом устройстве, пока её правили, — набранное не
+    // пропадает молча: оно ждёт, как не записанный черновик, и «Записать как новую» открывает его.
+    const store = createEntryDraftStore();
+    const typed = { ...food(), amount: "48123", note: "сверено" };
+    store.adoptFailed(PLUS_KEY, typed, food(), "Операцию удалили на другом устройстве.");
+    expect(store.failed()).toMatchObject({ key: PLUS_KEY, status: "failed", failure: "Операцию удалили на другом устройстве." });
+    expect(store.openEntry(PLUS_KEY, food)).toMatchObject({ status: "editing", draft: { amount: "48123", note: "сверено" } });
+    expect(store.isDirty()).toBe(true);
+  });
 });
