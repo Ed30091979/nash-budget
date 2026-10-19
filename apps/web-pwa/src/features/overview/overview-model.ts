@@ -3,9 +3,11 @@ import {
   baseCurrencyOf,
   calculateBudget,
   calculateHoldings,
+  calculatePeriodBreakdown,
   categoriesInListOrder,
   findBudgetForMonth,
   monthEndDate,
+  monthStartDate,
   monthOfDate,
   shiftMonth,
   type Account,
@@ -23,7 +25,11 @@ import { percentStep } from "../../reach";
  *
  * Месяц календарный. Его лимиты — строки бюджета этого месяца (`findBudgetForMonth`), их расход —
  * тот же расчёт, что у плана (`calculateBudget`); у месяца без бюджета лимитов нет, а расход
- * считается по операциям его дней. Суммы бюджета — в базовой валюте, по снимку каждой операции.
+ * считается по операциям его дней. Итог «Расходы» — весь расход календарного месяца, той же
+ * функцией, что итог «Отчётов» (`calculatePeriodBreakdown`, ревью 2b, MEDIUM-8): у плана, который
+ * открывает приложение, окно и есть календарный месяц, и числа совпадают с суммой плиток; у окна из
+ * копии, которое короче месяца, итог остаётся календарным, как в «Отчётах». Суммы — в базовой
+ * валюте, по снимку каждой операции.
  */
 
 /** Состояние лимита на плитке: цвет — третий носитель после глифа и цифр (DESIGN §9). */
@@ -100,7 +106,7 @@ export interface OverviewModel {
   /** «по лимитам N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
   readonly spentWithLimitMinor: number;
   readonly limitsMinor: number | null;
-  /** «Потрачено» — весь расход месяца, тот же, что в «Отчётах» (`calculateBudget(...).expensesMinor`). */
+  /** «Расходы» — весь расход календарного месяца, тот же, что в «Отчётах» (`calculatePeriodBreakdown`). */
   readonly spentMinor: number;
   readonly incomes: readonly IncomeTile[];
   readonly accounts: readonly AccountTile[];
@@ -195,7 +201,8 @@ export function overviewModel(state: BudgetState, month: string, today: string):
       };
     });
   const limited = categories.filter((tile) => tile.limitMinor !== null);
-  const spentMinor = metrics?.expensesMinor ?? [...spentByCategory.values()].reduce((sum, value) => sum + value, 0);
+  // Один источник с «Отчётами»: календарный месяц, расходы за вычетом возвратов (MEDIUM-8).
+  const spentMinor = calculatePeriodBreakdown(state, { from: monthStartDate(month), to: monthEndDate(month) }).expense.totalMinor;
 
   // Активные источники — в порядке списка; архивный с доходом месяца — после них.
   const incomeCategories = [

@@ -5,7 +5,8 @@ import { BaseCurrencyProvider } from "../../components/Money";
 import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import { buildDemoBudgetState } from "../../onboarding/demo";
-import { categorySpend } from "../reports/ReportsScreen";
+import { reportModel, reportsFieldsForMonth } from "../reports/report-model";
+import { overviewModel } from "./overview-model";
 import { periodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
 import { OverviewScreen, PickHintText, type OverviewScreenProps } from "./OverviewScreen";
@@ -171,13 +172,34 @@ describe("«Обзор»: «Расходы» — весь расход меся�
       flexiblePlanMinor: plan.currentMonth.flexiblePlanMinor,
     })} />);
     const totals = plain(/<div class="totals-strip"[\s\S]*?<\/div>/u.exec(markup)?.[0] ?? "");
-    const reports = categorySpend(demo, calculateBudget(demo)).reduce((sum, row) => sum + row.spentMinor, 0);
+    // «Отчёты» за тот же месяц — куда ведёт сам итог «Расходы»: тот же источник, то же число.
+    const report = reportModel(demo, reportsFieldsForMonth("2026-10", today), today);
+    const reports = report.totalMinor;
     expect(reports).toBe(7_100_000);
+    expect(report.segments.reduce((sum, segment) => sum + segment.amountMinor, 0)).toBe(reports);
     expect(calculateBudget(demo).expensesMinor).toBe(reports);
     // Демо, три итога: 554 000 на счетах, 71 000 расходов (столько же, сколько в «Отчётах»), 27 000 можно тратить.
     expect(totals).toBe(`На счетах554 000 ₽Расходы${plain(formatMoney(reports))}Можно тратить27 000 ₽`);
     const card = plain(/<section class="card reach-card[^"]*"[\s\S]*?<\/section>/u.exec(markup)?.[0] ?? "");
     expect(card).toContain("лимиты: 26 000 из 53 000 ₽");
+  });
+});
+
+describe("«Обзор» и «Отчёты»: «Расходы» месяца — одно число при любом окне плана", () => {
+  it("окно плана короче календарного месяца: итог шапки и итог «Отчётов» — календарный месяц, лимиты — окно", () => {
+    // План 5–20 октября (копия или другое устройство): лимиты и «Можно тратить» считаются по окну, а
+    // «Расходы» — весь календарный октябрь, как в «Отчётах» (packages/domain/src/reports.ts).
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    const narrow: BudgetState = { ...demo, budgets: demo.budgets.map((budget) => (budget.id === demo.activeBudgetId ? { ...budget, startDate: "2026-10-07", endDate: "2026-10-20" } : budget)) };
+    const header = overviewModel(narrow, "2026-10", today).spentMinor;
+    const report = reportModel(narrow, reportsFieldsForMonth("2026-10", today), today).totalMinor;
+    expect(header).toBe(report);
+    expect(header).toBe(7_100_000);
+    // Окно не видит аренды 5-го числа — потому и считать «Расходы» по нему было бы неправдой о месяце.
+    expect(calculateBudget(narrow).expensesMinor).toBe(7_100_000 - 4_500_000 - 440_000);
+    // Месяц без плана — тот же календарный итог, что и «Отчёты» за него.
+    expect(overviewModel(narrow, "2026-09", today).spentMinor).toBe(reportModel(narrow, reportsFieldsForMonth("2026-09", today), today).totalMinor);
   });
 });
 

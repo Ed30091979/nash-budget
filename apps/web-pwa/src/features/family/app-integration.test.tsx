@@ -136,16 +136,18 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain("onRecordSuccessfulBackup={recordBackup}");
   });
 
-  it("автор операции и фильтр по участнику подключены к истории", () => {
-    // С 2b «Последние записи» ушли вместе с «Сегодня»; «Кто записал» — в «Операциях».
-    const history = readFileSync(new URL("../operations/HistoryScreen.tsx", import.meta.url), "utf8");
-    expect(source).toContain("const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };");
-    expect(source).toContain("<HistoryScreen budget={budget} members={members}");
-    expect(history).toContain("filterTransactionsByMember(budget.transactions, memberFilter)");
-    expect(history).toContain('<label htmlFor="history-member-filter">Кто записал</label>');
-    expect(history).toContain("transactionAuthorLabel(members.byId, transaction.memberId)");
+  it("автор операции и фильтр по участнику подключены к «Операциям»", () => {
+    // С 2d «Кто записал» — чип «Участник» ленты, а выбор — в адресе (`member=<UUID>`), а не в
+    // памяти оболочки: «Назад» с листа правки и перезагрузка его не теряют.
+    const feed = readFileSync(new URL("../feed/FeedScreen.tsx", import.meta.url), "utf8");
+    const model = readFileSync(new URL("../feed/feed-model.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/<FeedScreen\s+budget=\{budget\}/u);
+    expect(source).not.toContain("setMemberFilter");
+    expect(feed).toContain("transactionAuthorLabel(byId, memberId)");
+    expect(feed).toContain('{ key: "member", label: member?.name ?? "Участник"');
+    expect(model).toContain("if (member !== undefined && transaction.memberId?.toLowerCase() !== member) return false;");
     // Без участников в бюджете экран остаётся ровно таким, каким был: ни фильтра, ни автора.
-    expect(history).toContain("const showMembers = members !== undefined && members.options.length > 2;");
+    expect(feed).toContain("const showMembers = activeMembers.length > 0;");
   });
 
   it("адрес сервера читается из конфигурации сборки, а не зашит", () => {

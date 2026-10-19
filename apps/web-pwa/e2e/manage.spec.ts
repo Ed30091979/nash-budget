@@ -122,7 +122,7 @@ test("категория: имя, иконка, цвет и лимит — од�
   await goToOverview(page);
   await expect(tile(page, "Кафе")).toHaveCount(0);
   await page.getByRole("button", { name: "Операции", exact: true }).click();
-  await expect(page.locator(".history-row .transaction-copy strong", { hasText: /^Кафе$/u })).toHaveCount(1);
+  await expect(page.locator(".feed-row .feed-title", { hasText: /^Кафе$/u })).toHaveCount(1);
 });
 
 test("метки: заведена, переименована, в архиве и удалена; используемую удалить нельзя — отказ словами домена", async ({ page }) => {

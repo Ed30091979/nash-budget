@@ -49,14 +49,15 @@ async function expectBudgetSnapshot(
 }
 
 async function expectAddedExpense(page: Page) {
-  // Строка истории называет категорию, дату с видом операции и сумму со знаком направления.
-  // Проверяется то, что видно в строке, а не порядок тегов внутри неё.
-  const row = page
+  // Строка «Операций» называет категорию и сумму со знаком направления, а день — заголовок её дня
+  // (2d, макет 08). Проверяется то, что видно, а не порядок тегов внутри строки.
+  const day = page
     .getByRole("region", { name: "Операции" })
-    .getByRole("listitem")
-    .filter({ hasText: /9\s*000\s*₽/u });
-  await expect(row).toContainText("2026-07-18");
+    .getByRole("region")
+    .filter({ has: page.getByRole("heading", { name: /^18\s+июля/u }) });
+  const row = day.getByRole("listitem").filter({ hasText: /9\s*000\s*₽/u });
   await expect(row).toContainText("Продукты");
+  await expect(row).toContainText("−9");
 }
 
 test("G-002 survives restore, offline nested navigation, and an explicit A to B update", async ({

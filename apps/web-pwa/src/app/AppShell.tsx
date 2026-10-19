@@ -26,11 +26,9 @@ import {
   holdWriteRefusal,
   familyDocumentNotice,
   FamilyScreen,
-  MEMBER_FILTER_ALL,
   showsFamilyHoldScreen,
   familyNewsLines,
   familyNewsSince,
-  memberFilterOptions,
   membersById,
   resolveSyncServerUrl,
   syncAlarm,
@@ -38,7 +36,6 @@ import {
   transactionIds,
   useFamily,
   type BudgetJournalWrite,
-  type MemberFilter,
   type OwnAuthor,
 } from "../features/family";
 import { createImportMemory } from "../features/import";
@@ -177,7 +174,6 @@ export default function App() {
   const [leaveRequest, setLeaveRequest] = useState<LeaveRequest | null>(null);
   // Новый лист ввода поверх не записанного черновика: что сделать, если человек начнёт новую операцию.
   const [replaceFailed, setReplaceFailed] = useState<{ readonly proceed: () => void } | null>(null);
-  const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
   // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
   // следующем открытии «прошлый раз» — это бюджет, прочитанный с диска, а в него приём уже
@@ -404,6 +400,8 @@ export default function App() {
       transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)),
       account: (id) => current.accounts.some((item) => sameRecordId(item.id, id)),
       category: (id) => current.categories.find((item) => sameRecordId(item.id, id))?.type ?? null,
+      tag: (id) => (current.tags ?? []).some((item) => sameRecordId(item.id, id)),
+      member: (id) => (current.members ?? []).some((item) => sameRecordId(item.id, id)),
     });
     if (!resolved.notFound) {
       // Маршрут найден, но назван неточно (старая ссылка на источник дохода без вида списка):
@@ -652,7 +650,6 @@ export default function App() {
       setOpeningMonth(false);
     }
   };
-  const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
@@ -761,7 +758,7 @@ export default function App() {
     setLoadState("empty");
   };
   const routeContext: AppRouteContext = {
-    budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
+    budget, today, plan, clock, paydays, categoryById, monthToOpen,
     openingMonth, openMonth, familyNewsText, navigate, back, replace, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,

@@ -23,7 +23,7 @@ import {
   DashboardScreen,
   searchOperations,
 } from "./features/dashboard";
-import { HistoryScreen } from "./features/operations";
+import { FeedScreen } from "./features/feed/FeedScreen";
 import { blankEntryDraft } from "./features/entry/entry-model";
 import { EntrySheet } from "./features/entry/EntrySheet";
 import {
@@ -157,7 +157,7 @@ describe("phase 7 App composition", () => {
     // «Операции», а не отдельным вторым списком и не на плане года. Лист записи («+») истории
     // не несёт: он поверх экрана, и под ним — тот экран, с которого его открыли.
     expect(source).toMatch(/\{route\.sheet === "entry" \? \(\s*<EntrySheetHost\s/u);
-    expect(source).toMatch(/route\.name === "operations" \? <HistoryScreen budget=\{budget\}/);
+    expect(source).toMatch(/route\.name === "operations" \? \(\s*<FeedScreen\s+budget=\{budget\}/u);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
     expect(source).not.toMatch(/repository\.save\(/);
@@ -182,7 +182,7 @@ describe("phase 7 App composition", () => {
     expect(dashboard).not.toContain("Капитал");
     expect(textOf(operations)).not.toContain("Показано");
     expect(operations).not.toContain("operation-history-search");
-    const history = renderToStaticMarkup(<HistoryScreen budget={sixOperationState()} onEdit={() => undefined} onAdd={() => undefined} />);
+    const history = renderToStaticMarkup(<FeedScreen budget={sixOperationState()} today="2026-07-13" filters={{}} onFilters={() => undefined} onEdit={() => undefined} onAdd={() => undefined} onImport={() => undefined} />);
     expect(textOf(history)).toContain("Показано 6 из 6");
   });
 

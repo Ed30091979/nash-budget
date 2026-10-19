@@ -15,7 +15,7 @@ import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
 import { sheetOpeningOf, type SheetOpening } from "../features/entry/sheet-address";
-import { HistoryScreen, type HistoryMembers } from "../features/operations";
+import { FeedScreen } from "../features/feed/FeedScreen";
 import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
@@ -30,7 +30,8 @@ import { AccountsScreen } from "../features/accounts/AccountsScreen";
 import { RatesScreen } from "../features/rates/RatesScreen";
 import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
-import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
+import { ReportsScreen } from "../features/reports/ReportsScreen";
+import { reportsFieldsForMonth } from "../features/reports/report-model";
 import type { Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
@@ -46,12 +47,9 @@ export interface AppRouteContext {
   /** День семьи по её календарю (`localToday`): один на все экраны и на лист ввода. */
   readonly today: string;
   readonly plan: AnnualPlan;
-  readonly metrics: BudgetMetrics;
   readonly clock: PeriodClock;
   readonly paydays: readonly number[];
   readonly categoryById: Map<string, BudgetState["categories"][number]>;
-  /** «Кто записал» в «Операциях»: участники семьи и выбранный фильтр (память сессии). */
-  readonly members: HistoryMembers;
   readonly monthToOpen: string | null;
   readonly openingMonth: boolean;
   readonly openMonth: (month: string) => Promise<void>;
@@ -165,7 +163,8 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
       onAddCategory={setAdding}
       onAddAccount={() => navigate({ name: "account-new" })}
       onPlan={() => navigate({ name: "plan-month" })}
-      onReports={() => navigate({ name: "reports" })}
+      // «Расходы» — к «Отчётам» за тот же месяц: итог там тот же (ревью 2b, MEDIUM-8).
+      onReports={() => navigate({ name: "reports", ...reportsFieldsForMonth(month ?? thisMonth, today) })}
       onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: "expense" })}
       coach={showCoach ? <CoachMark target={`category:${coachTarget}`} onDismiss={() => void firstRunStore().update(finishCoach)} /> : null}
       hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} syncAvailable={app.family.serverUrl !== null} onAction={hintAction} />}
@@ -191,21 +190,43 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
  * Экран маршрута. Плашки задержки и тревоги ключа стоят над ним и принадлежат оболочке, лист ввода
  * — поверх него (`EntrySheetHost` в оболочке).
  *
- * Раскладка 2b (план волны 2, §4): «Обзор» — месяц и плитки, «Операции» — прежняя «Вся история»
- * до подволны 2d, «+» — лист ввода поверх вкладки, «Отчёты» — итоги и расходы по категориям,
- * «Ещё» — прежний список с планом месяца и планом на год.
+ * Раскладка 2d (план волны 2, §4): «Обзор» — месяц и плитки, «Операции» — лента по дням с поиском и
+ * фильтрами, «+» — лист ввода поверх вкладки, «Отчёты» — кольцо, легенда и столбцы по месяцам,
+ * «Ещё» — справочники, планы и данные.
  */
 export function RouteView({ route, app }: { readonly route: Route; readonly app: AppRouteContext }) {
   const {
-    budget, plan, metrics, paydays, categoryById, members, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
+    budget, plan, paydays, categoryById, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
     isStandalone, lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family,
     familyScreen, syncIndicator,
   } = app;
   return <>
           {route.name === "overview" ? <OverviewRoute app={app} month={route.month} sheetOpen={route.sheet !== undefined} /> : null}
-          {/* «Операции» — вкладка: строка открывает операцию в листе ввода, и адрес это называет. */}
-          {route.name === "operations" ? <HistoryScreen budget={budget} members={members} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}
-          {route.name === "reports" ? <ReportsScreen budget={budget} metrics={metrics} /> : null}
+          {/* «Операции» — вкладка: фильтры в адресе, смена фильтра заменяет запись истории; строка
+              открывает операцию в листе ввода поверх ленты, и строка поиска экрана при этом остаётся. */}
+          {route.name === "operations" ? (
+            <FeedScreen
+              budget={budget}
+              today={app.today}
+              filters={route}
+              onFilters={(filters) => app.replace({ name: "operations", ...filters })}
+              onEdit={openEdit}
+              onAdd={() => openSheet({ op: "expense" })}
+              onImport={() => navigate({ name: "import" })}
+            />
+          ) : null}
+          {/* «Отчёты»: вкладка и период — тот же экран (замена записи), строка легенды — «Операции»
+              с фильтром поверх «Отчётов», и «Назад» возвращает сюда с тем же периодом. */}
+          {route.name === "reports" ? (
+            <ReportsScreen
+              budget={budget}
+              today={app.today}
+              fields={route}
+              onFields={(fields) => app.replace({ name: "reports", ...fields })}
+              onFeed={(filters) => navigate({ name: "operations", ...filters })}
+              onAdd={(kind) => openSheet({ op: kind })}
+            />
+          ) : null}
           {route.name === "more" ? <MoreScreen
             budget={budget}
             storageHealth={storageHealth}

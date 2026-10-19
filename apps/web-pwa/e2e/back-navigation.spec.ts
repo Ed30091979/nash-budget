@@ -64,7 +64,7 @@ test("лист «+» кладётся поверх вкладки, и «Наза
   await tab(page, "Записать").click();
   await expect(entrySheet(page)).toBeVisible();
   // Под листом — тот же экран (скрытый от диктора, пока лист открыт): адрес называет его и лист.
-  await expect(page.locator(".history-card")).toBeAttached();
+  await expect(page.locator(".feed-screen")).toBeAttached();
   expect(await hash(page)).toBe("#/operations?sheet=entry");
   await back(page);
   await expect(entrySheet(page)).toHaveCount(0);

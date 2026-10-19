@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 import { operationWords } from "./app/entry-controller";
 import { draftCurrency, newEntryDraft } from "./features/entry/entry-model";
 import { EntryReceipt } from "./features/entry/EntryReceipt";
-import { HistoryScreen } from "./features/operations";
+import { FeedScreen } from "./features/feed/FeedScreen";
 import { OperationAmount } from "./features/operations/OperationAmount";
 import { moneyIn, operationLabel } from "./features/operations/transaction-words";
 import { formatMoney } from "./money";
@@ -43,8 +43,10 @@ function withDollarExpense(): BudgetState {
 describe("сумма операции в валюте её счёта", () => {
   it("строка «Операций» подписывает долларовую покупку долларами", () => {
     const state = withDollarExpense();
-    const markup = plainText(renderToStaticMarkup(<HistoryScreen budget={state} onEdit={vi.fn()} onAdd={vi.fn()} />));
+    const markup = plainText(renderToStaticMarkup(<FeedScreen budget={state} today="2026-07-13" filters={{}} onFilters={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onImport={vi.fn()} />));
     expect(markup).toContain("−40,50 $");
+    // Под суммой в долларах — снимок в рублях, которым её считает бюджет (DESIGN §7).
+    expect(markup).toContain("≈ 3 645 ₽");
     expect(markup).not.toContain("40,50 ₽");
     // A rouble row next to it is drawn exactly as before.
     const rouble = state.transactions.find((item) => item.kind === "expense" && item.id !== DOLLAR_EXPENSE && item.status === "posted")!;

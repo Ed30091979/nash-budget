@@ -64,7 +64,7 @@ describe("мягкие переносы не уходят из приложен�
       ["features/accounts/AccountScreen.tsx", 'id="account-name"'],
       ["features/tags/TagsScreen.tsx", 'id="tag-new-name"'],
       ["features/tags/TagsScreen.tsx", "id={renameId(tag.id)}"],
-      ["features/operations/HistoryScreen.tsx", 'id="operation-history-search"'],
+      ["features/feed/FeedScreen.tsx", 'id="feed-search"'],
       ["features/planning/PlanningScreen.tsx", 'id="commitment-name"'],
       ["features/planning/PlanningScreen.tsx", 'id="schedule-name"'],
       ["features/planning/PlanningScreen.tsx", 'id="flexible-name"'],

@@ -1,0 +1,66 @@
+import type { CurrencyCode } from "@family-budget/domain";
+import { Icon } from "../../components/Icon";
+import { Money } from "../../components/Money";
+import { formatMoney } from "../../money";
+import { chartToneClass } from "./Donut";
+import { shareText, type ReportSegment, type ReportTableRow } from "./report-model";
+
+/**
+ * Легенда кольца (макет 09): строка-кнопка 48 на сектор — образец цвета, имя, «сумма · доля» и
+ * шеврон. Касание ведёт в «Операции» с фильтром этой категории и периода; «Остальное» раскрывает
+ * таблицу всех категорий. Доступное имя называет всё, что видно, и куда ведёт.
+ */
+export function ReportLegend({ segments, currency, onOpen, onRest }: {
+  readonly segments: readonly ReportSegment[];
+  readonly currency: CurrencyCode;
+  readonly onOpen: (segment: ReportSegment) => void;
+  readonly onRest: () => void;
+}) {
+  return (
+    <ul className="report-legend">
+      {segments.map((segment) => (
+        <li key={segment.key}>
+          <button
+            className="legend-row"
+            type="button"
+            aria-label={`${segment.name}: ${formatMoney(segment.amountMinor, currency)}, ${shareText(segment.share)}. ${segment.rest ? "Показать все категории" : "Показать операции"}`}
+            onClick={() => (segment.rest ? onRest() : onOpen(segment))}
+          >
+            <span className={`legend-swatch ${chartToneClass(segment)}`} aria-hidden="true" />
+            <span className="legend-text">
+              <b><bdi dir="auto">{segment.name}</bdi></b>
+              <span><Money value={segment.amountMinor} currency={currency} /> · {shareText(segment.share)}</span>
+            </span>
+            <Icon name="chevron-right" size={20} className="legend-chevron" />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Таблица всех категорий периода: имя, сумма за вычетом возвратов, доля — то, что кольцо показывает долями. */
+export function CategoryTable({ rows, totalMinor, currency, caption, nameHeader }: {
+  readonly rows: readonly ReportTableRow[];
+  readonly totalMinor: number;
+  readonly currency: CurrencyCode;
+  readonly caption: string;
+  readonly nameHeader: string;
+}) {
+  return (
+    <table className="report-table">
+      <caption>{caption}</caption>
+      <thead><tr><th scope="col">{nameHeader}</th><th scope="col">Сумма</th><th scope="col">Доля</th></tr></thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.key}>
+            <th scope="row"><bdi dir="auto">{row.name}</bdi>{row.archived ? " (в архиве)" : ""}</th>
+            <td><Money value={row.amountMinor} currency={currency} /></td>
+            <td>{shareText(row.share)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot><tr><th scope="row">Всего</th><td><Money value={totalMinor} currency={currency} /></td><td /></tr></tfoot>
+    </table>
+  );
+}
