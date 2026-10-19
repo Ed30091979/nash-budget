@@ -58,7 +58,7 @@ async function setSyncServer(
 
 /* ───────────────────────────── Экраны и величины ───────────────────────────── */
 
-/** Герой «Сегодня»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
+/** Герой «Обзора»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
 function flexibleRemaining(page: Page): Locator {
   return page.locator(".hero-card > strong");
 }
@@ -79,8 +79,8 @@ async function restoreCanonicalBudget(page: Page): Promise<void> {
 
 /** Июль G-002 в таблице «Месяцы по числам»: резерв и свободный остаток в одной строке. */
 async function expectJulyRow(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Год", exact: true }).click();
-  // Заголовок «Года» — вывод; дно горизонта стоит в лестнице месяцев и выделено весом.
+  await openYearPlan(page);
+  // Заголовок плана на год — вывод; дно горизонта стоит в лестнице месяцев и выделено весом.
   await expect(page.getByRole("heading", { name: /Плана хватает во все 12 месяцев/u })).toBeVisible();
   await expect(page.locator(".ladder-row.tight .ladder-value").first()).toHaveText(TIGHTEST_MONTH_FREE);
   const numbers = page.getByRole("group", { name: "Месяцы по числам" }).or(
@@ -100,13 +100,18 @@ async function expectOperationCount(page: Page, count: number): Promise<void> {
   ).toBeVisible();
 }
 
-/** «Вся история» живёт на «Ещё»: справка, а не действие, и с экрана записи она уехала. */
+/** История операций — вкладка «Операции» нижней навигации. */
 async function openHistory(page: Page): Promise<void> {
-  const history = page.getByRole("region", { name: "Вся история" });
+  const history = page.getByRole("region", { name: "Операции" });
   if (await history.count()) return;
-  await page.getByRole("button", { name: "Ещё", exact: true }).click();
-  await page.getByRole("button", { name: /^Вся история/u }).click();
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
   await expect(history).toBeVisible();
+}
+
+/** План на год — подэкран «Ещё»: отдельной вкладки «Год» в навигации из пяти мест нет. */
+async function openYearPlan(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("button", { name: /^План на год/u }).click();
 }
 
 /** Покупка на табло: сумма, дата за «Изменить», конверт касанием — и отдельная кнопка записи. */
@@ -195,7 +200,7 @@ test("канонический бюджет переживает круг чер
   expect(syncOrigin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
 
   await restoreCanonicalBudget(page);
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_REMAINING);
   await expectJulyRow(page);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT);
@@ -212,7 +217,7 @@ test("канонический бюджет переживает круг чер
   await expectSyncIndicator(page, /синхронизировано$/u);
 
   // Ни одна копейка от этого не сдвинулась: журнал — это транспорт, а не пересчёт.
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_REMAINING);
   await expectJulyRow(page);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT);
@@ -221,14 +226,14 @@ test("канонический бюджет переживает круг чер
   // категории становится 30 000 ₽ из 53 000 ₽ — остаётся 23 000 ₽.
   await recordExpense(page, { date: "2026-07-09", amount: "4000", category: "Транспорт" });
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT + 1);
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_TRANSPORT);
   await expectSyncIndicator(page, /синхронизировано$/u);
 
   // Устройство перезапускается: сессия, ключ, курсор и очередь лежат в IndexedDB и переживают
   // это. Ни повторного входа, ни повторного применения журнала: операций по-прежнему пять.
   await page.reload();
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_TRANSPORT);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT + 1);
   await expectJulyRow(page);
@@ -257,7 +262,7 @@ test("при недоступном сервере приложение оста
   await page.reload();
 
   // Чтение: все три экрана главного потока показывают канонические величины.
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_REMAINING);
   await expectJulyRow(page);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT);
@@ -266,13 +271,13 @@ test("при недоступном сервере приложение оста
   // потрачено на гибкие категории 27 500 ₽ из 53 000 ₽ — остаётся 25 500 ₽.
   await recordExpense(page, { date: "2026-07-10", amount: "1500", category: "Продукты" });
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT + 1);
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
 
   // Переключение экранов: горизонт по-прежнему считается и рисуется.
   await expectJulyRow(page);
   await page.getByRole("button", { name: "Записать", exact: true }).click();
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
 
   // Ни одной тревоги про сервер в главном потоке — и честный, не зелёный, индикатор.
@@ -281,7 +286,7 @@ test("при недоступном сервере приложение оста
 
   // Перезапуск приложения при лежащем сервере: всё то же самое и ничего не потеряно.
   await page.reload();
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT + 1);
   expect(await mainFlowTroubles(page)).toEqual([]);
@@ -290,7 +295,7 @@ test("при недоступном сервере приложение оста
   expect(await setSyncServer(request, baseURL, "start")).toBe(true);
   await page.reload();
   await expectSyncIndicator(page, /синхронизировано$/u);
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(flexibleRemaining(page)).toHaveText(FLEXIBLE_AFTER_PRODUCTS);
   await expectOperationCount(page, G002_INITIAL_OPERATION_COUNT + 1);
 });
@@ -347,7 +352,7 @@ test("два клиента одной семьи сходятся до копе
     // не пришёл», а записи недоступны (демонстрационный бюджет Бориса — не бюджет семьи, хоть и
     // показывает те же числа). Шапка со знаком «синхронизировано» есть только у документа семьи.
     await expect(syncIndicator(boris)).toHaveAttribute("aria-label", /синхронизировано$/u, { timeout: 45_000 });
-    await boris.getByRole("button", { name: "Сегодня", exact: true }).click();
+    await boris.getByRole("button", { name: "Обзор", exact: true }).click();
     await expect(flexibleRemaining(boris)).toHaveText(FLEXIBLE_REMAINING);
 
     // Оба уходят офлайн и оба пишут в одну и ту же категорию.
@@ -361,6 +366,9 @@ test("два клиента одной семьи сходятся до копе
     await borisContext.setOffline(false);
     await anna.reload();
     await boris.reload();
+    // Перезагрузка оставляет каждого на том же адресе — на записи; новость живёт на «Обзоре».
+    await anna.getByRole("button", { name: "Обзор", exact: true }).click();
+    await boris.getByRole("button", { name: "Обзор", exact: true }).click();
 
     // §6 «Семейная новость» — единственный заслуженный момент на входе: первое открытие после
     // того, как второй участник что-то записал. У Анны — покупка Бориса, у Бориса — покупка
@@ -371,10 +379,10 @@ test("два клиента одной семьи сходятся до копе
     await expect(boris.locator(".family-news")).toContainText(/4\s*000\s*₽/u, { timeout: 45_000 });
     await expect(boris.locator(".family-news")).not.toContainText(/1\s*500\s*₽/u);
     await helloShot(anna, "family-news");
-    // Увидена — человек ушёл с «Сегодня» — и за тем же не возвращается: ни на этот экран, ни
+    // Увидена — человек ушёл с «Обзора» — и за тем же не возвращается: ни на этот экран, ни
     // после перезапуска, когда «прошлый раз» читается с диска.
-    await anna.getByRole("button", { name: "Год", exact: true }).click();
-    await anna.getByRole("button", { name: "Сегодня", exact: true }).click();
+    await openYearPlan(anna);
+    await anna.getByRole("button", { name: "Обзор", exact: true }).click();
     await expect(anna.locator(".family-news")).toHaveCount(0);
     await anna.reload();
     await expect(flexibleRemaining(anna)).toHaveText(/21\s*500\s*₽/u);
@@ -388,7 +396,7 @@ test("два клиента одной семьи сходятся до копе
     // 53 000 − (22 000 «Продукты» + 4 000 «Транспорт» + 4 000 и 1 500 от двух устройств)
     // = 21 500 ₽ у обоих, до копейки.
     for (const client of [anna, boris]) {
-      await client.getByRole("button", { name: "Сегодня", exact: true }).click();
+      await client.getByRole("button", { name: "Обзор", exact: true }).click();
       await expect(flexibleRemaining(client)).toHaveText(/21\s*500\s*₽/u);
       await expectOperationCount(client, G002_INITIAL_OPERATION_COUNT + 2);
       await expectJulyRow(client);

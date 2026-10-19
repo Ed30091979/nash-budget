@@ -20,7 +20,8 @@ import {
  * - «Обзор» — корень; с «Обзора» «Назад» выводит из приложения;
  * - «Обзор» → вкладка кладёт запись, вкладка → вкладка её заменяет, поэтому «Назад» с любой
  *   вкладки ведёт на «Обзор»;
- * - подэкран и запись («+», лист) кладут запись поверх;
+ * - подэкран и запись («+», лист) кладут запись поверх; маршрут, который уже лежит ниже в истории,
+ *   не кладётся второй раз — приложение возвращается к нему;
  * - кнопка «назад» внутри экрана ведёт к родителю маршрута, а не слепым `history.back()`: если
  *   родитель — запись под текущей, приложение возвращается на неё (дубля в истории не остаётся);
  *   если нет (адрес открыт ссылкой), текущая запись заменяется родителем;
@@ -65,8 +66,8 @@ export interface HistoryLike {
 export interface RouterWindow {
   readonly location: { readonly hash: string };
   readonly history: HistoryLike;
-  addEventListener(type: "popstate", listener: () => void): void;
-  removeEventListener(type: "popstate", listener: () => void): void;
+  addEventListener(type: "popstate" | "hashchange", listener: () => void): void;
+  removeEventListener(type: "popstate" | "hashchange", listener: () => void): void;
 }
 
 /** Защита черновика: спрашивается в момент нажатия и в момент системного «Назад». */
@@ -99,9 +100,9 @@ export interface Router {
   back(): void;
   /**
    * Переход без вопроса о черновике: маршрут, которого больше нет (операция удалена), уходит к
-   * родителю, и спрашивать человеку там нечего.
+   * родителю, а адрес правки, которая кончилась, сменяется адресом записи, — спрашивать там нечего.
    */
-  redirect(route: Route): void;
+  redirect(route: Route, options?: NavigateOptions): void;
   /** Читает адрес, достраивает историю и слушает `popstate`. Возвращает отписку. */
   start(): () => void;
 }
@@ -119,10 +120,42 @@ function stacksOnTop(route: Route): boolean {
   return route.sheet !== undefined || (route.name === "entry" && route.edit === undefined);
 }
 
+/**
+ * История в памяти — для отрисовки без браузера (статическая разметка, проверки): записи, позиция
+ * и `popstate`, который приходит сразу, а не следующей задачей.
+ */
+export function memoryRouterWindow(hash = ""): RouterWindow {
+  const entries: { state: unknown; hash: string }[] = [{ state: null, hash }];
+  const listeners = new Set<() => void>();
+  let index = 0;
+  return {
+    location: { get hash() { return entries[index]?.hash ?? ""; } },
+    history: {
+      get state() { return entries[index]?.state ?? null; },
+      pushState(state, _unused, url) {
+        entries.splice(index + 1, entries.length, { state, hash: url ?? entries[index]?.hash ?? "" });
+        index += 1;
+      },
+      replaceState(state, _unused, url) {
+        entries[index] = { state, hash: url ?? entries[index]?.hash ?? "" };
+      },
+      go(delta) {
+        const target = index + delta;
+        if (target < 0 || target >= entries.length || target === index) return;
+        index = target;
+        for (const listener of [...listeners]) listener();
+      },
+    },
+    addEventListener(type, listener) { if (type === "popstate") listeners.add(listener); },
+    removeEventListener(type, listener) { if (type === "popstate") listeners.delete(listener); },
+  };
+}
+
 export function createRouter(options: RouterOptions): Router {
   const { window: frame } = options;
   const listeners = new Set<() => void>();
-  let route: Route = ROOT_ROUTE;
+  // Маршрут известен с первой отрисовки: адрес читается без побочных действий, историю достраивает `start`.
+  let route: Route = forReload(parseRoute(frame.location.hash).route);
   let stack: readonly string[] = [ROOT_KEY];
   /** Переход по истории, начатый самим роутером: его `popstate` вопроса о черновике не задаёт. */
   let pending: { readonly arrive: () => void } | null = null;
@@ -161,10 +194,11 @@ export function createRouter(options: RouterOptions): Router {
     }
     if (isRoot(target)) return [ROOT_KEY];
     if (isTab(target)) return [ROOT_KEY, key];
-    if (stacksOnTop(target)) return [...stack, key];
+    // Маршрут уже лежит ниже — вернуться к нему, а не класть второй раз.
+    const already = stack.indexOf(key);
+    if (already !== -1) return stack.slice(0, already + 1);
     const parent = parentRoute(target);
-    const parentAt = parent === null ? -1 : stack.lastIndexOf(routeKey(parent));
-    if (parentAt !== -1) return [...stack.slice(0, parentAt + 1), key];
+    if (stacksOnTop(target) || (parent !== null && stack.includes(routeKey(parent)))) return [...stack, key];
     return routeChain(target).map(routeKey);
   };
 
@@ -255,6 +289,14 @@ export function createRouter(options: RouterOptions): Router {
     if (parsed.notFound) options.onNotFound?.();
   };
 
+  // Переход по якорю (`#…` набран руками, старая ссылка) браузер объявляет `popstate`, а затем
+  // `hashchange`. Если `popstate` уже разобрал адрес, решётка совпадает с маршрутом, и здесь
+  // делать нечего; если браузер его не прислал — адрес разбирается здесь, тем же путём.
+  const onHashChange = () => {
+    if (pending !== null || frame.location.hash === routeKey(route)) return;
+    onPopState();
+  };
+
   const start = () => {
     if (frame.history.scrollRestoration !== undefined) frame.history.scrollRestoration = "manual";
     const parsed = parseRoute(frame.location.hash);
@@ -277,8 +319,12 @@ export function createRouter(options: RouterOptions): Router {
     }
     route = target;
     frame.addEventListener("popstate", onPopState);
+    frame.addEventListener("hashchange", onHashChange);
     if (parsed.notFound) options.onNotFound?.();
-    return () => frame.removeEventListener("popstate", onPopState);
+    return () => {
+      frame.removeEventListener("popstate", onPopState);
+      frame.removeEventListener("hashchange", onHashChange);
+    };
   };
 
   return {
@@ -292,7 +338,7 @@ export function createRouter(options: RouterOptions): Router {
       const parent = parentRoute(route);
       if (parent !== null) navigate(parent);
     },
-    redirect: (target) => perform(target, false),
+    redirect: (target, redirectOptions = {}) => perform(target, redirectOptions.replace === true),
     start,
   };
 }

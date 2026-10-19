@@ -64,10 +64,13 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(source).toContain("id={MAIN_CONTENT_ID}");
     expect(source).toMatch(/id=\{MAIN_CONTENT_ID\} tabIndex=\{-1\}/);
     expect(source).toContain('data-layout-contract="no-action-overflow"');
-    expect(source).toContain('data-screen={screen}');
+    expect(source).toContain('data-screen={route.name}');
     expect(source).toMatch(
-      /useEffect\(\(\) => \{\s*if \(previousScreenRef\.current === screen\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[screen\]\);/,
+      /useEffect\(\(\) => \{\s*if \(previousRouteKeyRef\.current === currentRouteKey\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[currentRouteKey\]\);/,
     );
+    // Прокрутка возвращается по ключу маршрута, а ссылка обхода не трогает адрес: решётка — роутера.
+    expect(source).toContain("window.scrollTo(0, scrollPositions.current.get(currentRouteKey) ?? 0);");
+    expect(source).toMatch(/const skip = \(event: MouseEvent<HTMLAnchorElement>\) => \{\s*event\.preventDefault\(\);\s*document\.getElementById\(MAIN_CONTENT_ID\)\?\.focus\(\);/u);
     expect(source).not.toMatch(/focusRouteHeading[\s\S]{0,100}\[(?:budget|message|loadState)\]/);
   });
 

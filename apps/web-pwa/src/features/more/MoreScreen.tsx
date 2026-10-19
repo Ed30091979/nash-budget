@@ -2,10 +2,8 @@ import type { BudgetState } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
 import { Icon } from "../../components/Icon";
 import { DataManagementScreen } from "../data-management";
-import { operationsCount, TotalsFact } from "../operations";
 import { formatMoney } from "../../money";
 import { plural } from "../../plural";
-import type { BudgetMetrics } from "../today/TodayScreen";
 
 /** «5-го и 20-го» — даты выплат, выведенные из доходов, одной строкой; пусто — выводить не из чего. */
 export function paydayWords(days: readonly number[]): string {
@@ -23,7 +21,7 @@ function storageText(health: StorageHealth | null): string {
 }
 
 /**
- * Строка «Наш месяц» на «Ещё»: строй месяца одной строкой — выплаты, конверты, платежи.
+ * Строка «План месяца» на «Ещё»: строй месяца одной строкой — выплаты, конверты, платежи.
  *
  * Те же числа, на которых стоят «Сегодня» и «Год», названные коротко: не второй экран плана, а
  * дверь в него с табличкой, по которой видно, что за ней.
@@ -45,6 +43,10 @@ export function monthNote(budget: BudgetState, paydays: readonly number[]): stri
 /**
  * «Ещё» — список: семья, план, данные, приложение.
  *
+ * План месяца и план на год — подэкраны «Ещё» (`#/more/plan-month`, `#/more/plan-year`): вкладки
+ * «Год» в навигации из пяти мест нет. Записи и итоги — вкладки «Операции» и «Отчёты», поэтому
+ * группы «Записи» здесь больше нет: два пути к одному экрану с разной историей «Назад» путали бы.
+ *
  * Экран не упразднён нарочно. Приложение офлайн-первое, сервер копией не является, и при утрате
  * всех устройств данные не восстановить, — поэтому «Сделать копию» обязано находиться с одного
  * взгляда, а не за дверью. Юридические абзацы при этом свёрнуты в строку факта: их читают один
@@ -52,7 +54,6 @@ export function monthNote(budget: BudgetState, paydays: readonly number[]): stri
  */
 export function MoreScreen(props: {
   budget: BudgetState;
-  metrics: BudgetMetrics;
   storageHealth: StorageHealth | null;
   showIosInstall: boolean;
   lastSuccessfulBackup: string | null;
@@ -62,8 +63,8 @@ export function MoreScreen(props: {
   onPersistClear: () => Promise<void>;
   onPublishEmpty: () => void;
   onFamily: () => void;
-  onPlanning: () => void;
-  onHistory: () => void;
+  onPlanMonth: () => void;
+  onPlanYear: () => void;
   onImportStatement: () => void;
   familyNote: string;
   monthNote: string;
@@ -81,18 +82,9 @@ export function MoreScreen(props: {
     <section className="list-group" aria-labelledby="more-plan-title">
       <h2 id="more-plan-title" className="list-kicker">План</h2>
       <ul className="list-card">
-        {/* Строй месяца одной строкой: то, на чём стоят «Сегодня» и «Год», и дверь туда, где это правят. */}
-        <li><button className="list-row" type="button" onClick={props.onPlanning}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>Наш месяц</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-      </ul>
-    </section>
-
-    {/* Записи: история с поиском — дверью, итоги — строкой факта. С экрана записи они уехали:
-        он отвечает на «можем ли мы себе это позволить» до траты, а не на «что уже записано». */}
-    <section className="list-group" aria-labelledby="more-records-title">
-      <h2 id="more-records-title" className="list-kicker">Записи</h2>
-      <ul className="list-card">
-        <li><button className="list-row" type="button" onClick={props.onHistory}><span className="list-icon"><Icon name="history" size={24} /></span><span className="list-copy"><strong>Вся история</strong><small>{operationsCount(props.budget.transactions.length)} · поиск по категории, счёту и сумме</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><TotalsFact budget={props.budget} metrics={props.metrics} /></li>
+        {/* Строй месяца одной строкой: то, на чём стоят «Обзор» и план на год, и дверь туда, где это правят. */}
+        <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>Горизонт 12–24 месяцев: сезонные расходы, обучение, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 

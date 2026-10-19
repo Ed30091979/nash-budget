@@ -44,9 +44,13 @@ class FakeBrowser implements RouterWindow {
   get hash(): string { return this.entries[this.index]?.hash ?? ""; }
   get hashes(): string[] { return this.entries.map((entry) => entry.hash); }
 
-  addEventListener(_type: "popstate", listener: () => void) { this.listeners.add(listener); }
-  removeEventListener(_type: "popstate", listener: () => void) { this.listeners.delete(listener); }
+  addEventListener(type: "popstate" | "hashchange", listener: () => void) { this.listenersOf(type).add(listener); }
+  removeEventListener(type: "popstate" | "hashchange", listener: () => void) { this.listenersOf(type).delete(listener); }
+  private readonly hashListeners = new Set<() => void>();
+  private listenersOf(type: "popstate" | "hashchange") { return type === "popstate" ? this.listeners : this.hashListeners; }
   fire() { for (const listener of [...this.listeners]) listener(); }
+  /** Браузер, который на переходе по якорю прислал только `hashchange`. */
+  fireHashOnly() { for (const listener of [...this.hashListeners]) listener(); }
 
   /** Системное «Назад» или «Вперёд»: браузер сам меняет позицию и шлёт `popstate`. */
   async press(delta: number) {
@@ -133,6 +137,38 @@ describe("история: «Обзор» — корень, вкладка на �
     expect(frame.index).toBe(1);
     await frame.press(-1);
     expect(router.current()).toEqual({ name: "overview" });
+  });
+
+  it("подэкран, открытый с соседнего подэкрана, кладётся поверх: системное «Назад» — к соседу, «назад» экрана — к родителю", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "more" });
+    await go(router, { name: "plan-year" });
+    await go(router, { name: "plan-month" });
+    expect(frame.hashes).toEqual(["#/", "#/more", "#/more/plan-year", "#/more/plan-month"]);
+    await frame.press(-1);
+    expect(router.current()).toEqual({ name: "plan-year" });
+    await go(router, { name: "plan-month" });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "more" });
+    expect(frame.index).toBe(1);
+  });
+
+  it("маршрут, который уже лежит ниже, не кладётся второй раз — приложение возвращается к нему", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "more" });
+    await go(router, { name: "plan-year" });
+    await go(router, { name: "plan-month" });
+    await go(router, { name: "plan-year" });
+    expect(router.current()).toEqual({ name: "plan-year" });
+    expect(frame.index).toBe(2);
+  });
+
+  it("знает маршрут с первой отрисовки, ещё до того, как достроил историю", () => {
+    const frame = new FakeBrowser("#/more/family");
+    const router = createRouter({ window: frame });
+    expect(router.current()).toEqual({ name: "family" });
+    expect(frame.hashes).toEqual(["#/more/family"]);
   });
 
   it("подэкран, открытый не из «Ещё», получает родителя в истории: «Назад» ведёт в «Ещё»", async () => {
@@ -270,6 +306,22 @@ describe("адрес, открытый ссылкой или перезагру�
     await frame.type("#/operations/oops");
     expect(router.current()).toEqual({ name: "operations" });
     expect(frame.hash).toBe("#/operations");
+    expect(onNotFound).toHaveBeenCalledOnce();
+  });
+});
+
+describe("переход по якорю", () => {
+  it("адрес, о котором браузер сказал только `hashchange`, разбирается так же, как по `popstate`", async () => {
+    const onNotFound = vi.fn();
+    const { frame, router } = started("", null, { onNotFound });
+    frame.entries.push({ state: null, hash: "#/more/bogus" });
+    frame.index += 1;
+    frame.fireHashOnly();
+    expect(router.current()).toEqual({ name: "more" });
+    expect(frame.hash).toBe("#/more");
+    expect(onNotFound).toHaveBeenCalledOnce();
+    // Повторное событие того же перехода уже ничего не меняет.
+    frame.fireHashOnly();
     expect(onNotFound).toHaveBeenCalledOnce();
   });
 });

@@ -67,6 +67,11 @@ interface OperationsScreenProps {
    */
   readonly editRequest?: EditRequest | null;
   readonly onEditRequestHandled?: () => void;
+  /**
+   * Правка, открытая по просьбе, кончилась — сохранена, отменена или операция удалена. Адрес
+   * правки (`#/new?edit=…`) тогда меняется на адрес записи: форма уже про новую операцию.
+   */
+  readonly onEditFinished?: () => void;
 }
 
 /**
@@ -465,7 +470,7 @@ function Envelope({ row, amountMinor, applies, selected, clock, onSelect }: { ro
  * от задетого пальцем экрана. Счёт и дата стоят строкой факта с «Изменить»; доход и перевод —
  * строкой под конвертами, и та же форма ведёт их до конца.
  */
-export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClock, editRequest = null, onEditRequestHandled }: OperationsScreenProps) {
+export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClock, editRequest = null, onEditRequestHandled, onEditFinished }: OperationsScreenProps) {
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId);
   // Часы периода те же, что на «Сегодня». Без переданных — свои, по календарю семьи.
   const clock = useMemo<PeriodClock>(() => {
@@ -548,7 +553,7 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
   useDraftGuard({
     label: editingId === null ? "операция, которую вы набирали" : "изменения в операции",
     isDirty: () => dirty && !saving.saving,
-    discard: () => reset(),
+    discard: () => clearForm(),
   });
 
   const clearTransient = () => {
@@ -616,7 +621,8 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
     // глаз. Прокрутка мгновенная и уважает `prefers-reduced-motion` по умолчанию платформы.
     window.setTimeout(() => document.getElementById(SAVE_RECEIPT_ID)?.scrollIntoView({ block: "center" }), 0);
   };
-  const reset = (kind: FormKind = draft.kind) => {
+  /** Пустая форма записи. Адрес не трогает: так её очищает и «Не сохранять» на уходе с экрана. */
+  const clearForm = (kind: FormKind = draft.kind) => {
     const fresh = defaultDraft(kind, budget, today);
     setDraft(fresh);
     setPristineDraft(fresh);
@@ -625,6 +631,11 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
     setFactOpen(false);
     setSheet(null);
     setSheetError(null);
+  };
+  /** Сброс после записи, отмены или удаления: правка, если была, кончилась — и адрес это узнаёт. */
+  const reset = (kind: FormKind = draft.kind) => {
+    if (editingId !== null) onEditFinished?.();
+    clearForm(kind);
   };
 
   /**

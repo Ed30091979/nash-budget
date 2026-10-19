@@ -30,13 +30,14 @@ export interface HistoryScreenProps {
   readonly onEdit: (transaction: Transaction) => void;
   /** Дорога к записи из пустой истории. */
   readonly onAdd: () => void;
-  readonly onBack: () => void;
+  /** Кнопка «назад» — только там, где история открыта подэкраном; вкладке «Операции» она не нужна. */
+  readonly onBack?: () => void;
   /** Пока приложение пишет, строки не открывают ничего: открытая форма спорила бы с записью. */
   readonly busy?: boolean;
 }
 
 /**
- * «Вся история» — маршрут внутри «Ещё».
+ * «Операции» — вкладка нижней навигации (2a: прежняя «Вся история» целиком, план волны 2, §1.3).
  *
  * Прежде история стояла свёрнутой под табло конвертов, и экран записи нёс в себе второй главный
  * экран. Экран записи существует, чтобы ответить «можем ли мы себе это позволить» до траты;
@@ -56,10 +57,10 @@ export function HistoryScreen({ budget, onEdit, onAdd, onBack, busy = false }: H
   const showAll = () => { setQuery(""); setKind("all"); setVisibleCount(PAGE_SIZE); };
 
   return <div className="history-screen">
-    <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
+    {onBack ? <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div> : null}
     <section className="section-card history-card" aria-labelledby={HISTORY_TITLE_ID}>
-      <span className="card-kicker">Записи</span>
-      <h1 id={HISTORY_TITLE_ID}>Вся история</h1>
+      <span className="card-kicker">Все записи</span>
+      <h1 id={HISTORY_TITLE_ID}>Операции</h1>
       <p className="history-count">{operationsCount(budget.transactions.length)}</p>
       <div className="search-controls">
         <label htmlFor="operation-history-search">Поиск по категории, счёту или сумме</label>
@@ -98,7 +99,7 @@ export function HistoryScreen({ budget, onEdit, onAdd, onBack, busy = false }: H
           <button className="primary-button" type="button" onClick={showAll}>Показать все операции</button>
         </> : <>
           <h3>Записей пока нет</h3>
-          <p>Сюда попадает каждая покупка, доход и перевод — сразу после того, как их записали на экране «Записать».</p>
+          <p>Сюда попадает каждая покупка, доход и перевод — сразу после того, как их записали кнопкой «+».</p>
           <button className="primary-button" type="button" onClick={onAdd}>Записать первую операцию</button>
         </>}
       </div>}

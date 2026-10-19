@@ -17,13 +17,18 @@ function expectNavigationSecurityHeaders(response: Response | null) {
   expect(response?.headers()["x-frame-options"]).toBe("DENY");
 }
 
-/** «Вся история» живёт на «Ещё»: справка, а не действие, и с экрана записи она уехала. */
+/** История операций — вкладка «Операции» нижней навигации. */
 async function openHistory(page: Page) {
-  const history = page.getByRole("region", { name: "Вся история" });
+  const history = page.getByRole("region", { name: "Операции" });
   if (await history.count()) return;
-  await page.getByRole("button", { name: "Ещё", exact: true }).click();
-  await page.getByRole("button", { name: /^Вся история/u }).click();
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
   await expect(history).toBeVisible();
+}
+
+/** План на год — подэкран «Ещё»: отдельной вкладки «Год» в навигации из пяти мест нет. */
+async function openYearPlan(page: Page) {
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("button", { name: /^План на год/u }).click();
 }
 
 async function expectBudgetSnapshot(
@@ -31,7 +36,7 @@ async function expectBudgetSnapshot(
   remaining: RegExp,
   operationCount: number,
 ) {
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   // Герой называет остаток месяца плана независимо от того, идёт этот месяц сейчас или уже закрыт.
   await expect(page.locator(".hero-card > strong")).toHaveText(remaining);
 
@@ -45,7 +50,7 @@ async function expectAddedExpense(page: Page) {
   // Строка истории называет категорию, дату с видом операции и сумму со знаком направления.
   // Проверяется то, что видно в строке, а не порядок тегов внутри неё.
   const row = page
-    .getByRole("region", { name: "Вся история" })
+    .getByRole("region", { name: "Операции" })
     .getByRole("listitem")
     .filter({ hasText: /9\s*000\s*₽/u });
   await expect(row).toContainText("2026-07-18");
@@ -100,7 +105,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   ).toBeVisible();
   await expectAddedExpense(page);
 
-  await page.getByRole("button", { name: "Сегодня", exact: true }).click();
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
   await expect(page.locator(".hero-card > strong")).toHaveText(UPDATED_FLEXIBLE_REMAINING);
   await expect(page.getByRole("alert")).toContainText(PRODUCTS_OVER_LIMIT);
 
@@ -127,7 +132,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   const nestedResponse = await page.goto("/year");
   expect(nestedResponse?.fromServiceWorker()).toBe(true);
   expectNavigationSecurityHeaders(nestedResponse);
-  await page.getByRole("button", { name: "Год", exact: true }).click();
+  await openYearPlan(page);
   // «Год» отвечает за горизонт: заголовок — вывод, лестница месяцев — где дно. У восстановленного
   // G-002 дно — пять месяцев на одной сумме, и все пять выделены в лестнице.
   await expect(page.getByRole("heading", { name: /Плана хватает во все 12 месяцев/u })).toBeVisible();
@@ -158,9 +163,11 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expect(updateButton).toBeVisible();
   await expect(page.getByLabel("Сумма, ₽")).toHaveValue("1234");
 
+  // Считаются перезагрузки документа, а не смены адреса: переходы внутри приложения меняют
+  // решётку адреса (тоже `framenavigated`), но страницу не перезагружают и черновик не теряют.
   let mainFrameNavigations = 0;
-  page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) mainFrameNavigations += 1;
+  page.on("load", () => {
+    mainFrameNavigations += 1;
   });
   await updateButton.click();
   await expect(
@@ -175,7 +182,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expect(page.getByLabel("Сумма, ₽")).toHaveValue("");
   await expect(page.locator("#update-blocked")).toBeHidden();
 
-  await page.getByRole("button", { name: "Год", exact: true }).click();
+  await openYearPlan(page);
   await page.getByRole("button", { name: "Настроить план" }).click();
   await expect(page.getByRole("heading", { name: "Плановые расходы" })).toBeVisible();
   await page.getByRole("button", {
@@ -201,10 +208,7 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expect(planningName).toHaveValue("");
   await expect(page.locator("#update-blocked")).toBeHidden();
 
-  const appliedNavigation = page.waitForEvent(
-    "framenavigated",
-    (frame) => frame === page.mainFrame(),
-  );
+  const appliedNavigation = page.waitForEvent("load");
   await updateButton.click();
   await appliedNavigation;
   await page.waitForLoadState("domcontentloaded");
@@ -215,7 +219,8 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
       return (await response.json() as { buildId: string }).buildId;
     });
   }).toBe("phase8-e2e-b");
-  await expect(page.locator(".hero-card")).toBeVisible();
+  // Обновление перезапускает приложение на том же адресе: план месяца, с которого его применили.
+  await expect(page.getByRole("heading", { name: "Плановые расходы" })).toBeVisible();
   expect(mainFrameNavigations).toBe(1);
 
   await expectBudgetSnapshot(

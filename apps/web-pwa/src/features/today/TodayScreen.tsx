@@ -111,7 +111,7 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
   const monthWord = monthOnly.format(new Date(`${plan.startMonth}-01T00:00:00.000Z`));
   const monthOf = monthGenitive(`${plan.startMonth}-15`);
   return <>
-    <h1 className="visually-hidden">Сегодня: семейный бюджет</h1>
+    <h1 className="visually-hidden">Обзор: семейный бюджет</h1>
     <section className={`hero-card${line.state === "out" && clock.inPeriod ? " danger" : ""}`}>
       {/* Эйбрау называет месяц, к которому относятся числа, и больше ничего. Числа дня здесь
           не было: его человек видит в строке состояния телефона, а положение внутри месяца

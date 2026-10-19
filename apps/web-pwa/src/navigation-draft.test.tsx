@@ -12,6 +12,9 @@ import { prepareBudgetState } from "./backup";
 import { ConfirmDialog, draftLeaveQuestion } from "./components/ConfirmDialog";
 import { makeG000State } from "./features/operations/test-fixture";
 import { createDraftRegistry, createDraftSaving, type DraftEntry } from "./navigation/draft-guard";
+import { createRouter, memoryRouterWindow } from "./navigation/router";
+import { formatRoute, type Route } from "./navigation/routes";
+import { activeTab } from "./components/BottomNav";
 import { BudgetWriteRefusal, WRITE_REFUSAL_TEXT } from "./write-refusal";
 
 /** Черновик экрана, которым проверка управляет руками. */
@@ -202,7 +205,8 @@ describe("оболочка спрашивает реестр", () => {
 
   it("переход спрашивает реестр в момент нажатия и задаёт вопрос своим диалогом", () => {
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
-    expect(source).toMatch(/if \(drafts\.hasUnsavedDrafts\("navigation"\)\) \{\s*setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation"\), proceed \}\);\s*return;\s*\}\s*proceed\(\);/u);
+    // Роутер спрашивает реестр и на нажатии, и на системном «Назад»; вопрос — диалог приложения.
+    expect(source).toMatch(/guard: \{\s*blocks: \(\) => drafts\.hasUnsavedDrafts\("navigation"\),\s*confirm: \(proceed\) => setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation"\), proceed \}\),\s*\}/u);
     expect(source).toMatch(/onConfirm=\{\(\) => \{\s*setLeaveRequest\(null\);\s*drafts\.discardAll\("navigation"\);\s*leaveRequest\.proceed\(\);/u);
     expect(source).toContain("onCancel={() => setLeaveRequest(null)}");
     expect(source).not.toMatch(/onDirtyChange|DraftDirty|const hasUnsavedDraft\b/u);
@@ -255,16 +259,27 @@ describe("оболочка спрашивает реестр", () => {
   it("оставляет дорогу домой одним нажатием с любого экрана", () => {
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     // Панель разделов нарисована один раз на всю оболочку, до переключателя экранов, — поэтому
-    // «Сегодня» доступно и с планирования, и с экрана семьи, куда ведёт только «Назад» внутри них.
+    // «Обзор» доступен и с плана, и с экрана семьи, куда ведёт только «назад» внутри них.
     const shell = source.slice(source.indexOf('<AppFrame className="app-shell"'));
-    const navigationTag = /<nav\b[^>]*\bclassName="bottom-nav"/u;
-    expect(shell.search(navigationTag)).toBeGreaterThan(-1);
-    expect(shell.search(navigationTag)).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));
-    expect(source).toContain('label="Сегодня" onClick={() => navigate("today")}');
-    expect(source).toContain('active={screen === "year" || screen === "planning"}');
-    expect(source).toContain('active={screen === "more" || screen === "family" || screen === "import" || screen === "history"}');
-    // Переход на «Сегодня» с чистым реестром не спрашивает ничего: вопрос — только при черновике.
-    expect(source).toMatch(/const navigate = \(destination: Screen\) => \{\s*if \(screen === destination\) return;/u);
+    expect(shell.indexOf("<BottomNav ")).toBeGreaterThan(-1);
+    expect(shell.indexOf("<BottomNav ")).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));
+    expect(source).toContain('onTab={(tab) => navigate({ name: tab })}');
+    expect(source).toMatch(/<nav ref=\{navRef\} className="bottom-nav" aria-label="Основные разделы">/u);
+    // Каждый маршрут подсвечивает свою вкладку или ни одной — у «+» своё место.
+    const routes: readonly Route[] = [
+      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" }, { name: "entry" },
+      { name: "plan-month" }, { name: "plan-year" }, { name: "family" }, { name: "import" },
+    ];
+    expect(routes.map((route) => activeTab(route))).toEqual([
+      "overview", "operations", "reports", "more", null, "more", "more", "more", "more",
+    ]);
+    // И с любого маршрута одно нажатие на «Обзор» туда и ведёт — без вопроса, пока черновика нет.
+    for (const route of routes) {
+      const router = createRouter({ window: memoryRouterWindow(formatRoute(route)), guard: { blocks: () => false, confirm: () => undefined } });
+      router.start();
+      router.navigate({ name: "overview" });
+      expect(router.current(), formatRoute(route)).toEqual({ name: "overview" });
+    }
 
     // И ничто её не прячет: ни узкий экран, ни альбомная ориентация.
     const navRules = [...styles.matchAll(/([^{}]*\.bottom-nav[^{}]*)\{([^{}]*)\}/gu)];
@@ -275,13 +290,16 @@ describe("оболочка спрашивает реестр", () => {
   });
 
   it("routes every internal unmounting control through the shared guard", () => {
-    expect(source).toContain('onClick={() => navigate("today")}');
-    expect(source).toContain('onClick={() => navigate("year")}');
-    expect(source).toContain('onClick={() => navigate("operations")}');
-    expect(source).toContain('onClick={() => navigate("more")}');
-    expect(source).toContain('onAdd={() => navigate("operations")}');
-    expect(source).toContain('onYear={() => navigate("year")}');
-    expect(source).toContain('onPlanning={() => navigate("planning")}');
-    expect(source).not.toMatch(/on(?:Click|Add|Year|Planning)=\{\(\) => setScreen\(/);
+    // Каждая дверь между экранами — переход роутера, а значит, вопрос реестру; своего пути у неё нет.
+    expect(source).toContain('onAdd={() => navigate({ name: "entry" })}');
+    expect(source).toContain('onYear={() => navigate({ name: "plan-year" })}');
+    expect(source).toContain('onPlanning={() => navigate({ name: "plan-month" })}');
+    expect(source).toContain('onFamily={() => navigate({ name: "family" })}');
+    expect(source).toContain('onImportStatement={() => navigate({ name: "import" })}');
+    expect(source).toContain("<MoreBackButton onBack={back} />");
+    expect(source).toContain("const navigate = (destination: Route) => router.navigate(destination);");
+    expect(source).toContain("const back = () => router.back();");
+    // Мимо роутера историю не трогает никто: ни `setScreen`, ни `history.back()`, ни запись в адрес.
+    expect(source).not.toMatch(/setScreen\(|history\.(?:back|go|pushState|replaceState)\(|location\.hash\s*=/u);
   });
 });

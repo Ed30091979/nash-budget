@@ -129,11 +129,11 @@ describe("phase 7 App composition", () => {
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
-    // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на маршруте
-    // «История» внутри «Ещё», а не отдельным вторым списком и не на «Годе». Экран записи
-    // истории больше не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
-    expect(source).toMatch(/screen === "operations" \? <OperationsScreen budget=\{budget\}/);
-    expect(source).toMatch(/screen === "history" \? <HistoryScreen budget=\{budget\}/);
+    // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на вкладке
+    // «Операции», а не отдельным вторым списком и не на плане года. Экран записи («+») истории
+    // не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
+    expect(source).toMatch(/route\.name === "entry" \? <OperationsScreen budget=\{budget\}/);
+    expect(source).toMatch(/route\.name === "operations" \? <HistoryScreen budget=\{budget\}/);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
     expect(source).not.toMatch(/repository\.save\(/);

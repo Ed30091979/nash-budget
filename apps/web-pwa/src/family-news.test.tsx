@@ -125,9 +125,11 @@ describe("семейная новость на «Сегодня»", () => {
   it("исчезает после того, как человек её увидел, и не возвращается за тем же", () => {
     // «Прошлый раз» — операции бюджета на момент открытия…
     expect(appSource).toContain("setSeenTransactionIds(transactionIds(prepared));");
-    // …и на момент, когда новость стояла на экране: человек ушёл с «Сегодня» или свернул приложение.
-    expect(appSource).toContain('const newsOnScreen = screen === "today" && familyNews.length > 0;');
+    // …и на момент, когда новость стояла на экране: человек ушёл с «Обзора» или свернул приложение.
+    expect(appSource).toContain('const newsOnScreen = route.name === "overview" && familyNews.length > 0;');
     expect(appSource).toContain("if (newsOnScreen) markNewsSeen();");
+    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла.
+    expect(appSource).toMatch(/onLeave: \(key\) => \{[\s\S]{0,120}leaving\.current\(\);/u);
     expect(appSource).toMatch(/visibilityState !== "hidden"[\s\S]{0,200}setSeenTransactionIds\(transactionIds\(current\)\)[\s\S]{0,200}addEventListener\("visibilitychange"/u);
     // Нового хранилища нет: память сессии, а на следующем открытии — бюджет с диска.
     expect(appSource).not.toMatch(/seen-transactions|family-news-seen|writeSyncState\(\[\{ key: "news/u);

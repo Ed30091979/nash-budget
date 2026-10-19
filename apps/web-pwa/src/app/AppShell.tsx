@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import {
   calculateAnnualPlan,
   calculateBudget,
@@ -11,7 +11,8 @@ import {
   requestStorageHealth,
   type StorageHealth,
 } from "@family-budget/storage";
-import { Icon, IconSprite, type IconName } from "../components/Icon";
+import { Icon, IconSprite } from "../components/Icon";
+import { BottomNav } from "../components/BottomNav";
 import { observeLayoutSpace } from "../layout-space";
 import { UpdatePrompt } from "../components/UpdatePrompt";
 import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
@@ -38,7 +39,6 @@ import {
   type OwnAuthor,
 } from "../features/family";
 import { createImportMemory } from "../features/import";
-import { type EditRequest } from "../features/operations";
 import { Onboarding } from "../onboarding/Onboarding";
 import { persistCompletedOnboarding } from "../onboarding/model";
 import { buildDemoBudgetState } from "../onboarding/demo";
@@ -54,9 +54,9 @@ import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
-import { RouteView, type AppRouteContext, type Screen } from "./routes";
-
-export type { Screen } from "./routes";
+import { RouteView, type AppRouteContext } from "./routes";
+import { createRouter, memoryRouterWindow, type NavigateOptions } from "../navigation/router";
+import { resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, type Route } from "../navigation/routes";
 
 type LoadState = "loading" | "empty" | "ready" | "error";
 
@@ -85,8 +85,16 @@ export function protectUnsavedDraftOnUnload(event: BeforeUnloadEvent, hasUnsaved
 /** Бюджета на устройстве нет — «Семье» нечего предупреждать о его замене. */
 const NO_LOCAL_BUDGET = { transactions: [] } as const;
 
+/**
+ * Ссылка обхода. Решётка адреса принадлежит роутеру, поэтому переход по якорю здесь не случается:
+ * ссылка сама переводит фокус на содержимое — и адрес, и история остаются прежними.
+ */
 function SkipLink() {
-  return <a className="skip-link" href={`#${MAIN_CONTENT_ID}`}>К основному содержимому</a>;
+  const skip = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    document.getElementById(MAIN_CONTENT_ID)?.focus();
+  };
+  return <a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skip}>К основному содержимому</a>;
 }
 
 /**
@@ -133,7 +141,6 @@ export default function App() {
   const [slowLoad, setSlowLoad] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [headerScrolled, setHeaderScrolled] = useState(false);
-  const [screen, setScreen] = useState<Screen>("today");
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -142,15 +149,33 @@ export default function App() {
   // обновления спрашивают их синхронно — в момент нажатия, а не по флагу, отставшему на отрисовку.
   const drafts = useMemo(() => createDraftRegistry(), []);
   const [leaveRequest, setLeaveRequest] = useState<LeaveRequest | null>(null);
-  // Просьба открыть операцию из истории на «Ещё» в форме «Записать»; экран записи её гасит.
-  const [editRequest, setEditRequest] = useState<EditRequest | null>(null);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
   // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
   // следующем открытии «прошлый раз» — это бюджет, прочитанный с диска, а в него приём уже
   // записал всё, что пришло, одной транзакцией с курсором.
   const [seenTransactionIds, setSeenTransactionIds] = useState<ReadonlySet<string> | null>(null);
-  const previousScreenRef = useRef<Screen>(screen);
+  // §2.1 Маршрут — в адресе. Роутер один на всё время жизни приложения: черновик спрашивается у
+  // реестра в момент нажатия и на системном «Назад», прокрутка помнится по ключу маршрута, адрес,
+  // ведущий в никуда, уходит к родителю с «Запись не найдена».
+  const scrollPositions = useRef(new Map<string, number>());
+  const leaving = useRef<() => void>(() => undefined);
+  const router = useMemo(() => createRouter({
+    window: typeof window === "undefined" ? memoryRouterWindow() : window,
+    guard: {
+      blocks: () => drafts.hasUnsavedDrafts("navigation"),
+      confirm: (proceed) => setLeaveRequest({ labels: drafts.dirtyLabels("navigation"), proceed }),
+    },
+    onLeave: (key) => {
+      scrollPositions.current.set(key, window.scrollY);
+      leaving.current();
+    },
+    onNotFound: () => setMessage(ROUTE_NOT_FOUND_MESSAGE),
+  }), [drafts]);
+  useLayoutEffect(() => router.start(), [router]);
+  const route = useSyncExternalStore(router.subscribe, router.current, router.current);
+  const currentRouteKey = routeKey(route);
+  const previousRouteKeyRef = useRef(currentRouteKey);
   // Место под шапку и навигацию снимается с разметки, а не берётся из числа: панель растёт с
   // системным шрифтом, и полоса записи обязана стоять на настоящей панели (`layout-space.ts`).
   // Оболочка появляется вместе с готовым бюджетом, поэтому наблюдение привязано к состоянию
@@ -294,11 +319,27 @@ export default function App() {
     return () => window.clearTimeout(timeout);
   }, [message]);
 
+  // После перехода: прокрутка — та, на которой маршрут оставили (или начало), фокус — на `h1`
+  // маршрута, чтобы читающий с экрана услышал, куда попал.
   useEffect(() => {
-    if (previousScreenRef.current === screen) return;
-    previousScreenRef.current = screen;
+    if (previousRouteKeyRef.current === currentRouteKey) return;
+    previousRouteKeyRef.current = currentRouteKey;
+    window.scrollTo(0, scrollPositions.current.get(currentRouteKey) ?? 0);
     focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
-  }, [screen]);
+  }, [currentRouteKey]);
+
+  // Операция из адреса (`#/new?edit=…`), которой в бюджете нет, — «Запись не найдена» и возврат к
+  // «Операциям». Проверяется по приходу на адрес, а не на каждой правке бюджета: удаление открытой
+  // операции само сменяет адрес и не должно называться ненайденной записью.
+  const budgetReady = budget !== null;
+  useEffect(() => {
+    const current = budgetRef.current;
+    if (current === null) return;
+    const resolved = resolveRoute(router.current(), { transaction: (id) => current.transactions.some((item) => item.id === id) });
+    if (!resolved.notFound) return;
+    router.redirect(resolved.route);
+    setMessage(ROUTE_NOT_FOUND_MESSAGE);
+  }, [currentRouteKey, budgetReady, router]);
 
   // §6 исследования, пункт 30: порог индикатора — секунда. Локальное чтение в неё укладывается,
   // и слово «открываем» появляется только тогда, когда чтение в неё не уложилось.
@@ -350,11 +391,17 @@ export default function App() {
   );
   // Новость увидена, когда человек ушёл с «Сегодня» или свернул приложение, пока она там стояла:
   // «прошлый раз» становится нынешним состоянием, и за тем же она не возвращается.
-  const newsOnScreen = screen === "today" && familyNews.length > 0;
+  const newsOnScreen = route.name === "overview" && familyNews.length > 0;
   const markNewsSeen = () => {
     const current = budgetRef.current;
     if (current !== null) setSeenTransactionIds(transactionIds(current));
   };
+  // Уход с «Обзора», пока новость на нём, — тоже «увидена». Роутер зовёт это перед сменой маршрута.
+  useLayoutEffect(() => {
+    leaving.current = () => {
+      if (newsOnScreen) markNewsSeen();
+    };
+  });
   useEffect(() => {
     if (!newsOnScreen) return undefined;
     const onVisibility = () => {
@@ -531,22 +578,13 @@ export default function App() {
   const hold = family.inFamily ? family.status?.hold ?? null : null;
   const holdNotice = documentHoldNotice(hold);
   /**
-   * Переход между экранами. Несохранённый черновик спрашивается синхронно, в момент нажатия, и
-   * вопрос задаёт диалог приложения, а не системное окно: «Продолжить ввод» оставляет всё как
-   * было, «Не сохранять» забывает черновики и переходит.
+   * Переход между экранами — по правилам истории роутера (§2.1). Несохранённый черновик
+   * спрашивается синхронно, в момент нажатия, и вопрос задаёт диалог приложения, а не системное
+   * окно: «Продолжить ввод» оставляет всё как было, «Не сохранять» забывает черновики и переходит.
    */
-  const navigate = (destination: Screen) => {
-    if (screen === destination) return;
-    const proceed = () => {
-      if (newsOnScreen) markNewsSeen();
-      setScreen(destination);
-    };
-    if (drafts.hasUnsavedDrafts("navigation")) {
-      setLeaveRequest({ labels: drafts.dirtyLabels("navigation"), proceed });
-      return;
-    }
-    proceed();
-  };
+  const navigate = (destination: Route) => router.navigate(destination);
+  const back = () => router.back();
+  const redirect = (destination: Route, options?: NavigateOptions) => router.redirect(destination, options);
   const leaveQuestion = leaveRequest === null ? null : (
     <ConfirmDialog
       {...draftLeaveQuestion(leaveRequest.labels)}
@@ -575,7 +613,7 @@ export default function App() {
   const routeContext: AppRouteContext = {
     budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
     recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, budgetSave, budgetRef, editRequest, setEditRequest,
+    openingMonth, openMonth, familyNewsText, navigate, back, redirect, budgetSave, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
@@ -595,38 +633,33 @@ export default function App() {
         {syncIndicator.state === "local" ? null : <div className="header-badges"><span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span></div>}
       </header>
 
-      <nav ref={navRef} className="bottom-nav" aria-label="Основные разделы">
-        <NavButton active={screen === "today"} icon="today" label="Сегодня" onClick={() => navigate("today")} />
-        <NavButton active={screen === "year" || screen === "planning"} icon="year" label="Год" onClick={() => navigate("year")} />
-        <NavButton active={screen === "operations"} icon="operations" label="Записать" onClick={() => navigate("operations")} />
-        <NavButton active={screen === "more" || screen === "family" || screen === "import" || screen === "history"} icon="more" label="Ещё" onClick={() => navigate("more")} />
-      </nav>
+      <BottomNav navRef={navRef} route={route} onTab={(tab) => navigate({ name: tab })} onAdd={() => navigate({ name: "entry" })} />
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
-        <div className="route-screen" data-screen={screen}>
+        <div className="route-screen" data-screen={route.name}>
           {/* Второе ревью: пока документ задержан, устройство только читает, и человек узнаёт об этом
               до того, как запись откажет, на любом экране, кроме «Семьи», где задержка названа сама. */}
-          {hold !== null && holdNotice !== null && screen !== "family" ? (
+          {hold !== null && holdNotice !== null && route.name !== "family" ? (
             <section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">
               <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
               <div>
                 <h2 id="app-hold-title">{holdNotice.title}</h2>
                 <p>{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}</p>
-                <button className="primary-button" type="button" onClick={() => navigate("family")}>Подробнее</button>
+                <button className="primary-button" type="button" onClick={() => navigate({ name: "family" })}>Подробнее</button>
               </div>
             </section>
           ) : null}
-          {keyAlarm && screen !== "family" ? (
+          {keyAlarm && route.name !== "family" ? (
             <section className="key-alarm" role="alert" aria-labelledby="app-key-alarm-title">
               <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
               <div>
                 <h2 id="app-key-alarm-title">{keyAlarm.title}</h2>
                 <p>{keyAlarm.body}</p>
-                <button className="primary-button" type="button" onClick={() => navigate("family")}>{keyAlarm.actionLabel}</button>
+                <button className="primary-button" type="button" onClick={() => navigate({ name: "family" })}>{keyAlarm.actionLabel}</button>
               </div>
             </section>
           ) : null}
-          <RouteView screen={screen} app={routeContext} />
+          <RouteView route={route} app={routeContext} />
         </div>
       </main>
 
@@ -634,17 +667,4 @@ export default function App() {
       {leaveQuestion}
     </AppFrame>
   );
-}
-
-// Нижняя навигация берёт глифы из того же спрайта, что и остальной интерфейс: один набор,
-// одна толщина штриха, одна канва. Подпись под иконкой несёт смысл, иконка — декоративная.
-const navIcons = {
-  today: "house",
-  year: "calendar",
-  operations: "circle-plus",
-  more: "ellipsis",
-} as const satisfies Record<string, IconName>;
-
-function NavButton({ active, icon, label, onClick }: { active: boolean; icon: keyof typeof navIcons; label: string; onClick: () => void }) {
-  return <button className={`nav-button${active ? " active" : ""}`} type="button" onClick={onClick} aria-current={active ? "page" : undefined}><span className="nav-icon"><Icon name={navIcons[icon]} size={24} /></span><span>{label}</span></button>;
 }

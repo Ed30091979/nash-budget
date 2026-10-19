@@ -55,17 +55,15 @@ describe("приложение с экраном семьи", () => {
   });
 
   it("экран семьи добавлен как маршрут и не трогает нижнюю навигацию", () => {
-    expect(source).toContain('| "family"');
-    // Один и тот же экран «Семья» — маршрут оболочки и дверь с экрана ожидания документа семьи.
-    expect(source).toContain('{screen === "family" ? familyScreen(() => navigate("more")) : null}');
+    const routes = readFileSync(new URL("../../navigation/routes.ts", import.meta.url), "utf8");
+    expect(routes).toContain('| { readonly name: "family"; readonly sheet?: SheetName }');
+    // Один и тот же экран «Семья» — маршрут оболочки (`#/more/family`) и дверь с экрана ожидания.
+    expect(source).toContain('{route.name === "family" ? familyScreen(back) : null}');
     expect(source).toContain("const familyScreen = (onBack: () => void) => (\n    <FamilyScreen");
-    // Кнопок в нижней навигации по-прежнему четыре, и порядок прежний.
-    const navButtons = source.match(/<NavButton /gu) ?? [];
-    expect(navButtons).toHaveLength(4);
-    expect(source).toContain('label="Сегодня"');
-    expect(source).toContain('label="Год"');
-    expect(source).toContain('label="Записать"');
-    expect(source).toContain('label="Ещё"');
+    // Нижняя навигация — пять мест, и «Семьи» среди них нет: она живёт под «Ещё».
+    const tabs = [...source.matchAll(/\{ tab: "([a-z]+)", label: "([^"]+)"/gu)].map((match) => match[2]);
+    expect(tabs).toEqual(["Обзор", "Операции", "Отчёты", "Ещё"]);
+    expect(source).toContain('<button className={`nav-fab${adding ? " active" : ""}`} type="button" aria-label="Записать"');
     // Вход на экран — строкой списка «Ещё», названной словами.
     expect(source).toMatch(/onClick=\{props\.onFamily\}>[\s\S]{0,200}Семья и синхронизация/u);
     expect(source).toContain("<BackButton label=");
@@ -112,8 +110,8 @@ describe("приложение с экраном семьи", () => {
   it("задержанный документ виден плашкой на каждом экране, кроме «Семьи», без кнопки «закрыть»", () => {
     expect(source).toContain("const hold = family.inFamily ? family.status?.hold ?? null : null;");
     expect(source).toContain("const holdNotice = documentHoldNotice(hold);");
-    expect(source).toContain("{hold !== null && holdNotice !== null && screen !== \"family\" ? (");
-    const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && screen !== \"family\" ? ("));
+    expect(source).toContain("{hold !== null && holdNotice !== null && route.name !== \"family\" ? (");
+    const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && route.name !== \"family\" ? ("));
     // The words follow the reason: «обновите приложение» for a version skew, «дождитесь бюджета»
     // for a journal with nothing to show.
     expect(banner).toContain("{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}");

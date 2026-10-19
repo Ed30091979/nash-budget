@@ -545,11 +545,23 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .storage-meter, .body-copy { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
-/* §6 Нижняя навигация. */
-.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
+/* §5 Нижняя навигация — пять мест: две вкладки, «+», две вкладки. «+» берёт свои 56 pt, вкладки
+   делят остаток поровну; между целями 8 (§9). */
+.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 56px repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
-   «Записать» шире четверти экрана, и без переноса навигация выезжала бы за его край. */
-.nav-button { position: relative; display: grid; min-width: 0; min-height: 48px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+   «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
+.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (4.29:1 — графика, порог 3:1),
+   радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
+.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-ink); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
+.nav-fab svg { width: 24px; height: 24px; }
+/* При обычном кегле подпись вкладки — одна строка: на 320 pt «Операции» шире своей колонки на
+   пару пунктов, перенос по слогам поднимал панель на 8 pt, и при открытой клавиатуре суммы под
+   ней не оставалось места конверту. Лишнее уходит в зазор 8 между целями, а не под соседа. При
+   системном увеличении (уже 18em) подпись снова переносится — не обрезается никогда. */
+@media (min-width: 18em) {
+  .nav-button > span:last-child { white-space: nowrap; }
+}
 .nav-icon { position: relative; display: grid; place-items: center; height: 24px; }
 .nav-icon svg { width: 24px; height: 24px; }
 /* Активная вкладка — это текст, а не графика, и порог у него 4.5:1, а не 3:1: подпись набрана
@@ -1173,7 +1185,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    (`keypad.spec.ts`). Ниже 38em в высоту панель возвращается к 56: 16 pt на таком экране — это
    разница между конвертом на виду и конвертом под панелью. */
 @media (max-height: 38em) {
-  .bottom-nav { min-height: calc(var(--nav-height-compact) + env(safe-area-inset-bottom)); }
+  .bottom-nav { min-height: calc(var(--nav-height-compact) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 48px repeat(2, minmax(0, 1fr)); padding-top: 4px; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
+  .nav-button { min-height: 48px; }
+  .nav-fab { width: 48px; height: 48px; min-height: 48px; }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
