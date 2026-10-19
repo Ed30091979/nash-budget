@@ -52,6 +52,7 @@ import {
 import { createBudgetRepository } from "../storage-repository";
 import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 import { useBudgetWrite } from "../write/useBudgetWrite";
+import { HOLD_DETAILS_LABEL, writeFormRefusal } from "../write/hold-gate";
 import { ReadOnlyBanner } from "../components/ReadOnlyBanner";
 import { WriteRefusalNotice } from "../components/WriteRefusalNotice";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
@@ -147,6 +148,9 @@ export default function App() {
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Сообщение, которое ведёт в «Семью» (отказ открыть форму записи при задержке): кнопка стоит
+  // только у этого текста, и любое другое сообщение, вставшее на его место, её не наследует.
+  const [messageToFamily, setMessageToFamily] = useState<string | null>(null);
   const [openingMonth, setOpeningMonth] = useState(false);
   // Реестр несохранённых черновиков: экраны регистрируют свои, а переход, `beforeunload` и плашка
   // обновления спрашивают их синхронно — в момент нажатия, а не по флагу, отставшему на отрисовку.
@@ -258,6 +262,14 @@ export default function App() {
     },
   });
   journalWriteRef.current = family.writeBudget;
+  // Задержка документа семьи: устройство только читает, и форма записи не открывается (ревью 2a, п. 6).
+  const hold = family.inFamily ? family.status?.hold ?? null : null;
+  const holdRef = useRef(hold);
+  holdRef.current = hold;
+  const refuseWriteForm = useCallback((text: string) => {
+    setMessage(text);
+    setMessageToFamily(text);
+  }, []);
   inFamilyRef.current = family.inFamily;
 
   useEffect(() => {
@@ -351,6 +363,16 @@ export default function App() {
     router.redirect(resolved.route);
     setMessage(ROUTE_NOT_FOUND_MESSAGE);
   }, [currentRouteKey, budgetReady, router]);
+
+  // Пришли на форму записи — набранным адресом, «Назад» или «Вперёд», ссылкой, — а документ
+  // задержан: форма не открывается, маршрут уходит к родителю, и человек слышит почему. Только по
+  // приходу: черновик, уже открытый, когда задержка началась, остаётся на месте.
+  useEffect(() => {
+    const refusal = writeFormRefusal(holdRef.current, router.current());
+    if (refusal === null) return;
+    router.redirect(refusal.fallback);
+    refuseWriteForm(refusal.message);
+  }, [currentRouteKey, router, refuseWriteForm]);
 
   // §6 исследования, пункт 30: порог индикатора — секунда. Локальное чтение в неё укладывается,
   // и слово «открываем» появляется только тогда, когда чтение в неё не уложилось.
@@ -586,14 +608,21 @@ export default function App() {
   // and no timer, and it follows the person onto whichever screen they are on — the family screen
   // renders its own copy, so this one steps aside there.
   const keyAlarm = syncAlarm(family.status?.stop ?? null);
-  const hold = family.inFamily ? family.status?.hold ?? null : null;
   const holdNotice = documentHoldNotice(hold);
   /**
    * Переход между экранами — по правилам истории роутера (§2.1). Несохранённый черновик
    * спрашивается синхронно, в момент нажатия, и вопрос задаёт диалог приложения, а не системное
    * окно: «Продолжить ввод» оставляет всё как было, «Не сохранять» забывает черновики и переходит.
    */
-  const navigate = (destination: Route) => router.navigate(destination);
+  const navigate = (destination: Route) => {
+    // «+», «План месяца», «Выписка» и правка операции при задержке не открываются: отказ — сразу.
+    const refusal = writeFormRefusal(hold, destination);
+    if (refusal !== null) {
+      refuseWriteForm(refusal.message);
+      return;
+    }
+    router.navigate(destination);
+  };
   const back = () => router.back();
   const redirect = (destination: Route, options?: NavigateOptions) => router.redirect(destination, options);
   const leaveQuestion = leaveRequest === null ? null : (
@@ -668,7 +697,10 @@ export default function App() {
         </div>
       </main>
 
-      {message ? <aside className="message-toast" role="status"><p>{message}</p><button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button></aside> : null}
+      {message ? <aside className="message-toast" role="status"><p>{message}</p>{messageToFamily === message ? <>
+        <button className="primary-button" type="button" onClick={() => { setMessage(null); navigate({ name: "family" }); }}>{HOLD_DETAILS_LABEL}</button>
+        <button className="quiet-button" type="button" onClick={() => setMessage(null)}>Закрыть</button>
+      </> : <button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button>}</aside> : null}
       {leaveQuestion}
     </AppFrame>
   );

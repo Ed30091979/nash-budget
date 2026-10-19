@@ -334,7 +334,8 @@ describe("оболочка спрашивает реестр", () => {
     expect(source).toContain('onFamily={() => navigate({ name: "family" })}');
     expect(source).toContain('onImportStatement={() => navigate({ name: "import" })}');
     expect(source).toContain("<MoreBackButton onBack={back} />");
-    expect(source).toContain("const navigate = (destination: Route) => router.navigate(destination);");
+    // Переход — через роутер; при задержке документа форма записи не открывается вовсе (ревью 2a, п. 6).
+    expect(source).toMatch(/const navigate = \(destination: Route\) => \{\s*\/\/[^\n]*\n\s*const refusal = writeFormRefusal\(hold, destination\);\s*if \(refusal !== null\) \{\s*refuseWriteForm\(refusal\.message\);\s*return;\s*\}\s*router\.navigate\(destination\);\s*\};/u);
     expect(source).toContain("const back = () => router.back();");
     // Мимо роутера историю не трогает никто: ни `setScreen`, ни `history.back()`, ни запись в адрес.
     expect(source).not.toMatch(/setScreen\(|history\.(?:back|go|pushState|replaceState)\(|location\.hash\s*=/u);
