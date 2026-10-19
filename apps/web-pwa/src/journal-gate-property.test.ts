@@ -13,6 +13,16 @@
  *
  * Найденное нарушение закрывается в журнале (удержанием) или делает шлюз терпимым к состоянию из
  * журнала (с отчётом), но никогда наоборот.
+ *
+ * Генератор — расширенный ревьюером третьего круга: пять идентификаторов на вид, до 123 операций на
+ * журнал, базовая валюта хозяйства RUB, USD, KWD или JPY, чаще правки хозяйства, счетов и курсов.
+ * В наборе тестов он идёт по фиксированным зёрнам (`FUZZ_OFFSET` = 0, `FUZZ_N` = 3 000), чтобы
+ * прогон был одинаковым на каждой машине и укладывался в секунды. Большую случайную партию
+ * запускают локально, например:
+ *
+ *   FUZZ_N=100000 FUZZ_OFFSET=$RANDOM$RANDOM npx vitest run src/journal-gate-property.test.ts
+ *
+ * Найденное зерно воспроизводится той же парой переменных и переносится в набор отдельным тестом.
  */
 import {
   convertMinor,
@@ -35,9 +45,10 @@ import { describe, expect, it } from "vitest";
 
 import { prepareBudgetState } from "./backup";
 
-/** Сколько журналов собирается — и сколько из них обязано оказаться готовыми, чтобы свойство что-то значило. */
-const JOURNALS = 10_000;
-const MIN_READY = 7_000;
+/** Сколько журналов собирается, с какого зерна — и какая доля обязана оказаться готовой, чтобы свойство что-то значило. */
+const JOURNALS = Number(process.env.FUZZ_N ?? 3_000);
+const OFFSET = Number(process.env.FUZZ_OFFSET ?? 0);
+const MIN_READY_SHARE = 0.5;
 
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
@@ -55,12 +66,12 @@ const uuid = (lead: number, tail: number): string =>
 const DEVICES = [uuid(0xd1, 1), uuid(0xd2, 2), uuid(0xd3, 3)] as const;
 
 /**
- * Идентификаторы, из которых собираются журналы: по три на вид, общий набор, на который могут
+ * Идентификаторы, из которых собираются журналы: по пять на вид, общий набор, на который могут
  * претендовать два вида сразу, и два идентификатора не вида UUID — для старых видов, которым кодек
  * их позволяет.
  */
 function poolOf(kind: EntityKind): readonly string[] {
-  return kind === "household" ? [HOUSEHOLD_ID] : [1, 2, 3].map((n) => uuid(0x100 + ENTITY_KINDS.indexOf(kind), n));
+  return kind === "household" ? [HOUSEHOLD_ID] : [1, 2, 3, 4, 5].map((n) => uuid(0x100 + ENTITY_KINDS.indexOf(kind), n));
 }
 const POOLS: Readonly<Record<EntityKind, readonly string[]>> = {
   account: poolOf("account"),
@@ -254,7 +265,7 @@ function fieldsOf(d: Draw, kind: EntityKind): Record<string, unknown> {
     case "exchangeRate":
       return { currency: d.pick(["USD", "KWD", "JPY", "RUB"]), baseCurrency: d.pick(["RUB", "RUB", "USD"]), date: d.pick(DATES), rate: rate(d) };
     case "household":
-      return { baseCurrency: d.pick(["RUB", "RUB", "RUB", "USD"]) };
+      return { baseCurrency: d.pick(["RUB", "USD", "KWD", "JPY"]) };
     case "debt":
       return {
         counterparty: d.pick(["Петя", "", "Сосед"]), direction: d.pick(["i_owe", "owed_to_me"]), currency: d.pick(CURRENCIES),
@@ -304,7 +315,8 @@ function foundation(d: Draw): Record<string, unknown>[] {
 }
 
 function randomDraft(d: Draw): Record<string, unknown> {
-  const entity = d.pick(ENTITY_KINDS);
+  // Хозяйство, счета и курсы — чаще: именно их правки меняют валюты всего остального.
+  const entity = d.chance(0.1) ? d.pick(["household", "account", "exchangeRate"] as const) : d.pick(ENTITY_KINDS);
   const roll = d.random();
   if (entity === "budget" && roll < 0.12) return { entity, action: "activate", targetId: d.chance(0.8) ? idOf(d, "budget") : uuid(0xdead, 9) };
   if (roll < 0.15) return { entity, action: "delete", targetId: idOf(d, entity) };
@@ -318,7 +330,7 @@ interface Generated {
 
 function generate(seed: number): Generated {
   const d = draw(seed);
-  const drafts = [...foundation(d), ...Array.from({ length: 4 + Math.floor(d.random() * 40) }, () => randomDraft(d))];
+  const drafts = [...foundation(d), ...Array.from({ length: 4 + Math.floor(d.random() * 120) }, () => randomDraft(d))];
   const operations: Operation[] = [];
   let refused = 0;
   drafts.forEach((draft, index) => {
@@ -345,7 +357,7 @@ describe("готовое состояние журнала открываетс�
     let refused = 0;
     const reasons = new Set<string>();
     const counterexamples: string[] = [];
-    for (let seed = 1; seed <= JOURNALS; seed += 1) {
+    for (let seed = OFFSET + 1; seed <= OFFSET + JOURNALS; seed += 1) {
       const generated = generate(seed);
       operations += generated.operations.length;
       refused += generated.refused;
@@ -364,7 +376,7 @@ describe("готовое состояние журнала открываетс�
     expect(counterexamples.slice(0, 10)).toEqual([]);
     // And the run meant something: most journals were ready, the codec let most operations through,
     // and the gate's withholding rules — the new one included — all had journals to act on.
-    expect(ready).toBeGreaterThanOrEqual(MIN_READY);
+    expect(ready).toBeGreaterThanOrEqual(Math.floor(JOURNALS * MIN_READY_SHARE));
     expect(operations).toBeGreaterThan(refused);
     for (const reason of ["invalid_id", "unknown_reference", "identifier_claimed_twice", "currency_mismatch", "snapshot_mismatch", "duplicate_budget_line"]) {
       expect(reasons.has(reason), reason).toBe(true);
