@@ -70,6 +70,14 @@ export interface AccountTile {
   readonly includeInTotal: boolean;
 }
 
+/** Счёт, который итог должен был учесть, но не смог оценить. */
+export interface UnvaluedAccount {
+  readonly id: string;
+  readonly name: string;
+  readonly currency: CurrencyCode;
+  readonly archived: boolean;
+}
+
 export interface OverviewModel {
   readonly month: string;
   readonly baseCurrency: CurrencyCode;
@@ -77,8 +85,15 @@ export interface OverviewModel {
   readonly asOf: string;
   /** «Всего на счетах» — `calculateHoldings(...).totalInBaseMinor` (решение по умолчанию, §6). */
   readonly totalInBaseMinor: number;
-  /** Счета, которые итог не смог оценить: нет курса или сумма не представима. */
-  readonly unvaluedAccounts: readonly AccountTile[];
+  /**
+   * Сколько во «Всего на счетах» — счетов в архиве. Архивный счёт плитки не имеет, а в итоге
+   * остаётся (контракт, правило 9: итог — по счетам с `includeInTotal !== false`; домен: «архив
+   * ничего не тратит»), и экран называет эту часть, чтобы итог сходился с плитками. `null` — архив
+   * в итоге ничего не держит.
+   */
+  readonly archivedInTotalMinor: number | null;
+  /** Счета, которые итог не смог оценить: нет курса или сумма не представима, — и архивные тоже. */
+  readonly unvaluedAccounts: readonly UnvaluedAccount[];
   /** «по лимитам N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
   readonly spentWithLimitMinor: number;
   readonly limitsMinor: number | null;
@@ -120,6 +135,16 @@ export function limitStatus(spentMinor: number, limitMinor: number | null, warni
 
 function inMonth(date: string, month: string): boolean {
   return monthOfDate(date) === month;
+}
+
+/** Архивные счета в итоге: их оценённые остатки в базовой; `null` — ни одного или все по нулям. */
+function archivedInTotal(state: BudgetState, inBase: Readonly<Record<string, number | null>>): number | null {
+  const parts = state.accounts
+    .filter((account) => !account.active && account.includeInTotal !== false)
+    .map((account) => inBase[account.id] ?? null)
+    .filter((value): value is number => value !== null);
+  const sum = parts.reduce((total, value) => total + value, 0);
+  return parts.length === 0 || sum === 0 || !Number.isSafeInteger(sum) ? null : sum;
 }
 
 /** Последний день месяца или сегодня — что раньше: остатки прошлого месяца — на его конец. */
@@ -202,7 +227,9 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     baseCurrency,
     asOf,
     totalInBaseMinor: holdings.totalInBaseMinor,
-    unvaluedAccounts: accounts.filter((tile) => tile.unvalued),
+    archivedInTotalMinor: archivedInTotal(state, holdings.accountBalancesInBaseMinor),
+    unvaluedAccounts: bySortOrder(state.accounts.filter((account) => account.includeInTotal !== false && unvalued.has(account.id)))
+      .map((account) => ({ id: account.id, name: account.name, currency: account.currency, archived: !account.active })),
     spentWithLimitMinor: limited.reduce((sum, tile) => sum + tile.spentMinor, 0),
     limitsMinor: limited.length === 0 ? null : limited.reduce((sum, tile) => sum + (tile.limitMinor ?? 0), 0),
     spentMinor,

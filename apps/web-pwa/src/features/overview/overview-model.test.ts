@@ -138,6 +138,31 @@ describe("данные «Обзора» за месяц", () => {
     expect(excluded.accounts.find((tile) => tile.id === DOLLARS)).toMatchObject({ includeInTotal: false, inTotal: false, unvalued: false });
   });
 
+  it("архивный счёт — в итоге, как велит контракт (правило 9), и итог говорит, сколько в нём архива; архивный без курса назван", () => {
+    // Ревью 2c, LOW-5: архивный счёт уходил с «Обзора», но его остаток молча оставался во «Всего на
+    // счетах», а архивный счёт без курса не назывался в «В итог не вошли».
+    const state = g002();
+    const OLD_CARD = "a1000000-0000-4000-8000-0000000000d2";
+    const withArchive: BudgetState = {
+      ...state,
+      accounts: [
+        ...state.accounts,
+        { id: OLD_CARD, name: "Старая карта", type: "cash", currency: "RUB", openingBalanceMinor: 1_500_000, active: false },
+        { id: DOLLARS, name: "Доллары", type: "cash", currency: "USD", openingBalanceMinor: 74_400, active: false },
+      ],
+    };
+    const roublesOnly = overviewModel(state, "2026-07", "2026-07-13").totalInBaseMinor;
+    const model = overviewModel(withArchive, "2026-07", "2026-07-13");
+    expect(model.totalInBaseMinor).toBe(roublesOnly + 1_500_000);
+    expect(model.archivedInTotalMinor).toBe(1_500_000);
+    expect(model.accounts.map((tile) => tile.id)).not.toContain(OLD_CARD);
+    expect(model.unvaluedAccounts).toEqual([{ id: DOLLARS, name: "Доллары", currency: "USD", archived: true }]);
+    // Архив вне итога — не в итоге и не в словах о нём; без архива — слов нет.
+    const outside: BudgetState = { ...withArchive, accounts: withArchive.accounts.map((item) => (item.active ? item : { ...item, includeInTotal: false })) };
+    expect(overviewModel(outside, "2026-07", "2026-07-13")).toMatchObject({ totalInBaseMinor: roublesOnly, archivedInTotalMinor: null, unvaluedAccounts: [] });
+    expect(overviewModel(state, "2026-07", "2026-07-13").archivedInTotalMinor).toBeNull();
+  });
+
   it("остатки прошлого месяца — на его последний день, текущего — на сегодня", () => {
     const state = g002();
     expect(overviewModel(state, "2026-07", "2026-10-19").asOf).toBe("2026-07-31");

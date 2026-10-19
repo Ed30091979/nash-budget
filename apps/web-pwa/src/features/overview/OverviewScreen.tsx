@@ -146,6 +146,9 @@ export function OverviewScreen({
           <div className="overview-balance">
             <dt>Всего на счетах</dt>
             <dd className="overview-total"><Money value={model.totalInBaseMinor} breakDigits /></dd>
+            {/* Архивный счёт плитки не имеет, а в итоге остаётся (правило 9 контракта): итог
+                называет эту часть, чтобы сходиться с плитками (ревью 2c, LOW-5). */}
+            {model.archivedInTotalMinor === null ? null : <dd className="overview-limits">в том числе в архиве <Money value={model.archivedInTotalMinor} /></dd>}
           </div>
           {/* «Потрачено» — весь расход месяца, тот же, что в «Отчётах»; расход по лимитам против их
               суммы — другое число, и у него своя подпись (ревью 2b, MEDIUM-8). */}
@@ -158,7 +161,7 @@ export function OverviewScreen({
         {model.unvaluedAccounts.length > 0 ? (
           <p className="overview-note">
             <Icon name="triangle-alert" size={20} />
-            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>» — нет курса {tile.currency}</span>)}.</span>
+            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>»{tile.archived ? " (в архиве)" : ""} — нет курса {tile.currency}</span>)}.</span>
           </p>
         ) : null}
       </header>
