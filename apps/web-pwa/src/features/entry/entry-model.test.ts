@@ -18,6 +18,7 @@ import {
   GOAL_EDIT_REFUSAL,
   needsArrivedAmount,
   newEntryDraft,
+  outsidePlanHint,
   refundDraftFor,
   sheetTitle,
   submitLabel,
@@ -316,6 +317,26 @@ describe("число, которое человек узнаёт после за
   it("молчит, когда называть нечего: выдуманное число хуже отсутствующего", () => {
     const nowhere = { ...expense(""), accountId: "00000000-0000-4000-8000-000000000000" };
     expect(effectTargetOf(state(), nowhere, TODAY)).toBeNull();
+  });
+});
+
+describe("лист ввода: день вне периода плана", () => {
+  it("план с 10 июля, покупка 5 июля: строка не обещает движения лимита, а подсказка говорит, куда пойдёт покупка", () => {
+    // Ревью 2b, LOW-2: строка «В категории … останется N из M» считала лимит июля, хотя бюджет июля
+    // начинается 10-го, и покупка 5-го в него не войдёт.
+    const base = state();
+    const late: BudgetState = { ...base, budgets: base.budgets.map((budget) => ({ ...budget, startDate: "2026-07-10" })) };
+    const early = { ...newEntryDraft(late, { kind: "expense", accountId: MAIN, categoryId: PLANNING_IDS.categories.food }, TODAY), amount: "1250", occurredOn: "2026-07-05" };
+    expect(effectLine(late, early, TODAY)).toMatch(/^На счёте «Основной» останется /u);
+    expect(effectTargetOf(late, early, TODAY)).toMatchObject({ kind: "account" });
+    expect(outsidePlanHint(late, early)).toBe("5\u00a0июля — вне периода плана: лимиты не изменятся, покупка попадёт в историю и в остаток счёта.");
+    // День внутри периода — лимит и без подсказки.
+    const inside = { ...early, occurredOn: "2026-07-12" };
+    expect(effectLine(late, inside, TODAY)).toMatch(/^В категории «Продукты» останется /u);
+    expect(outsidePlanHint(late, inside)).toBeNull();
+    // Без плана вовсе подсказывать не о чем; доход — не про лимиты.
+    expect(outsidePlanHint({ ...late, budgets: [] }, early)).toBeNull();
+    expect(outsidePlanHint(late, { ...early, mode: "income" })).toBeNull();
   });
 });
 

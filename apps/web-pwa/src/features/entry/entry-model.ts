@@ -427,14 +427,39 @@ function accountEffect(state: BudgetState, draft: EntryDraft, today: string): Ef
   return { kind: "account", id: account.id, name: account.name, currency: account.currency, asOf: draft.occurredOn > today ? draft.occurredOn : today };
 }
 
+/**
+ * Бюджет, в период которого попадает день операции: месяц бюджета найден по дню, и день не раньше
+ * его начала и не позже конца. Бюджет «с 10 июля» покупку 5 июля не считает (ревью 2b, LOW-2).
+ */
+function budgetOfDay(state: BudgetState, date: string): BudgetState["budgets"][number] | undefined {
+  const budget = findBudgetForMonth(state, monthOfDate(date));
+  return budget !== undefined && date >= budget.startDate && date <= budget.endDate ? budget : undefined;
+}
+
 export function effectTargetOf(state: BudgetState, draft: EntryDraft, today: string): EffectTarget | null {
   if (draft.mode === "expense" && draft.categoryId !== "") {
     const category = state.categories.find((item) => item.id === draft.categoryId);
-    const budget = findBudgetForMonth(state, monthOfDate(draft.occurredOn));
+    const budget = budgetOfDay(state, draft.occurredOn);
     const line = budget?.lines.find((item) => item.categoryId === draft.categoryId && item.active !== false);
     if (category !== undefined && budget !== undefined && line !== undefined) return { kind: "category", id: category.id, name: category.name, budgetId: budget.id };
   }
   return accountEffect(state, draft, today);
+}
+
+/**
+ * Подсказка под строкой «останется», когда день расхода — вне периода любого бюджета: лимиты
+ * его не увидят, и лист говорит это до записи, а не молчит (так говорил и прежний экран записи).
+ * `null` — день в периоде, плана нет вовсе или это не расход.
+ */
+export function outsidePlanHint(state: BudgetState, draft: EntryDraft): string | null {
+  if (draft.mode !== "expense" || state.budgets.length === 0) return null;
+  try {
+    if (budgetOfDay(state, draft.occurredOn) !== undefined) return null;
+    return `${formatDay(draft.occurredOn)} — вне периода плана: лимиты не изменятся, покупка попадёт в историю и в остаток счёта.`;
+  } catch {
+    // Дату ещё набирают.
+    return null;
+  }
 }
 
 /** Значение этого числа в состоянии: остаток лимита категории в базовой валюте или остаток счёта в его. */

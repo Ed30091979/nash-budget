@@ -20,6 +20,7 @@ import {
   foreignValueLine,
   MODE_LABELS,
   needsArrivedAmount,
+  outsidePlanHint,
   sheetTitle,
   submitCheck,
   submitLabel,
@@ -174,6 +175,7 @@ export function EntrySheet(props: EntrySheetProps) {
   const amount = evaluateAmount(draft.amount, exponent);
   const minor = amount.kind === "value" ? amount.minor : null;
   const effect = effectLine(budget, draft, today);
+  const outside = outsidePlanHint(budget, draft);
   const value = foreignValue(budget, draft);
   const valueLine = foreignValueLine(value);
   const baseCurrency = baseCurrencyOf(budget);
@@ -327,6 +329,7 @@ export function EntrySheet(props: EntrySheetProps) {
                 {amount.kind === "value" && amount.compound ? <output htmlFor="entry-amount" className="amount-total">= <Money value={amount.minor} currency={currency} /></output> : null}
               </div>
               {effect !== null ? <p className="entry-effect" id="entry-effect">{effect}</p> : null}
+              {outside !== null ? <p className="field-hint entry-outside" role="status">{outside}</p> : null}
 
               {value.kind === "missing" ? (
                 <div className="entry-notice">
