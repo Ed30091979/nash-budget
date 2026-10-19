@@ -42,12 +42,12 @@ interface PlanningScreenProps {
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
 }
 
-export function isPlanningEditorDirty<T extends object>(
-  draft: T,
-  pristine: T,
-  editingId: string | null,
-): boolean {
-  return editingId !== null || JSON.stringify(draft) !== JSON.stringify(pristine);
+/**
+ * «Грязно» — отличается от снимка, сделанного при открытии, при «Изменить» и при каждом сбросе.
+ * Открытая и нетронутая правка — не несохранённое: потерять в ней нечего (ревью 2a, п. 3).
+ */
+export function isPlanningEditorDirty<T extends object>(draft: T, pristine: T): boolean {
+  return JSON.stringify(draft) !== JSON.stringify(pristine);
 }
 
 export function hasChangedRestoreDrafts(
@@ -93,15 +93,16 @@ function useSave(onChange: PlanningScreenProps["onChange"], formPrefix: string, 
    */
   const run = async (change: (current: BudgetState) => BudgetState, done?: () => void, submitsDraft = false) => {
     await gate.current.run(async () => {
-      if (submitsDraft) saving.begin();
+      const ticket = submitsDraft ? saving.begin() : null;
       dispatch({ type: "submit" });
       try {
         await onChange(change);
+        if (ticket !== null) saving.succeed(ticket);
         done?.();
         dispatch({ type: "success" });
       } catch (error) {
         // Не записалось — черновик на месте и снова несохранённый.
-        saving.end();
+        if (ticket !== null) saving.fail(ticket);
         const target = resolveErrorTarget(formPrefix, planningError(error), visibleFields);
         dispatch({ type: "failure", error: { field: target.field, message: target.message } });
         window.setTimeout(() => document.getElementById(target.id)?.focus(), 0);
@@ -115,12 +116,14 @@ function useSave(onChange: PlanningScreenProps["onChange"], formPrefix: string, 
  * Черновик редактора в реестре: навигация спрашивает `isDirty` синхронно в момент нажатия.
  * Удачная запись держит «записывается», пока сброшенная форма не нарисована: между ответом
  * координатора и этой отрисовкой старая, грязная отрисовка ответила бы реестру неправду.
+ * «Записывается» относится только к форме: `otherDirty` (сумма для возврата строки из архива) в
+ * запись не уходит и охраняется всегда — и защёлку не держит (ревью 2a, п. 2).
  */
-function usePlanningDraft(label: string, dirty: boolean, saving: DraftSaving, discard: () => void) {
+function usePlanningDraft(label: string, dirty: boolean, saving: DraftSaving, discard: () => void, otherDirty = false) {
   useLayoutEffect(() => {
-    if (!dirty) saving.end();
-  }, [dirty, saving]);
-  useDraftGuard({ label, isDirty: () => dirty && !saving.saving, discard });
+    saving.settle(dirty);
+  });
+  useDraftGuard({ label, isDirty: () => (dirty && !saving.saving) || otherDirty, discard });
 }
 
 type PlanningEditorProps = PlanningScreenProps;
@@ -181,7 +184,7 @@ function CommitmentsEditor({ budget, onChange }: PlanningEditorProps) {
     setPristine(fresh);
     setDraft(fresh);
   };
-  usePlanningDraft("крупный платёж в плане", isPlanningEditorDirty(draft, pristine, editingId), save.saving, () => {
+  usePlanningDraft("крупный платёж в плане", isPlanningEditorDirty(draft, pristine), save.saving, () => {
     setEditingId(null);
     resetDraft();
     save.clear();
@@ -203,7 +206,9 @@ function CommitmentsEditor({ budget, onChange }: PlanningEditorProps) {
     if (!item) return;
     setEditingId((current) => nextEditingId(current, { type: "edit", id }));
     save.clear();
-    setDraft({ name: item.name, categoryId: item.categoryId, accountId: item.accountId, dueDate: item.dueDate, amount: moneyInput(item.amountMinor), reserved: moneyInput(item.reservedMinor), recurrence: item.recurrence });
+    const opened: CommitmentDraft = { name: item.name, categoryId: item.categoryId, accountId: item.accountId, dueDate: item.dueDate, amount: moneyInput(item.amountMinor), reserved: moneyInput(item.reservedMinor), recurrence: item.recurrence };
+    setPristine(opened);
+    setDraft(opened);
   };
   return <section className="section-card" aria-labelledby="commitments-title">
     <h2 id="commitments-title">Ежегодные и разовые платежи</h2>
@@ -242,7 +247,7 @@ function SchedulesEditor({ budget, onChange }: PlanningEditorProps) {
     setPristine(fresh);
     setDraft(fresh);
   };
-  usePlanningDraft("регулярный платёж в плане", isPlanningEditorDirty(draft, pristine, editingId), save.saving, () => {
+  usePlanningDraft("регулярный платёж в плане", isPlanningEditorDirty(draft, pristine), save.saving, () => {
     setEditingId(null);
     resetDraft();
     save.clear();
@@ -260,7 +265,9 @@ function SchedulesEditor({ budget, onChange }: PlanningEditorProps) {
     if (!item) return;
     setEditingId((current) => nextEditingId(current, { type: "edit", id }));
     save.clear();
-    setDraft({ name: item.name, categoryId: item.categoryId, accountId: item.accountId, amount: moneyInput(item.amountMinor), dueDay: String(item.dueDay), mode: item.mode, months: item.months ?? [] });
+    const opened: ScheduleDraft = { name: item.name, categoryId: item.categoryId, accountId: item.accountId, amount: moneyInput(item.amountMinor), dueDay: String(item.dueDay), mode: item.mode, months: item.months ?? [] };
+    setPristine(opened);
+    setDraft(opened);
   };
   const toggleMonth = (month: number) => patch("months", draft.months.includes(month) ? draft.months.filter((item) => item !== month) : [...draft.months, month]);
   return <section className="section-card" aria-labelledby="schedules-title">
@@ -284,9 +291,12 @@ function SchedulesEditor({ budget, onChange }: PlanningEditorProps) {
   </section>;
 }
 
+const EMPTY_FLEXIBLE_DRAFT: FlexibleDraft = { name: "", amount: "" };
+
 function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
   const active = budget.budgets.find((item) => item.id === budget.activeBudgetId);
-  const [draft, setDraft] = useState<FlexibleDraft>({ name: "", amount: "" });
+  const [pristine, setPristine] = useState<FlexibleDraft>(EMPTY_FLEXIBLE_DRAFT);
+  const [draft, setDraft] = useState<FlexibleDraft>(EMPTY_FLEXIBLE_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [restoreDrafts, setRestoreDrafts] = useState<Readonly<Record<string, RestoreDraftState>>>({});
   const [restoringId, setRestoringId] = useState<string | null>(null);
@@ -295,7 +305,7 @@ function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
   const categories = useMemo(() => new Map(budget.categories.map((item) => [item.id, item])), [budget.categories]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void save.run((state) => editingId ? editFlexibleLine(state, editingId, draft) : createFlexibleLine(state, draft), () => { setEditingId((current) => nextEditingId(current, { type: "saved" })); setDraft({ name: "", amount: "" }); }, true);
+    void save.run((state) => editingId ? editFlexibleLine(state, editingId, draft) : createFlexibleLine(state, draft), () => { setEditingId((current) => nextEditingId(current, { type: "saved" })); setPristine(EMPTY_FLEXIBLE_DRAFT); setDraft(EMPTY_FLEXIBLE_DRAFT); }, true);
   };
   const edit = (lineId: string) => {
     const line = active?.lines.find((item) => item.id === lineId);
@@ -303,7 +313,9 @@ function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
     if (!line || !category) return;
     setEditingId((current) => nextEditingId(current, { type: "edit", id: lineId }));
     save.clear();
-    setDraft({ name: category.name, amount: moneyInput(line.plannedMinor) });
+    const opened: FlexibleDraft = { name: category.name, amount: moneyInput(line.plannedMinor) };
+    setPristine(opened);
+    setDraft(opened);
   };
   const activeLines = active?.lines.filter((line) => line.active !== false) ?? [];
   const archivedLines = active?.lines.filter((line) => line.active === false) ?? [];
@@ -313,15 +325,16 @@ function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
   );
   usePlanningDraft(
     "повседневный лимит в плане",
-    isPlanningEditorDirty(draft, { name: "", amount: "" }, editingId) ||
-      hasChangedRestoreDrafts(restoreDrafts, restoreBaselines),
+    isPlanningEditorDirty(draft, pristine),
     save.saving,
     () => {
       setEditingId(null);
-      setDraft({ name: "", amount: "" });
+      setPristine(EMPTY_FLEXIBLE_DRAFT);
+      setDraft(EMPTY_FLEXIBLE_DRAFT);
       setRestoreDrafts({});
       save.clear();
     },
+    hasChangedRestoreDrafts(restoreDrafts, restoreBaselines),
   );
   const restore = async (lineId: string, categoryId: string, categoryName: string, originalAmount: string) => {
     const controlId = restoreControlId(categoryId);
@@ -344,7 +357,7 @@ function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
   };
   return <section className="section-card" aria-labelledby="flexible-title">
     <h2 id="flexible-title">Повседневные лимиты</h2><p>Мелкие покупки: продукты, транспорт, дети и дом. Архив сохраняет категорию для истории.</p>
-    <form onSubmit={submit} noValidate aria-busy={save.busy}><fieldset disabled={save.busy}><legend>{editingId ? "Редактировать лимит" : "Добавить лимит"}</legend><div className="field"><label htmlFor="flexible-name">Название</label><input id="flexible-name" maxLength={80} value={draft.name} onChange={(event) => { setDraft((current) => ({ ...current, name: event.target.value })); save.clear(); }} {...a11y("flexible-name", save.errorField, save.errorMessage, "name")} /><FieldError id="flexible-name" message={save.errorField === "name" ? save.errorMessage ?? undefined : undefined} /></div><div className="field"><label htmlFor="flexible-amount">Лимит в месяц, ₽</label><input id="flexible-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => { setDraft((current) => ({ ...current, amount: event.target.value })); save.clear(); }} {...a11y("flexible-amount", save.errorField, save.errorMessage, "amount")} /><FieldError id="flexible-amount" message={save.errorField === "amount" ? save.errorMessage ?? undefined : undefined} /></div>{save.errorField === "form" ? <p className="field-error" id="flexible-form" tabIndex={-1} role="alert">{save.errorMessage}</p> : null}<button className="primary-button" type="submit" aria-label={editingId ? "Сохранить повседневный лимит" : "Добавить повседневный лимит"}>{editingId ? "Сохранить" : "Добавить"}</button>{editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование повседневного лимита" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setDraft({ name: "", amount: "" }); save.clear(); }}>Отмена</button> : null}</fieldset></form>
+    <form onSubmit={submit} noValidate aria-busy={save.busy}><fieldset disabled={save.busy}><legend>{editingId ? "Редактировать лимит" : "Добавить лимит"}</legend><div className="field"><label htmlFor="flexible-name">Название</label><input id="flexible-name" maxLength={80} value={draft.name} onChange={(event) => { setDraft((current) => ({ ...current, name: event.target.value })); save.clear(); }} {...a11y("flexible-name", save.errorField, save.errorMessage, "name")} /><FieldError id="flexible-name" message={save.errorField === "name" ? save.errorMessage ?? undefined : undefined} /></div><div className="field"><label htmlFor="flexible-amount">Лимит в месяц, ₽</label><input id="flexible-amount" inputMode="decimal" maxLength={24} value={draft.amount} onChange={(event) => { setDraft((current) => ({ ...current, amount: event.target.value })); save.clear(); }} {...a11y("flexible-amount", save.errorField, save.errorMessage, "amount")} /><FieldError id="flexible-amount" message={save.errorField === "amount" ? save.errorMessage ?? undefined : undefined} /></div>{save.errorField === "form" ? <p className="field-error" id="flexible-form" tabIndex={-1} role="alert">{save.errorMessage}</p> : null}<button className="primary-button" type="submit" aria-label={editingId ? "Сохранить повседневный лимит" : "Добавить повседневный лимит"}>{editingId ? "Сохранить" : "Добавить"}</button>{editingId ? <button className="secondary-button" type="button" aria-label="Отменить редактирование повседневного лимита" onClick={() => { setEditingId((current) => nextEditingId(current, { type: "cancel" })); setPristine(EMPTY_FLEXIBLE_DRAFT); setDraft(EMPTY_FLEXIBLE_DRAFT); save.clear(); }}>Отмена</button> : null}</fieldset></form>
     <ul className="planning-edit-list">{activeLines.map((line) => { const name = categories.get(line.categoryId)?.name ?? "Категория"; return <li key={line.id}><div><strong>{name}</strong><span>{rubles(line.plannedMinor)} в месяц</span></div><button className="secondary-button" type="button" aria-label={`Изменить повседневный лимит «${name}»`} onClick={() => edit(line.id)}>Изменить</button><button className="text-button" type="button" aria-label={`Архивировать повседневный лимит «${name}»`} onClick={() => void save.run((state) => archiveFlexibleLine(state, line.id))}>В архив</button></li>; })}</ul>
     {archivedLines.length ? <div><h3>Архив повседневных лимитов</h3><ul className="planning-edit-list">{archivedLines.map((line) => {
       const category = categories.get(line.categoryId);

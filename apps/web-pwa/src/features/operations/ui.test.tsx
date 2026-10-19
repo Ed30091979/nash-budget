@@ -136,8 +136,11 @@ describe("operations UI", () => {
     expect(source).toContain("isDirty: () => dirty && !saving.saving,");
     expect(source).toContain("const beginSaving = () => saving.begin();");
     // Неудача возвращает черновик в несохранённые; удача держит «записывается» до отрисовки сброса.
-    expect(source).toMatch(/await onChange\(change\);\s*success\(\);\s*\} catch \(cause\) \{\s*\/\/[^\n]*\n\s*saving\.end\(\);/u);
-    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!dirty\) saving\.end\(\);/u);
+    expect(source).toMatch(/await onChange\(change\);\s*if \(ticket !== null\) saving\.succeed\(ticket\);\s*success\(\);\s*\} catch \(cause\) \{\s*\/\/[^\n]*\n\s*if \(ticket !== null\) saving\.fail\(ticket\);/u);
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*saving\.settle\(dirty\);\s*\}\);/u);
+    // Нетронутая правка — не несохранённое: «Изменить» снимает снимок (ревью 2a, п. 3).
+    expect(source).toContain("const dirty = JSON.stringify(draft) !== JSON.stringify(pristineDraft);");
+    expect(source).toMatch(/setPristineDraft\(editable\);\s*setDraft\(editable\);\s*setEditingId\(transaction\.id\);/u);
     // «Грязно» — против снимка при сбросе, а не против умолчаний, пересчитанных от бюджета.
     expect(source).not.toMatch(/useMemo\(\(\) => defaultDraft\(/u);
     expect(source).toMatch(/const fresh = defaultDraft\(kind, budget, today\);\s*setDraft\(fresh\);\s*setPristineDraft\(fresh\);/u);

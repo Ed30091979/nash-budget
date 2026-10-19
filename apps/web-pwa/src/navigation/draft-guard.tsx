@@ -11,7 +11,8 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncE
  *
  * Черновик, отправленный в запись, перестаёт быть грязным до первого `await`
  * (`createDraftSaving`): запись доводит координатор, итог — квитанция или ошибка, и при ошибке
- * черновик снова грязный, с тем же содержимым.
+ * черновик снова грязный, с тем же содержимым; при удаче — чистый, как только сброшенная форма
+ * нарисована.
  */
 export interface DraftEntry {
   /** Есть ли несохранённое, что уход с экрана потеряет. Вызывается синхронно, без эффектов. */
@@ -84,21 +85,47 @@ export function createDraftRegistry(): DraftRegistry {
 
 /**
  * Черновик, отправленный в запись: с этого касания он не «несохранённый», а «записывается».
- * `begin` — синхронно, до первого `await`; `end(failed)` — когда запись кончилась; при неудаче
- * черновик снова грязный, потому что его содержимое никуда не делось.
+ *
+ * Each submit takes a ticket (`begin`, synchronously, before the first `await`), and only the
+ * newest ticket moves the latch: a write that fails (`fail`) makes the draft unsaved again — its
+ * contents never went anywhere; a write that succeeds (`succeed`) holds the latch until the form
+ * it reset is drawn and reads clean (`settle`, after every commit). The latch never waits on
+ * anything but the form it was taken for: other drafts on the screen (a limit typed for restoring
+ * an archived line) are guarded on their own and cannot keep it shut (review of 2a, finding 2).
  */
 export interface DraftSaving {
   readonly saving: boolean;
-  begin(): void;
-  end(): void;
+  begin(): number;
+  fail(ticket: number): void;
+  succeed(ticket: number): void;
+  settle(formDirty: boolean): void;
 }
 
 export function createDraftSaving(): DraftSaving {
+  let latest = 0;
   let saving = false;
+  let succeeded = false;
   return {
     get saving() { return saving; },
-    begin() { saving = true; },
-    end() { saving = false; },
+    begin() {
+      latest += 1;
+      saving = true;
+      succeeded = false;
+      return latest;
+    },
+    fail(ticket) {
+      if (ticket !== latest) return;
+      saving = false;
+      succeeded = false;
+    },
+    succeed(ticket) {
+      if (ticket === latest && saving) succeeded = true;
+    },
+    settle(formDirty) {
+      if (!saving || !succeeded || formDirty) return;
+      saving = false;
+      succeeded = false;
+    },
   };
 }
 

@@ -56,27 +56,28 @@ describe("planning UI", () => {
     expect(isPlanningEditorDirty(
       { name: "Новая страховка", dueDate: "", amount: "" },
       { name: "", dueDate: "", amount: "" },
-      null,
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "", dueDay: "15", months: [9, 10] },
       { name: "", dueDay: "1", months: [] },
-      null,
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "Продукты", amount: "30000" },
       { name: "", amount: "" },
-      null,
+    )).toBe(true);
+    // Открытая правка сравнивается со снимком, сделанным при «Изменить»: нетронутая — не
+    // несохранённое (ревью 2a, п. 3), а тронутая — несохранённое.
+    expect(isPlanningEditorDirty(
+      { name: "Продукты", amount: "30000" },
+      { name: "Продукты", amount: "30000" },
+    )).toBe(false);
+    expect(isPlanningEditorDirty(
+      { name: "Продукты", amount: "31000" },
+      { name: "Продукты", amount: "30000" },
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "", amount: "" },
       { name: "", amount: "" },
-      "editing-existing-line",
-    )).toBe(true);
-    expect(isPlanningEditorDirty(
-      { name: "", amount: "" },
-      { name: "", amount: "" },
-      null,
     )).toBe(false);
 
     const baselines = new Map([
@@ -113,12 +114,16 @@ describe("planning UI", () => {
     // Пассивного флага больше нет: экран не сообщает о черновике, а отвечает на вопрос реестра.
     expect(source).not.toContain("onDirtyChange");
     expect(source.match(/usePlanningDraft\(/gu)).toHaveLength(4);
-    expect(source).toContain("useDraftGuard({ label, isDirty: () => dirty && !saving.saving, discard });");
+    expect(source).toContain("useDraftGuard({ label, isDirty: () => (dirty && !saving.saving) || otherDirty, discard });");
+    // Сумма возврата из архива охраняется сама по себе и защёлку формы не держит (ревью 2a, п. 2).
+    expect(source).toMatch(/isPlanningEditorDirty\(draft, pristine\),\s*save\.saving,[\s\S]*?hasChangedRestoreDrafts\(restoreDrafts, restoreBaselines\),\s*\);/u);
+    // «Изменить» снимает снимок правки в каждом из трёх редакторов (ревью 2a, п. 3).
+    expect(source.match(/setPristine\(opened\);\s*setDraft\(opened\);/gu)).toHaveLength(3);
     // Черновик, отправленный в запись, «записывается» — синхронно, до первого ожидания; неудача
     // возвращает его, удача держит, пока сброшенная форма не нарисована.
-    expect(source).toMatch(/if \(submitsDraft\) saving\.begin\(\);\s*dispatch\(\{ type: "submit" \}\);\s*try \{\s*await onChange\(change\);/u);
-    expect(source).toMatch(/\} catch \(error\) \{\s*\/\/[^\n]*\n\s*saving\.end\(\);/u);
-    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!dirty\) saving\.end\(\);/u);
+    expect(source).toMatch(/const ticket = submitsDraft \? saving\.begin\(\) : null;\s*dispatch\(\{ type: "submit" \}\);\s*try \{\s*await onChange\(change\);\s*if \(ticket !== null\) saving\.succeed\(ticket\);/u);
+    expect(source).toMatch(/\} catch \(error\) \{\s*\/\/[^\n]*\n\s*if \(ticket !== null\) saving\.fail\(ticket\);/u);
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*saving\.settle\(dirty\);\s*\}\);/u);
     // Архив и возврат строки черновик не уносят; уносят только «Добавить» и «Сохранить».
     expect(source.match(/, true\);/gu)).toHaveLength(2);
     expect(source).toMatch(/\(\) => \{ resetDraft\(\); setEditingId\(\(current\) => nextEditingId\(current, \{ type: "saved" \}\)\); \},\s*true,/u);

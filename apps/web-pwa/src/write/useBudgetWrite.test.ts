@@ -81,9 +81,9 @@ describe("единственный путь записи", () => {
     const saving = createDraftSaving();
     registry.register({ current: { label: "операция", isDirty: () => !saving.saving } });
 
-    saving.begin();
+    const ticket = saving.begin();
     await expect(write.run((budget) => ({ ...budget }))).rejects.toMatchObject({ reason: "held" });
-    saving.end();
+    saving.fail(ticket);
 
     expect(publish).not.toHaveBeenCalled();
     expect(saveIfRevision).not.toHaveBeenCalled();

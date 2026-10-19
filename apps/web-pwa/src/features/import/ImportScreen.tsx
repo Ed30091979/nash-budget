@@ -156,11 +156,12 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
   const store = useMemo(() => memory ?? createImportMemory(), [memory]);
   const dirty = stage.kind === "review";
   // Предпросмотр с выбранными назначениями — черновик: уход с экрана его теряет. «Добавить»
-  // переводит его в «записывается» до первого `await`; неудача возвращает, удача сменяет стадию.
+  // переводит его в «записывается» до первого `await`; неудача возвращает, удача сменяет стадию —
+  // и защёлка отпускает, как только нарисована стадия без предпросмотра.
   const [saving] = useState(createDraftSaving);
   useLayoutEffect(() => {
-    if (!dirty) saving.end();
-  }, [dirty, saving]);
+    saving.settle(dirty);
+  });
   useDraftGuard({
     label: "выписка, ещё не добавленная в бюджет",
     isDirty: () => dirty && !saving.saving,
@@ -230,7 +231,7 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
 
   const confirm = async () => {
     if (stage.kind !== "review" || plan === null || busy || plan.drafts.length === 0) return;
-    saving.begin();
+    const ticket = saving.begin();
     setBusy(true);
     setError(null);
     let ids: readonly string[] = [];
@@ -240,6 +241,7 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
         ids = applied.ids;
         return applied.state;
       });
+      saving.succeed(ticket);
       try {
         await store.remember(plan.memoryUpdates);
       } catch {
@@ -254,7 +256,7 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
         transferMinor: plan.totals.transferMinor,
       });
     } catch (cause) {
-      saving.end();
+      saving.fail(ticket);
       setError(toOperationsErrorView(cause).message);
     } finally {
       setBusy(false);

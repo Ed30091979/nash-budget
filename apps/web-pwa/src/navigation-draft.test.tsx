@@ -101,13 +101,50 @@ describe("черновик, отправленный в запись", () => {
     let dirty = true;
     registry.register({ current: { label: "операция", isDirty: () => dirty && !saving.saving } });
     expect(registry.hasUnsavedDrafts("navigation")).toBe(true);
-    saving.begin();
+    const ticket = saving.begin();
     // Касание вкладки сразу после «Записать» — без вопроса: черновик уже уходит в запись.
     expect(registry.hasUnsavedDrafts("navigation")).toBe(false);
-    saving.end();
+    saving.fail(ticket);
     expect(registry.hasUnsavedDrafts("navigation")).toBe(true);
     dirty = false;
     expect(registry.hasUnsavedDrafts("navigation")).toBe(false);
+  });
+
+  it("удача держит «записывается», пока сброшенная форма не нарисована, и ни отрисовкой дольше", () => {
+    const saving = createDraftSaving();
+    const ticket = saving.begin();
+    // Отрисовка до ответа координатора — старая, грязная форма: защёлка держит.
+    saving.settle(true);
+    expect(saving.saving).toBe(true);
+    saving.succeed(ticket);
+    // Ответ пришёл, а сброс ещё не нарисован: отрисовка со старой формой защёлку не снимает.
+    saving.settle(true);
+    expect(saving.saving).toBe(true);
+    // Нарисована сброшенная форма — защёлка снята, и следующий набранный черновик снова несохранённый.
+    saving.settle(false);
+    expect(saving.saving).toBe(false);
+    saving.settle(true);
+    expect(saving.saving).toBe(false);
+  });
+
+  it("отвечает только последняя запись: опоздавший ответ прежней ничего не снимает и не возвращает", () => {
+    const saving = createDraftSaving();
+    const first = saving.begin();
+    const second = saving.begin();
+    saving.fail(first);
+    expect(saving.saving).toBe(true);
+    saving.succeed(first);
+    saving.settle(false);
+    expect(saving.saving).toBe(true);
+    saving.succeed(second);
+    saving.settle(false);
+    expect(saving.saving).toBe(false);
+    // Неудача после того, как защёлка уже снята, — тоже не её дело.
+    saving.fail(second);
+    expect(saving.saving).toBe(false);
+    // Без записи отрисовки ничего не делают.
+    saving.settle(false);
+    expect(saving.saving).toBe(false);
   });
 
   it("отказ записи при задержке документа семьи не трогает бюджет и возвращает черновик", async () => {
@@ -128,12 +165,12 @@ describe("черновик, отправленный в запись", () => {
     const amount: string = "1250";
     registry.register({ current: { label: "операция", isDirty: () => amount !== "" && !saving.saving } });
 
-    saving.begin();
+    const ticket = saving.begin();
     expect(registry.hasUnsavedDrafts("navigation")).toBe(false);
     const write = coordinator.apply((current: BudgetState) => ({ ...current }));
     await expect(write).rejects.toBeInstanceOf(BudgetWriteRefusal);
     await expect(write).rejects.toMatchObject({ userMessage: WRITE_REFUSAL_TEXT.held });
-    saving.end();
+    saving.fail(ticket);
 
     expect(publish).not.toHaveBeenCalled();
     expect(saveIfRevision).not.toHaveBeenCalled();
