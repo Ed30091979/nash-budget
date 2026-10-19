@@ -143,18 +143,21 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
         const ticket = options.store.beginSaving();
         options.redirect(withoutSheet(opened));
         let transactionId = "";
+        // Метки этой записи — из самой записи, а не разностью с `before`: между касанием и записью
+        // синхронизация могла принести чужую метку, и «Отменить» снял бы её тоже (ревью 2b, раунд 3,
+        // NEW-6). Координатор может применить изменение не один раз — в счёт идёт последнее.
+        let createdTags: readonly string[] = [];
         try {
           const after = await options.write.run((state) => {
             const result = writeEntry(state, draft, makeId);
             transactionId = result.transactionId;
+            createdTags = result.createdTagIds;
             return result.state;
           }, { ownsFailure: true });
           options.store.succeed(ticket);
           const written = after.transactions.find((item) => item.id === transactionId);
           if (written === undefined) return;
           const previous = draft.editId === null ? undefined : before.transactions.find((item) => item.id === draft.editId);
-          const known = new Set((before.tags ?? []).map((tag) => tag.id));
-          const createdTags = (after.tags ?? []).filter((tag) => !known.has(tag.id)).map((tag) => tag.id);
           const label = operationWords(draft.editId === null ? "Записано" : "Изменено", written, after);
           options.showToast({
             text: label,
