@@ -183,4 +183,22 @@ describe("роли цвета §3", () => {
     expect(rules).not.toContain("var(--orange)");
     expect(rules).toContain("var(--accent)");
   });
+
+  it("красит основную кнопку акцентом с белой подписью везде, кроме тоста на чернилах (5.0, §6)", () => {
+    // 4.0 заливала основную кнопку чернилами; в 5.0 чернилами залиты только выбранное, пузырь и тост,
+    // а основное действие — акцент (белый на нём — 5.07:1). На тосте акцент к чернилам не читается.
+    const painted = [...styles.replace(/\/\*[\s\S]*?\*\//gu, "").matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+      .flatMap((rule) => (rule[1] ?? "").split(",").map((selector) => ({ selector: selector.trim(), body: rule[2] ?? "" })))
+      .filter(({ selector, body }) => /\.primary-button(?![\w-])/u.test(selector) && /(?:^|;)\s*background:/u.test(body));
+    expect(painted.length).toBeGreaterThan(0);
+    for (const { selector, body } of painted) {
+      const background = /(?:^|;)\s*background:\s*([^;]+)/u.exec(body)?.[1]?.trim();
+      if (/toast/u.test(selector)) {
+        expect(background, selector).toBe("var(--surface)");
+        continue;
+      }
+      expect(background, `${selector}: основная кнопка не акцентом`).toBe("var(--accent)");
+      expect(body, selector).toContain("color: var(--on-accent)");
+    }
+  });
 });
