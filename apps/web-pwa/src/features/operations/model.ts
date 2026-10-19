@@ -1,13 +1,26 @@
 import {
   baseCurrencyOf,
+  baseSnapshot,
   calculateBudget,
   categoryNameKey,
   createCategory,
   CategoryValidationError,
+  currencyExponent,
   documentIds,
+  indexRates,
+  isSupportedCurrency,
   isWithinDateWindow,
+  manualSnapshot,
   MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_TAGS_PER_TRANSACTION,
   MIN_LOCAL_DATE,
+  normalizeNote,
+  normalizeTagIds,
+  NOTE_MAX_LENGTH,
+  snapshotAt,
+  TextValidationError,
+  type BaseSnapshot,
   type BudgetLine,
   type BudgetMetrics,
   type BudgetState,
@@ -41,10 +54,24 @@ export type OperationsIdFactory = () => string;
 interface CommonTransactionDraft {
   readonly occurredOn: string;
   readonly status: TransactionStatus;
+  /** In the currency of the account the money moves from (or to, for an income and a refund). */
   readonly amount: string;
+  /** A one-line note; empty or absent — no note. Normalised by the domain's input rule. */
+  readonly note?: string;
+  /** Tags of the operation; empty or absent — none. At most `MAX_TAGS_PER_TRANSACTION`. */
+  readonly tagIds?: readonly string[];
 }
 
-export interface IncomeDraft extends CommonTransactionDraft {
+/**
+ * The value in the base currency of an income, an expense or a refund on a foreign account. Absent —
+ * the rate of the operation's day (`baseSnapshot`); typed — that sum, written as the exact rate
+ * «sum for sum» (D-031). On an account in the base currency it is ignored: the amount is the figure.
+ */
+interface ForeignValueDraft {
+  readonly baseAmount?: string;
+}
+
+export interface IncomeDraft extends CommonTransactionDraft, ForeignValueDraft {
   readonly kind: "income";
   readonly accountId: string;
   /**
@@ -54,13 +81,13 @@ export interface IncomeDraft extends CommonTransactionDraft {
   readonly categoryId: string;
 }
 
-export interface ExpenseDraft extends CommonTransactionDraft {
+export interface ExpenseDraft extends CommonTransactionDraft, ForeignValueDraft {
   readonly kind: "expense";
   readonly accountId: string;
   readonly categoryId: string;
 }
 
-export interface RefundDraft extends CommonTransactionDraft {
+export interface RefundDraft extends CommonTransactionDraft, ForeignValueDraft {
   readonly kind: "refund";
   readonly accountId: string;
   readonly originalTransactionId: string;
@@ -70,6 +97,11 @@ export interface TransferDraft extends CommonTransactionDraft {
   readonly kind: "transfer";
   readonly fromAccountId: string;
   readonly toAccountId: string;
+  /**
+   * What arrived, in the receiving account's currency — only between two currencies, where it is
+   * required; within one currency the amount is one amount and this is ignored.
+   */
+  readonly toAmount?: string;
 }
 
 export interface GoalContributionDraft extends CommonTransactionDraft {
@@ -167,12 +199,25 @@ function assertLocalDate(value: string): string {
   return value;
 }
 
-function parsePositiveMoney(value: string): number {
+/** Digits of the minor unit of an account's currency: two when the code is not one the model knows. */
+function exponentOf(currency: string): number {
+  return isSupportedCurrency(currency) ? currencyExponent(currency) : 2;
+}
+
+function amountRefusal(exponent: number): string {
+  if (exponent === 0) return "Введите положительную сумму целым числом.";
+  return `Введите положительную сумму, не более ${exponent === 3 ? "трёх" : "двух"} знаков после запятой.`;
+}
+
+function parsePositiveMoney(value: string, exponent = 2, field = "amount"): number {
+  let minor: number;
   try {
-    return parseMoney(value);
+    minor = parseMoney(value, exponent);
   } catch {
-    return fail("amount", "Введите положительную сумму в рублях, не более двух знаков после запятой.");
+    return fail(field, amountRefusal(exponent));
   }
+  if (minor > MAX_MONEY_MINOR) return fail(field, "Сумма превышает максимально допустимое значение.");
+  return minor;
 }
 
 function assertStatus(value: TransactionStatus): TransactionStatus {
@@ -192,20 +237,87 @@ function accountFor(
   return account;
 }
 
-/**
- * Эта форма записывает суммы в базовой валюте семьи и ничего больше: суммы в другой валюте, курса и
- * суммы зачисления у неё нет. Счёт в другой валюте приходит из копии или от другого устройства, и
- * операцию по нему форма отвергает понятными словами, а не повреждённым документом.
- */
-const FOREIGN_ACCOUNT_MESSAGE = "Операции по счёту в другой валюте эта форма пока не записывает.";
-const FOREIGN_TRANSFER_MESSAGE = "Перевод между счетами в разных валютах эта форма пока не записывает.";
+/** «19 октября» — день, на который нет курса, словом. */
+const dayWords = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", timeZone: "UTC" });
 
-function assertBaseCurrencyAccount(state: BudgetState, account: BudgetState["accounts"][number], field: string): void {
-  if (account.currency !== baseCurrencyOf(state)) fail(field, FOREIGN_ACCOUNT_MESSAGE);
+/** Сообщение, когда операцию в другой валюте оценить нечем: название валюты, дня и выхода из положения. */
+export function missingRateMessage(currency: string, baseCurrency: string, date: string): string {
+  const day = dayWords.format(new Date(`${date}T00:00:00.000Z`)).replace(/ /gu, "\u00a0");
+  return `Курса ${currency} на ${day} нет. Задайте курс или впишите сумму в ${baseCurrency} вручную.`;
 }
 
-function assertOneCurrency(from: BudgetState["accounts"][number], to: BudgetState["accounts"][number]): void {
-  if (from.currency !== to.currency) fail("toAccountId", FOREIGN_TRANSFER_MESSAGE);
+/**
+ * The base-currency snapshot of an income, an expense or a refund, or nothing on an account in the
+ * base currency.
+ *
+ * A typed base sum is the exact rate «sum for sum» (D-031). Otherwise an edit that keeps the
+ * account and the day keeps the rate the operation was written at — correcting a note must not
+ * revalue a purchase at a later rate — and everything else takes the rate of its day. Without one
+ * the operation is refused in words that say what to do, not written without its figure.
+ */
+function snapshotFor(
+  state: BudgetState,
+  account: BudgetState["accounts"][number],
+  amountMinor: number,
+  occurredOn: string,
+  draft: ForeignValueDraft,
+  current: Transaction | undefined,
+): BaseSnapshot | Record<string, never> {
+  const baseCurrency = baseCurrencyOf(state);
+  if (account.currency === baseCurrency) return {};
+  const typed = draft.baseAmount?.trim() ?? "";
+  if (typed !== "") {
+    const baseMinor = parsePositiveMoney(typed, exponentOf(baseCurrency), "baseAmount");
+    const manual = manualSnapshot(amountMinor, baseMinor, baseCurrency);
+    if (manual === null) return fail("baseAmount", "Такую пару сумм записать нельзя: проверьте обе.");
+    return manual;
+  }
+  if (
+    current !== undefined
+    && (current.kind === "income" || current.kind === "expense" || current.kind === "refund")
+    && current.accountId === account.id
+    && current.occurredOn === occurredOn
+    && current.rate !== undefined
+    && current.baseCurrency === baseCurrency
+  ) {
+    const kept = snapshotAt(amountMinor, baseCurrency, current.rate);
+    if (kept !== null) return kept;
+  }
+  const snapshot = baseSnapshot(amountMinor, account.currency, baseCurrency, indexRates(state.exchangeRates ?? []), occurredOn);
+  if (snapshot === null) return fail("baseAmount", missingRateMessage(account.currency, baseCurrency, occurredOn));
+  return snapshot;
+}
+
+/** The note as it is stored, or nothing; refusals in the words of the field. */
+function noteFor(value: string | undefined): { readonly note?: string } {
+  let note: string | undefined;
+  try {
+    note = normalizeNote(value ?? "");
+  } catch (error) {
+    if (!(error instanceof TextValidationError)) throw error;
+    return fail("note", error.code === "too_long"
+      ? `Комментарий — не больше ${NOTE_MAX_LENGTH} символов.`
+      : "Уберите из комментария скрытые или служебные символы.");
+  }
+  return note === undefined ? {} : { note };
+}
+
+/**
+ * The tags as an operation stores them: no repeats, one order, no empty list. Each names a tag of the
+ * state; an archived one only if the edited operation already carries it — archive means «not offered
+ * for new operations», not «taken off the old ones».
+ */
+function tagsFor(state: BudgetState, ids: readonly string[] | undefined, current: Transaction | undefined): { readonly tagIds?: readonly string[] } {
+  const tagIds = normalizeTagIds(ids ?? []);
+  if (tagIds === undefined) return {};
+  if (tagIds.length > MAX_TAGS_PER_TRANSACTION) fail("tagIds", `Не больше ${MAX_TAGS_PER_TRANSACTION} меток на одной операции.`);
+  const known = new Map((state.tags ?? []).map((tag) => [tag.id, tag]));
+  for (const id of tagIds) {
+    const tag = known.get(id);
+    if (tag === undefined) fail("tagIds", "Метка не найдена: возможно, её удалили на другом устройстве.");
+    if (!tag.active && current?.tagIds?.includes(id) !== true) fail("tagIds", `Метка «${tag.name}» в архиве.`);
+  }
+  return { tagIds };
 }
 
 function expenseCategoryFor(
@@ -265,25 +377,23 @@ function accountIds(transaction: Transaction): readonly string[] {
   }
 }
 
-type CarriedLabels = Pick<Transaction, "memberId" | "note" | "tagIds" | "recurringRuleId">;
+type CarriedLabels = Pick<Transaction, "memberId" | "recurringRuleId">;
 
 /**
- * What an edit keeps from the operation it edits because the form never shows it.
+ * What an edit keeps from the operation it edits because the sheet never shows it.
  *
- * The form rebuilds an operation from its own fields, and a field it does not have was simply
- * lost: every edit took off the participant the operation was credited to — the split by
- * participant then counted it as unattributed, against D-021 and against the journal, whose codec
- * carries the participant on the operation for exactly this reason. A note, tags and the recurring
- * rule an operation came from would have gone the same way the first time anybody corrected an
- * amount. They are labels: no figure reads them, so carrying them over cannot move a kopeck, and
- * dropping them is a loss nobody asked for. Absent stays absent.
+ * The sheet rebuilds an operation from its own fields, and a field it does not have would simply be
+ * lost: an edit would take off the participant the operation was credited to — the split by
+ * participant would then count it as unattributed, against D-021 and against the journal, whose codec
+ * carries the participant on the operation for exactly this reason — and the recurring rule it is an
+ * occurrence of. The note and the tags are the sheet's own fields now (wave 2b) and come from the
+ * draft; these two are labels no figure reads, so carrying them over cannot move a kopeck. Absent
+ * stays absent.
  */
 function carriedLabels(current: Transaction | undefined): CarriedLabels {
   if (current === undefined) return {};
   return {
     ...(current.memberId === undefined ? {} : { memberId: current.memberId }),
-    ...(current.note === undefined ? {} : { note: current.note }),
-    ...(current.tagIds === undefined ? {} : { tagIds: current.tagIds }),
     ...(current.recurringRuleId === undefined ? {} : { recurringRuleId: current.recurringRuleId }),
   };
 }
@@ -296,13 +406,13 @@ function makeTransaction(
 ): Transaction {
   const occurredOn = assertLocalDate(draft.occurredOn);
   const status = assertStatus(draft.status);
-  const amountMinor = parsePositiveMoney(draft.amount);
   const oldAccounts = current?.kind === draft.kind ? accountIds(current) : [];
-  const labels = carriedLabels(current);
+  const labels = { ...carriedLabels(current), ...noteFor(draft.note), ...tagsFor(state, draft.tagIds, current) };
 
   switch (draft.kind) {
     case "income": {
-      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
+      const account = accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      const amountMinor = parsePositiveMoney(draft.amount, exponentOf(account.currency));
       const oldCategoryId = current?.kind === "income" ? current.categoryId : undefined;
       const categoryId = incomeCategoryFor(state, draft.categoryId, oldCategoryId);
       // Отсутствующая категория остаётся отсутствующей: `categoryId: undefined` — это не то же
@@ -315,17 +425,24 @@ function makeTransaction(
         amountMinor,
         accountId: draft.accountId,
         ...(categoryId === undefined ? {} : { categoryId }),
+        ...snapshotFor(state, account, amountMinor, occurredOn, draft, current),
         ...labels,
       };
     }
     case "expense": {
-      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
+      const account = accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      const amountMinor = parsePositiveMoney(draft.amount, exponentOf(account.currency));
       const oldCategoryId = current?.kind === "expense" ? current.categoryId : undefined;
       expenseCategoryFor(state, draft.categoryId, oldCategoryId);
-      return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId, ...labels };
+      return {
+        id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId,
+        ...snapshotFor(state, account, amountMinor, occurredOn, draft, current),
+        ...labels,
+      };
     }
     case "refund": {
-      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
+      const account = accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      const amountMinor = parsePositiveMoney(draft.amount, exponentOf(account.currency));
       assertIdentifier(draft.originalTransactionId, "originalTransactionId");
       const original = state.transactions.find((item) => item.id === draft.originalTransactionId);
       if (!original || original.kind !== "expense" || original.status !== "posted") {
@@ -343,6 +460,7 @@ function makeTransaction(
         accountId: draft.accountId,
         categoryId: original.categoryId,
         originalTransactionId: original.id,
+        ...snapshotFor(state, account, amountMinor, occurredOn, draft, current),
         ...labels,
       };
     }
@@ -350,14 +468,23 @@ function makeTransaction(
       const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
       const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
-      assertOneCurrency(from, to);
-      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, ...labels };
+      const amountMinor = parsePositiveMoney(draft.amount, exponentOf(from.currency));
+      // Между двумя валютами сумма зачисления — своя, в валюте счёта назначения, и обязательна:
+      // курс перевода назначает банк, а не таблица курсов.
+      let arrived = {};
+      if (from.currency !== to.currency) {
+        const typed = draft.toAmount?.trim() ?? "";
+        if (typed === "") fail("toAmount", `Впишите, сколько пришло на счёт «${to.name}», в ${to.currency}.`);
+        arrived = { toAmountMinor: parsePositiveMoney(typed, exponentOf(to.currency), "toAmount") };
+      }
+      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, ...arrived, ...labels };
     }
     case "goal_contribution": {
       const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
       const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
-      assertOneCurrency(from, to);
+      if (from.currency !== to.currency) fail("toAccountId", "Взнос в цель идёт со счёта в той же валюте, что и счёт цели.");
+      const amountMinor = parsePositiveMoney(draft.amount, exponentOf(from.currency));
       const oldGoalId = current?.kind === "goal_contribution" ? current.goalId : undefined;
       const goal = goalFor(state, draft.goalId, oldGoalId);
       if (goal.linkedAccountId !== draft.toAccountId) {
@@ -467,19 +594,17 @@ export function deleteTransactions(state: BudgetState, ids: readonly string[]): 
   return validateResult({ ...state, transactions: state.transactions.filter((item) => !removing.has(item.id)) });
 }
 
+/** Words for an operation the sheet cannot show whole yet: a debt movement (its sheet is wave 2e). */
+export const DEBT_EDIT_REFUSAL = "Операцию по долгу этот лист пока не изменяет.";
+
 /**
- * Операция, которую эта форма не умеет показать целиком, — правке ею не подлежит (план, §3.4): форма
- * пересобрала бы операцию из своих полей и потеряла бы то, чего у неё нет, — сумму в базовой
- * валюте, курс, сумму зачисления. До волны интерфейса такую операцию правят только там, где её
- * записали.
+ * An operation the sheet cannot show whole is not edited by it: the sheet would rebuild it from its
+ * own fields and lose what it does not have. Since wave 2b that is only a debt movement — the sheet
+ * has no debt and no sum in the debt's currency; the base-currency value and the amount that
+ * arrived are its own fields now.
  */
-function assertEditableByForm(state: BudgetState, current: Transaction): void {
-  // Долга у формы нет вовсе: ни выбора долга, ни суммы в его валюте.
-  if (current.kind === "debt_out" || current.kind === "debt_in") {
-    fail("kind", "Операцию по долгу эта форма пока не изменяет.");
-  }
-  const foreign = (accountId: string) => state.accounts.find((item) => item.id === accountId)?.currency !== baseCurrencyOf(state);
-  if (accountIds(current).some(foreign)) fail("kind", "Операцию в другой валюте эта форма пока не изменяет.");
+function assertEditableByForm(current: Transaction): void {
+  if (current.kind === "debt_out" || current.kind === "debt_in") fail("kind", DEBT_EDIT_REFUSAL);
 }
 
 export function editTransaction(state: BudgetState, id: string, draft: TransactionDraft): BudgetState {
@@ -487,7 +612,7 @@ export function editTransaction(state: BudgetState, id: string, draft: Transacti
   assertIdentifier(id);
   const current = state.transactions.find((item) => item.id === id);
   if (!current) fail("id", "Операция не найдена.");
-  assertEditableByForm(state, current);
+  assertEditableByForm(current);
   const dependentRefunds = state.transactions.filter(
     (item) => item.kind === "refund" && item.originalTransactionId === id,
   );
@@ -525,6 +650,35 @@ export function deleteTransaction(state: BudgetState, id: string): BudgetState {
     fail("id", "Сначала удалите связанные возвраты.");
   }
   return validateResult({ ...state, transactions: state.transactions.filter((item) => item.id !== id) });
+}
+
+/**
+ * Puts an operation back exactly as it was before an edit: «Отменить» in the toast that announced
+ * the edit. The stored operation is the one the domain accepted then; the whole document is checked
+ * again now, so a change that came from another device in between still cannot leave a broken state.
+ */
+export function restoreTransaction(state: BudgetState, previous: Transaction): BudgetState {
+  validateState(state);
+  assertIdentifier(previous.id);
+  if (!state.transactions.some((item) => item.id === previous.id)) fail("id", "Операция не найдена.");
+  return validateResult({ ...state, transactions: state.transactions.map((item) => item.id === previous.id ? previous : item) });
+}
+
+/**
+ * Writes a deleted operation again — «Отменить» in the toast that announced the delete — under a
+ * new identifier: in the family journal a delete is final, and the same identifier written again
+ * would come back on this device alone. Everything else is the operation as it was.
+ */
+export function recreateTransaction(
+  state: BudgetState,
+  deleted: Transaction,
+  makeId: OperationsIdFactory = () => crypto.randomUUID(),
+): TransactionBatchCreation {
+  validateState(state);
+  if (state.transactions.length >= OPERATIONS_LIMITS.transactions) fail("transactions", "Достигнут лимит операций.");
+  const id = nextId(allDocumentIds(state), makeId);
+  const recreated = { ...deleted, id } as Transaction;
+  return { state: validateResult({ ...state, transactions: [...state.transactions, recreated] }), ids: [id] };
 }
 
 export function archiveCategory(state: BudgetState, id: string): BudgetState {
