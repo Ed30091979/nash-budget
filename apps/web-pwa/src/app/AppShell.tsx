@@ -818,12 +818,12 @@ export default function App() {
         />
       ) : null}
       {/* Тост гасится своим таймером (`components/Toast.tsx`), и время его стоит, пока на нём
-          фокус или указатель и пока поверх лист или вопрос: тогда он под затемнением. */}
+          фокус или указатель и пока поверх любой модальный диалог — лист или вопрос: тогда он под
+          затемнением. Какой диалог открыт, тост узнаёт у документа сам (`modal-presence.ts`). */}
       {toast !== null ? (
         <Toast
           key={toast.key}
           toast={toast}
-          paused={route.sheet !== undefined || leaveRequest !== null || replaceFailed !== null}
           onClose={() => setToast(null)}
           fallbackFocus={fallbackFocus}
         />

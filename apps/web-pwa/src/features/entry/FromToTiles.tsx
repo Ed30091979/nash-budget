@@ -2,6 +2,7 @@ import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import type { BudgetState } from "@family-budget/domain";
 import { accountIcon, categoryVisual } from "../../category-visual";
+import { softHyphenate } from "../../hyphenation";
 import { endpoints, type EntryDraft } from "./entry-model";
 
 /** Какая сторона операции выбирается: «откуда» или «куда». */
@@ -49,7 +50,7 @@ export function FromToTiles({ budget, draft, balances, onPick }: {
 
   const accountFace = (value: ReturnType<typeof account>) => value === undefined ? null : <>
     <Icon name={accountIcon(value)} size={20} />
-    {balances[value.id] === null || balances[value.id] === undefined ? null : <small className="endpoint-balance"><Money value={balances[value.id] ?? 0} currency={value.currency} /></small>}
+    {balances[value.id] === null || balances[value.id] === undefined ? null : <small className="endpoint-balance" aria-hidden="true"><Money value={balances[value.id] ?? 0} currency={value.currency} /></small>}
   </>;
   const categoryTone = (value: ReturnType<typeof category>) => value === undefined ? "neutral" : categoryVisual(value).tone;
 
@@ -59,14 +60,16 @@ export function FromToTiles({ budget, draft, balances, onPick }: {
     const word = side === "from" ? words.from : words.to;
     const pickable = sidePickable(draft, side);
     const tone = isAccount ? "tile-account" : `tone-${categoryTone(side === "from" ? fromCategory : toCategory)}`;
+    // Имя — с мягкими переносами, как на любой плитке (ревью 2b, раунд 3, NEW-2), и потому только для
+    // глаза: что выбрано, диктор слышит из доступного имени, где U+00AD нет.
     const content = <>
-      <span className="endpoint-word">{word}</span>
-      <span className="endpoint-name"><bdi dir="auto">{value}</bdi></span>
+      <span className="endpoint-word" aria-hidden="true">{word}</span>
+      <span className="endpoint-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(value)}</bdi></span>
       {isAccount ? accountFace(side === "from" ? fromAccount : toAccount) : null}
     </>;
     return pickable
       ? <button className={`tile endpoint ${tone}`} type="button" data-side={side} aria-label={`${word}: ${value}. Изменить`} onClick={() => onPick(side)}>{content}</button>
-      : <div className={`endpoint fixed ${tone}`}>{content}</div>;
+      : <div className={`endpoint fixed ${tone}`} role="group" aria-label={`${word}: ${value}`}>{content}</div>;
   };
 
   return (

@@ -7,10 +7,12 @@
  * за экран ни на 320 pt, ни при ×2.7.
  */
 import type { Locator, Page } from "@playwright/test";
+import type { BudgetState } from "@family-budget/domain";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
+import { demoBudget, restoreBudget } from "./budgets";
 import { applyFontScale } from "./font-scale";
-import { amountField, entrySheet, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
+import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
 
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -182,10 +184,10 @@ test("месяц за краем календаря в адресе — «Зап
  * иначе слово разорвано посередине без знака переноса. Строки находятся по прямоугольникам
  * каждого символа (`Range.getClientRects`), а не по ширине: так видно то, что видит глаз.
  */
-async function wordSplits(page: Page): Promise<readonly string[]> {
-  return page.evaluate(() => {
+async function wordSplits(page: Page, selector = ".overview-screen .tile-name"): Promise<readonly string[]> {
+  return page.evaluate((names) => {
     const splits: string[] = [];
-    for (const name of document.querySelectorAll<HTMLElement>(".overview-screen .tile-name")) {
+    for (const name of document.querySelectorAll<HTMLElement>(names)) {
       const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
       const chars: { readonly char: string; readonly top: number | null }[] = [];
       for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
@@ -215,23 +217,111 @@ async function wordSplits(page: Page): Promise<readonly string[]> {
       }
     }
     return splits;
-  });
+  }, selector);
 }
 
-test("на 390 pt имена плиток не рвутся посреди слова: перенос — только по слогам и с дефисом", async ({ page }) => {
-  // Ревью 2b, LOW-9: «Продук|ты», «Трансп|орт», «Здоров|ье», «Подработ|ка» — пять колонок по 65 и
-  // `overflow-wrap: anywhere` рвали слова без знака переноса.
-  await loadDemo(page);
-  for (const [width, scale] of [[390, 1], [320, 1], [430, 1], [390, 2.7]] as const) {
+/** Длинные имена, какие семьи и правда заводят: с одной гласной, с приставками, латиницей (ревью 2b, раунд 3). */
+const LONG_NAMES = [
+  "Благотворительность", "Электроэнергия", "Стройматериалы", "Канцтовары", "Сверхъестественный",
+  "Развлечения", "Подписки", "Коммунальные платежи", "Домашние животные", "Путешествия",
+  "Strengths", "Netflix", "Здравоохранение", "Взносы", "Абонементы", "Бытовая химия",
+  "Детский сад", "Автомобиль", "Сантехника", "Всплеск", "Тинькофф", "Мобильная связь",
+];
+
+/** Демо, где первые расходные категории названы `LONG_NAMES`. */
+function withLongNames(state: BudgetState): BudgetState {
+  const expense = state.categories.filter((item) => item.type === "expense" && item.active);
+  const renamed = new Map(expense.slice(0, LONG_NAMES.length).map((item, index) => [item.id, LONG_NAMES[index]!]));
+  return { ...state, categories: state.categories.map((item) => (renamed.has(item.id) ? { ...item, name: renamed.get(item.id)! } : item)) };
+}
+
+/** Ширины и кегли, на которых проверяется перенос: телефоны от 320 до 430 pt, ×1, ×2 и ×2.7. */
+const LINE_BREAK_LAYOUTS = [[320, 1], [390, 1], [430, 1], [320, 2], [390, 2], [430, 2], [320, 2.7], [390, 2.7], [430, 2.7]] as const;
+
+/** Имена на плитках — «Обзора», выбора стороны в листе и плиток «откуда → куда» наверху листа. */
+const TILE_NAMES = ".tile-name, .endpoint-name";
+
+/**
+ * Где рвутся имена всех плиток при этой ширине и кегле: на «Обзоре», в листе с «+» — на плитках
+ * «откуда → куда» и в открытом выборе каждой стороны, — и в листе с плитки `opener`.
+ */
+async function tileNameSplits(page: Page, opener: string): Promise<readonly string[]> {
+  const splits = [...await wordSplits(page, TILE_NAMES)];
+  const sheet = entrySheet(page);
+  await page.getByRole("button", { name: "Записать", exact: true }).click();
+  await expect(sheet).toBeVisible();
+  splits.push(...(await wordSplits(page, TILE_NAMES)).map((split) => `лист: ${split}`));
+  for (const side of ["to", "from"] as const) {
+    await sheet.locator(`[data-side="${side}"]`).click();
+    await expect(page.locator(".target-picker .tile-name").first()).toBeVisible();
+    splits.push(...(await wordSplits(page, TILE_NAMES)).map((split) => `выбор ${side}: ${split}`));
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".target-picker")).toHaveCount(0);
+  }
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await tile(page, opener).click();
+  await expect(sheet).toBeVisible();
+  splits.push(...(await wordSplits(page, TILE_NAMES)).map((split) => `лист с «${opener}»: ${split}`));
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  return splits;
+}
+
+/** Доступные имена с мягким переносом — по дереву доступности самого Chromium, а не по разметке. */
+async function softHyphenedNames(page: Page): Promise<readonly string[]> {
+  const session = await page.context().newCDPSession(page);
+  const tree = (await session.send("Accessibility.getFullAXTree")) as { readonly nodes: readonly { readonly name?: { readonly value?: unknown } }[] };
+  await session.detach();
+  return tree.nodes.map((node) => String(node.name?.value ?? "")).filter((name) => name.includes("\u00ad"));
+}
+
+/** Ни одно имя плитки нигде не рвётся без дефиса — и ни одно доступное имя не несёт мягкого переноса. */
+async function expectHyphenatedTileNames(page: Page, opener: string): Promise<void> {
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
     await applyFontScale(page, scale);
     await page.setViewportSize({ width, height: 844 });
-    expect(await wordSplits(page), `${width} pt ×${scale}`).toEqual([]);
+    expect(await tileNameSplits(page, opener), `${width} pt ×${scale}`).toEqual([]);
   }
   await applyFontScale(page, 1);
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await softHyphenedNames(page), "«Обзор»").toEqual([]);
+  await tile(page, opener).click();
+  await expect(entrySheet(page)).toBeVisible();
+  expect(await softHyphenedNames(page), `лист с «${opener}»: «откуда → куда»`).toEqual([]);
+  for (const side of ["to", "from"] as const) {
+    await entrySheet(page).locator(`[data-side="${side}"]`).click();
+    await expect(page.locator(".target-picker .tile-name").first()).toBeVisible();
+    expect(await softHyphenedNames(page), `выбор ${side} в листе`).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".target-picker")).toHaveCount(0);
+  }
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+}
+
+test("имена плиток не рвутся посреди слова — на «Обзоре», в выборе листа и на «откуда → куда»: перенос — только с дефисом", async ({ page }) => {
+  // Ревью 2b, LOW-9: «Продук|ты», «Трансп|орт», «Здоров|ье», «Подработ|ка» — пять колонок по 65 и
+  // `overflow-wrap: anywhere` рвали слова без знака переноса. Раунд 3, NEW-2: выбор категории в
+  // листе («В категорию… Изменить») мягких переносов не получил — «Транспор|т», «рассрочк|и»,
+  // «Развлече|ния», при ×2.7 «Продукт|ы».
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  await expectHyphenatedTileNames(page, "Развлечения и хобби");
   // До 400 pt — не больше четырёх колонок расходов: на пяти по 65 имени остаётся 49 pt.
   const columns = await page.locator(".tile-grid-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
   expect(columns).toBe(4);
+});
+
+test("длинные имена тоже переносятся только с дефисом — и слово с одной гласной", async ({ page }) => {
+  // Ревью 2b, раунд 3, NEW-5а: у «Strengths» правила не находили ни одного места, и на 320, 430 и
+  // при ×2 слово рвалось без знака переноса — «Strengt|hs».
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  await restoreBudget(page, withLongNames(demoBudget()));
+  await goToOverview(page);
+  await expect(tile(page, "Strengths")).toBeVisible();
+  await expectHyphenatedTileNames(page, "Благотворительность");
 });
 
 test("на 320 pt и при ×2.7 ничего не выезжает за экран — ни «Обзор», ни лист поверх него", async ({ page }) => {
@@ -265,4 +355,28 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
     await expect(entrySheet(page)).toHaveCount(0);
   }
   await applyFontScale(page, 1);
+});
+
+test("месяц плана закрыт — «Открыть …» залитой кнопкой в одну строку, на телефоне и на широком экране", async ({ page }) => {
+  await loadDemo(page);
+  // Демо строит план на текущий месяц; через два месяца он закрыт, и строка предлагает открыть новый.
+  const later = new Date();
+  later.setMonth(later.getMonth() + 2, 10);
+  await page.clock.install({ time: later });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.reload();
+    await goToOverview(page);
+    const open = page.locator(".reach-line.closed").getByRole("button", { name: /^Открыть / });
+    await expect(open).toBeVisible();
+    const box = await open.boundingBox();
+    const label = await open.locator(".icon-label").boundingBox();
+    if (box === null || label === null) throw new Error("«Открыть …» has no layout box.");
+    // Подпись не сжата в узкую колонку по букве на строку: кнопка — одна строка высотой с цель касания.
+    expect(box.height, `${viewport.width}px: высота кнопки`).toBeLessThan(TOUCH_TARGET_MINIMUM * 1.5);
+    expect(label.width, `${viewport.width}px: ширина подписи`).toBeGreaterThan(120);
+    // Кнопка — основное действие карточки, а не прозрачная строка-ссылка.
+    const fill = await open.evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(fill, `${viewport.width}px: заливка`).not.toBe("rgba(0, 0, 0, 0)");
+  }
 });

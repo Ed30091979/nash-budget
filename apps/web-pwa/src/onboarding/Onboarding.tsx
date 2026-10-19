@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { type BudgetState } from "@family-budget/domain";
 import { Icon } from "../components/Icon";
+import { plainInputValue } from "../plain-text";
 import {
   advanceOnboardingStep,
   buildOnboardingBudgetState,
@@ -164,12 +165,12 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
             </fieldset>
             <div className="field">
               <label htmlFor="householdLabel">Название плана</label>
-              <input id="householdLabel" autoComplete="off" maxLength={80} value={draft.householdLabel} onChange={(event) => patchDraft("householdLabel", event.target.value)} {...fieldA11y("householdLabel", errors.householdLabel)} />
+              <input id="householdLabel" autoComplete="off" maxLength={80} value={draft.householdLabel} onChange={(event) => patchDraft("householdLabel", plainInputValue(event.currentTarget))} {...fieldA11y("householdLabel", errors.householdLabel)} />
               <ErrorText id="householdLabel" message={errors.householdLabel} />
             </div>
             <div className="field">
               <label htmlFor="accountLabel">Как назвать основной счёт</label>
-              <input id="accountLabel" autoComplete="off" maxLength={80} value={draft.accountLabel} onChange={(event) => patchDraft("accountLabel", event.target.value)} {...fieldA11y("accountLabel", errors.accountLabel)} />
+              <input id="accountLabel" autoComplete="off" maxLength={80} value={draft.accountLabel} onChange={(event) => patchDraft("accountLabel", plainInputValue(event.currentTarget))} {...fieldA11y("accountLabel", errors.accountLabel)} />
               <ErrorText id="accountLabel" message={errors.accountLabel} />
             </div>
           </> : null}
@@ -198,7 +199,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
             </div>
             <div className="field">
               <label htmlFor="mandatoryName">Обязательный ежемесячный платёж</label>
-              <input id="mandatoryName" maxLength={80} value={draft.mandatoryName} onChange={(event) => patchDraft("mandatoryName", event.target.value)} {...fieldA11y("mandatoryName", errors.mandatoryName)} />
+              <input id="mandatoryName" maxLength={80} value={draft.mandatoryName} onChange={(event) => patchDraft("mandatoryName", plainInputValue(event.currentTarget))} {...fieldA11y("mandatoryName", errors.mandatoryName)} />
               <ErrorText id="mandatoryName" message={errors.mandatoryName} />
             </div>
             <div className="field">
@@ -219,7 +220,7 @@ export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
                   <legend>Категория {index + 1}</legend>
                   <div className="field">
                     <label htmlFor={nameId}>Название</label>
-                    <input id={nameId} maxLength={80} value={category.name} onChange={(event) => patchCategory(index, { name: event.target.value })} {...fieldA11y(nameId, errors[nameId])} />
+                    <input id={nameId} maxLength={80} value={category.name} onChange={(event) => patchCategory(index, { name: plainInputValue(event.currentTarget) })} {...fieldA11y(nameId, errors[nameId])} />
                     <ErrorText id={nameId} message={errors[nameId]} />
                   </div>
                   <div className="field">

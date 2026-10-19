@@ -115,6 +115,7 @@ export function EntrySheet(props: EntrySheetProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
+  const rateButtonRef = useRef<HTMLButtonElement>(null);
   const caretRef = useRef<number | null>(null);
   const keypad = useKeypadAvailable();
   const [picker, setPicker] = useState<EndpointSide | null>(null);
@@ -227,7 +228,7 @@ export function EntrySheet(props: EntrySheetProps) {
     if (sheet === null || !(event.target instanceof Node) || !sheet.contains(event.target)) return;
     handleDialogKeyboard(event, sheet, !busy && creating === null, () => {
       if (picker !== null) setPicker(null);
-      else if (rating) setRating(false);
+      else if (rating) closeRate();
       else onClose();
     });
   };
@@ -248,6 +249,16 @@ export function EntrySheet(props: EntrySheetProps) {
       setError(refusal);
       focusError();
     }
+  };
+
+  /**
+   * «Отмена» или Esc в «Задать курс»: форма курса уходит вместе с фокусом, который в ней был, —
+   * фокус возвращается на «Задать курс» (или в сумму, если кнопки уже нет), и следующий Esc
+   * закрывает лист, как обычно (ревью 2b, раунд 3, NEW-1).
+   */
+  const closeRate = () => {
+    setRating(false);
+    (rateButtonRef.current ?? amountRef.current)?.focus({ preventScroll: true });
   };
 
   const saveRate = async (rate: ExchangeRateDraft) => {
@@ -339,7 +350,7 @@ export function EntrySheet(props: EntrySheetProps) {
                 <div className="entry-notice">
                   <p><Icon name="triangle-alert" size={20} />Курса {value.currency} на день операции нет: оценить её в {baseCurrency} нечем.</p>
                   <div className="chip-row">
-                    <button className="secondary-button" type="button" aria-expanded={rating} onClick={() => setRating(true)}>Задать курс</button>
+                    <button ref={rateButtonRef} className="secondary-button" type="button" aria-expanded={rating} onClick={() => setRating(true)}>Задать курс</button>
                     <button className="secondary-button" type="button" aria-expanded={manualBase} onClick={() => setManualBase(true)}>Сумма в {baseCurrency} вручную</button>
                   </div>
                 </div>
@@ -351,7 +362,7 @@ export function EntrySheet(props: EntrySheetProps) {
                 </div>
               ) : null}
               {rating && value.kind === "missing" ? (
-                <RateQuickSheet currency={value.currency} baseCurrency={baseCurrency} date={draft.occurredOn} onSave={saveRate} onCancel={() => setRating(false)} />
+                <RateQuickSheet currency={value.currency} baseCurrency={baseCurrency} date={draft.occurredOn} onSave={saveRate} onCancel={closeRate} />
               ) : null}
               {manualBase && value.kind !== "base" ? (
                 <div className="field">

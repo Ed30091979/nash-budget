@@ -263,6 +263,11 @@ export interface EntryWrite {
   readonly state: BudgetState;
   /** Идентификатор записанной или исправленной операции. */
   readonly transactionId: string;
+  /**
+   * Метки, которые создала именно эта запись (`«+ метка»`), — то, что «Отменить» вправе снять.
+   * Не разность меток до и после: между касанием и записью синхронизация могла принести чужие.
+   */
+  readonly createdTagIds: readonly string[];
 }
 
 /**
@@ -273,6 +278,7 @@ export interface EntryWrite {
 export function writeEntry(state: BudgetState, draft: EntryDraft, makeId: () => string = () => crypto.randomUUID()): EntryWrite {
   let next = state;
   const added: string[] = [];
+  const created: string[] = [];
   for (const name of draft.newTags) {
     let normalized: string;
     try {
@@ -287,9 +293,10 @@ export function writeEntry(state: BudgetState, draft: EntryDraft, makeId: () => 
       continue;
     }
     try {
-      const created = createTag(next, normalized, makeId);
-      next = created.state;
-      added.push(created.tag.id);
+      const tag = createTag(next, normalized, makeId);
+      next = tag.state;
+      added.push(tag.tag.id);
+      created.push(tag.tag.id);
     } catch (error) {
       if (error instanceof TagValidationError) throw new OperationsValidationError("tagIds", error.message);
       throw error;
@@ -297,14 +304,14 @@ export function writeEntry(state: BudgetState, draft: EntryDraft, makeId: () => 
   }
   const operation = toTransactionDraft(next, draft, added);
   if (draft.editId !== null) {
-    return { state: editTransaction(next, draft.editId, operation), transactionId: draft.editId };
+    return { state: editTransaction(next, draft.editId, operation), transactionId: draft.editId, createdTagIds: created };
   }
   let createdId = "";
   const written = createTransaction(next, operation, () => {
     createdId = makeId();
     return createdId;
   });
-  return { state: written, transactionId: createdId };
+  return { state: written, transactionId: createdId, createdTagIds: created };
 }
 
 /** Можно ли нажать «Записать»: сумма — число, и выбраны «откуда» и «куда». */

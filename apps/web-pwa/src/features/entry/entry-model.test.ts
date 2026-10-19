@@ -236,6 +236,8 @@ describe("лист ввода: комментарий и метки", () => {
     expect(created).toBeDefined();
     expect(result.state.tags).toHaveLength(3);
     expect(written(result)).toMatchObject({ note: "Пятёрочка", tagIds: [TAG_HOME, TAG_TRIP, created!.id].sort() });
+    // Созданной записью названа только новая «Дача»: «отпуск» — уже существующая метка.
+    expect(result.createdTagIds).toEqual([created!.id]);
     expect(() => writeEntry(state(), { ...draft, newTags: ["\u202e"] }, ids())).toThrow(expect.objectContaining({ field: "tagIds" }));
     expect(tagRoom({ ...draft, tagIds: [TAG_HOME, TAG_TRIP] })).toBe(10 - 2 - 2);
   });

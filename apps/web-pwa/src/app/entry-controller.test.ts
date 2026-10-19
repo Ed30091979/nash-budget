@@ -1,4 +1,4 @@
-import { carryBudgetForward, makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import { carryBudgetForward, createTag, makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState } from "@family-budget/domain";
 import { isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 import type { ToastMessage } from "../components/Toast";
@@ -65,6 +65,8 @@ function harness(fails: () => unknown = () => null, start: BudgetState = makePla
   return {
     store, controller, toasts, redirects, navigations, writes,
     budget: () => budget,
+    /** Правка, пришедшая не из листа, — синхронизация с другого устройства — прямо сейчас. */
+    arrive: (change: BudgetChange) => { budget = change(budget); },
     open,
     holdWrites: () => { hold = true; },
     releaseWrites: () => {
@@ -191,6 +193,25 @@ describe("запись из листа ввода", () => {
     shell.toasts[2]!.action?.run();
     await settle();
     expect(shell.budget().tags?.some((tag) => tag.id === dacha.id)).toBe(true);
+  });
+
+  it("«Отменить» снимает только метки этой записи: чужая метка, пришедшая между касанием и записью, остаётся", async () => {
+    // Ревью 2b, раунд 3, NEW-6: созданные метки считались разностью «после записи − снимок при
+    // касании», и неиспользуемая метка другого устройства, пришедшая синхронизацией в этот зазор,
+    // попадала в неё — «Отменить» удалял и её.
+    const shell = harness();
+    const tagged = { ...food("300"), newTags: ["Дача"] };
+    shell.open(tagged);
+    shell.holdWrites();
+    expect(shell.controller.submit(tagged)).toBeNull();
+    shell.arrive((state) => createTag(state, "Отпуск", () => "e3000000-0000-4000-8000-00000000f001").state);
+    shell.releaseWrites();
+    await settle();
+    expect(shell.budget().tags?.map((tag) => tag.name).sort()).toEqual(["Дача", "Отпуск"]);
+    shell.toasts[0]!.action?.run();
+    await settle();
+    expect(plain(shell.toasts[1]!.text)).toBe("Отменено: расход 300 ₽");
+    expect(shell.budget().tags?.map((tag) => tag.name)).toEqual(["Отпуск"]);
   });
 
   it("«Отменить» правки, которая создала метку, снимает и её", async () => {

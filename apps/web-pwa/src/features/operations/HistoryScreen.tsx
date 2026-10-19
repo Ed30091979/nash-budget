@@ -4,6 +4,7 @@ import { BackButton } from "../../components/BackButton";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { categoryVisual } from "../../category-visual";
+import { plainInputValue } from "../../plain-text";
 import { searchOperations } from "../dashboard";
 import { filterTransactionsByMember, MEMBER_FILTER_ALL, transactionAuthorLabel, type MemberFilter, type MemberFilterOption } from "../family/model";
 import { OperationAmount } from "./OperationAmount";
@@ -100,7 +101,7 @@ export function HistoryScreen({ budget, members, onEdit, onAdd, onBack, busy = f
       <p className="history-count">{operationsCount(budget.transactions.length)}</p>
       <div className="search-controls">
         <label htmlFor="operation-history-search">Поиск по категории, счёту или сумме</label>
-        <input id="operation-history-search" type="search" autoComplete="off" maxLength={80} value={query} onChange={(event) => { setQuery(event.target.value); setVisibleCount(PAGE_SIZE); }} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
+        <input id="operation-history-search" type="search" autoComplete="off" maxLength={80} value={query} onChange={(event) => { setQuery(plainInputValue(event.currentTarget)); setVisibleCount(PAGE_SIZE); }} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} />
         <label htmlFor="operation-history-kind">Вид операции</label>
         <select id="operation-history-kind" value={kind} onChange={(event) => { setKind(event.target.value as TransactionKind | "all"); setVisibleCount(PAGE_SIZE); }}>
           <option value="all">Все виды</option>

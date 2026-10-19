@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from "react";
 import { MAX_TAGS_PER_TRANSACTION, TAG_NAME_MAX_LENGTH, type BudgetState } from "@family-budget/domain";
+import { plainInputValue } from "../../plain-text";
 import { frequentTags, tagRoom, type EntryDraft } from "./entry-model";
 
 /**
@@ -49,7 +50,7 @@ export function TagChips({ budget, draft, onChange }: { readonly budget: BudgetS
       {adding ? <div className="tag-new">
         <div className="field">
           <label htmlFor="entry-new-tag">Новая метка</label>
-          <input id="entry-new-tag" dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} value={name} onChange={(event) => setName(event.target.value)} onKeyDown={onKeyDown} />
+          <input id="entry-new-tag" dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} value={name} onChange={(event) => setName(plainInputValue(event.currentTarget))} onKeyDown={onKeyDown} />
         </div>
         <button className="secondary-button" type="button" onClick={add}>Добавить</button>
       </div> : null}
