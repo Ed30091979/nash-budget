@@ -58,6 +58,22 @@ export function tagsNote(budget: BudgetState): string {
   return parts.join(" · ");
 }
 
+/** Подписи строк-заглушек 2e — «Долги», «Цели», «Регулярные»: сколько уже есть в бюджете. */
+export function debtsNote(budget: BudgetState): string {
+  const count = (budget.debts ?? []).length;
+  return count === 0 ? "долгов нет" : plural(count, ["долг", "долга", "долгов"]);
+}
+
+export function goalsNote(budget: BudgetState): string {
+  const count = budget.goals.length;
+  return count === 0 ? "целей пока нет" : plural(count, ["цель", "цели", "целей"]);
+}
+
+export function recurringNote(budget: BudgetState): string {
+  const count = (budget.recurringRules ?? []).length;
+  return count === 0 ? "регулярных пока нет" : plural(count, ["регулярная", "регулярные", "регулярных"]);
+}
+
 /** «3 счёта · 1 в архиве» — подпись строки «Счета». */
 export function accountsNote(budget: BudgetState): string {
   const active = budget.accounts.filter((account) => account.active).length;
@@ -102,6 +118,13 @@ export function MoreScreen(props: {
   categoriesNote: string;
   onTags: () => void;
   tagsNote: string;
+  /** Заглушки до подволны 2e (R2): строки между «Метками» и «Курсами валют». */
+  onDebts: () => void;
+  debtsNote: string;
+  onGoals: () => void;
+  goalsNote: string;
+  onRecurring: () => void;
+  recurringNote: string;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
@@ -115,6 +138,9 @@ export function MoreScreen(props: {
         <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
         <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
         <li><button className="list-row" type="button" onClick={props.onTags}><span className="list-icon"><Icon name="hash" size={24} /></span><span className="list-copy"><strong>Метки</strong><small>{props.tagsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onDebts}><span className="list-icon"><Icon name="arrow-left-right" size={24} /></span><span className="list-copy"><strong>Долги</strong><small>{props.debtsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onGoals}><span className="list-icon"><Icon name="target" size={24} /></span><span className="list-copy"><strong>Цели</strong><small>{props.goalsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRecurring}><span className="list-icon"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>Регулярные</strong><small>{props.recurringNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
         <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>

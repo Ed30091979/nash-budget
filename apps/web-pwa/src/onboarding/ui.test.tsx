@@ -16,7 +16,7 @@ describe("первый запуск: три слайда (дизайн v5, 01 �
     expect(html).toContain("Наш бюджет");
     expect(html).toContain(">Пропустить</button>");
     // Заголовок и абзац — дважды: с мягкими переносами для глаз и без них для слуха (`Hyphenated`).
-    expect(html).toMatch(/<h1 id="intro-title-tap" tabindex="-1"><span class="hyphenated" aria-hidden="true">[^<]+<\/span><span class="sr-only">Записать трату\u00a0— два шага<\/span><\/h1>/u);
+    expect(html).toMatch(/<h1 id="intro-title-tap" tabindex="-1"><span class="hyphenated" aria-hidden="true"><span class="hy-plain">Записать трату\u00a0— два шага<\/span><span class="hy-soft">[^<]+<\/span><\/span><span class="sr-only">Записать трату\u00a0— два шага<\/span><\/h1>/u);
     expect(html).toContain('<span class="sr-only">Коснитесь категории и наберите сумму. Без форм и лишних полей.</span>');
     expect(html).toContain('role="img" aria-label="Шаг 1 из 3"');
     expect(html).toContain(">Дальше</button>");

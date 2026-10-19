@@ -195,6 +195,8 @@ export interface AccountScreenProps {
   readonly today: string;
   /** Счёт из адреса; `null` — «Новый счёт». */
   readonly accountId: string | null;
+  /** Вид нового счёта из адреса (`?type=savings` — вопрос первого запуска); у правки не читается. */
+  readonly initialType?: AccountType;
   readonly write: BudgetWriter;
   readonly onBack: () => void;
   /** Записано: назад к списку, со словами о сделанном. */
@@ -209,11 +211,13 @@ const ACCOUNT_RESTORE_ID = "account-restore";
  * диалог приложения; отправленный — «записывается» до первого `await`, отказ записи оставляет его
  * на месте с отказом у поля. Порядок и архив — отдельные записи сразу, черновик они не трогают.
  */
-export function AccountScreen({ budget, today, accountId, write, onBack, onDone }: AccountScreenProps) {
+export function AccountScreen({ budget, today, accountId, initialType, write, onBack, onDone }: AccountScreenProps) {
   const account = accountId === null ? null : budget.accounts.find((item) => item.id.toLowerCase() === accountId.toLowerCase()) ?? null;
   // Снимок при открытии — не пересчитывается от бюджета: правка с другого устройства не делает
   // форму «грязной» и не стирает набранное.
-  const [pristine] = useState<AccountFormDraft>(() => (account === null ? blankAccountDraft(budget) : accountDraftOf(account)));
+  const [pristine] = useState<AccountFormDraft>(() => (account === null
+    ? { ...blankAccountDraft(budget), ...(initialType === undefined ? {} : { type: initialType }) }
+    : accountDraftOf(account)));
   const [draft, setDraft] = useState<AccountFormDraft>(pristine);
   const [error, setError] = useState<AccountFormError | null>(null);
   const [busy, setBusy] = useState(false);

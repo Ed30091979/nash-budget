@@ -3,6 +3,7 @@ import {
   archiveTag,
   createTag,
   deleteTag,
+  findTagByName,
   renameTag,
   restoreTag,
   TAG_NAME_MAX_LENGTH,
@@ -11,6 +12,8 @@ import {
 } from "@family-budget/domain";
 import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { EmptyState } from "../../components/EmptyState";
+import { TagsIllustration } from "../../components/illustrations/TagsIllustration";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { useFormDraft } from "../../navigation/draft-guard";
@@ -29,6 +32,9 @@ const editId = (tagId: string) => `tag-edit-${tagId}`;
 const renameId = (tagId: string) => `tag-rename-${tagId}`;
 const archiveId = (tagId: string) => `tag-archive-${tagId}`;
 const restoreId = (tagId: string) => `tag-restore-${tagId}`;
+
+/** Быстрые метки пустого состояния (14): одним касанием, без набора. */
+export const QUICK_TAGS: readonly string[] = ["отпуск", "дача", "ремонт", "подарки"];
 
 /** Отказ у строки: к какой метке он относится и что сказать. */
 interface RowNotice {
@@ -51,6 +57,11 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
   const [removing, setRemoving] = useState<TagRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  // Пустое состояние (дизайн v5, 14): иллюстрация, «Создать метку» и быстрые метки. Поле новой
+  // метки появляется по «Создать метку» — или сразу, если меток уже было хоть сколько-то.
+  const [composing, setComposing] = useState(false);
+  const empty = view.active.length === 0 && view.archived.length === 0;
+  const showEmpty = empty && !composing && name.trim() === "";
   // Фокус после действия на месте — на том, что его продолжает (ревью 2c, MEDIUM-3). Кнопки строки
   // во время записи не выключаются, а говорят `aria-disabled`: выключенная теряет фокус.
   const focusAfterRender = useFocusAfterRender();
@@ -97,6 +108,26 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
       focusAfterRender("tag-new-name");
     } catch (cause) {
       creating.fail(ticket);
+      setCreateError(tagErrorText(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const startComposing = () => {
+    setComposing(true);
+    focusAfterRender("tag-new-name");
+  };
+  /** Быстрая метка: запись сразу, фокус — на «Изменить» новой строки. */
+  const createQuick = async (label: string) => {
+    if (busy) return;
+    setBusy(true);
+    setCreateError(null);
+    try {
+      const next = await write.run((state) => createTag(state, label).state);
+      setStatus(`Метка «${label}» добавлена.`);
+      const created = findTagByName(next, label);
+      if (created !== undefined) focusAfterRender(editId(created.id));
+    } catch (cause) {
       setCreateError(tagErrorText(cause));
     } finally {
       setBusy(false);
@@ -189,9 +220,24 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
       <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
       <header className="manage-head">
         <h1>Метки</h1>
-        <p>Метка — пометка поверх категории: «отпуск», «ремонт», «дача». Её ставят при записи операции, а деньги по меткам видны в «Отчётах». Ни одна сумма бюджета от меток не зависит.</p>
+        {showEmpty ? null : <p>Метка — пометка поверх категории: «отпуск», «ремонт», «дача». Её ставят при записи операции, а деньги по меткам видны в «Отчётах». Ни одна сумма бюджета от меток не зависит.</p>}
       </header>
 
+      {showEmpty ? <>
+        <EmptyState
+          illustration={<TagsIllustration />}
+          title="Меток пока нет"
+          text="Метка собирает траты из разных категорий: например, всё на дачу или на отпуск."
+          action={{ id: "tags-create", label: "Создать метку", onClick: startComposing }}
+          quick={{
+            label: "Или одним касанием:",
+            busy,
+            items: QUICK_TAGS.map((label) => ({ key: label, label, name: `Создать метку «${label}»`, onClick: () => void createQuick(label) })),
+          }}
+        />
+        {createError === null ? null : <p className="field-error" id="tag-new-error" role="alert">{createError}</p>}
+        <p className="manage-status" role="status">{status}</p>
+      </> : <>
       <form className="tag-new manage-new-tag" onSubmit={(event) => void create(event)} noValidate>
         <div className="field">
           <label htmlFor="tag-new-name">Новая метка</label>
@@ -222,6 +268,7 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
           <ul className="list-card manage-list">{view.archived.map(row)}</ul>
         </section>
       )}
+      </>}
 
       {removing === null ? null : (
         <ConfirmDialog
@@ -233,8 +280,11 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
           onConfirm={() => {
             const target = removing;
             setRemoving(null);
-            // Строки больше нет: фокус — на заголовок списка, где она стояла.
-            void rowWrite(target.tag.id, (state) => deleteTag(state, target.tag.id), `Метка «${target.tag.name}» удалена.`, target.tag.active ? "tags-active-title" : "tags-archived-title");
+            // Строки больше нет: фокус — на заголовок списка, где она стояла, а у последней метки —
+            // на «Создать метку» пустого состояния, которое встаёт на её место.
+            const last = view.active.length + view.archived.length === 1;
+            if (last) setComposing(false);
+            void rowWrite(target.tag.id, (state) => deleteTag(state, target.tag.id), `Метка «${target.tag.name}» удалена.`, last ? "tags-create" : target.tag.active ? "tags-active-title" : "tags-archived-title");
           }}
         />
       )}

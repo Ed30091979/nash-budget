@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent } from "react";
+import { useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
@@ -56,6 +56,12 @@ export interface OverviewScreenProps {
   readonly onPlan: () => void;
   /** «Изменить» у ряда (§5.1: ничего только долгим нажатием): экран справочника этого ряда. */
   readonly onEdit: (row: OverviewRow) => void;
+  /**
+   * Места первого запуска (R2, DIRECTION §e): подсказка на первую трату — сразу за плитками
+   * расходов, карточки-подсказки — в конце экрана. Экран их не знает и ничего в них не решает.
+   */
+  readonly coach?: ReactNode;
+  readonly hints?: ReactNode;
 }
 
 /** Ряды плиток «Обзора», у каждого — своё «Изменить». */
@@ -86,7 +92,7 @@ function RowHead({ id, title, row, onEdit }: { readonly id: string; readonly tit
  * следующий шаг решает автомат `pick-model.ts`, а подсказка говорит их словами в `role="status"`.
  */
 export function OverviewScreen({
-  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onEdit,
+  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onEdit, coach, hints,
 }: OverviewScreenProps) {
   const model = useMemo(() => overviewModel(budget, month, today), [budget, month, today]);
   const line = useMemo(() => reachLineModel(budget, flexiblePlanMinor), [budget, flexiblePlanMinor]);
@@ -212,7 +218,9 @@ export function OverviewScreen({
           })}
           <AddTile key="add" label="Добавить категорию расходов" onClick={() => onAddCategory("expense")} />
         </TileGrid>
+        {coach}
       </section>
+      {hints}
     </div>
   );
 }

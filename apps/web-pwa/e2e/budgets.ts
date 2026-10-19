@@ -16,17 +16,20 @@ export const DOLLARS_ID = "e2b00000-0000-4000-8000-0000000000d1";
 export const DOLLARS_NAME = "Доллары";
 
 /**
- * Демо на сегодняшний день прогона — без своих долларов: счёт «Доллары», курсы USD и покупка
- * долларов с карты убраны. Прогоны про счёт в другой валюте и про отсутствующий курс заводят их
- * сами (`withDollarAccount`), а у демо макетов v5 и счёт, и курс уже есть.
+ * Демо на сегодняшний день прогона — без своих долларов и меток: счёт «Доллары», курсы USD, покупка
+ * долларов с карты и метки «отпуск» и «дача» убраны. Прогоны про счёт в другой валюте, отсутствующий
+ * курс и справочник меток заводят их сами (`withDollarAccount`, экран «Метки»), а у демо макетов v5
+ * всё это уже есть.
  */
 export function demoBudget(): BudgetState {
-  const { exchangeRates: _rates, ...demo } = buildDemoBudgetState();
+  const { exchangeRates: _rates, tags: _tags, ...demo } = buildDemoBudgetState();
   const dollars = DEMO_IDS.accounts.dollars;
   return {
     ...demo,
     accounts: demo.accounts.filter((account) => account.id !== dollars),
-    transactions: demo.transactions.filter((item) => !(item.kind === "transfer" && item.toAccountId === dollars)),
+    transactions: demo.transactions
+      .filter((item) => !(item.kind === "transfer" && item.toAccountId === dollars))
+      .map(({ tagIds: _tagIds, ...item }) => item as BudgetState["transactions"][number]),
   };
 }
 

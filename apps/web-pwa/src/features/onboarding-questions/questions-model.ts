@@ -1,12 +1,13 @@
 import {
   CATEGORY_SUGGESTIONS,
+  categoriesInListOrder,
   categoryNameKey,
   type BudgetState,
   type CategoryGroup,
 } from "@family-budget/domain";
 import { categoryVisual, type CategoryTone } from "../../category-visual";
 import type { IconName } from "../../components/Icon";
-import { ALWAYS_ACTIVE_EXPENSE, ARCHIVED_STARTERS } from "../../onboarding/model";
+import { ALWAYS_ACTIVE_EXPENSE, ARCHIVED_STARTERS, PRESET_EXPENSES } from "../../onboarding/model";
 import { daysBetween } from "../../reach";
 import { archiveCategoryWithLimits } from "../categories/category-model";
 import { createOperationCategory, restoreCategory } from "../operations/model";
@@ -95,7 +96,7 @@ export interface CategoryChip {
 export interface CategoryChips {
   /** «Частые — уже отмечены»: активные категории расходов, кроме «Прочего», которое есть всегда. */
   readonly frequent: readonly CategoryChip[];
-  /** «Добавить»: оставшиеся стартовые (в архиве) и три подсказки домена. */
+  /** «Добавить»: оставшиеся стартовые (в архиве), убранные в архив частые и три подсказки домена. */
   readonly more: readonly CategoryChip[];
 }
 
@@ -107,14 +108,21 @@ export function categoryChips(state: BudgetState): CategoryChips {
     const visual = categoryVisual({ name, type: "expense", group });
     return { key: categoryNameKey(name), name, source, categoryId, group, icon: visual.icon, tone: visual.tone };
   };
-  const frequent = expense
-    .filter((category) => category.active && categoryNameKey(category.name) !== always)
-    .sort((left, right) => left.sortOrder - right.sortOrder)
-    .map((category) => chip(category.name, "active", category.id, category.group as CategoryGroup));
+  // Порядок листа — порядок набора (§e: от «Продуктов» до «Подарков»); своё — следом, по месту в списке.
+  const presetIndex = (name: string) => {
+    const index = PRESET_EXPENSES.findIndex((preset) => categoryNameKey(preset) === categoryNameKey(name));
+    return index === -1 ? PRESET_EXPENSES.length : index;
+  };
+  const frequent = categoriesInListOrder(expense, "expense")
+    .filter((category) => categoryNameKey(category.name) !== always)
+    .map((category, order) => ({ category, order }))
+    .sort((left, right) => presetIndex(left.category.name) - presetIndex(right.category.name) || left.order - right.order)
+    .map(({ category }) => chip(category.name, "active", category.id, category.group as CategoryGroup));
   const taken = new Set(frequent.map((item) => item.key));
   taken.add(always);
   const more: CategoryChip[] = [];
-  for (const name of [...ARCHIVED_STARTERS, ...OFFERED_SUGGESTIONS]) {
+  // Частые из набора, убранные в архив прежним ответом, тоже здесь: вернуть их — одно касание.
+  for (const name of [...ARCHIVED_STARTERS, ...PRESET_EXPENSES, ...OFFERED_SUGGESTIONS]) {
     const key = categoryNameKey(name);
     if (taken.has(key)) continue;
     taken.add(key);
@@ -123,6 +131,7 @@ export function categoryChips(state: BudgetState): CategoryChips {
       more.push(chip(archived.name, "archived", archived.id, archived.group as CategoryGroup));
       continue;
     }
+    if (PRESET_EXPENSES.some((item) => categoryNameKey(item) === key)) continue;
     const template = CATEGORY_SUGGESTIONS.find((item) => item.type === "expense" && categoryNameKey(item.name) === key);
     const starter = ARCHIVED_STARTERS.some((item) => categoryNameKey(item) === key);
     if (template !== undefined) more.push(chip(template.name, "suggestion", null, template.group ?? "other"));

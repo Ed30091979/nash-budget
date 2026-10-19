@@ -20,6 +20,13 @@ async function openMore(page: Page, row: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 }
 
+/** Меток нет — пустое состояние (дизайн v5, 14): поле новой метки открывает «Создать метку». */
+async function startTag(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { level: 2, name: "Меток пока нет" })).toBeVisible();
+  await page.getByRole("button", { name: "Создать метку", exact: true }).click();
+  await expect(page.getByLabel("Новая метка")).toBeFocused();
+}
+
 /** «554 000 ₽» — в копейки, по цифрам. */
 async function totalMinor(page: Page): Promise<number> {
   const text = await page.locator(".overview-total").innerText();
@@ -119,7 +126,10 @@ test("категория: имя, иконка, цвет и лимит — од�
 
 test("метки: заведена, переименована, в архиве и удалена; используемую удалить нельзя — отказ словами домена", async ({ page }) => {
   await loadDemo(page);
+  // Демо без своих меток: справочник заводится с нуля.
+  await restoreBudget(page, demoBudget());
   await openMore(page, "Метки");
+  await startTag(page);
   const field = page.getByLabel("Новая метка");
   await field.fill("Ремонт");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
@@ -226,6 +236,7 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
   // было что мерить (ревью 2c, MEDIUM-2: прежде здесь заводилась одна метка).
   await restoreBudget(page, withDollarExpenseAtOldRate(demoBudget()));
   await openMore(page, "Метки");
+  await startTag(page);
   await page.getByLabel("Новая метка").fill("Подработка для отпуска и дачи");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(page.locator(".tag-row")).toHaveCount(1);
@@ -477,6 +488,7 @@ test("фокус после действий на месте — на том, ч
   // Метка: «Изменить» — в поле имени; «Отмена» и «Сохранить» — обратно на «Изменить»; «В архив» —
   // на «Вернуть», «Вернуть» — на «В архив».
   await openMore(page, "Метки");
+  await startTag(page);
   await page.getByLabel("Новая метка").fill("Ремонт");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(page.locator(".tag-row")).toHaveCount(1);

@@ -279,6 +279,10 @@ describe("справочники «Учёта» (подволна 2c)", () => {
     [{ name: "category", id: CATEGORY, type: "income" }, `#/more/categories/${CATEGORY}?type=income`],
     [{ name: "category", id: CATEGORY, type: "expense", sheet: "entry", edit: OPERATION }, `#/more/categories/${CATEGORY}?type=expense&sheet=entry&edit=${OPERATION}`],
     [{ name: "tags" }, "#/more/tags"],
+    [{ name: "account-new", type: "savings" }, "#/more/accounts/new?type=savings"],
+    [{ name: "debts" }, "#/more/debts"],
+    [{ name: "goals" }, "#/more/goals"],
+    [{ name: "recurring" }, "#/more/recurring"],
     [{ name: "account", id: ACCOUNT, sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE }, `#/more/accounts/${ACCOUNT}?sheet=entry&op=transfer&src=${ACCOUNT}&dst=${RESERVE}`],
     [{ name: "categories", type: "income", sheet: "entry", edit: OPERATION }, `#/more/categories?type=income&sheet=entry&edit=${OPERATION}`],
   ];
@@ -310,6 +314,11 @@ describe("справочники «Учёта» (подволна 2c)", () => {
       ["#/more/categories?type=expense&type=income", { name: "categories" }],
       [`#/more/categories/${CATEGORY}?type=Зарплата`, { name: "category", id: CATEGORY }],
       ["#/more/accounts%2Fnew", { name: "more" }],
+      // Вид нового счёта — только из перечня домена: имя или слово вне перечня — форма без вида.
+      ["#/more/accounts/new?type=Вклад", { name: "account-new" }],
+      ["#/more/accounts/new?type=savings&type=cash", { name: "account-new" }],
+      ["#/more/goals/Отпуск", { name: "goals" }],
+      ["#/more/debts/Саша", { name: "debts" }],
     ];
     for (const [hash, route] of cases) expect(parseRoute(hash), hash).toEqual({ route, notFound: true });
     // Ключ чужого маршрута отбрасывается молча: `type` бывает только у категорий и их списка.
@@ -329,13 +338,17 @@ describe("справочники «Учёта» (подволна 2c)", () => {
       { name: "tags", id: OPERATION },
       { name: "rates", currency: "USD" },
       { name: "account-new", name2: "Карта" },
+      { name: "account-new", type: "Вклад" },
+      { name: "goals", id: OPERATION },
+      { name: "debts", counterparty: "Саша" },
     ]) {
       expect(() => formatRoute(route as unknown as Route), JSON.stringify(route)).toThrow();
     }
   });
 
   it("родители: списки — дети «Ещё», запись — дитя своего списка; вкладка подсвечена «Ещё»", () => {
-    for (const name of ["accounts", "rates", "categories", "tags"] as const) expect(parentRoute({ name })).toEqual({ name: "more" });
+    for (const name of ["accounts", "rates", "categories", "tags", "debts", "goals", "recurring"] as const) expect(parentRoute({ name })).toEqual({ name: "more" });
+    expect(parentRoute({ name: "account-new", type: "savings" })).toEqual({ name: "accounts" });
     expect(parentRoute({ name: "account", id: ACCOUNT })).toEqual({ name: "accounts" });
     expect(parentRoute({ name: "account-new" })).toEqual({ name: "accounts" });
     expect(parentRoute({ name: "category", id: CATEGORY })).toEqual({ name: "categories", type: "expense" });

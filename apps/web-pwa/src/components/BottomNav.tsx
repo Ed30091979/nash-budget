@@ -36,6 +36,9 @@ export function activeTab(route: Route): TabName | null {
     case "categories":
     case "category":
     case "tags":
+    case "debts":
+    case "goals":
+    case "recurring":
       return "more";
   }
 }
