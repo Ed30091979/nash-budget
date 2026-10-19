@@ -124,6 +124,19 @@ describe("operations UI", () => {
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
 
+  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает флаг", () => {
+    // Третье ревью (e2e b1): после «Записать» касание вкладки спрашивало «Несохранённый черновик
+    // будет удалён», потому что флаг доходил до приложения только пассивным эффектом.
+    const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+    const submit = source.slice(source.indexOf("const submit = (event: FormEvent<HTMLFormElement>) => {"), source.indexOf("const confirm = () => {"));
+    expect(submit.indexOf("beginSaving();")).toBeGreaterThan(0);
+    expect(submit.indexOf("beginSaving();")).toBeLessThan(submit.indexOf("void runChange((state) => createTransaction(state, pending)"));
+    expect(source).toContain("onDirtyChange?.(dirty && !savingRef.current);");
+    expect(source).toMatch(/const beginSaving = \(\) => \{\s*savingRef\.current = true;\s*onDirtyChange\?\.\(false\);/u);
+    expect(source).toMatch(/await onChange\(change\);\s*endSaving\(false\);\s*success\(\);\s*\} catch \(cause\) \{\s*endSaving\(true\);/u);
+    expect(source).toContain("if (failed) onDirtyChange?.(dirtyRef.current);");
+  });
+
   it("показывает под суммой, что останется в каждом конверте, — до записи, а не после", () => {
     // Табло отвечает на «а мы можем себе это позволить?» до траты, и сразу по всем конвертам.
     // Проверка рисует экран с уже введённой суммой: то же самое человек видит, набрав её.

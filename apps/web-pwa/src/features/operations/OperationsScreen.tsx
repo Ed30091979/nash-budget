@@ -532,9 +532,26 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const previewApplies = draft.kind === "expense" && editingId === null && amountMinor > 0 && dateInPeriod;
   const detailsOpen = factOpen || draft.kind !== "expense" || editingId !== null;
 
+  // Черновик, ушедший в запись, — уже не несохранённый черновик (третье ревью, e2e b1). Флаг
+  // приложения прежде шёл только через этот пассивный эффект, а черновик оставался «грязным» весь
+  // полёт записи: касание вкладки сразу после «Записать» спрашивало «Несохранённый черновик будет
+  // удалён», хотя покупка уже записывалась. Поэтому запись снимает флаг сама и синхронно, до
+  // первого `await` (`beginSaving`), а неудача возвращает его (`endSaving`).
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
-    onDirtyChange?.(dirty);
+    onDirtyChange?.(dirty && !savingRef.current);
   }, [dirty, onDirtyChange]);
+  const beginSaving = () => {
+    savingRef.current = true;
+    onDirtyChange?.(false);
+  };
+  const endSaving = (failed: boolean) => {
+    if (!savingRef.current) return;
+    savingRef.current = false;
+    if (failed) onDirtyChange?.(dirtyRef.current);
+  };
 
   useEffect(() => () => {
     onDirtyChange?.(false);
@@ -561,8 +578,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       setError(null);
       try {
         await onChange(change);
+        endSaving(false);
         success();
       } catch (cause) {
+        endSaving(true);
         const view = toOperationsErrorView(cause);
         setError(view.message);
         // Квитанция утверждает, что запись прошла. Рядом с сообщением об ошибке это ложь.
@@ -675,16 +694,21 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       setConfirmation({ type: "edit", id: editingId, draft: pending });
       return;
     }
+    // Записанный черновик сбрасывается: с этого касания он не «несохранённый».
+    beginSaving();
     void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); });
   };
   const confirm = () => {
     if (!confirmation || busy) return;
     if (confirmation.type === "edit") {
       const pending = confirmation;
+      beginSaving();
       void runChange((state) => editTransaction(state, pending.id, pending.draft), () => { recordReceipt("Изменено", pending.draft); reset(pending.draft.kind); });
     } else {
       const pending = confirmation;
       const removed = budget.transactions.find((item) => item.id === pending.id);
+      // Удаление открытой в форме операции сбрасывает форму; удаление другой оставляет черновик.
+      if (editingId === pending.id) beginSaving();
       void runChange((state) => deleteTransaction(state, pending.id), () => {
         const removedDraft = removed === undefined ? null : draftFromTransaction(removed);
         if (removedDraft !== null) recordReceipt("Удалено", removedDraft);
