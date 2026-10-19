@@ -117,6 +117,22 @@ describe("лист ввода: виды 2b", () => {
     expect(draftFromTransaction(base, debt)).toMatchObject({ kind: "refused", message: "Операцию по долгу этот лист пока не изменяет." });
   });
 
+  it("правка операции «в ожидании» или черновика оставляет её такой: статус не становится «проведена»", () => {
+    // Ревью 2b, MEDIUM-1: черновик правки статуса не нёс, и запись делала её проведённой — правка
+    // одного комментария двигала «Потрачено». До 2b `draftFromTransaction` статус переносил.
+    const base = state();
+    const posted = base.transactions.find((item) => item.kind === "expense")!;
+    for (const status of ["pending", "draft"] as const) {
+      const waiting = { ...posted, status };
+      const budget = { ...base, transactions: base.transactions.map((item) => (item.id === posted.id ? waiting : item)) };
+      const opening = draftFromTransaction(budget, waiting);
+      if (opening.kind !== "draft") throw new Error("expense must open as a draft");
+      expect(written(writeEntry(budget, { ...opening.draft, note: "сверено" }, ids()))).toMatchObject({ status, note: "сверено" });
+    }
+    // Новая операция с листа — проведённая, как и прежде.
+    expect(written(writeEntry(base, { ...newEntryDraft(base, { kind: "expense", accountId: MAIN, categoryId: PLANNING_IDS.categories.food }, TODAY), amount: "100" }, ids())).status).toBe("posted");
+  });
+
   it("смена вида на месте оставляет сумму, дату, комментарий и метки", () => {
     const draft: EntryDraft = { ...blankEntryDraft(state(), "expense", TODAY), amount: "300", note: "кофе", tagIds: [TAG_HOME], occurredOn: "2026-07-12" };
     const income = switchMode(state(), draft, "income");

@@ -1,8 +1,9 @@
 import { expect, type Page } from "@playwright/test";
-import type { BudgetState } from "@family-budget/domain";
+import { PLANNING_IDS, type BudgetState } from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
 import { prepareBudgetState } from "../src/backup";
 import { buildDemoBudgetState } from "../src/onboarding/demo";
+import { localToday } from "../src/reach";
 
 /**
  * Бюджеты прогона, которых нет в демо: счёт в долларах без курса, операция «в ожидании». Они
@@ -24,6 +25,21 @@ export function withDollarAccount(state: BudgetState): BudgetState {
   return {
     ...state,
     accounts: [...state.accounts, { id: DOLLARS_ID, name: DOLLARS_NAME, type: "cash", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+  };
+}
+
+/** Расход «в ожидании»: банк его ещё не провёл, и в «Потрачено» он не входит. */
+export const PENDING_EXPENSE_ID = "e2b00000-0000-4000-8000-0000000000e1";
+
+/** Демо с расходом 5 432 ₽ в «Продуктах» сегодняшним числом — «в ожидании». */
+export function withPendingExpense(state: BudgetState): BudgetState {
+  const main = state.transactions.find((item) => item.kind === "income")?.accountId ?? state.accounts[0]!.id;
+  return {
+    ...state,
+    transactions: [
+      ...state.transactions,
+      { id: PENDING_EXPENSE_ID, kind: "expense", status: "pending", occurredOn: localToday(new Date()), amountMinor: 543_200, accountId: main, categoryId: PLANNING_IDS.categories.food },
+    ],
   };
 }
 

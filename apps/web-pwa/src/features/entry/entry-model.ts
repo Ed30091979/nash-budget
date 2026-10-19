@@ -19,6 +19,7 @@ import {
   type CurrencyCode,
   type ExchangeRate,
   type Transaction,
+  type TransactionStatus,
 } from "@family-budget/domain";
 import { formatDay } from "../../date-words";
 import { formatMoney } from "../../money";
@@ -51,6 +52,11 @@ export interface EntryDraft {
   readonly mode: EntryMode;
   /** Операция, которую правят; `null` — новая. */
   readonly editId: string | null;
+  /**
+   * Статус операции: новая с листа — проведённая; правка несёт статус операции, как модель несёт
+   * её автора, — «в ожидании» и черновик правкой не проводятся (ревью 2b, MEDIUM-1).
+   */
+  readonly status: TransactionStatus;
   /** Счёт, с которого уходят деньги (расход, перевод) или на который приходят (доход, возврат). */
   readonly accountId: string;
   /** Категория расхода. */
@@ -76,6 +82,7 @@ export interface EntryDraft {
 
 const EMPTY: Omit<EntryDraft, "mode" | "occurredOn"> = {
   editId: null,
+  status: "posted",
   accountId: "",
   categoryId: "",
   incomeCategoryId: "",
@@ -133,6 +140,7 @@ export function draftFromTransaction(state: BudgetState, transaction: Transactio
   const common = {
     ...EMPTY,
     editId: transaction.id,
+    status: transaction.status,
     occurredOn: transaction.occurredOn,
     note: transaction.note ?? "",
     tagIds: [...(transaction.tagIds ?? [])],
@@ -233,7 +241,7 @@ export function draftAmountMinor(state: BudgetState, draft: EntryDraft): number 
 /** Черновик модели операций — то, что запишет домен. Выражение свёрнуто в число. */
 export function toTransactionDraft(state: BudgetState, draft: EntryDraft, newTagIds: readonly string[] = []): TransactionDraft {
   const common = {
-    status: "posted" as const,
+    status: draft.status,
     occurredOn: draft.occurredOn,
     amount: settleAmount(draft.amount, draftExponent(state, draft)),
     note: draft.note,

@@ -9,10 +9,12 @@
  */
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
+import { demoBudget, restoreBudget, withPendingExpense } from "./budgets";
 import { applyFontScale } from "./font-scale";
 import {
   amountField,
   entrySheet,
+  goToOverview,
   keypadKey,
   leaveDialog,
   loadDemo,
@@ -287,6 +289,24 @@ test("«Оформить возврат», закрытый без набран�
   await row.click();
   await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: расход: /u);
   await expect(submitButton(page)).toHaveText("Сохранить");
+});
+
+test("правка расхода «в ожидании» оставляет его в ожидании: комментарий не двигает «Потрачено»", async ({ page }) => {
+  // Ревью 2b, MEDIUM-1: запись правки делала операцию проведённой.
+  await loadDemo(page);
+  await restoreBudget(page, withPendingExpense(demoBudget()));
+  await goToOverview(page);
+  const before = await tile(page, "Продукты").getAttribute("aria-label");
+
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
+  await page.getByRole("button", { name: /^Изменить операцию «Расход 5\s432\s₽/u }).click();
+  await expect(amountField(page)).toHaveValue("5432");
+  await entrySheet(page).getByRole("textbox", { name: "Комментарий" }).fill("ждём списания");
+  await submitButton(page).click();
+  await expect(toast(page, /Изменено: расход 5\s432\s₽/u)).toBeVisible();
+
+  await goToOverview(page);
+  await expect(tile(page, "Продукты")).toHaveAttribute("aria-label", before ?? "");
 });
 
 test("лист держит фокус: Tab ходит внутри, Esc с набранным спрашивает, без набранного — закрывает", async ({ page }) => {
