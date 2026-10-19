@@ -162,6 +162,18 @@ describe("участник в локальном бюджете", () => {
     expect(controller).toContain("registerLocalMember({");
   });
 
+  it("созданная семья сразу засевает журнал записью участника, а не ждёт первой покупки", () => {
+    // Третье ревью, e2e: со старой сессией в ссылке участник ложился мимо журнала, журнал семьи
+    // оставался пустым, и вступившее устройство стояло на «Бюджет семьи ещё не пришёл».
+    const controller = readFileSync(new URL("./controller.ts", import.meta.url), "utf8");
+    const create = controller.slice(controller.indexOf("createFamily() {"), controller.indexOf("issueInvite() {"));
+    expect(create.indexOf("sessionRef.current = next;")).toBeGreaterThan(0);
+    expect(create.indexOf("sessionRef.current = next;")).toBeLessThan(create.indexOf("await registerLocalMember({"));
+    // And the join no longer writes a participant into the budget the device had before joining.
+    const join = controller.slice(controller.indexOf("joinByCode(rawCode) {"), controller.indexOf("leaveFamily() {"));
+    expect(join).not.toContain("registerLocalMember(");
+  });
+
   it("приложение записывает участника тем же CAS, что и любое изменение бюджета", () => {
     expect(source).toContain("registerLocalMember: async (member) => {");
     expect(source).toContain("await budgetSave.apply((state) => ({");
