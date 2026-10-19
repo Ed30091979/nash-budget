@@ -448,3 +448,102 @@ test("категория и источник дохода: «Назад», си�
   await expect(list).toBeVisible();
   await shows("Доходы");
 });
+
+/** Где фокус: «BODY» — потерян; иначе доступное имя (`aria-label`, подпись поля или текст). */
+async function focused(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const element = document.activeElement as HTMLElement | null;
+    if (element === null || element === document.body) return "BODY";
+    const label = element.getAttribute("aria-label") ?? (element as HTMLInputElement).labels?.[0]?.textContent ?? element.textContent ?? "";
+    return `${element.tagName.toLowerCase()}: ${label.replace(/\s+/gu, " ").trim()}`;
+  });
+}
+
+/** Нажать кнопку с клавиатуры — как человек без мыши: фокус на неё и Enter. */
+async function pressWithKeyboard(page: Page, name: string | RegExp, scope: Page | ReturnType<Page["locator"]> = page): Promise<void> {
+  await scope.getByRole("button", { name, exact: typeof name === "string" }).focus();
+  await page.keyboard.press("Enter");
+}
+
+test("фокус после действий на месте — на том, что их продолжает, а не на <body>", async ({ page }) => {
+  // Ревью 2c, MEDIUM-3: после «Изменить», «Отмена», «В архив», «Убрать в архив», записи и удаления
+  // курса нажатая кнопка исчезала, и фокус падал на <body>.
+  await loadDemo(page);
+  await restoreBudget(page, withDollarAccount(demoBudget()));
+
+  // Метка: «Изменить» — в поле имени; «Отмена» и «Сохранить» — обратно на «Изменить»; «В архив» —
+  // на «Вернуть», «Вернуть» — на «В архив».
+  await openMore(page, "Метки");
+  await page.getByLabel("Новая метка").fill("Ремонт");
+  await page.getByRole("button", { name: "Добавить", exact: true }).click();
+  await expect(page.locator(".tag-row")).toHaveCount(1);
+  await pressWithKeyboard(page, "Переименовать метку «Ремонт»");
+  await expect.poll(() => focused(page)).toBe("input: Новое имя метки «Ремонт»");
+  await pressWithKeyboard(page, "Отмена");
+  await expect.poll(() => focused(page)).toBe("button: Переименовать метку «Ремонт»");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => focused(page)).toBe("input: Новое имя метки «Ремонт»");
+  await page.keyboard.press("End");
+  await page.keyboard.type(" кухни");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toHaveText("Метка «Ремонт» теперь «Ремонт кухни».");
+  await expect.poll(() => focused(page)).toBe("button: Переименовать метку «Ремонт кухни»");
+  await pressWithKeyboard(page, "Убрать метку «Ремонт кухни» в архив");
+  await expect(page.locator(".manage-status")).toContainText("в архиве");
+  await expect.poll(() => focused(page)).toBe("button: Вернуть метку «Ремонт кухни» из архива");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toContainText("снова в выборе");
+  await expect.poll(() => focused(page)).toBe("button: Убрать метку «Ремонт кухни» в архив");
+
+  // Счёт: «Убрать в архив» — на «Вернуть из архива» и обратно.
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: /^Доллары: /u }).click();
+  await pressWithKeyboard(page, "Убрать в архив");
+  await expect(page.locator(".manage-status")).toContainText("в архиве");
+  await expect.poll(() => focused(page)).toBe("button: Вернуть из архива");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toContainText("снова среди активных");
+  await expect.poll(() => focused(page)).toBe("button: Убрать в архив");
+  // «Вернуть» в списке: строка уходит из архива в активные — фокус на неё.
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toContainText("в архиве");
+  await page.getByRole("button", { name: "К счетам" }).click();
+  await pressWithKeyboard(page, "Вернуть «Доллары» из архива");
+  await expect(page.locator(".manage-status")).toContainText("снова среди активных");
+  await expect.poll(() => focused(page)).toMatch(/^button: Доллары: /u);
+
+  // Категория: вопрос приложения, «Убрать в архив» в нём — на «Вернуть из архива» и обратно.
+  await openMore(page, "Категории и доходы");
+  await page.getByRole("button", { name: /^Кафе и доставка: /u }).click();
+  await pressWithKeyboard(page, "Убрать в архив");
+  await pressWithKeyboard(page, "Убрать в архив", page.getByRole("alertdialog"));
+  await expect(page.locator(".manage-status")).toContainText("в архиве");
+  await expect.poll(() => focused(page)).toBe("button: Вернуть из архива");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toContainText("снова на «Обзоре»");
+  await expect.poll(() => focused(page)).toBe("button: Убрать в архив");
+  await page.keyboard.press("Enter");
+  await pressWithKeyboard(page, "Убрать в архив", page.getByRole("alertdialog"));
+  await expect(page.locator(".manage-status")).toContainText("в архиве");
+  await page.getByRole("button", { name: "К категориям" }).click();
+  await pressWithKeyboard(page, "Вернуть «Кафе и доставка» из архива");
+  await expect(page.locator(".manage-status")).toContainText("снова на «Обзоре»");
+  await expect.poll(() => focused(page)).toMatch(/^button: Кафе и доставка: /u);
+
+  // Курс: после записи и после удаления — на заголовок карточки валюты.
+  await openMore(page, "Курсы валют");
+  const usd = page.locator("section.rate-card", { has: page.getByRole("heading", { name: /^USD/u }) });
+  // «Отмена» — обратно на кнопку, что открыла группу.
+  await pressWithKeyboard(page, "Добавить курс USD", usd);
+  await pressWithKeyboard(page, "Отмена", usd);
+  await expect.poll(() => focused(page)).toBe("button: Добавить курс USD");
+  await page.keyboard.press("Enter");
+  await usd.getByRole("textbox", { name: "Сколько ₽ за 1 USD" }).fill("92,50");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".manage-status")).toContainText("записан");
+  await expect.poll(() => focused(page)).toBe("h2: USD Доллар США");
+  await pressWithKeyboard(page, /^Удалить курс USD от /u, usd);
+  await pressWithKeyboard(page, "Удалить курс", page.getByRole("alertdialog"));
+  await expect(page.locator(".manage-status")).toContainText("удалён");
+  await expect.poll(() => focused(page)).toBe("h2: USD Доллар США");
+});

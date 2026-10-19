@@ -12,6 +12,7 @@ import {
 import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { CurrencySelect, currencyLabel, currencyName } from "../../components/CurrencySelect";
+import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { formatDayYear, formatDayYearLine } from "../../date-words";
 import { useFormDraft } from "../../navigation/draft-guard";
@@ -25,6 +26,10 @@ export interface RatesScreenProps {
   readonly write: BudgetWriter;
   readonly onBack: () => void;
 }
+
+/** `id` заголовка карточки валюты и кнопок «Добавить курс»: по ним фокус находит, куда вернуться. */
+const cardTitleId = (currency: CurrencyCode) => `rates-${currency}`;
+const addButtonId = (where: "top" | CurrencyCode) => `rates-add-${where}`;
 
 /** Где открыта группа «Новый курс»: над списком — для любой валюты, или в карточке своей валюты. */
 type Adding = { readonly where: "top" | CurrencyCode; readonly currency: CurrencyCode } | null;
@@ -43,6 +48,9 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
   const [removing, setRemoving] = useState<ExchangeRate | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // После записи и удаления курса — на заголовок карточки его валюты, после «Отмена» — на кнопку,
+  // что открыла группу (ревью 2c, MEDIUM-3): группа закрывается, и фокус иначе падал на <body>.
+  const focusAfterRender = useFocusAfterRender();
 
   const saveRate = async (draft: ExchangeRateDraft): Promise<string | null> => {
     const outcome: { saved?: ExchangeRateCreation } = {};
@@ -59,7 +67,12 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
     }
     setAdding(null);
     setStatus(outcome.saved === undefined ? `Курс ${draft.currency} записан.` : rateSavedText(outcome.saved));
+    focusAfterRender(cardTitleId(draft.currency));
     return null;
+  };
+  const cancel = () => {
+    if (adding !== null) focusAfterRender(addButtonId(adding.where));
+    setAdding(null);
   };
   const remove = async (rate: ExchangeRate) => {
     setRemoving(null);
@@ -67,6 +80,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
     try {
       await write.run((state) => deleteExchangeRate(state, rate.id));
       setStatus(`Курс ${rate.currency} от ${formatDayYear(rate.date)} удалён.`);
+      focusAfterRender(cardTitleId(rate.currency));
     } catch (cause) {
       setError(ratesErrorText(cause));
     }
@@ -81,7 +95,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
       date={today}
       screen={{ preferred, draftLabel: "курс, который не записан" }}
       onSave={saveRate}
-      onCancel={() => setAdding(null)}
+      onCancel={cancel}
     />
   );
 
@@ -93,13 +107,13 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
         <p>Курс задаётся вручную и действует с его даты, пока не задан новый. Он не переоценивает записанное: у каждой операции — свой курс на день записи.</p>
       </header>
 
-      <BaseCurrencySection budget={budget} lockText={base.lockText} write={write} onDone={setStatus} />
+      <BaseCurrencySection budget={budget} lockText={base.lockText} write={write} onDone={setStatus} focusAfterRender={focusAfterRender} />
 
       <p className="manage-status" role="status">{status}</p>
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}
 
       {adding?.where === "top" ? panel("top", adding.currency) : (
-        <button className="primary-button manage-add" type="button" onClick={() => setAdding({ where: "top", currency: firstForeign })}>
+        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => setAdding({ where: "top", currency: firstForeign })}>
           <span className="icon-label"><Icon name="plus" size={20} />Добавить курс</span>
         </button>
       )}
@@ -138,7 +152,7 @@ function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
   readonly onAdd: () => void;
   readonly onRemove: (rate: ExchangeRate) => void;
 }) {
-  const titleId = `rates-${card.currency}`;
+  const titleId = cardTitleId(card.currency);
   return (
     <section className="section-card rate-card" aria-labelledby={titleId}>
       <h2 id={titleId}><span className="rate-code">{card.currency}</span> {currencyName(card.currency)}</h2>
@@ -163,7 +177,7 @@ function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
         </ul>
       </>}
       {adding ? panel : (
-        <button className="secondary-button" type="button" onClick={onAdd}>
+        <button id={addButtonId(card.currency)} className="secondary-button" type="button" onClick={onAdd}>
           <span className="icon-label"><Icon name="plus" size={20} />Добавить курс {card.currency}</span>
         </button>
       )}
@@ -176,11 +190,12 @@ function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
  * `setBaseCurrency`, `baseCurrencyLock`): ни операций, ни планов, ни долгов, ни счетов в другой
  * валюте, ни курсов. Иначе — слова домена о том, что её держит.
  */
-function BaseCurrencySection({ budget, lockText, write, onDone }: {
+function BaseCurrencySection({ budget, lockText, write, onDone, focusAfterRender }: {
   readonly budget: BudgetState;
   readonly lockText: string | null;
   readonly write: BudgetWriter;
   readonly onDone: (message: string) => void;
+  readonly focusAfterRender: (id: string) => void;
 }) {
   const current = baseCurrencyState(budget).currency;
   const [editing, setEditing] = useState(false);
@@ -198,6 +213,8 @@ function BaseCurrencySection({ budget, lockText, write, onDone }: {
       saving.succeed(ticket);
       setEditing(false);
       onDone(`Базовая валюта — ${currencyLabel(choice)}.`);
+      // Форма закрылась: фокус — на заголовок раздела, под которым названа новая база.
+      focusAfterRender("base-currency-title");
     } catch (cause) {
       saving.fail(ticket);
       setError(ratesErrorText(cause));
@@ -218,14 +235,14 @@ function BaseCurrencySection({ budget, lockText, write, onDone }: {
           </div>
           {error === null ? null : <p className="field-error" role="alert">{error}</p>}
           <div className="rate-quick-actions">
-            <button className="primary-button" type="button" disabled={busy || choice === current} aria-busy={busy} onClick={() => void save()}>Сохранить</button>
-            <button className="secondary-button" type="button" disabled={busy} onClick={() => { setChoice(current); setEditing(false); setError(null); }}>Отмена</button>
+            <button className="primary-button" type="button" aria-disabled={busy || choice === current || undefined} aria-busy={busy} onClick={() => { if (choice !== current) void save(); }}>Сохранить</button>
+            <button className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (busy) return; setChoice(current); setEditing(false); setError(null); focusAfterRender("base-currency-change"); }}>Отмена</button>
           </div>
         </div>
       ) : (
         <>
           <p className="field-hint">Её можно сменить, пока в бюджете нет ни операций, ни планов: потом она задана раз и навсегда.</p>
-          <button className="secondary-button" type="button" onClick={() => setEditing(true)}>Сменить базовую валюту</button>
+          <button id="base-currency-change" className="secondary-button" type="button" onClick={() => { setEditing(true); focusAfterRender("base-currency-select"); }}>Сменить базовую валюту</button>
         </>
       )}
     </section>

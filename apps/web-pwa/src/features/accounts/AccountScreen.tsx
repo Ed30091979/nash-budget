@@ -15,6 +15,7 @@ import {
 import { accountIcon, type CategoryTone } from "../../category-visual";
 import { BackButton } from "../../components/BackButton";
 import { CurrencySelect } from "../../components/CurrencySelect";
+import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon, type IconName } from "../../components/Icon";
 import { ACCOUNT_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { Money } from "../../components/Money";
@@ -200,6 +201,9 @@ export interface AccountScreenProps {
   readonly onDone: (message: string) => void;
 }
 
+const ACCOUNT_ARCHIVE_ID = "account-archive";
+const ACCOUNT_RESTORE_ID = "account-restore";
+
 /**
  * «Новый счёт» и правка счёта. Черновик — в реестре (слой экрана): уход с набранным спрашивает
  * диалог приложения; отправленный — «записывается» до первого `await`, отказ записи оставляет его
@@ -221,6 +225,8 @@ export function AccountScreen({ budget, today, accountId, write, onBack, onDone 
     discard: () => setDraft(pristine),
   });
   const focusError = useRef<string | null>(null);
+  // После архива и возврата — на кнопку, вставшую на место нажатой (ревью 2c, MEDIUM-3).
+  const focusAfterRender = useFocusAfterRender();
   useEffect(() => {
     if (focusError.current === null) return;
     document.getElementById(focusError.current)?.focus();
@@ -257,13 +263,14 @@ export function AccountScreen({ budget, today, accountId, write, onBack, onDone 
 
   const active = accountsInOrder(budget.accounts.filter((item) => item.active));
   const position = account === null ? 0 : active.findIndex((item) => item.id === account.id) + 1;
-  const sideWrite = async (change: (state: BudgetState) => BudgetState, done: string) => {
+  const sideWrite = async (change: (state: BudgetState) => BudgetState, done: string, then?: string) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       await write.run(change);
       setNotice(done);
+      if (then !== undefined) focusAfterRender(then);
     } catch (cause) {
       fail(accountFormError(cause));
     } finally {
@@ -316,12 +323,12 @@ export function AccountScreen({ budget, today, accountId, write, onBack, onDone 
           <h2 id="account-archive-title" className="list-kicker">Архив</h2>
           {account.active ? <>
             <p className="field-hint">Счёт в архиве не предлагается для новых операций и уходит с «Обзора». Его остаток, операции и история остаются в итогах и отчётах; вернуть его можно в любой момент. Удаления нет: прошлые месяцы ссылаются на счёт.</p>
-            <button className="secondary-button" type="button" disabled={busy} onClick={() => void sideWrite((state) => archiveAccount(state, account.id), `«${account.name}» в архиве. Остаток и история на месте.`)}>
+            <button id={ACCOUNT_ARCHIVE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => archiveAccount(state, account.id), `«${account.name}» в архиве. Остаток и история на месте.`, ACCOUNT_RESTORE_ID)}>
               <span className="icon-label"><Icon name="archive" size={20} />Убрать в архив</span>
             </button>
           </> : <>
             <p className="field-hint">Счёт в архиве: для новых операций он не предлагается. Его остаток и история — в итогах и отчётах.</p>
-            <button className="secondary-button" type="button" disabled={busy} onClick={() => void sideWrite((state) => restoreAccount(state, account.id), `«${account.name}» снова среди активных.`)}>
+            <button id={ACCOUNT_RESTORE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => restoreAccount(state, account.id), `«${account.name}» снова среди активных.`, ACCOUNT_ARCHIVE_ID)}>
               Вернуть из архива
             </button>
           </>}

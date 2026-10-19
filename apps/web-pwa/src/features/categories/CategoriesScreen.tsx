@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { BudgetState, CategoryType } from "@family-budget/domain";
 import { BackButton } from "../../components/BackButton";
+import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { Money, useBaseCurrency } from "../../components/Money";
 import { Tile } from "../../components/tiles/Tile";
@@ -42,6 +43,8 @@ export function CategoriesScreen({ budget, type, write, onBack, onType, onOpen, 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  // Возвращённая категория уходит из архива в сетку: фокус — на её плитку (ревью 2c, MEDIUM-3).
+  const focusAfterRender = useFocusAfterRender();
   const restore = async (card: CategoryCard) => {
     if (busy) return;
     setBusy(true);
@@ -49,6 +52,7 @@ export function CategoriesScreen({ budget, type, write, onBack, onType, onOpen, 
     try {
       await write.run((state) => restoreCategory(state, card.category.id));
       setStatus(`«${card.category.name}» снова на «Обзоре» и в выборе.`);
+      focusAfterRender({ selector: `[data-tile="manage-category:${card.category.id}"]` });
     } catch (cause) {
       setError(categoryFormError(cause).message);
     } finally {
@@ -117,7 +121,7 @@ export function CategoriesScreen({ budget, type, write, onBack, onType, onOpen, 
                   <span className={`icon-plate tone-${card.visual.tone}`} aria-hidden="true"><Icon name={card.visual.icon} size={24} /></span>
                   <span className="manage-copy" aria-hidden="true"><strong><bdi dir="auto">{card.category.name}</bdi></strong><small>в архиве</small></span>
                 </button>
-                <button className="secondary-button" type="button" disabled={busy} aria-label={`Вернуть «${card.category.name}» из архива`} onClick={() => void restore(card)}>Вернуть</button>
+                <button className="secondary-button" type="button" aria-disabled={busy || undefined} aria-label={`Вернуть «${card.category.name}» из архива`} onClick={() => void restore(card)}>Вернуть</button>
               </li>
             ))}
           </ul>

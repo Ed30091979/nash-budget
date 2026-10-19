@@ -561,6 +561,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .onboarding-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 4px; }
 .onboarding-actions button { min-width: 116px; }
 .primary-button:disabled, .secondary-button:disabled, .text-button:disabled, .quiet-button:disabled { cursor: wait; opacity: .62; }
+/* Кнопка, которая во время записи молчит, а не выключается (`aria-disabled`): выключенная теряет
+   фокус, и он падал на <body> (ревью 2c, MEDIUM-3). Выглядит так же, как выключенная. */
+.primary-button[aria-disabled="true"], .secondary-button[aria-disabled="true"], .quiet-button[aria-disabled="true"] { cursor: default; opacity: .62; }
+.primary-button[aria-disabled="true"][aria-busy="true"] { cursor: wait; }
 .demo-option { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .demo-option p strong { color: var(--ink); }
@@ -1116,7 +1120,7 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
 /* «Выше / Ниже»: две цели по 48 рядом, зазор 8 (§9). На краю кнопка говорит «нет» и остаётся в фокусе. */
 .reorder { display: flex; flex-wrap: wrap; gap: 8px; }
 .reorder .secondary-button { min-width: 48px; padding: 13px 16px; }
-.reorder [aria-disabled="true"] { color: var(--ink-muted); cursor: default; }
+.reorder [aria-disabled="true"] { color: var(--ink-muted); cursor: default; opacity: 1; }
 
 /* §8 Справочники «Учёта» (подволна 2c): «назад», заголовок с подписью, главное действие, список-
    карточка строк и форма. Строка — цель нажатия «Изменить»; «Выше / Ниже» — под ней, справа: рядом

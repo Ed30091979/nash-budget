@@ -85,18 +85,19 @@ export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel,
         </div>
         <div className="field">
           <label htmlFor={`${id}-date`}>С какого дня</label>
-          <input id={`${id}-date`} type="date" value={day} disabled={busy} onChange={(event) => { setDay(event.target.value); setError(null); }} />
+          <input id={`${id}-date`} type="date" value={day} readOnly={busy} onChange={(event) => { setDay(event.target.value); setError(null); }} />
         </div>
       </>}
       <div className="field">
         <label htmlFor={`${id}-rate`}>Сколько {currencySign(baseCurrency)} за {per} {selected}</label>
-        <input id={`${id}-rate`} inputMode="decimal" autoComplete="off" maxLength={20} placeholder={per === 100 ? "18,40" : "92,50"} value={text} disabled={busy} aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} onChange={(event) => { setText(event.target.value); setError(null); }} onKeyDown={onFieldKey} />
+        <input id={`${id}-rate`} inputMode="decimal" autoComplete="off" maxLength={20} placeholder={per === 100 ? "18,40" : "92,50"} value={text} readOnly={busy} aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} onChange={(event) => { setText(event.target.value); setError(null); }} onKeyDown={onFieldKey} />
       </div>
       <p className="field-hint">Курс действует с этого дня, пока не задан новый. Уже записанные операции он не переоценивает.</p>
       {error ? <p className="field-error" id={`${id}-error`} role="alert">{error}</p> : null}
       <div className="rate-quick-actions">
-        <button className="primary-button" type="button" disabled={busy} aria-busy={busy} onClick={() => void save()}>Сохранить курс</button>
-        <button className="secondary-button" type="button" disabled={busy} onClick={onCancel}>Отмена</button>
+        {/* Во время записи кнопки и поле не выключаются, а молчат: выключенное теряет фокус. */}
+        <button className="primary-button" type="button" aria-disabled={busy || undefined} aria-busy={busy} onClick={() => void save()}>Сохранить курс</button>
+        <button className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) onCancel(); }}>Отмена</button>
       </div>
     </div>
   );

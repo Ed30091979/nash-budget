@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { moveAccount, restoreAccount, type BudgetState } from "@family-budget/domain";
 import { BackButton } from "../../components/BackButton";
+import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { ReorderControls, type ReorderDirection } from "../../components/ReorderControls";
@@ -35,13 +36,16 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const run = async (change: (state: BudgetState) => BudgetState, done: string) => {
+  // Возвращённый счёт уходит из архива в активные: фокус — на его строку (ревью 2c, MEDIUM-3).
+  const focusAfterRender = useFocusAfterRender();
+  const run = async (change: (state: BudgetState) => BudgetState, done: string, then?: string) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       await write.run(change);
       setStatus(done);
+      if (then !== undefined) focusAfterRender(then);
     } catch (cause) {
       setError(accountFormError(cause).message);
     } finally {
@@ -86,7 +90,7 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate 
             {list.archived.map((row) => (
               <li key={row.account.id} className="manage-row">
                 <AccountRowButton row={row} onOpen={() => onOpen(row.account.id)} />
-                <button className="secondary-button" type="button" disabled={busy} aria-label={`Вернуть «${row.account.name}» из архива`} onClick={() => void run((state) => restoreAccount(state, row.account.id), `«${row.account.name}» снова среди активных.`)}>
+                <button className="secondary-button" type="button" aria-disabled={busy || undefined} aria-label={`Вернуть «${row.account.name}» из архива`} onClick={() => void run((state) => restoreAccount(state, row.account.id), `«${row.account.name}» снова среди активных.`, accountRowId(row.account.id))}>
                   Вернуть
                 </button>
               </li>
@@ -98,9 +102,11 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate 
   );
 }
 
+const accountRowId = (accountId: string) => `account-row-${accountId}`;
+
 function AccountRowButton({ row, onOpen }: { readonly row: AccountRow; readonly onOpen: () => void }) {
   return (
-    <button className="row-open" type="button" aria-label={accountRowLabel(row)} onClick={onOpen}>
+    <button id={accountRowId(row.account.id)} className="row-open" type="button" aria-label={accountRowLabel(row)} onClick={onOpen}>
       <span className={row.tone === null ? "icon-plate account-plate" : `icon-plate tone-${row.tone}`} aria-hidden="true"><Icon name={row.icon} size={24} /></span>
       <span className="manage-copy" aria-hidden="true">
         <strong><bdi dir="auto">{row.account.name}</bdi></strong>

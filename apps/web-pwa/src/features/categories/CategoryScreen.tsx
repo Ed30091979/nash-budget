@@ -3,6 +3,7 @@ import { moveCategory, type BudgetState, type Category, type CategoryGroup } fro
 import { categoryVisual, type CategoryTone } from "../../category-visual";
 import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { CATEGORY_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { useBaseCurrency } from "../../components/Money";
@@ -147,6 +148,9 @@ export interface CategoryScreenProps {
   readonly onDone: (message: string) => void;
 }
 
+const CATEGORY_ARCHIVE_ID = "category-archive";
+const CATEGORY_RESTORE_ID = "category-restore";
+
 /**
  * Категория или источник дохода, открытые для правки (`#/more/categories/<UUID>`). Черновик —
  * в реестре экрана; «Сохранить» — одна запись имени, оформления и лимита. Порядок в группе и архив —
@@ -167,6 +171,8 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
     discard: () => setDraft(pristine),
   });
   const focusError = useRef<string | null>(null);
+  // После архива и возврата — на кнопку, вставшую на место нажатой (ревью 2c, MEDIUM-3).
+  const focusAfterRender = useFocusAfterRender();
   useEffect(() => {
     if (focusError.current === null) return;
     document.getElementById(focusError.current)?.focus();
@@ -195,13 +201,14 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
       fail(categoryFormError(cause));
     });
   };
-  const sideWrite = async (change: (state: BudgetState) => BudgetState, done: string) => {
+  const sideWrite = async (change: (state: BudgetState) => BudgetState, done: string, then?: string) => {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
       await write.run(change);
       setNotice(done);
+      if (then !== undefined) focusAfterRender(then);
     } catch (cause) {
       fail(categoryFormError(cause));
     } finally {
@@ -246,12 +253,12 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
         <h2 id="category-archive-title" className="list-kicker">Архив</h2>
         {category.active ? <>
           <p className="field-hint">Удалить {what} нельзя: прошлые месяцы ссылаются на неё. В архиве она уходит с «Обзора» и из выбора при записи, а её операции остаются в «Операциях» и отчётах.</p>
-          <button className="secondary-button" type="button" disabled={busy} onClick={() => setAsking(true)}>
+          <button id={CATEGORY_ARCHIVE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) setAsking(true); }}>
             <span className="icon-label"><Icon name="archive" size={20} />Убрать в архив</span>
           </button>
         </> : <>
           <p className="field-hint">{income ? "Источник" : "Категория"} в архиве: на «Обзоре» и в выборе при записи {income ? "его" : "её"} нет, операции — на месте.</p>
-          <button className="secondary-button" type="button" disabled={busy} onClick={() => void sideWrite((state) => restoreCategory(state, category.id), `«${category.name}» снова на «Обзоре» и в выборе.`)}>
+          <button id={CATEGORY_RESTORE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => restoreCategory(state, category.id), `«${category.name}» снова на «Обзоре» и в выборе.`, CATEGORY_ARCHIVE_ID)}>
             Вернуть из архива
           </button>
         </>}
@@ -265,7 +272,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
           onCancel={() => setAsking(false)}
           onConfirm={() => {
             setAsking(false);
-            void sideWrite((state) => archiveCategoryWithLimits(state, category.id), `«${category.name}» в архиве. Операции на месте.`);
+            void sideWrite((state) => archiveCategoryWithLimits(state, category.id), `«${category.name}» в архиве. Операции на месте.`, CATEGORY_RESTORE_ID);
           }}
         />
       ) : null}
