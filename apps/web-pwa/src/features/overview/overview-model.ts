@@ -11,7 +11,7 @@ import {
   type BudgetState,
   type CurrencyCode,
 } from "@family-budget/domain";
-import { accountIcon, categoryVisual, type CategoryVisual } from "../../category-visual";
+import { accountIcon, accountTone, categoryVisual, type CategoryTone, type CategoryVisual } from "../../category-visual";
 import type { IconName } from "../../components/Icon";
 import { percentStep } from "../../reach";
 
@@ -59,6 +59,8 @@ export interface AccountTile {
   readonly name: string;
   readonly currency: CurrencyCode;
   readonly icon: IconName;
+  /** Тон, выбранный семьёй (D-036): им окрашена подложка глифа; `null` — плитка тёмная целиком. */
+  readonly tone: CategoryTone | null;
   /** Остаток на конец показанного дня в валюте счёта; `null` — не представим. */
   readonly balanceMinor: number | null;
   /** Счёт оценён в базовой валюте и входит в итог. */
@@ -188,6 +190,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     name: account.name,
     currency: account.currency,
     icon: accountIcon(account),
+    tone: accountTone(account),
     balanceMinor: holdings.accountBalancesMinor[account.id] ?? null,
     includeInTotal: account.includeInTotal !== false,
     inTotal: account.includeInTotal !== false && !unvalued.has(account.id),

@@ -169,6 +169,16 @@ export interface AccountLike {
   readonly type: AccountType;
   readonly currency: string;
   readonly icon?: DisplayKey;
+  /** Ключ тона, выбранный семьёй (D-036): у счёта им окрашена подложка глифа на тёмной плитке. */
+  readonly color?: DisplayKey;
+}
+
+/**
+ * Тон счёта — только выбранный семьёй: без него плитка счёта тёмная целиком, как в §3, и тона по
+ * имени у счёта нет — «Карта» и «Наличные» не категории. Неизвестный ключ — тоже без тона.
+ */
+export function accountTone(account: AccountLike): CategoryTone | null {
+  return toneOfKey(ownField(account, "color"));
 }
 
 /** Глиф счёта по его виду: карта, наличные, копилка, резерв. Ключ семьи (D-036) — первым. */

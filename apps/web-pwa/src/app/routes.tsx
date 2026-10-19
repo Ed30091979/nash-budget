@@ -12,7 +12,9 @@ import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { PlanningScreen } from "../features/planning";
-import { MoreScreen, monthNote } from "../features/more/MoreScreen";
+import { accountsNote, MoreScreen, monthNote } from "../features/more/MoreScreen";
+import { AccountScreen } from "../features/accounts/AccountScreen";
+import { AccountsScreen } from "../features/accounts/AccountsScreen";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
 import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
 import type { Route } from "../navigation/routes";
@@ -166,6 +168,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             onPlanMonth={() => navigate({ name: "plan-month" })}
             onPlanYear={() => navigate({ name: "plan-year" })}
             onImportStatement={() => navigate({ name: "import" })}
+            onAccounts={() => navigate({ name: "accounts" })}
+            accountsNote={accountsNote(budget)}
             familyNote={family.membership === null
               ? "Без входа приложение работает как сейчас"
               : `${plural(Math.max(1, family.members.length), ["участник", "участника", "участников"])} · приглашение, отпечатки ключей`}
@@ -176,5 +180,18 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
+          {/* Справочники «Учёта» (подволна 2c). Запись — по UUID из адреса; имени в адресе нет. */}
+          {route.name === "accounts" ? <AccountsScreen budget={budget} today={app.today} write={write} onBack={back} onOpen={(id) => navigate({ name: "account", id })} onCreate={() => navigate({ name: "account-new" })} /> : null}
+          {route.name === "account" || route.name === "account-new" ? (
+            <AccountScreen
+              key={route.name === "account" ? route.id : "new"}
+              budget={budget}
+              today={app.today}
+              accountId={route.name === "account" ? route.id : null}
+              write={write}
+              onBack={back}
+              onDone={(message) => { setMessage(message); back(); }}
+            />
+          ) : null}
   </>;
 }
