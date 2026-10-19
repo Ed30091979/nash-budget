@@ -470,3 +470,23 @@ test("320×640: дата, комментарий и метки свёрнуты 
   await expect(sheet.getByRole("button", { name: "Вчера", exact: true })).toBeVisible();
   await discardSheet(page);
 });
+
+test("фокус суммы — подчёркивание цветом фокуса под числом, а не рамка; цифры при наборе — без разрядов, в «Записать» — с ними", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await tile(page, "Продукты").click();
+  await typeOnKeypad(page, ["2", "4", "0", "0"]);
+  const amount = amountField(page);
+  await expect(amount).toBeFocused();
+  const focus = await amount.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { outlineColor: style.outlineColor, boxShadow: style.boxShadow };
+  });
+  // Ни рамки браузера (`auto`), ни кольца 3 pt вокруг героя: кольцо прозрачно, а указание фокуса —
+  // полоса 3 pt `--focus` (#0B57D0, 6.39:1 к белому листу) под числом.
+  expect(focus.outlineColor).toBe("rgba(0, 0, 0, 0)");
+  expect(focus.boxShadow).toMatch(/^rgb\(11, 87, 208\) 0px -3px 0px 0px inset$/u);
+  await expect(amount).toHaveValue("2400");
+  await expect(submitButton(page)).toHaveText(/^Записать 2\s400\s₽$/u);
+  await discardSheet(page);
+});

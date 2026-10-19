@@ -1064,7 +1064,7 @@ button.endpoint { border-radius: var(--radius-control); }
    поле во всю ширину, а знак — справа. */
 .entry-amount-field { position: sticky; top: 0; bottom: 0; z-index: 1; background: var(--surface); }
 .entry-amount-row { display: flex; min-width: 0; align-items: baseline; justify-content: center; }
-.entry-amount-field input { min-width: 48px; min-height: 68px; padding: 8px 2px; color: var(--ink); font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; caret-color: var(--focus); background: transparent; border: 0; border-radius: var(--radius-input); }
+.entry-amount-field input { min-width: 48px; min-height: 68px; padding: 8px 2px; color: var(--ink); font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; caret-color: var(--focus); background: transparent; border: 0; border-radius: 0; }
 @supports (field-sizing: content) {
   .entry-amount-field input { width: auto; max-width: 100%; field-sizing: content; }
 }
@@ -1072,6 +1072,11 @@ button.endpoint { border-radius: var(--radius-control); }
   .entry-amount-field input { width: 100%; }
 }
 .entry-amount-field input::placeholder { color: var(--ink-muted); font-weight: 400; }
+/* Фокус суммы — подчёркивание 3 pt цветом фокуса под числом и каретка, а не рамка вокруг героя:
+   рамка вокруг «2400» читалась артефактом браузера (§9, второе исключение из кольца). Контраст
+   `--focus` к белому листу — 6.39:1 (§3). Кольцо не снято, а прозрачно: в режиме принудительных
+   цветов система рисует его видимой рамкой. */
+.entry-amount-field input:focus-visible { outline: 3px solid transparent; outline-offset: 0; box-shadow: inset 0 -3px 0 var(--focus); }
 .entry-amount-sign { flex: none; margin-left: 6px; color: var(--ink-muted); font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 400; }
 .entry-amount-field .amount-total { text-align: center; }
 .entry-foreign > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); text-align: center; }
