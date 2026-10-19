@@ -10,7 +10,7 @@ import {
   type BudgetState,
   type Tag,
 } from "@family-budget/domain";
-import { TitleBar } from "../../components/TitleBar";
+import { TitleBar, TitleBarAction } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { EmptyState } from "../../components/EmptyState";
 import { TagsIllustration } from "../../components/illustrations/TagsIllustration";
@@ -217,7 +217,8 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
 
   return (
     <div className="manage-screen tags-screen">
-      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Метки" />
+      {/* «+» в строке заголовка (макет 14): новая метка — и из пустого состояния, и над списком. */}
+      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Метки" action={<TitleBarAction icon="plus" label="Добавить метку" onClick={startComposing} />} />
       {showEmpty ? null : <header className="manage-head">
         <p>Метка — пометка поверх категории: «отпуск», «ремонт», «дача». Её ставят при записи операции, а деньги по меткам видны в «Отчётах». Ни одна сумма бюджета от меток не зависит.</p>
       </header>}

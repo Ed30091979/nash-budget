@@ -108,6 +108,9 @@ describe("метки: пустое состояние (дизайн v5, 14)", ()
     for (const label of QUICK_TAGS) expect(markup).toContain(`aria-label="Создать метку «${label}»"`);
     expect(QUICK_TAGS).toEqual(["отпуск", "дача", "ремонт", "подарки"]);
     expect(markup).not.toContain('id="tag-new-name"');
+    // Строка заголовка — «‹ Ещё · Метки · +»: единственный `h1` и «+» с именем словами (макет 14).
+    expect(markup.match(/<h1/gu)).toHaveLength(1);
+    expect(markup).toContain('<button class="icon-button" type="button" aria-label="Добавить метку">');
   });
 
   it("есть хоть одна метка, пусть в архиве, — прежний список и поле новой метки, без пустого состояния", () => {

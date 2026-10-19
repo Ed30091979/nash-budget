@@ -50,6 +50,15 @@ function render(overrides: Partial<OverviewScreenProps> = {}, budget = state()):
 const plain = (markup: string) => markup.replace(/<[^>]+>/gu, "").replace(/[\u00a0\u202f]/gu, " ");
 
 describe("«Обзор»: разметка", () => {
+  it("кольцо подсказки первого запуска опирается на квадрат категории, а не на всю колонку (макет 05)", () => {
+    const markup = render();
+    const categorySquares = [...markup.matchAll(/data-tile="category:[^"]+"[^>]*><span class="tile-square[^"]*" aria-hidden="true"( data-coach-anchor="")?>/gu)];
+    expect(categorySquares.length).toBeGreaterThan(3);
+    expect(categorySquares.every((match) => match[1] !== undefined)).toBe(true);
+    // Счёт и доход — не опора: подсказка говорит о категории.
+    expect(markup).not.toMatch(/data-tile="(?:account|income):[^"]+"[^>]*><span class="tile-square[^"]*" aria-hidden="true" data-coach-anchor/u);
+  });
+
   it("месяц заголовком экрана, три итога и карточка «Хватает до …» G-002", () => {
     const markup = render();
     expect(markup).toMatch(/<h1><span class="visually-hidden">Обзор, <\/span>Июль 2026<\/h1>/u);

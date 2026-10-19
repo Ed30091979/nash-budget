@@ -1476,9 +1476,9 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
 }
 
 /* ═════════════ R2: первый запуск, вопросы, пустые состояния ═════════════
-   Дизайн v5, DIRECTION §e и §f. Блок пользуется токенами `:root` и не объявляет своих: значения
-   токенов меняет волна R1. Размер `display` (22/28) выведен из ступени заголовка — пока своей
-   ступени у шкалы нет, — поэтому вместе со шкалой растёт и при системном крупном шрифте. */
+   Дизайн v5, DIRECTION §e и §f. Блок пользуется токенами `:root` и не объявляет своих. Вопрос листа
+   и заголовок пустого состояния — ступень `display` (22/28, §4). Главные кнопки слайдов, листов и
+   пустых состояний — 52 и кегль заголовка, как «Записать» листа ввода (макеты 01–04, 14). */
 
 /* Слайды первого запуска (01, 02, 02b): марка и «Пропустить», иллюстрация, точки, заголовок,
    строка и одна главная кнопка. Колонка во всю высоту экрана; при крупном шрифте слайд
@@ -1499,6 +1499,7 @@ button.intro-skip { border-radius: var(--radius-control); }
 .intro-slide h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; text-align: center; text-wrap: balance; }
 .intro-text { margin: 10px 0 0; color: var(--ink-muted); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: center; text-wrap: pretty; }
 .intro-actions { display: grid; gap: 8px; margin: 28px 0 8px; }
+.intro-actions > button, .q-foot .primary-button, .q-actions > button, .empty-state .empty-action { min-height: 52px; font-size: var(--size-title); line-height: var(--lh-title); }
 .intro-error { margin: 8px 0 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); }
 @media (max-width: 18em) {
   .intro-skip { margin-left: auto; font-size: var(--size-body); line-height: var(--lh-body); }
@@ -1513,13 +1514,15 @@ button.intro-skip { border-radius: var(--radius-control); }
 /* Листы-вопросы поверх «Обзора» (03, 03b, 04): лист 24 снизу, вопрос крупно, одна строка
    пояснения, крестик «Спросить позже». Лист прокручивается целиком, а кнопки ответа прилипают к
    его низу — у длинного листа чипов «Готово» видно всегда. Ниже 18em варианты встают в колонку. */
-.sheet-backdrop.q-backdrop { padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+.sheet-backdrop.q-backdrop { padding: 8px 0 0; }
 .sheet-backdrop.q-backdrop[hidden] { display: none; }
-.sheet.q-sheet { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(94dvh, 820px); padding: 0 16px 16px; overflow-y: auto; overscroll-behavior: contain; color: var(--ink); text-align: left; background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
+.sheet.q-sheet { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(94dvh, 820px); padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; color: var(--ink); text-align: left; background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
+/* Лист во всю ширину телефона и скруглён только сверху: низ стоит на краю экрана (макеты 03–04). */
+.sheet.q-sheet { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
 .q-grab { display: block; flex: none; margin: 8px auto 0; }
 .q-grab::before { content: ""; display: block; width: 36px; height: 5px; border-radius: var(--radius-pill); background: var(--border); }
 .q-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 12px 0 4px 4px; }
-.q-head h2 { min-width: 0; margin: 0; padding-top: 10px; font-size: var(--size-display, calc(var(--size-title) * 22 / 17)); line-height: var(--lh-display, calc(var(--lh-title) * 28 / 23)); }
+.q-head h2 { min-width: 0; margin: 0; padding-top: 10px; font-size: var(--size-display); line-height: var(--lh-display); }
 .q-head .q-later { display: grid; flex: none; width: 48px; min-height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; }
 .q-sub { margin: 0 4px 12px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .q-body { min-width: 0; }
@@ -1542,7 +1545,7 @@ button.intro-skip { border-radius: var(--radius-control); }
 .q-chip[aria-pressed="true"] .tone-coral .icon { color: var(--tone-coral-ink); }
 .q-chip[aria-pressed="true"] .tone-neutral .icon { color: var(--ink); }
 .q-chip-own .chip-face { background: transparent; border-style: dashed; }
-.q-foot { position: sticky; bottom: -16px; margin: 8px -16px -16px; padding: 12px 16px 16px; background: var(--surface); }
+.q-foot { position: sticky; bottom: 0; margin: 8px -16px 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); background: var(--surface); }
 .q-tall .q-foot { box-shadow: 0 -1px 0 var(--border); }
 .q-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .q-error { margin: 8px 4px 0; }
@@ -1597,10 +1600,11 @@ button.intro-skip { border-radius: var(--radius-control); }
 /* Пустое состояние (14, 15): иллюстрация или глиф 64, название состояния крупно, одна строка,
    одна основная кнопка и быстрые шаблоны — у меток и у заглушек «Долгов», «Целей», «Регулярных». */
 .empty-state { display: flex; min-width: 0; flex-direction: column; align-items: center; padding: 24px 12px 0; text-align: center; }
+.empty-state h2 { color: var(--ink); }
 .empty-art svg { width: 200px; max-width: 100%; height: auto; }
 .icon-plate.empty-glyph { display: grid; width: 64px; height: 64px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
-.empty-state h2 { margin: 20px 0 0; font-size: var(--size-display, calc(var(--size-title) * 22 / 17)); line-height: var(--lh-display, calc(var(--lh-title) * 28 / 23)); }
-.empty-text { max-width: 30em; margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; text-wrap: pretty; }
+.empty-state h2 { margin: 20px 0 0; font-size: var(--size-display); line-height: var(--lh-display); }
+.empty-state .empty-text { max-width: 30ch; margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; text-wrap: pretty; }
 .empty-state .empty-action { max-width: 480px; margin-top: 24px; }
 .empty-quick { width: 100%; margin-top: 24px; }
 .empty-quick p { margin: 0 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }

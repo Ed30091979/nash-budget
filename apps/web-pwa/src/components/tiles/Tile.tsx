@@ -40,14 +40,16 @@ const BADGE_ICONS: Readonly<Record<TileBadge, IconName>> = {
  * Квадрат плитки: заливка тона с глифом его чернилами (5.05–6.50:1) или графит счёта с белым глифом
  * (15.37:1). Его же рисуют плитки, которые не нажимают, — источник в архиве и образец над формой.
  */
-export function TileSquare({ icon, tone, badge, picked = false }: {
+export function TileSquare({ icon, tone, badge, picked = false, coachAnchor = false }: {
   readonly icon: IconName;
   readonly tone: CategoryTone | "account";
   readonly badge?: TileBadge;
   readonly picked?: boolean;
+  /** Квадрат плитки категории — опора кольца подсказки первого запуска (`CoachMark`, макет 05). */
+  readonly coachAnchor?: boolean;
 }) {
   return (
-    <span className={`tile-square ${tone === "account" ? "account" : `tone-${tone}`}`} aria-hidden="true">
+    <span className={`tile-square ${tone === "account" ? "account" : `tone-${tone}`}`} aria-hidden="true" data-coach-anchor={coachAnchor ? "" : undefined}>
       <Icon name={icon} size={24} />
       {picked
         ? <span className="tile-check"><Icon name="check" size={20} /></span>
@@ -94,7 +96,7 @@ export function Tile({ variant, label, pressed, onClick, onKeyDown, drag, icon, 
       onDragOver={drag?.onDragOver}
       onDrop={drag?.onDrop}
     >
-      <TileSquare icon={icon} tone={tone} badge={badge} picked={pressed === true} />
+      <TileSquare icon={icon} tone={tone} badge={badge} picked={pressed === true} coachAnchor={variant === "expense"} />
       {children}
     </button>
   );
