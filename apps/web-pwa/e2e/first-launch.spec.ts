@@ -117,9 +117,12 @@ test("первый запуск целиком: слайды → «Начать�
   for (const name of ["Карта", "Наличные", "Вклад", "Зарплата"]) await expect(tile(page, name)).toBeVisible();
   await expect(coach(page)).toBeVisible();
   await expect(page.locator(".coach-text")).toHaveText("Коснитесь категории, чтобы записать расход");
+  // Кольцо обводит квадрат «Продуктов», а не всю колонку с именем и суммой (макет 05).
   const ring = await page.locator(".coach-ring").boundingBox();
-  const food = await tile(page, "Продукты").boundingBox();
+  const food = await tile(page, "Продукты").locator(".tile-square").boundingBox();
+  const column = await tile(page, "Продукты").boundingBox();
   expect(ring && food && ring.x <= food.x && ring.y <= food.y && ring.x + ring.width >= food.x + food.width && ring.y + ring.height >= food.y + food.height).toBe(true);
+  expect(ring && column && ring.y + ring.height < column.y + column.height).toBe(true);
   // Подсказка не модальна: Tab ходит по экрану, лист вопросов не открыт.
   await expect(page.locator("[aria-modal='true']")).toHaveCount(0);
 
