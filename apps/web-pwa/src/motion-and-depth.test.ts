@@ -108,18 +108,37 @@ describe("глубина", () => {
 });
 
 /**
- * §5: форма кодирует смысл. Радиус достаётся тому, что трогают пальцем, и пилюле-метке;
- * поверхности прямые. Тогда правило читается само: скруглённое нажимается, прямое читается.
+ * §5 DESIGN.md 4.0: скругление по ролям. Радиус — токен роли, и роль видна по нему: кнопка и поле —
+ * 14, пилюля — круг, плитка — 16, карточка — 20, лист — 24, подложка глифа — 10, «+» — 18. Прямой
+ * угол — тоже роль. Каждый токен роли достаётся только своим элементам: скруглённая карточка,
+ * которую не нажимают, или «+» с радиусом кнопки — это уже не та роль.
  *
- * Девять радиусов системой не были: раз скруглено всё, скругление не различает ничего.
+ * Девять радиусов по месту системой не были: раз скруглено всё, скругление не различает ничего.
  */
 describe("форма", () => {
-  const approvedRadii = new Set(["0", "50%", "var(--radius-control)", "var(--radius-input)", "var(--radius-pill)"]);
   /** Метка-пилюля: её форма — часть роли «короткое слово о состоянии», а не приглашение нажать. */
   const pillLabels = new Set([".status-chip", ".network-badge", ".sync-badge", ".save-receipt-change"]);
   /** Оправа группы переключателей: сама не нажимается, но обнимает то, что нажимается. */
   const controlHousings = new Set([".segmented", '.dashboard-screen > header [role="group"]']);
-  /** Поверхности, которые до этой версии были скруглены, а теперь обязаны быть прямыми. */
+  /** Токен роли → его значение по §5 и то, кому он достаётся. */
+  const roles: Record<string, { readonly px: string; readonly owns: (selector: string) => boolean }> = {
+    // Пилюля и оправа при системном шрифте ниже 18em выпрямляются в прямоугольник кнопки (§5).
+    "--radius-control": {
+      px: "14px",
+      owns: (selector) => addressesTouchTarget(selector) || pillLabels.has(selector) || controlHousings.has(selector),
+    },
+    "--radius-input": { px: "14px", owns: (selector) => addressesTouchTarget(selector) },
+    "--radius-pill": {
+      px: "999px",
+      owns: (selector) => addressesTouchTarget(selector) || pillLabels.has(selector) || controlHousings.has(selector),
+    },
+    "--radius-tile": { px: "16px", owns: (selector) => /\.(?:tile|add-tile)(?![\w-])/u.test(selector) },
+    "--radius-card": { px: "20px", owns: (selector) => /\.(?:card|tile-card)(?![\w-])/u.test(selector) },
+    "--radius-sheet": { px: "24px", owns: (selector) => /\.(?:sheet|sheet-frame)(?![\w-])/u.test(selector) },
+    "--radius-plate": { px: "10px", owns: (selector) => /\.(?:icon-plate|tile-glyph)(?![\w-])/u.test(selector) },
+    "--radius-fab": { px: "18px", owns: (selector) => /\.nav-fab(?![\w-])/u.test(selector) },
+  };
+  /** Поверхности 3.0, которые остаются прямыми, пока их экран не переписан (§5: роли — с компонентами). */
   const surfaces = [
     ".hero-card", ".section-card, .entry-card", ".quick-card", ".month-split", ".next-card",
     ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
@@ -137,26 +156,39 @@ describe("форма", () => {
     });
   }
 
-  it("не знает ни одного радиуса мимо трёх утверждённых ролей", () => {
+  it("объявляет токены ролей с числами §5 — и документ называет те же числа", () => {
+    const section = design.slice(design.indexOf("## 5. Сетка"), design.indexOf("## 6. Компоненты"));
+    for (const [name, role] of Object.entries(roles)) {
+      expect(token(name), `${name} в :root`).toBe(role.px);
+      expect(section, `§5 не называет ${name}`).toMatch(new RegExp(`\\| \`${name}\` \\| ${Number.parseInt(role.px, 10)} \\|`, "u"));
+    }
+  });
+
+  it("не знает ни одного радиуса мимо токенов ролей, прямого угла и точки", () => {
     const rules = radiusRules();
+    const approved = new Set(["0", "50%", ...Object.keys(roles).map((name) => `var(${name})`)]);
     expect(rules.length).toBeGreaterThan(10);
     for (const { selector, value } of rules) {
-      expect(approvedRadii, `${selector} набирает радиус по месту: ${value}`).toContain(value);
+      expect(approved, `${selector} набирает радиус по месту: ${value}`).toContain(value);
     }
   });
 
-  it("даёт радиус только тому, что трогают пальцем, метке-пилюле и точке-индикатору", () => {
+  it("даёт каждый токен роли только его элементам, а круг — только точке-индикатору", () => {
     for (const { selector, value } of radiusRules()) {
       if (value === "0") continue;
-      const allowed = addressesTouchTarget(selector)
-        || pillLabels.has(selector)
-        || controlHousings.has(selector)
-        || /::(?:before|after)$/u.test(selector);
-      expect(allowed, `${selector} скруглён, хотя его не нажимают`).toBe(true);
+      if (value === "50%") {
+        expect(/::(?:before|after)$/u.test(selector), `${selector}: круг 50 % — только у точки-индикатора`).toBe(true);
+        continue;
+      }
+      const name = /^var\((--radius-[a-z]+)\)$/u.exec(value)?.[1] ?? "";
+      const role = roles[name];
+      expect(role, `${selector}: ${value} — не токен роли`).toBeDefined();
+      const allowed = (role?.owns(selector) ?? false) || /::(?:before|after)$/u.test(selector);
+      expect(allowed, `${selector} скруглён ролью ${name}, которая ему не принадлежит`).toBe(true);
     }
   });
 
-  it("оставляет поверхности прямыми: скруглённое нажимается, прямое читается", () => {
+  it("оставляет поверхности 3.0 прямыми, пока их экран не переписан", () => {
     const withRadius = new Set(radiusRules().filter(({ value }) => value !== "0").map(({ selector }) => selector));
     for (const surface of surfaces) {
       expect(withoutComments.includes(`\n${surface} {`), `правило ${surface} исчезло — контракт формы проверять не на чем`).toBe(true);

@@ -37,7 +37,12 @@ export function designTargetGap(): number {
  * цель нажатия, хотя «label» в нём и есть.
  */
 const TOUCH_TARGET_ELEMENTS = /(?:^|[\s>+~(])(?:button|select|input|textarea|summary|label)(?![\w-])/u;
-const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|step-progress-step|row-open|remove-category|skip-link|danger-button|primary-button|secondary-button|quiet-button|text-button|envelope|list-row)(?![\w-])/u;
+/**
+ * Классы целей нажатия. 4.0 добавляет плитку (`.tile`), чип (`.chip` — прозрачная кнопка 48 вокруг
+ * видимой пилюли `.chip-face`) и «+» навигации (`.fab`, `.nav-fab`). `.category-tile` сюда не входит:
+ * это квадрат глифа внутри строки, а не то, что нажимают.
+ */
+const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|nav-fab|fab|tile|chip|step-progress-step|row-open|remove-category|skip-link|danger-button|primary-button|secondary-button|quiet-button|text-button|envelope|list-row)(?![\w-])/u;
 const TOUCH_TARGET_ATTRIBUTES = /\[(?:tabindex|role="button")/u;
 
 export function addressesTouchTarget(selector: string): boolean {
