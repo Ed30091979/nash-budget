@@ -12,6 +12,7 @@ import {
   routeChain,
   routeKey,
   ROUTE_NOT_FOUND_MESSAGE,
+  sameRecordId,
   type Route,
 } from "./routes";
 
@@ -162,6 +163,17 @@ describe("родители маршрутов", () => {
     expect(parentRoute(sheet)).toEqual({ name: "operations" });
     expect(forReload(sheet)).toEqual({ name: "operations" });
     expect(forReload({ name: "plan-month" })).toEqual({ name: "plan-month" });
+  });
+
+  it("идентификатор из адреса находит операцию, записанную в любом регистре (ревью 2a, п. 4)", () => {
+    expect(sameRecordId(OPERATION.toUpperCase(), OPERATION)).toBe(true);
+    expect(sameRecordId(OPERATION, OPERATION.toUpperCase())).toBe(true);
+    expect(sameRecordId(OPERATION, OPERATION.replace("7f1d", "7f1e"))).toBe(false);
+    // Адрес — всегда строчными; хранимое — как пришло, и `resolveRoute` с этим сравнением его находит.
+    const stored = [{ id: OPERATION.toUpperCase() }];
+    const route = parseRoute(`#/new?edit=${OPERATION.toUpperCase()}`).route;
+    expect(route).toEqual({ name: "entry", edit: OPERATION });
+    expect(resolveRoute(route, { transaction: (id) => stored.some((item) => sameRecordId(item.id, id)) })).toEqual({ route, notFound: false });
   });
 
   it("операция, которой в бюджете нет, — «Запись не найдена» и возврат к «Операциям»", () => {

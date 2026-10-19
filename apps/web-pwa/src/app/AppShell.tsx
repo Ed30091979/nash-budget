@@ -59,7 +59,7 @@ import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
 import { createRouter, memoryRouterWindow, type NavigateOptions } from "../navigation/router";
-import { resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, type Route } from "../navigation/routes";
+import { resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, type Route } from "../navigation/routes";
 
 type LoadState = "loading" | "empty" | "ready" | "error";
 
@@ -345,7 +345,8 @@ export default function App() {
   useEffect(() => {
     const current = budgetRef.current;
     if (current === null) return;
-    const resolved = resolveRoute(router.current(), { transaction: (id) => current.transactions.some((item) => item.id === id) });
+    // Идентификатор в адресе пишется строчными, а в бюджете может храниться в любом регистре.
+    const resolved = resolveRoute(router.current(), { transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)) });
     if (!resolved.notFound) return;
     router.redirect(resolved.route);
     setMessage(ROUTE_NOT_FOUND_MESSAGE);

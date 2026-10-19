@@ -8,6 +8,7 @@
  * (`MainActivity.java`), поэтому здесь проверяется то, на что она опирается.
  */
 import type { Page } from "@playwright/test";
+import { G002_UPPER_CASE_IDS, makeG002UpperCaseIdsBackupBuffer } from "./canonical-budget";
 import { expect, test } from "./fixtures";
 
 async function loadDemo(page: Page): Promise<void> {
@@ -159,4 +160,30 @@ test("ссылка на подэкран достраивает историю �
   await expect(page.getByRole("heading", { name: "Отчёты" })).toBeVisible();
   await back(page);
   await expect(page.locator(".hero-card")).toBeVisible();
+});
+
+test("операция с идентификатором в верхнем регистре открывается по адресу и правится", async ({ page }) => {
+  // Ревью 2a, п. 4: адрес пишет UUID строчными, а копия и журнал принимают любой регистр.
+  await loadDemo(page);
+  await tab(page, "Ещё").click();
+  await page.locator("#backup-file").setInputFiles({
+    name: "family-budget-upper-case-ids.json",
+    mimeType: "application/json",
+    buffer: makeG002UpperCaseIdsBackupBuffer(),
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
+
+  await tab(page, "Операции").click();
+  await page.locator('button[aria-label^="Изменить операцию «"]').first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
+  await expect(page.locator(".message-toast")).toHaveCount(0);
+  const address = await hash(page);
+  expect(address).toMatch(/^#\/new\?edit=[0-9a-f-]{36}$/u);
+  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/new?edit=".length));
+
+  // Перезагрузка открывает ту же операцию — по адресу строчными.
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
+  await expect(page.locator(".message-toast")).toHaveCount(0);
+  await expect(page.getByLabel("Сумма, ₽")).not.toHaveValue("");
 });

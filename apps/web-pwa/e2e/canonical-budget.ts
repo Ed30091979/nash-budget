@@ -25,3 +25,23 @@ export function makeG002BackupBuffer(): Buffer {
     "utf8",
   );
 }
+
+/**
+ * G-002 whose operations carry identifiers in upper case — as a backup or a journal written by
+ * another implementation may (both accept a UUID in either case). The app must open them by the
+ * lower-case address and must not rewrite them (review of 2a, finding 4).
+ */
+export const G002_UPPER_CASE_IDS = canonicalState.transactions.map(
+  (_transaction, index) => `7F1D2C3B-4A5E-4F60-8A7B-9C0D1E2F3A${String(index).padStart(2, "0")}`,
+);
+
+export function makeG002UpperCaseIdsBackupBuffer(): Buffer {
+  const state = {
+    ...canonicalState,
+    transactions: canonicalState.transactions.map((transaction, index) => ({
+      ...transaction,
+      id: G002_UPPER_CASE_IDS[index] ?? transaction.id,
+    })),
+  };
+  return Buffer.from(serializeBackup(state, { createdAt: G002_BACKUP_CREATED_AT }), "utf8");
+}

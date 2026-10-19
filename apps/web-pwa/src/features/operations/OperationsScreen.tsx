@@ -39,6 +39,7 @@ import { Keypad, useKeypadAvailable } from "./Keypad";
 import { amountText, draftCurrency, kindLabels, moneyIn, operationLabel, rubles, transactionDetail } from "./transaction-words";
 import { OperationAmount } from "./OperationAmount";
 import { createDraftSaving, useDraftGuard } from "../../navigation/draft-guard";
+import { sameRecordId } from "../../navigation/routes";
 
 /** Просьба открыть операцию в форме — из «Операций», адресом `#/new?edit=<id>`. `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
@@ -752,7 +753,8 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
   };
   useEffect(() => {
     if (!editRequest) return;
-    const transaction = budget.transactions.find((item) => item.id === editRequest.id);
+    // Адрес несёт UUID строчными, бюджет — в том регистре, в каком его записали.
+    const transaction = budget.transactions.find((item) => sameRecordId(item.id, editRequest.id));
     if (transaction) beginEdit(transaction);
     onEditRequestHandled?.();
     // Просьба — событие, а не состояние: выполняется один раз на каждую, чем бы ни было занято
