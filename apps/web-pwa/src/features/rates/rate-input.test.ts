@@ -34,7 +34,7 @@ describe("курс, набранный человеком: края", () => {
   it("запятая и точка — одно и то же; пробелы между разрядами, в том числе неразрывные, не мешают", () => {
     const comma = parseRateInput("1 092,5", "USD", "RUB");
     expect(comma.kind).toBe("rate");
-    for (const text of ["1092.5", "1092,50", "1 092,5", " 1092,500000 "]) expect(parseRateInput(text, "USD", "RUB"), text).toEqual(comma);
+    for (const text of ["1092.5", "1092,50", "1\u00A0092,5", " 1092,500000 "]) expect(parseRateInput(text, "USD", "RUB"), text).toEqual(comma);
     for (const text of ["92,", ",5", "92,5.0", "1.000.5", "92;5", "٩٢"]) expect(parseRateInput(text, "USD", "RUB").kind, text).toBe("error");
   });
 

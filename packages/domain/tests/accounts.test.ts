@@ -74,7 +74,7 @@ describe("createAccount", () => {
     const seed = makeSeedBudget();
     expect(code(() => createAccount(seed, { ...dollarsDraft, name: "   " }, () => DOLLARS))).toBe("name_required");
     expect(code(() => createAccount(seed, { ...dollarsDraft, name: "я".repeat(81) }, () => DOLLARS))).toBe("name_too_long");
-    expect(code(() => createAccount(seed, { ...dollarsDraft, name: "Нал​ичные" }, () => DOLLARS))).toBe("name_forbidden_characters");
+    expect(code(() => createAccount(seed, { ...dollarsDraft, name: "Нал\u200Bичные" }, () => DOLLARS))).toBe("name_forbidden_characters");
     expect(code(() => createAccount(seed, { ...dollarsDraft, name: "Кaрта" }, () => DOLLARS))).toBe("name_mixed_scripts");
     expect(code(() => createAccount(seed, { ...dollarsDraft, name: "—" }, () => DOLLARS))).toBe("name_unreadable");
     const main = seed.accounts.find((item) => item.id === SEED_IDS.accounts.main)!;
