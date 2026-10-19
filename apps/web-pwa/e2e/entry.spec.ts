@@ -309,6 +309,21 @@ test("правка расхода «в ожидании» оставляет е�
   await expect(tile(page, "Продукты")).toHaveAttribute("aria-label", before ?? "");
 });
 
+test("тост «Записано» называет то же число, что лист обещал под суммой", async ({ page }) => {
+  // Ревью 2b, MEDIUM-3: остаток в тосте считался по окну бюджета месяца, а в листе и на плитке —
+  // накопленным. У демо есть доходы прошлых месяцев, и числа расходились.
+  await loadDemo(page);
+  await tile(page, "Зарплата").click();
+  await tile(page, "Основной").click();
+  await amountField(page).fill("100");
+  const promised = (await entrySheet(page).locator("#entry-effect").innerText()).trim();
+  const balance = /^На счёте «Основной» станет (.+)$/u.exec(promised)?.[1];
+  expect(balance, promised).toBeDefined();
+  await submitButton(page).click();
+  const receipt = toast(page, /Записано: доход 100\s₽/u).locator(".toast-receipt .sr-only");
+  await expect(receipt).toHaveText(`Остаток на счёте «Основной»: ${balance}, больше на 100\u00a0₽`);
+});
+
 test("лист держит фокус: Tab ходит внутри, Esc с набранным спрашивает, без набранного — закрывает", async ({ page }) => {
   await loadDemo(page);
   await page.setViewportSize({ width: 390, height: 844 });

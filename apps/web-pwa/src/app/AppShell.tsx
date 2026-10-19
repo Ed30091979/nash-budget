@@ -304,6 +304,7 @@ export default function App() {
     redirect: (destination) => router.redirect(destination),
     navigate: (destination) => shellNavigate.current(destination),
     showToast,
+    today: () => localToday(new Date()),
   }), [entryStore, write, router, showToast]);
   // Не записанный черновик ждёт «Вернуться к черновику» и переход ему не мешает; перезагрузка его потеряет.
   const failedEntry = useRef<DraftEntry>({ label: "операция, которая не записалась", isDirty: () => entryStore.failed() !== null, guardsNavigation: false });

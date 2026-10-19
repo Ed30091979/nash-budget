@@ -1,7 +1,10 @@
-import { makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import { carryBudgetForward, makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import { isValidElement } from "react";
 import { describe, expect, it } from "vitest";
 import type { ToastMessage } from "../components/Toast";
-import { draftFromTransaction, newEntryDraft, type EntryDraft } from "../features/entry/entry-model";
+import type { EntryReceiptValue } from "../features/entry/EntryReceipt";
+import { draftFromTransaction, effectLine, newEntryDraft, type EntryDraft } from "../features/entry/entry-model";
+import { formatMoney } from "../money";
 import { routeKey, withoutSheet, type Route } from "../navigation/routes";
 import { BudgetWriteRefusal, WRITE_REFUSAL_TEXT } from "../write-refusal";
 import type { BudgetChange, BudgetWriter } from "../write/useBudgetWrite";
@@ -16,8 +19,8 @@ const SHEET: Route = { name: "overview", sheet: "entry", op: "expense", dst: FOO
 const plain = (text: string) => text.replace(/[\u00a0\u202f]/gu, " ");
 
 /** Оболочка в миниатюре: бюджет, маршрут, тосты и писатель, который отвечает тем, что ему велели. */
-function harness(fails: () => unknown = () => null) {
-  let budget: BudgetState = makePlanningSeed();
+function harness(fails: () => unknown = () => null, start: BudgetState = makePlanningSeed(), today = TODAY) {
+  let budget: BudgetState = start;
   let route: Route = SHEET;
   let id = 0;
   const redirects: Route[] = [];
@@ -52,6 +55,7 @@ function harness(fails: () => unknown = () => null) {
     redirect: (next) => { redirects.push(next); route = next; },
     navigate: (next) => { navigations.push(next); route = next; },
     showToast: (toast) => { toasts.push(toast); },
+    today: () => today,
     makeId: () => `e3000000-0000-4000-8000-${String((id += 1)).padStart(12, "0")}`,
   });
   const open = (draft: EntryDraft, at: Route = SHEET) => {
@@ -163,4 +167,50 @@ describe("запись из листа ввода", () => {
     await expect(shell.controller.saveRate({ currency: "USD", date: TODAY, rate: { baseMinor: 9_250, quoteMinor: 100 } })).resolves.toBeNull();
     expect(shell.budget().exchangeRates?.some((rate) => rate.currency === "USD")).toBe(true);
   });
+
+  it("число в тосте — то же, что лист обещал до записи: остаток счёта — накопленный, а не за месяц плана", async () => {
+    // Ревью 2b, MEDIUM-3: тост считал остаток по окну бюджета (`calculateBudget`), а лист и плитки —
+    // накопленным (`calculateHoldings`): доход прошлого месяца — и лист говорил «118 900 ₽», а тост
+    // «109 000 → 108 900 ₽». Со второго месяца это видит каждый.
+    const PHARMACY = "e3000000-0000-4000-8000-0000000000c9";
+    const seed = makePlanningSeed();
+    const start: BudgetState = {
+      ...seed,
+      categories: [...seed.categories, { id: PHARMACY, name: "Аптека", type: "expense", group: "everyday", active: true, sortOrder: 90 }],
+      transactions: [...seed.transactions, { id: "e3000000-0000-4000-8000-0000000000b1", kind: "income", status: "posted", occurredOn: "2026-06-25", amountMinor: 5_000_000, accountId: MAIN }],
+    };
+    const shell = harness(undefined, start);
+    const draft = { ...newEntryDraft(start, { kind: "expense", accountId: MAIN, categoryId: PHARMACY }, TODAY), amount: "100" };
+    const promised = effectLine(start, draft, TODAY);
+    expect(promised).toMatch(/^На счёте «Основной» останется /u);
+    shell.open(draft);
+    shell.controller.submit(draft);
+    await settle();
+    const receipt = receiptOf(shell.toasts[0]!.detail);
+    expect(receipt.label).toBe("Остаток на счёте «Основной»");
+    expect(promised).toBe(`На счёте «Основной» останется ${formatMoney(receipt.afterMinor, "RUB")}`);
+    expect(receipt.beforeMinor - receipt.afterMinor).toBe(10_000);
+  });
+
+  it("категория — по бюджету месяца операции: «Вчера» через границу месяца двигает июльский лимит", async () => {
+    // Ревью 2b, MEDIUM-3: тост брал активный бюджет (август), а лист — бюджет месяца операции (июль).
+    const both = carryBudgetForward(makePlanningSeed(), "2026-08").state;
+    const shell = harness(undefined, both, "2026-08-01");
+    const draft = { ...newEntryDraft(both, { kind: "expense", accountId: MAIN, categoryId: FOOD }, "2026-08-01"), occurredOn: "2026-07-31", amount: "1000" };
+    const promised = effectLine(both, draft, "2026-08-01");
+    expect(promised).toMatch(/^В категории «Продукты» останется /u);
+    shell.open(draft);
+    shell.controller.submit(draft);
+    await settle();
+    const receipt = receiptOf(shell.toasts[0]!.detail);
+    expect(receipt.label).toBe("Осталось в категории «Продукты»");
+    expect(promised?.startsWith(`В категории «Продукты» останется ${formatMoney(receipt.afterMinor, "RUB")} из `)).toBe(true);
+    expect(receipt.beforeMinor - receipt.afterMinor).toBe(100_000);
+  });
 });
+
+/** Значение одометра в тосте: `detail` — это `<EntryReceipt value={…} />`. */
+function receiptOf(detail: unknown): EntryReceiptValue {
+  if (!isValidElement<{ readonly value: EntryReceiptValue }>(detail)) throw new Error("тост без числа");
+  return detail.props.value;
+}

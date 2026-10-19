@@ -1,7 +1,5 @@
 import {
   addExchangeRate,
-  baseCurrencyOf,
-  calculateBudget,
   RateValidationError,
   TagValidationError,
   type BudgetState,
@@ -10,14 +8,13 @@ import {
 } from "@family-budget/domain";
 import type { ToastMessage } from "../components/Toast";
 import { EntryReceipt } from "../features/entry/EntryReceipt";
-import { toTransactionDraft, writeEntry, type EntryDraft } from "../features/entry/entry-model";
+import { effectCurrencyOf, effectLabelOf, effectTargetOf, effectValueOf, writeEntry, type EntryDraft } from "../features/entry/entry-model";
 import {
   deleteTransaction,
   OperationsValidationError,
   recreateTransaction,
   restoreTransaction,
 } from "../features/operations/model";
-import { effectLabel, effectTarget, effectValueMinor } from "../features/operations/save-receipt";
 import { createOperationsSubmissionGate } from "../features/operations/form-state";
 import { kindLabels, transactionCurrency } from "../features/operations/transaction-words";
 import { formatMoney } from "../money";
@@ -56,6 +53,8 @@ export interface EntryControllerOptions {
   /** Переход с проверками оболочки (задержка семьи): «Вернуться к черновику». */
   readonly navigate: (route: Route) => void;
   readonly showToast: (toast: Omit<ToastMessage, "key">) => void;
+  /** Сегодня по календарю семьи: остаток счёта в тосте — на тот же день, что и в листе. */
+  readonly today: () => string;
   readonly makeId?: () => string;
 }
 
@@ -70,21 +69,18 @@ export function operationWords(verb: string, transaction: Transaction, state: Bu
   return `${verb}: ${kindLabels[transaction.kind].toLowerCase()} ${formatMoney(transaction.amountMinor, transactionCurrency(transaction, state))}`;
 }
 
-/** Число, которое сдвинула запись: остаток лимита категории или остаток счёта — до и после. */
-function receiptDetail(before: BudgetState, after: BudgetState, draft: EntryDraft) {
+/**
+ * Число, которое сдвинула запись, до и после — то же, что лист назвал под суммой (`effectTargetOf`):
+ * лимит категории в бюджете месяца операции или накопленный остаток счёта.
+ */
+function receiptDetail(before: BudgetState, after: BudgetState, draft: EntryDraft, today: string) {
   try {
-    const beforeMetrics = calculateBudget(before);
-    const target = effectTarget(before, beforeMetrics, toTransactionDraft(before, draft));
+    const target = effectTargetOf(before, draft, today);
     if (target === null) return undefined;
-    const currency = target.kind === "category"
-      ? baseCurrencyOf(after)
-      : after.accounts.find((account) => account.id === target.id)?.currency ?? baseCurrencyOf(after);
-    return <EntryReceipt value={{
-      label: effectLabel(target),
-      beforeMinor: effectValueMinor(beforeMetrics, target),
-      afterMinor: effectValueMinor(calculateBudget(after), target),
-      currency,
-    }} />;
+    const beforeMinor = effectValueOf(before, target);
+    const afterMinor = effectValueOf(after, target);
+    if (beforeMinor === null || afterMinor === null) return undefined;
+    return <EntryReceipt value={{ label: effectLabelOf(target), beforeMinor, afterMinor, currency: effectCurrencyOf(after, target) }} />;
   } catch {
     return undefined;
   }
@@ -133,7 +129,7 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
           const label = operationWords(draft.editId === null ? "Записано" : "Изменено", written, after);
           options.showToast({
             text: label,
-            detail: receiptDetail(before, after, draft),
+            detail: receiptDetail(before, after, draft, options.today()),
             action: {
               label: "Отменить",
               run: () => undo(label.slice(label.indexOf(":") + 2), previous === undefined

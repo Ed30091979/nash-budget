@@ -410,6 +410,50 @@ export function submitLabel(state: BudgetState, draft: EntryDraft): string {
 }
 
 /**
+ * Число, которое двигает запись (§5 исследования, пункты 27–28), — одно на строку под суммой и на
+ * тост «Записано» (ревью 2b, MEDIUM-3: тост считал по окну активного бюджета, а лист и плитки — нет,
+ * и числа расходились со второго месяца). Расход в категорию со строкой в бюджете месяца операции
+ * двигает остаток её лимита — этого месяца, а не активного; всё остальное — остаток счёта,
+ * накопленный с его открытия (`calculateHoldings`), как на плитке счёта, на сегодня или на день
+ * операции позже. У перевода — счёт, с которого ушли деньги. `null` — называть нечего.
+ */
+export type EffectTarget =
+  | { readonly kind: "category"; readonly id: string; readonly name: string; readonly budgetId: string }
+  | { readonly kind: "account"; readonly id: string; readonly name: string; readonly currency: CurrencyCode; readonly asOf: string };
+
+function accountEffect(state: BudgetState, draft: EntryDraft, today: string): EffectTarget | null {
+  const account = state.accounts.find((item) => item.id === draft.accountId);
+  if (account === undefined) return null;
+  return { kind: "account", id: account.id, name: account.name, currency: account.currency, asOf: draft.occurredOn > today ? draft.occurredOn : today };
+}
+
+export function effectTargetOf(state: BudgetState, draft: EntryDraft, today: string): EffectTarget | null {
+  if (draft.mode === "expense" && draft.categoryId !== "") {
+    const category = state.categories.find((item) => item.id === draft.categoryId);
+    const budget = findBudgetForMonth(state, monthOfDate(draft.occurredOn));
+    const line = budget?.lines.find((item) => item.categoryId === draft.categoryId && item.active !== false);
+    if (category !== undefined && budget !== undefined && line !== undefined) return { kind: "category", id: category.id, name: category.name, budgetId: budget.id };
+  }
+  return accountEffect(state, draft, today);
+}
+
+/** Значение этого числа в состоянии: остаток лимита категории в базовой валюте или остаток счёта в его. */
+export function effectValueOf(state: BudgetState, target: EffectTarget): number | null {
+  if (target.kind === "category") return calculateBudget(state, target.budgetId).categoryMetrics[target.id]?.remainingMinor ?? null;
+  return calculateHoldings(state, target.asOf).accountBalancesMinor[target.id] ?? null;
+}
+
+/** Подпись числа в тосте: и величина, и чья она. */
+export function effectLabelOf(target: EffectTarget): string {
+  return target.kind === "category" ? `Осталось в категории «${target.name}»` : `Остаток на счёте «${target.name}»`;
+}
+
+/** Валюта числа: у лимита — базовая, у счёта — его. */
+export function effectCurrencyOf(state: BudgetState, target: EffectTarget): CurrencyCode {
+  return target.kind === "category" ? baseCurrencyOf(state) : target.currency;
+}
+
+/**
  * Что станет от этой записи — одной строкой под суммой. Расход в категорию с лимитом месяца —
  * «В категории «Продукты» останется 13 250 ₽ из 30 000 ₽» (имя не склоняется, рамочное слово рядом);
  * без лимита и у остальных видов — остаток счёта в его валюте. Правка уже учтена в остатках, и
@@ -427,32 +471,27 @@ export function effectLine(state: BudgetState, draft: EntryDraft, today: string)
 
 function effectWords(state: BudgetState, draft: EntryDraft, today: string): string | null {
   const minor = draftAmountMinor(state, draft) ?? 0;
-  const account = state.accounts.find((item) => item.id === draft.accountId);
-  if (draft.mode === "expense" && draft.categoryId !== "") {
-    const category = state.categories.find((item) => item.id === draft.categoryId);
-    const budget = findBudgetForMonth(state, monthOfDate(draft.occurredOn));
-    const line = budget?.lines.find((item) => item.categoryId === draft.categoryId && item.active !== false);
+  let target = effectTargetOf(state, draft, today);
+  if (target?.kind === "category") {
     const value = valueInBase(state, draft, minor);
-    if (category !== undefined && budget !== undefined && line !== undefined && value !== null) {
-      const metric = calculateBudget(state, budget.id).categoryMetrics[category.id];
-      if (metric !== undefined) {
-        const left = metric.remainingMinor - value;
-        const base = baseCurrencyOf(state);
-        return left >= 0
-          ? `В категории «${category.name}» останется ${formatMoney(left, base)} из ${formatMoney(metric.availableMinor, base)}`
-          : `В категории «${category.name}» будет перелимит ${formatMoney(-left, base)} при лимите ${formatMoney(metric.availableMinor, base)}`;
-      }
+    const metric = calculateBudget(state, target.budgetId).categoryMetrics[target.id];
+    if (value !== null && metric !== undefined) {
+      const left = metric.remainingMinor - value;
+      const base = baseCurrencyOf(state);
+      return left >= 0
+        ? `В категории «${target.name}» останется ${formatMoney(left, base)} из ${formatMoney(metric.availableMinor, base)}`
+        : `В категории «${target.name}» будет перелимит ${formatMoney(-left, base)} при лимите ${formatMoney(metric.availableMinor, base)}`;
     }
+    // Оценить в базовой валюте нечем: лимит строка не называет, а остаток счёта — может.
+    target = accountEffect(state, draft, today);
   }
-  if (account === undefined) return null;
-  // Остаток — накопленный с открытия счёта, в его валюте, на сегодня (или на день операции позже).
-  const balance = calculateHoldings(state, draft.occurredOn > today ? draft.occurredOn : today).accountBalancesMinor[account.id];
-  if (balance === undefined || balance === null) return null;
+  if (target === null || target.kind !== "account") return null;
+  const balance = effectValueOf(state, target);
+  if (balance === null) return null;
   const incoming = draft.mode === "income" || draft.mode === "refund";
-  const after = incoming ? balance + minor : balance - minor;
   return incoming
-    ? `На счёте «${account.name}» станет ${formatMoney(after, account.currency)}`
-    : `На счёте «${account.name}» останется ${formatMoney(after, account.currency)}`;
+    ? `На счёте «${target.name}» станет ${formatMoney(balance + minor, target.currency)}`
+    : `На счёте «${target.name}» останется ${formatMoney(balance - minor, target.currency)}`;
 }
 
 /**

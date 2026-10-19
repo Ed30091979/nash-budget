@@ -1,4 +1,4 @@
-import { makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState, type Transaction } from "@family-budget/domain";
+import { calculateBudget, calculateHoldings, makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState, type Transaction } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 import { localToday } from "../../reach";
 import { missingRateMessage, OperationsValidationError } from "../operations/model";
@@ -8,7 +8,10 @@ import {
   dateChoice,
   draftFromTransaction,
   draftReady,
+  effectLabelOf,
   effectLine,
+  effectTargetOf,
+  effectValueOf,
   foreignValue,
   foreignValueLine,
   frequentTags,
@@ -267,6 +270,52 @@ describe("лист ввода: что станет после записи", () 
     expect(effectLine(state(), income, TODAY)).toBe("На счёте «Основной» станет 110\u00a0000\u00a0₽");
     // Дату ещё набирают — строки нет, лист стоит.
     expect(effectLine(state(), { ...expense, occurredOn: "" }, TODAY)).toBeNull();
+  });
+});
+
+describe("число, которое человек узнаёт после записи", () => {
+  // Перенесено из `operations/save-receipt.test.ts`: с 2b это правило одно для строки под суммой и
+  // для тоста «Записано» (`effectTargetOf`), и прежний модуль его больше не держит.
+  const FOOD = PLANNING_IDS.categories.food;
+  const expense = (categoryId: string, amount = "1200"): EntryDraft => ({ ...newEntryDraft(state(), { kind: "expense", accountId: MAIN, categoryId }, TODAY), amount });
+  const withoutPlan = (budget: BudgetState, categoryId: string): BudgetState => ({
+    ...budget,
+    budgets: budget.budgets.map((item) => ({ ...item, lines: item.lines.filter((line) => line.categoryId !== categoryId) })),
+  });
+
+  it("у расхода по категории с лимитом называет остаток этой категории в бюджете месяца операции", () => {
+    const budget = state();
+    const target = effectTargetOf(budget, expense(FOOD), TODAY);
+    expect(target).toMatchObject({ kind: "category", id: FOOD, name: "Продукты", budgetId: budget.activeBudgetId });
+    expect(effectLabelOf(target!)).toBe("Осталось в категории «Продукты»");
+    expect(effectValueOf(budget, target!)).toBe(calculateBudget(budget).categoryMetrics[FOOD]!.remainingMinor);
+  });
+
+  it("после записи это число уменьшается ровно на сумму траты", () => {
+    const before = state();
+    const target = effectTargetOf(before, expense(FOOD, "1200"), TODAY)!;
+    const after = writeEntry(before, expense(FOOD, "1200"), ids()).state;
+    expect(effectValueOf(after, target)).toBe(effectValueOf(before, target)! - 120_000);
+  });
+
+  it("у категории без плана называет не «остаток лимита», а накопленный остаток счёта", () => {
+    // Без строки плана «осталось» было бы суммой трат со знаком минус — числом, которого человек
+    // нигде больше не видит. Остаток счёта — тот же, что на его плитке (`calculateHoldings`).
+    const budget = withoutPlan(state(), FOOD);
+    const target = effectTargetOf(budget, expense(FOOD), TODAY)!;
+    expect(target).toMatchObject({ kind: "account", id: MAIN, name: "Основной" });
+    expect(effectLabelOf(target)).toBe("Остаток на счёте «Основной»");
+    expect(effectValueOf(budget, target)).toBe(calculateHoldings(budget, TODAY).accountBalancesMinor[MAIN]);
+  });
+
+  it("у перевода называет счёт, с которого ушли деньги, — тот, что и подвинулся вниз", () => {
+    const transfer = { ...newEntryDraft(state(), { kind: "transfer", fromAccountId: MAIN, toAccountId: RESERVE }, TODAY), amount: "5000" };
+    expect(effectTargetOf(state(), transfer, TODAY)).toMatchObject({ kind: "account", id: MAIN, name: "Основной" });
+  });
+
+  it("молчит, когда называть нечего: выдуманное число хуже отсутствующего", () => {
+    const nowhere = { ...expense(""), accountId: "00000000-0000-4000-8000-000000000000" };
+    expect(effectTargetOf(state(), nowhere, TODAY)).toBeNull();
   });
 });
 
