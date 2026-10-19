@@ -1,0 +1,265 @@
+/**
+ * Справочники «Учёта» в настоящем браузере (план волны 2, §1.5–§1.8, подволна 2c): счёт в долларах,
+ * курс, категория и её лимит, метки. Всё — касаниями экранов «Ещё», без адресов, набранных руками,
+ * кроме проверки геометрии; черновик формы спрашивается диалогом приложения, а не системным окном
+ * (`fixtures.ts` валит прогон на любом системном окне).
+ */
+import { expect, test } from "./fixtures";
+import type { Page } from "@playwright/test";
+import { applyFontScale } from "./font-scale";
+import { amountField, entrySheet, goToOverview, leaveDialog, loadDemo, recordExpense, submitButton, tile, toast } from "./sheet";
+
+const TOUCH_TARGET_MINIMUM = 48;
+
+async function openMore(page: Page, row: string): Promise<void> {
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await page.getByRole("button", { name: new RegExp(`^${row}`, "u") }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+}
+
+/** «554 000 ₽» — в копейки, по цифрам. */
+async function totalMinor(page: Page): Promise<number> {
+  const text = await page.locator(".overview-total").innerText();
+  expect(text).toContain("₽");
+  return Number(text.replace(/[^\d]/gu, "")) * 100;
+}
+
+test("счёт в долларах заведён в «Ещё», курс задан на экране курсов, расход в $: плитка — в $, итог — в ₽", async ({ page }) => {
+  await loadDemo(page);
+  const before = await totalMinor(page);
+
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: "Новый счёт" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Новый счёт" })).toBeVisible();
+  await page.getByLabel("Название").fill("Доллары");
+  await page.getByRole("radio", { name: "Наличные" }).check();
+  await page.getByLabel("Валюта").selectOption("USD");
+  await expect(page.getByText(/^Счёт в USD: каждая операция по нему запишется и в RUB/u)).toBeVisible();
+  await page.getByLabel("Начальный остаток, $").fill("500");
+  await page.getByRole("radio", { name: "Доллар" }).check();
+  await page.getByRole("button", { name: "Завести счёт" }).click();
+  await expect(toast(page, "Счёт «Доллары» заведён.")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Доллары: 500\s\$, наличные · usd\. Изменить$/u })).toBeVisible();
+  // В адресе — UUID и список, а не имя.
+  expect(await page.evaluate(() => window.location.hash)).toBe("#/more/accounts");
+
+  // Курса ещё нет: экран курсов говорит это и задаёт его.
+  await openMore(page, "Курсы валют");
+  const usd = page.locator("section.rate-card", { has: page.getByRole("heading", { name: /^USD/u }) });
+  await expect(usd.getByText(/^Курса на сегодня нет/u)).toBeVisible();
+  await usd.getByRole("button", { name: "Добавить курс USD" }).click();
+  await usd.getByRole("textbox", { name: "Сколько ₽ за 1 USD" }).fill("92,50");
+  await usd.getByRole("button", { name: "Сохранить курс" }).click();
+  await expect(page.locator(".manage-status")).toContainText("Курс USD с ");
+  await expect(usd.locator(".rate-now strong")).toHaveText(/^1 USD = 92,50\s₽$/u);
+  await expect(page.getByText("Он не переоценивает записанное", { exact: false })).toBeVisible();
+
+  // Расход в долларах: плитка счёта — в $, итог — в ₽ по курсу.
+  await goToOverview(page);
+  await expect(tile(page, "Доллары")).toHaveAccessibleName(/^Доллары: остаток 500\s\$/u);
+  expect(await totalMinor(page)).toBe(before + 46_250_00);
+  await tile(page, "Доллары").click();
+  await tile(page, "Продукты").click();
+  await expect(entrySheet(page)).toBeVisible();
+  await amountField(page).fill("10");
+  await expect(entrySheet(page).locator(".entry-foreign")).toContainText(/≈ 925\s₽ по курсу 92,50/u);
+  await submitButton(page).click();
+  await expect(toast(page, /Записано: расход 10\s\$/u)).toBeVisible();
+  await expect(tile(page, "Доллары")).toHaveAccessibleName(/^Доллары: остаток 490\s\$/u);
+  await expect(page.locator(".overview-total")).not.toContainText("$");
+  expect(await totalMinor(page)).toBe(before + 45_325_00);
+});
+
+test("категория: имя, иконка, цвет и лимит — одной записью; архив прячет её с «Обзора», операция остаётся в «Операциях»", async ({ page }) => {
+  await loadDemo(page);
+  await recordExpense(page, { category: "Кафе и доставка", amount: "700" });
+
+  await goToOverview(page);
+  await page.getByRole("button", { name: "Изменить категории расходов" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Категории и доходы" })).toBeVisible();
+  await page.getByRole("button", { name: "Кафе и доставка: без лимита. Изменить" }).click();
+  await page.getByLabel("Название").fill("Кафе");
+  await page.getByRole("radio", { name: "Сирень" }).check();
+  await page.getByRole("radio", { name: "Бокал" }).check();
+  await page.getByLabel(/^Лимит на /u).fill("5000");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(toast(page, "Категория «Кафе» сохранена.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Кафе: лимит 5\s000\s₽ на [а-я]+\. Изменить$/u })).toBeVisible();
+
+  await goToOverview(page);
+  const cafe = tile(page, "Кафе");
+  await expect(cafe).toHaveAccessibleName(/^Кафе: потрачено 700\s₽ из 5\s000\s₽/u);
+  await expect(cafe).toHaveClass(/tone-lilac/u);
+  await expect(cafe.locator("use")).toHaveAttribute("href", "#glyph-wine");
+
+  // Архив: вопрос приложения, затем плитки на «Обзоре» нет, а операция — на месте.
+  await page.getByRole("button", { name: "Изменить категории расходов" }).click();
+  await page.getByRole("button", { name: /^Кафе: лимит/u }).click();
+  await page.getByRole("button", { name: "Убрать в архив" }).click();
+  const question = page.getByRole("alertdialog", { name: "Убрать «Кафе» в архив?" });
+  await expect(question).toContainText("Записанные операции останутся в «Операциях» и отчётах.");
+  await question.getByRole("button", { name: "Убрать в архив" }).click();
+  await expect(page.locator(".manage-status")).toContainText("«Кафе» в архиве.");
+  await expect(page.getByRole("button", { name: "Вернуть из архива" })).toBeVisible();
+  await goToOverview(page);
+  await expect(tile(page, "Кафе")).toHaveCount(0);
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
+  await expect(page.locator(".history-row .transaction-copy strong", { hasText: /^Кафе$/u })).toHaveCount(1);
+});
+
+test("метки: заведена, переименована, в архиве и удалена; используемую удалить нельзя — отказ словами домена", async ({ page }) => {
+  await loadDemo(page);
+  await openMore(page, "Метки");
+  const field = page.getByLabel("Новая метка");
+  await field.fill("Ремонт");
+  await page.getByRole("button", { name: "Добавить", exact: true }).click();
+  await expect(page.locator(".manage-status")).toHaveText("Метка «Ремонт» добавлена.");
+  await field.fill("Отпуск");
+  await field.press("Enter");
+  await expect(page.locator(".manage-status")).toHaveText("Метка «Отпуск» добавлена.");
+
+  // «Ремонт» — на операции.
+  await goToOverview(page);
+  await tile(page, "Продукты").click();
+  await amountField(page).fill("300");
+  await entrySheet(page).getByRole("button", { name: "Ремонт", exact: true }).click();
+  await submitButton(page).click();
+  await expect(toast(page, /Записано: расход/u)).toBeVisible();
+
+  await openMore(page, "Метки");
+  const repair = page.locator(".tag-row", { hasText: "Ремонт" });
+  await expect(repair).toContainText("1 операция");
+  await page.getByRole("button", { name: "Удалить метку «Ремонт»" }).click();
+  await expect(repair.getByRole("alert")).toHaveText("Метка стоит на операциях. Её можно убрать в архив: на операциях она останется.");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(repair).toBeVisible();
+
+  // «Отпуск»: переименование на месте, архив, удаление неиспользуемой — с вопросом.
+  await page.getByRole("button", { name: "Переименовать метку «Отпуск»" }).click();
+  const rename = page.getByLabel("Новое имя метки «Отпуск»");
+  await rename.fill("Отпуск 2026");
+  await rename.press("Enter");
+  await expect(page.locator(".manage-status")).toHaveText("Метка «Отпуск» теперь «Отпуск 2026».");
+  await page.getByRole("button", { name: "Убрать метку «Отпуск 2026» в архив" }).click();
+  const archived = page.locator("section", { has: page.getByRole("heading", { name: "В архиве" }) });
+  await expect(archived.locator(".tag-row", { hasText: "Отпуск 2026" })).toBeVisible();
+  await page.getByRole("button", { name: "Удалить метку «Отпуск 2026»" }).click();
+  const question = page.getByRole("alertdialog", { name: "Удалить метку «Отпуск 2026»?" });
+  await question.getByRole("button", { name: "Удалить метку" }).click();
+  await expect(page.locator(".manage-status")).toHaveText("Метка «Отпуск 2026» удалена.");
+  await expect(page.locator(".tag-row", { hasText: "Отпуск 2026" })).toHaveCount(0);
+});
+
+test("форма счёта только с клавиатуры: поля, радиогруппы стрелками, отметка пробелом, запись — Enter", async ({ page }) => {
+  await loadDemo(page);
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: "Новый счёт" }).click();
+  const heading = page.getByRole("heading", { level: 1, name: "Новый счёт" });
+  await expect(heading).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-name")).toBeFocused();
+  await page.keyboard.type("Кошелёк");
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-type-current")).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#account-type-cash")).toBeChecked();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-currency")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-opening")).toBeFocused();
+  await page.keyboard.type("1250,50");
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-negative")).toBeFocused();
+  await page.keyboard.press("Tab");
+  // Цвет: Tab входит в группу один раз — на «Авто», стрелка выбирает «Мята».
+  await expect(page.getByRole("radio", { name: "Авто" }).first()).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("radio", { name: "Мята" })).toBeChecked();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("radio", { name: "Карта", exact: true })).toBeChecked();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#account-include")).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(page.locator("#account-include")).not.toBeChecked();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("button", { name: "Завести счёт" })).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  await expect(toast(page, "Счёт «Кошелёк» заведён.")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeFocused();
+  await expect(page.getByRole("button", { name: /^Кошелёк: 1\s250,50\s₽, наличные · вне итога\. Изменить$/u })).toBeVisible();
+});
+
+test("набранная форма при уходе спрашивает диалогом приложения: «Продолжить ввод» оставляет, «Не сохранять» уводит", async ({ page }) => {
+  await loadDemo(page);
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: /^Основной: /u }).click();
+  await page.getByLabel("Название").fill("Зарплатная");
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
+  await expect(leaveDialog(page)).toContainText("правка счёта «Основной»");
+  await leaveDialog(page).getByRole("button", { name: "Продолжить ввод" }).click();
+  await expect(page.getByLabel("Название")).toHaveValue("Зарплатная");
+  // Системное «Назад» — тот же вопрос.
+  await page.goBack();
+  await expect(leaveDialog(page)).toBeVisible();
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Основной: /u })).toBeVisible();
+});
+
+test("на 320 pt и при ×2.7 справочники не выезжают за экран, а их цели — не меньше 48", async ({ page }) => {
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  // Один долларовый счёт с курсом и одна метка — чтобы на экранах было что мерить.
+  await openMore(page, "Метки");
+  await page.getByLabel("Новая метка").fill("Подработка для отпуска и дачи");
+  await page.getByRole("button", { name: "Добавить", exact: true }).click();
+  await expect(page.locator(".tag-row")).toHaveCount(1);
+  await openMore(page, "Счета");
+  const mainId = await (async () => {
+    await page.getByRole("button", { name: /^Основной: /u }).click();
+    const hash = await page.evaluate(() => window.location.hash);
+    expect(hash).toMatch(/^#\/more\/accounts\/[0-9a-f-]{36}$/u);
+    return hash;
+  })();
+  await openMore(page, "Категории и доходы");
+  await page.getByRole("button", { name: /^Продукты: /u }).click();
+  const categoryHash = await page.evaluate(() => window.location.hash);
+  expect(categoryHash).toMatch(/^#\/more\/categories\/[0-9a-f-]{36}$/u);
+
+  const screens: readonly (readonly [string, string])[] = [
+    ["#/more", "more"], ["#/more/accounts", "accounts"], ["#/more/accounts/new", "account-new"], [mainId, "account"], ["#/more/rates", "rates"],
+    ["#/more/categories?type=expense", "categories"], ["#/more/categories?type=income", "categories"], [categoryHash, "category"], ["#/more/tags", "tags"],
+  ];
+  for (const [width, height, scale] of [[320, 568, 1], [320, 568, 2.7], [390, 844, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height });
+    for (const [hash, screen] of screens) {
+      await page.evaluate((target) => { window.location.hash = target; }, hash);
+      await expect(page.locator(".route-screen")).toHaveAttribute("data-screen", screen);
+      expect(await page.evaluate(() => window.location.hash)).toBe(hash);
+      const label = `${hash} ${width}×${height} ×${scale}`;
+      const measured = await page.evaluate((minimum) => {
+        const root = document.querySelector(".route-screen");
+        const targets = [...(root?.querySelectorAll<HTMLElement>("button, select, input:not([type='radio']):not([type='checkbox']):not([type='file']), label.picker-option, .option-grid label, label.check-row") ?? [])]
+          .filter((element) => element.checkVisibility());
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          clientWidth: document.documentElement.clientWidth,
+          undersized: targets
+            .map((element) => ({ name: (element.getAttribute("aria-label") ?? element.textContent ?? "").trim().slice(0, 40), rect: element.getBoundingClientRect() }))
+            .filter(({ rect }) => rect.width < minimum - 0.5 || rect.height < minimum - 0.5)
+            .map(({ name, rect }) => `${name} ${Math.round(rect.width)}×${Math.round(rect.height)}`),
+          targets: targets.length,
+        };
+      }, TOUCH_TARGET_MINIMUM);
+      expect(measured.scrollWidth, `${label}: без горизонтальной прокрутки`).toBeLessThanOrEqual(measured.clientWidth);
+      expect(measured.targets, `${label}: цели найдены`).toBeGreaterThan(1);
+      expect(measured.undersized, `${label}: цели не меньше ${TOUCH_TARGET_MINIMUM}`).toEqual([]);
+    }
+  }
+  await applyFontScale(page, 1);
+});

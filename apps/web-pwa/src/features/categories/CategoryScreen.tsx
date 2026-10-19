@@ -188,7 +188,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
     write.run(categorySave(category, draft, pristine)).then(() => {
       saving.succeed(ticket);
       setBusy(false);
-      onDone(`${income ? "Источник дохода" : "Категория"} «${name}» сохранён${income ? "" : "а"}.`, category.type);
+      onDone(income ? `Источник дохода «${name}» сохранён.` : `Категория «${name}» сохранена.`, category.type);
     }, (cause: unknown) => {
       saving.fail(ticket);
       setBusy(false);
