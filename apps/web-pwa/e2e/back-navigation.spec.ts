@@ -290,6 +290,8 @@ test("строка заголовка: «‹ Ещё» на каждом подэ
   await expect(page.getByRole("heading", { level: 1, name: "Счёт" })).toBeFocused();
   await expect(page.getByRole("heading", { level: 1 }), "лист: заголовок экрана один").toHaveCount(1);
   const close = page.getByRole("dialog", { name: "Счёт" }).getByRole("button", { name: "Закрыть", exact: true });
+  // Мерить — после въезда листа: в середине `sheet-in` сдвиг даёт дробные края, а цель та же.
+  await page.locator(".dir-backdrop").evaluate((backdrop) => Promise.all(backdrop.getAnimations({ subtree: true }).map((animation) => animation.finished)));
   const box = await close.boundingBox();
   expect(box?.width ?? 0, "крестик листа: ширина цели").toBeGreaterThanOrEqual(48);
   expect(box?.height ?? 0, "крестик листа: высота цели").toBeGreaterThanOrEqual(48);
