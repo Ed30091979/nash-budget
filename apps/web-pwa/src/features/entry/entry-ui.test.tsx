@@ -148,7 +148,10 @@ describe("лист ввода: поведение без браузера", () =
     expect(submitCheck(state(), { ...blankEntryDraft(state(), "expense", TODAY), amount: "5" }, null)).toEqual({ kind: "incomplete", message: "Выберите категорию." });
   });
 
-  it("ловушка фокуса: Tab с последней цели — на первую, Shift+Tab с первой — на последнюю, Esc — закрыть", () => {
+  // Ревью 2b: это не лист, а `handleDialogKeyboard`, которым лист ловит фокус, — на подставных
+  // элементах. Сам лист в браузере держит фокус в e2e `entry.spec.ts` («лист держит фокус: Tab ходит
+  // внутри…») и `accessibility.spec.ts`.
+  it("handleDialogKeyboard листа: Tab с последней цели — на первую, Shift+Tab с первой — на последнюю, Esc — закрыть (подставные элементы)", () => {
     const focused: string[] = [];
     const target = (name: string) => ({ focus: () => { focused.push(name); } });
     const first = target("Закрыть");

@@ -8,7 +8,10 @@ import {
   type BudgetState,
 } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
-import { entryErrorText } from "../../app/entry-controller";
+import { createEntryController, entryErrorText } from "../../app/entry-controller";
+import { createEntryDraftStore } from "../../app/entry-draft-store";
+import { routeKey, type Route } from "../../navigation/routes";
+import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { createOperationsSubmissionGate } from "../operations/form-state";
 import { archiveCategory } from "../operations/model";
 import { OverviewScreen } from "../overview/OverviewScreen";
@@ -79,7 +82,9 @@ function overview(budget: BudgetState): string {
 const food = (amount = "1250"): EntryDraft => ({ ...newEntryDraft(makeSeedBudget(), { kind: "expense", accountId: MAIN, categoryId: FOOD }, TODAY), amount });
 
 describe("лист ввода: одно дело и все виды", () => {
-  it("каждый вид достижим: расход, доход и перевод — переключателем, возврат — из правки расхода, взнос и долги — отказом словами", () => {
+  // Ревью 2b, LOW-8: прежнее имя обещало «каждый вид достижим», а взнос в цель по плану — 2e; здесь
+  // проверено ровно то, что сказано в имени. Отказ правке долга — в «лист ввода: разметка» (entry-ui).
+  it("расход, доход и перевод выбираются с «+», возврат — из правки расхода, правку взноса в цель лист отвергает словами (взносы — подволна 2e)", () => {
     const budget = makeSeedBudget();
     const plus = sheet(budget, blankEntryDraft(budget, "expense", TODAY), { modeSwitch: true });
     const modes = [...plus.matchAll(/<button class="chip" type="button" aria-pressed="(?:true|false)"><span class="chip-face">([^<]+)<\/span><\/button>/gu)].map((match) => match[1]);
@@ -187,15 +192,37 @@ describe("запись и её неудача", () => {
     expect(gate.locked).toBe(false);
   });
 
-  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает его", () => {
+  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает его", async () => {
     // Третье ревью (e2e b1): после «Записать» касание вкладки спрашивало «Несохранённый черновик
-    // будет удалён». Теперь билет берётся внутри шлюза синхронно — лист закрывается тем же касанием.
-    const controller = read("../../app/entry-controller.tsx");
-    expect(controller).toMatch(/void gate\.run\(async \(\) => \{\s*const ticket = options\.store\.beginSaving\(\);\s*options\.redirect\(withoutSheet\(opened\)\);/u);
-    expect(controller).toMatch(/catch \(error\) \{\s*const text = entryErrorText\(error\);\s*options\.store\.fail\(ticket, text\);/u);
-    const store = read("../../app/entry-draft-store.ts");
-    expect(store).toContain("isDirty: () => entry !== null && entry.status !== \"saving\" && !saving.saving && draftDiffers(entry.draft, entry.pristine),");
-    // Реестр черновиков читает `isDirty` в момент нажатия; пассивного флага нет.
+    // будет удалён». Ревью 2b: прежде здесь сверялся только исходник; теперь — поведение настоящих
+    // контроллера и хранилища, с записью, которая отвечает, когда ей велят.
+    const budget = makeSeedBudget();
+    let fail: (error: unknown) => void = () => undefined;
+    const write: BudgetWriter = { run: () => new Promise((_resolve, reject) => { fail = reject; }) };
+    const sheet: Route = { name: "overview", sheet: "entry", op: "expense", dst: FOOD };
+    let route: Route = sheet;
+    const store = createEntryDraftStore();
+    const controller = createEntryController({
+      store, write, current: () => budget, route: () => route, today: () => TODAY,
+      redirect: (next) => { route = next; }, navigate: (next) => { route = next; }, showToast: () => undefined,
+    });
+    store.openEntry(routeKey(sheet), () => food(""));
+    store.update((draft) => ({ ...draft, amount: "1250" }));
+    expect(store.isDirty()).toBe(true);
+    // Синхронно с касанием: лист ушёл с адреса, черновик «записывается» и вопроса не вызовет.
+    expect(controller.submit(store.current()!.draft)).toBeNull();
+    expect(route).toEqual({ name: "overview" });
+    expect(store.current()?.status).toBe("saving");
+    expect(store.isDirty()).toBe(false);
+    // Запись не прошла — черновик снова несохранённый, с тем же содержимым.
+    fail(new Error("disk full"));
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
+    expect(store.failed()).toMatchObject({ key: routeKey(sheet), status: "failed", draft: { amount: "1250" } });
+    expect(store.openEntry(routeKey(sheet), () => food("")).draft.amount).toBe("1250");
+    expect(store.isDirty()).toBe(true);
+  });
+
+  it("сверка исходника: реестр читает `isDirty` хранилища в момент нажатия, пассивного флага у листа нет", () => {
     expect(read("./EntrySheetHost.tsx")).toContain("isDirty={store.isDirty}");
     expect(read("./EntrySheet.tsx")).not.toContain("onDirtyChange");
   });
