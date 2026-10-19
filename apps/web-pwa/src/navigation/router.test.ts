@@ -348,11 +348,13 @@ describe("история остаётся правдой и впереди, и �
     await go(router, { name: "entry" });
     drafts.setDirty(true);
     await frame.type("#/reports");
-    // Набранная запись заменена записью «+», а не накрыта ещё одной: адрес — снова «+».
+    // Набранная запись стала правдивой копией «+», и роутер вернулся на шаг — на сам «+»: копия
+    // лежит впереди, а не под экраном (ревью 2a, круг 2, LOW 2). Адрес — снова «+».
     expect(drafts.asked).toHaveLength(1);
     expect(router.current()).toEqual({ name: "entry" });
     expect(frame.hash).toBe("#/new");
     expect(frame.hashes).toEqual(["#/", "#/new", "#/new"]);
+    expect(frame.index).toBe(1);
     expectHonestHistory(frame);
     // «Продолжить ввод» — ничего; затем «Обзор» и «Не сохранять».
     await go(router, { name: "overview" });
@@ -369,6 +371,87 @@ describe("история остаётся правдой и впереди, и �
     const reloaded = createRouter({ window: frame, guard: drafts.guard });
     reloaded.start();
     expect(reloaded.current()).toEqual({ name: "overview" });
+  });
+
+  it("адрес, набранный поверх черновика, → системное «Назад» → «Не сохранять» уводит с «+», а не оставляет на копии", async () => {
+    // Ревью 2a, круг 2, LOW 2: история была [#/, #/new, #/new] с позицией на копии, и «Назад» с
+    // «Не сохранять» стирал черновик, оставляя человека на «+».
+    const drafts = draftGuard();
+    const { frame, router } = started("", null, { guard: drafts.guard });
+    await go(router, { name: "entry" });
+    drafts.setDirty(true);
+    await frame.type("#/reports");
+    expect(drafts.asked).toHaveLength(1);
+    await frame.press(-1);
+    expect(drafts.asked).toHaveLength(2);
+    expect(router.current()).toEqual({ name: "entry" });
+    drafts.setDirty(false);
+    drafts.asked[1]?.();
+    await settle();
+    await settle();
+    expect(router.current()).toEqual({ name: "overview" });
+    expect(frame.hash).toBe("#/");
+    expect(frame.index).toBe(0);
+    expectHonestHistory(frame);
+  });
+
+  it("адрес, поставленный на место текущей записи (`location.replace`), — переход, и счёт шагов не сбивается", async () => {
+    // Ревью 2a, круг 2, LOW 3: замену принимали за новую запись, и следующий возврат по истории
+    // уходил на запись дальше, чем нужно, — в Chromium до about:blank.
+    const { frame, router } = started();
+    await go(router, { name: "operations" });
+    await frame.typeReplacing("#/reports");
+    await settle();
+    expect(router.current()).toEqual({ name: "reports" });
+    expect(frame.hash).toBe("#/reports");
+    expect(frame.hashes).toEqual(["#/", "#/reports"]);
+    expectHonestHistory(frame);
+    await go(router, { name: "more" });
+    await go(router, { name: "plan-year" });
+    await go(router, { name: "overview" });
+    expect(router.current()).toEqual({ name: "overview" });
+    expect(frame.index).toBe(0);
+    expectHonestHistory(frame);
+
+    // С черновиком замена возвращает запись на место и спрашивает.
+    const drafts = draftGuard();
+    const guarded = started("", null, { guard: drafts.guard });
+    await go(guarded.router, { name: "operations" });
+    await go(guarded.router, { name: "entry" });
+    drafts.setDirty(true);
+    await guarded.frame.typeReplacing("#/more/family");
+    expect(drafts.asked).toHaveLength(1);
+    expect(guarded.frame.hashes).toEqual(["#/", "#/operations", "#/new"]);
+    expect(guarded.frame.index).toBe(2);
+    expectHonestHistory(guarded.frame);
+    drafts.setDirty(false);
+    drafts.asked[0]?.();
+    await settle();
+    await settle();
+    expect(guarded.router.current()).toEqual({ name: "family" });
+    expect(guarded.frame.hashes.slice(0, guarded.frame.index + 1)).toEqual(["#/", "#/more", "#/more/family"]);
+    expectHonestHistory(guarded.frame);
+  });
+
+  it("переход по истории, на который не пришёл `popstate`, не держит очередь вечно: маршрут встаёт сверху", async () => {
+    // Ревью 2a, круг 2, LOW 3: в окне без записей ниже (автономное окно, WebView Android) `go()`
+    // уходит за край, `popstate` не приходит, и каждое следующее касание ждало его вечно.
+    const frame = new FakeBrowser("#/more/family", { mark: "nash-budget/route", stack: ["#/", "#/more", "#/more/family"] });
+    const router = createRouter({ window: frame });
+    router.start();
+    expect(frame.hashes).toEqual(["#/more/family"]);
+    router.back();
+    await settle();
+    // Записи «Ещё» ниже нет: ждём сторож и смотрим, что маршрут всё же открылся.
+    expect(router.current()).toEqual({ name: "family" });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 600); });
+    expect(router.current()).toEqual({ name: "more" });
+    expect(frame.hash).toBe("#/more");
+    // Следующий переход не стоит в очереди за пропавшим `popstate`.
+    router.navigate({ name: "reports" });
+    await new Promise<void>((resolve) => { setTimeout(resolve, 600); });
+    expect(router.current()).toEqual({ name: "reports" });
+    expect(frame.hash).toBe("#/reports");
   });
 
   it("набранный адрес с черновиком и «Не сохранять» ведёт туда, куда его набрали", async () => {

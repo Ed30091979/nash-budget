@@ -75,9 +75,11 @@ export class FakeBrowser implements RouterWindow {
       if (target < 0 || target >= this.entries.length) return;
       setTimeout(() => { this.index = target; this.fire(); }, 0);
     };
+    const all = () => this.entries;
     this.history = {
       scrollRestoration: "auto",
       get state() { return entry()?.state ?? null; },
+      get length() { return all().length; },
       pushState: (state, _unused, url) => push(state, url),
       replaceState: (state, _unused, url) => replace(state, url),
       go,
@@ -105,6 +107,13 @@ export class FakeBrowser implements RouterWindow {
     this.entries = this.entries.slice(0, this.index + 1);
     this.entries.push({ state: null, hash });
     this.index += 1;
+    this.fire();
+    await settle();
+  }
+
+  /** An address put in place of the current entry (`location.replace("#/…")`): no new entry, then `popstate`. */
+  async typeReplacing(hash: string) {
+    this.entries[this.index] = { state: null, hash };
     this.fire();
     await settle();
   }

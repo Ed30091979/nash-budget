@@ -128,13 +128,12 @@ describe("адрес — только маршрут: исходники", () =>
     }
   });
 
-  it("роутер пишет в адрес только ключи цепочки, и только тремя вызовами", () => {
+  it("роутер пишет в адрес только ключи цепочки, и только двумя вызовами", () => {
     const router = readFileSync(new URL("./router.ts", import.meta.url), "utf8");
     const writes = [...router.matchAll(/\.(pushState|replaceState)\(([^;]*)\);/gu)].map((match) => `${match[1]}(${match[2]})`);
     expect(writes).toEqual([
       'pushState(stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY)',
       'replaceState(stateOf(chain), "", chain[chain.length - 1] ?? ROOT_KEY)',
-      'pushState(stateOf(restored), "", leaving)',
     ]);
     // No other form of the calls, and the address is only ever read, as `frame.location.hash`.
     expect(router).not.toMatch(/\[\s*["'`](?:pushState|replaceState|location|history)["'`]\s*\]|\.(?:pushState|replaceState)\s*\.\s*(?:call|apply|bind)\b/u);

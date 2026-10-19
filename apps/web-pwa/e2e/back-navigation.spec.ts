@@ -137,6 +137,45 @@ test("адрес, набранный руками поверх черновик�
   expect(await hash(page)).toBe("#/");
 });
 
+test("адрес, набранный поверх черновика, → «Назад» → «Не сохранять» уводит с «+»", async ({ page }) => {
+  // Ревью 2a, круг 2, LOW 2: копия «+» лежала под экраном, и «Не сохранять» оставлял на «+».
+  await loadDemo(page);
+  await tab(page, "Записать").click();
+  await page.getByLabel("Сумма, ₽").fill("1234");
+  // Новая запись истории над «+» — так её кладёт адресная строка; `page.goto` с одной решёткой
+  // Chromium ставит на место текущей, и этот путь проверяет тест ниже.
+  await page.evaluate(() => { window.location.hash = "#/reports"; });
+  const dialog = page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
+  expect(await hash(page)).toBe("#/new");
+  await back(page);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Не сохранять" }).click();
+  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect.poll(() => hash(page)).toBe("#/");
+});
+
+test("адрес, поставленный на место текущей записи, не сбивает счёт шагов: приложение не уходит за свою историю", async ({ page }) => {
+  // Ревью 2a, круг 2, LOW 3: после `location.replace` возврат по истории перелетал на about:blank.
+  await loadDemo(page);
+  await tab(page, "Операции").click();
+  await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
+  await page.evaluate(() => { window.location.replace("#/reports"); });
+  await expect(page.getByRole("heading", { level: 1, name: "Отчёты" })).toBeVisible();
+  await tab(page, "Ещё").click();
+  await page.getByRole("button", { name: /^План на год/u }).click();
+  await expect(page.getByRole("heading", { name: /Плана хватает/u })).toBeVisible();
+  await tab(page, "Обзор").click();
+  await expect(page.locator(".hero-card")).toBeVisible();
+  expect(page.url()).not.toContain("about:blank");
+  expect(await hash(page)).toBe("#/");
+  // «Назад» с корня — прочь из приложения, а не на чужую запись внутри него.
+  await tab(page, "Отчёты").click();
+  await back(page);
+  await expect(page.locator(".hero-card")).toBeVisible();
+});
+
 test("ссылка на подэкран достраивает историю родителями, мусор в адресе — «Запись не найдена»", async ({ page }) => {
   await loadDemo(page);
   // Открытие по ссылке — новая загрузка страницы, а не переход по якорю внутри открытой.

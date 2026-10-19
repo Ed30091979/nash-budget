@@ -32,8 +32,10 @@ import {
  * ней, не заглядывая в чужие записи. Цепочки обязаны оставаться правдой и для записей «вперёд»,
  * поэтому история меняется только наращиванием: вернуться по истории к последней общей записи и
  * положить остальное (`pushState` отрезает всё, что было впереди). Запись на месте не заменяется
- * никогда, кроме той, что только что появилась (адрес, набранный руками), и первой при запуске:
- * замена оставила бы впереди записи, чьи цепочки описывают уже не то, что под ними (ревью 2a, п. 5).
+ * никогда, кроме той, что только что появилась (адрес, набранный руками), той, что чужой код
+ * поставил на место нашей, и первой при запуске: замена оставила бы впереди записи, чьи цепочки
+ * описывают уже не то, что под ними (ревью 2a, п. 5). Каждый переход по истории, начатый роутером,
+ * ждёт свой `popstate` не дольше `TRAVERSAL_TIMEOUT_MS`.
  * Несохранённый черновик спрашивается синхронно в момент нажатия (`NavigationGuard`); системное
  * «Назад» с черновиком возвращает адрес на место и задаёт тот же вопрос.
  */
@@ -42,6 +44,13 @@ const STATE_MARK = "nash-budget/route";
 const ROOT_KEY = routeKey(ROOT_ROUTE);
 /** Сколько раз подряд роутер вернётся по истории, пока цепочка не сойдётся. Больше — не ходить вслепую. */
 const MAX_TRAVERSALS = 8;
+/**
+ * How long a traversal the router started may go without its `popstate`. None comes when the
+ * entry is not there — no entries below in a standalone window or the Android WebView, a count
+ * thrown off by an entry someone replaced — and the router must not wait for it forever with every
+ * later tap queued behind it (review of 2a, round 2, LOW 3).
+ */
+const TRAVERSAL_TIMEOUT_MS = 500;
 
 interface EntryState {
   readonly mark: typeof STATE_MARK;
@@ -70,6 +79,8 @@ function stateOf(stack: readonly string[]): EntryState {
 /** То, что роутеру нужно от `window.history`; в проверках — поддельная история. */
 export interface HistoryLike {
   readonly state: unknown;
+  /** Entries in this tab's history: tells a typed address that pushed an entry from one that replaced it. */
+  readonly length: number;
   scrollRestoration?: ScrollRestoration;
   pushState(data: unknown, unused: string, url?: string | null): void;
   replaceState(data: unknown, unused: string, url?: string | null): void;
@@ -143,6 +154,7 @@ export function memoryRouterWindow(hash = ""): RouterWindow {
     location: { get hash() { return entries[index]?.hash ?? ""; } },
     history: {
       get state() { return entries[index]?.state ?? null; },
+      get length() { return entries.length; },
       pushState(state, _unused, url) {
         entries.splice(index + 1, entries.length, { state, hash: url ?? entries[index]?.hash ?? "" });
         index += 1;
@@ -169,8 +181,17 @@ export function createRouter(options: RouterOptions): Router {
   let route: Route = forReload(parseRoute(frame.location.hash).route);
   let stack: readonly string[] = [ROOT_KEY];
   /** Переход по истории, начатый самим роутером: его `popstate` вопроса о черновике не задаёт. */
-  let pending: { readonly expected: readonly string[]; readonly arrive: () => void } | null = null;
+  let pending: {
+    readonly delta: number;
+    readonly expected: readonly string[];
+    readonly arrive: () => void;
+    readonly timer: ReturnType<typeof setTimeout>;
+  } | null = null;
   let queued: (() => void) | null = null;
+  /** `history.length`, каким роутер его оставил, и сколько записей впереди текущей. */
+  let knownLength = 0;
+  let ahead = 0;
+  const observe = () => { knownLength = frame.history.length; };
 
   const notify = () => {
     for (const listener of [...listeners]) listener();
@@ -190,11 +211,38 @@ export function createRouter(options: RouterOptions): Router {
   const pushFrom = (chain: readonly string[], from: number) => {
     for (let index = from; index < chain.length; index += 1) {
       frame.history.pushState(stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY);
+      ahead = 0;
     }
+    observe();
   };
-  /** Заменить текущую запись — только ту, над которой ничего нет: новую или первую при запуске. */
+  /**
+   * Заменить текущую запись — только ту, чья цепочка от этого не станет неправдой для записей
+   * впереди: новую, первую при запуске, или ту, что кто-то заменил чужой.
+   */
   const replaceCurrent = (chain: readonly string[]) => {
     frame.history.replaceState(stateOf(chain), "", chain[chain.length - 1] ?? ROOT_KEY);
+    observe();
+  };
+
+  const runQueued = () => {
+    const next = queued;
+    queued = null;
+    next?.();
+  };
+
+  /**
+   * Пройти по истории на `delta` и по приходу выполнить `arrive`. Если `popstate` так и не пришёл —
+   * записи там нет, — `stalled`: роутер перестаёт ждать, и очередь переходов не застревает.
+   */
+  const traverse = (delta: number, expected: readonly string[], arrive: () => void, stalled: () => void) => {
+    const timer = setTimeout(() => {
+      if (pending === null || pending.timer !== timer) return;
+      pending = null;
+      stalled();
+      runQueued();
+    }, TRAVERSAL_TIMEOUT_MS);
+    pending = { delta, expected, arrive, timer };
+    frame.history.go(delta);
   };
 
   /** Цепочка записей, которой история должна стать, чтобы показать `target`. */
@@ -227,20 +275,18 @@ export function createRouter(options: RouterOptions): Router {
       commit(chain);
       return;
     }
+    // История не сходится с цепочкой: вслепую по ней не ходить — нужный маршрут встаёт сверху.
+    const onTop = () => {
+      const top = [...stack, chain[chain.length - 1] ?? ROOT_KEY];
+      pushFrom(top, stack.length);
+      commit(top);
+    };
     if (shared === 0 || traversals >= MAX_TRAVERSALS) {
-      // История не сходится с цепочкой: вслепую по ней не ходить — нужный маршрут встаёт сверху.
-      const onTop = [...stack, chain[chain.length - 1] ?? ROOT_KEY];
-      pushFrom(onTop, stack.length);
-      commit(onTop);
+      onTop();
       return;
     }
     const landing = shared - 1;
-    const expected = stack.slice(0, landing + 1);
-    pending = {
-      expected,
-      arrive: () => apply(chain, traversals + 1),
-    };
-    frame.history.go(landing - (stack.length - 1));
+    traverse(landing - (stack.length - 1), stack.slice(0, landing + 1), () => apply(chain, traversals + 1), onTop);
   };
 
   /** Выполнить сейчас или, если история ещё едет, — сразу после неё. */
@@ -269,46 +315,78 @@ export function createRouter(options: RouterOptions): Router {
     perform(target, replace);
   };
 
-  const onPopState = () => {
-    const state = entryState(frame.history.state);
-    if (pending !== null) {
-      const arrival = pending;
-      pending = null;
-      // Цепочка — та, что несёт запись, куда пришли; без неё — та, что ожидалась.
-      stack = state?.stack ?? arrival.expected;
-      arrival.arrive();
-      const next = queued;
-      queued = null;
-      next?.();
-      return;
-    }
-    const parsed = parseRoute(frame.location.hash);
-    const landed = state?.stack ?? null;
+  /**
+   * Запись без нашего `state` — адрес набран руками, пришёл по старой ссылке или его заменил чужой
+   * код. Новая запись над текущей меняет `history.length` (кроме случая, когда она отрезала ровно
+   * одну запись впереди — тогда она всё равно скорее новая: так набирают адрес); замена — никогда.
+   */
+  const typedEntryWasPushed = () => frame.history.length !== knownLength || ahead === 1;
+
+  const onTypedEntry = (parsed: ReturnType<typeof parseRoute>) => {
+    const typed = forReload(parsed.route);
     const leaving = routeKey(route);
-    if (landed === null) {
-      // Запись не приложения: адрес набран руками или пришёл по старой ссылке. Она только что
-      // появилась над той, на которой стояли, — её заменить можно, и адрес набран как переход.
-      const typed = forReload(parsed.route);
-      const above = [...stack, options.guard?.blocks() ? leaving : routeKey(typed)];
-      replaceCurrent(above);
-      stack = above;
+    const pushed = typedEntryWasPushed();
+    const asked = () => options.guard?.confirm(() => {
+      perform(typed, false);
+      if (parsed.notFound) options.onNotFound?.();
+    });
+    if (!pushed) {
+      // Чужая запись встала на место нашей: наша возвращается на место, и адрес — та же просьба
+      // перейти. Записи впереди и цепочки под ней остаются правдой (ревью 2a, круг 2, LOW 3).
+      replaceCurrent(stack);
       if (options.guard?.blocks()) {
-        // С черновиком набранный адрес — та же просьба уйти: адрес возвращается, вопрос задаётся.
-        options.guard.confirm(() => {
-          perform(typed, false);
-          if (parsed.notFound) options.onNotFound?.();
-        });
+        asked();
         return;
       }
       if (parsed.notFound) options.onNotFound?.();
       apply(chainFor(typed, false));
       return;
     }
+    ahead = 0;
+    if (options.guard?.blocks()) {
+      // С черновиком набранный адрес — та же просьба уйти. Новая запись становится правдивой копией
+      // той, с которой уходят, и роутер возвращается на шаг назад, на саму эту запись: копия
+      // остаётся впереди, а «Назад» с экрана ведёт к его родителю, а не на копию (ревью 2a, круг 2, LOW 2).
+      const below = stack;
+      const copy = [...below, leaving];
+      replaceCurrent(copy);
+      stack = copy;
+      traverse(-1, below, () => undefined, () => undefined);
+      asked();
+      return;
+    }
+    const above = [...stack, routeKey(typed)];
+    replaceCurrent(above);
+    stack = above;
+    if (parsed.notFound) options.onNotFound?.();
+    apply(chainFor(typed, false));
+  };
+
+  const onPopState = () => {
+    const state = entryState(frame.history.state);
+    if (pending !== null) {
+      const arrival = pending;
+      pending = null;
+      clearTimeout(arrival.timer);
+      ahead = Math.max(0, ahead - arrival.delta);
+      // Цепочка — та, что несёт запись, куда пришли; без неё — та, что ожидалась.
+      stack = state?.stack ?? arrival.expected;
+      arrival.arrive();
+      runQueued();
+      return;
+    }
+    const parsed = parseRoute(frame.location.hash);
+    const landed = state?.stack ?? null;
+    if (landed === null) {
+      onTypedEntry(parsed);
+      return;
+    }
+    ahead = Math.max(0, ahead - (landed.length - stack.length));
     if (options.guard?.blocks()) {
       // Системное «Назад» или «Вперёд» с несохранённым черновиком: адрес возвращается в историю
       // поверх записи, куда пришли, и человек отвечает на тот же вопрос, что и при нажатии на вкладку.
-      const restored = [...landed, leaving];
-      frame.history.pushState(stateOf(restored), "", leaving);
+      const restored = [...landed, routeKey(route)];
+      pushFrom(restored, landed.length);
       stack = restored;
       options.guard.confirm(() => whenSettled(() => apply(landed)));
       return;
@@ -344,6 +422,9 @@ export function createRouter(options: RouterOptions): Router {
       pushFrom(chain, 1);
       stack = chain;
     }
+    // Что впереди после перезагрузки, роутер не знает; длину истории — знает.
+    ahead = 0;
+    observe();
     route = target;
     frame.addEventListener("popstate", onPopState);
     frame.addEventListener("hashchange", onHashChange);

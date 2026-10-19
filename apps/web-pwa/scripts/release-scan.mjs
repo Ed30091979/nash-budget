@@ -210,16 +210,16 @@ function topLevelArguments(text, start) {
 
 /**
  * The history calls the app is allowed to make, pinned by number. They are the
- * hash router's own (src/navigation/router.ts): the push that grows history,
- * the re-push that puts an address back when a draft holds Back, and the
- * replace of an entry that has nothing above it. memoryRouterWindow, the
+ * hash router's own (src/navigation/router.ts): the push that grows history
+ * (also the re-push that puts an address back when a draft holds Back), and
+ * the replace of an entry that has nothing above it. memoryRouterWindow, the
  * in-memory history the shell renders with when there is no window, defines
  * one method of each name. A new call site, a new definition, or the names
  * appearing in any other form (`history["pushState"]`, `.pushState.call`,
  * destructuring) changes these numbers, and changing them must be a deliberate
  * edit here, next to the reason (docs/SECURITY.md, "The app's address").
  */
-const HISTORY_CALL_SITES = { pushState: 2, replaceState: 1 };
+const HISTORY_CALL_SITES = { pushState: 1, replaceState: 1 };
 const HISTORY_METHOD_DEFINITIONS = { pushState: 1, replaceState: 1 };
 const HISTORY_TRAVERSALS = 1;
 

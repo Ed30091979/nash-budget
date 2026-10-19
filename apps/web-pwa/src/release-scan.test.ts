@@ -40,7 +40,7 @@ const ROUTER_BUNDLE =
   "replaceState(e,n,i){t[r]={state:e,hash:i??t[r]?.hash??``}},go(e){let i=r+e;i<0||i>=t.length||i===r||(r=i)}}}}" +
   "function kS(e){let{window:t}=e,i=[MS],l=(e,n)=>{for(let r=n;r<e.length;r+=1)t.history.pushState(FS(e.slice(0,r+1)),``,e[r]??MS)}," +
   "u=e=>{t.history.replaceState(FS(e),``,e[e.length-1]??MS)},f=(e,n)=>{let o=n-1;t.history.go(o-(i.length-1))}," +
-  "g=(l,h)=>{let n=[...l,h];t.history.pushState(FS(n),``,h),i=n},s=_S(t.location.hash);return{l,u,f,g,s}}";
+  "s=_S(t.location.hash);return{l,u,f,s}}";
 
 function createScanFixture(): ScanFixture {
   const root = mkdtempSync(join(tmpdir(), "family-budget-release-scan-test-"));
@@ -189,13 +189,13 @@ describe("production release scanner", () => {
   });
 
   it.each([
-    ["state written as a literal", "t.history.pushState(FS(n),``,h)", "t.history.pushState({mark:`nash-budget/route`,stack:n,amount:a},``,h)"],
-    ["an address concatenated", "t.history.pushState(FS(n),``,h)", 't.history.pushState(FS(n),``,"#/new?edit="+h)'],
-    ["an address interpolated", "t.history.pushState(FS(n),``,h)", "t.history.pushState(FS(n),``,`#/new?note=${h}`)"],
+    ["state written as a literal", "t.history.pushState(FS(e.slice(0,r+1)),``,e[r]??MS)", "t.history.pushState({mark:`nash-budget/route`,stack:e,amount:a},``,e[r]??MS)"],
+    ["an address concatenated", "t.history.pushState(FS(e.slice(0,r+1)),``,e[r]??MS)", 't.history.pushState(FS(e.slice(0,r+1)),``,"#/new?edit="+e[r])'],
+    ["an address interpolated", "t.history.pushState(FS(e.slice(0,r+1)),``,e[r]??MS)", "t.history.pushState(FS(e.slice(0,r+1)),``,`#/new?note=${e[r]}`)"],
     ["an address that is a literal", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", 't.history.replaceState(FS(e),``,"#/spent")'],
     ["a title that is not empty", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", 't.history.replaceState(FS(e),"кофе",e[e.length-1]??MS)'],
-    ["a call site fewer", "t.history.pushState(FS(n),``,h),", ""],
-    ["a call site more", "t.history.pushState(FS(n),``,h),", "t.history.pushState(FS(n),``,h),t.history.pushState(FS(n),``,h),"],
+    ["a call site fewer", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", "void 0"],
+    ["a call site more", "t.history.replaceState(FS(e),``,e[e.length-1]??MS)", "t.history.replaceState(FS(e),``,e[e.length-1]??MS),t.history.pushState(FS(e),``,e[0]??MS)"],
   ])("rejects a router whose history calls changed: %s", (_label, original, changed) => {
     const fixture = createScanFixture();
     expect(ROUTER_BUNDLE).toContain(original);
