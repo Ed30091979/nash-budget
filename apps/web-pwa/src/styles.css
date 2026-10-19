@@ -912,20 +912,30 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .month-switch { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }
 .month-switch h1 { margin: 0; text-align: center; }
 .month-switch > button { display: grid; width: 48px; height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
-.overview-totals { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-end; justify-content: space-between; margin: 0; }
+/* Итоги шапки — одна колонка по левому краю: «Всего на счетах» крупно, под ним за тонкой линией —
+   вторичный блок «Потрачено N», а под ним «по лимитам N из M». Прежде «Потрачено» стоял правой
+   колонкой и, не уместившись рядом с итогом, падал строкой ниже по центру — оторванным от всего.
+   Одна колонка держит и 320 pt, и ×2.7: строки переносятся, а не съезжают (2c, п. 7). */
+.overview-totals { display: grid; min-width: 0; gap: 8px; margin: 0; }
 .overview-totals > div { min-width: 0; }
-.overview-totals > div:last-child { text-align: right; }
 .overview-totals dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .overview-totals dd { margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 .overview-totals .overview-total { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; }
-/* «по лимитам N из M» под «Потрачено»: чернила приглушения на белом — 7.16:1 (§3). */
-.overview-totals .overview-limits { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.overview-spent { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--border); }
+.overview-spent > dt { color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); }
+/* «по лимитам N из M» — своей строкой под «Потрачено»: чернила приглушения на холсте — 6.07:1 (§3). */
+.overview-totals .overview-limits { flex-basis: 100%; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .overview-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .overview-note .icon { color: var(--amber-ink); }
 .pick-hint { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .tile-section { min-width: 0; }
 /* §4 Кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ» — капс-метка, одно из трёх мест, где капс есть. */
 .row-kicker { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+/* Кикер ряда и «Изменить» справа (§5.1: у каждого ряда — «Изменить», ничего только долгим нажатием).
+   Цель 48 при тихой кнопке; поле справа отдано кольцу фокуса. */
+.row-head { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.row-head > .row-kicker { margin: 0; }
+.row-head > .row-edit { min-height: 48px; padding: 0 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); }
 
 /* §6 Строка «Можно на повседневные» — карточка-переход в «План месяца»: глиф состояния, число, голос. */
 .card { border-radius: var(--radius-card); }
@@ -1203,7 +1213,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .from-to { grid-template-columns: minmax(0, 1fr); }
   /* Стрелка поворачивается глифом, а не коробкой: коробка во всю ширину, повёрнутая, легла бы на плитки. */
   .from-to-arrow .icon { transform: rotate(90deg); }
-  .overview-totals > div:last-child { text-align: left; }
   .tag-new { grid-template-columns: minmax(0, 1fr); }
 }
 

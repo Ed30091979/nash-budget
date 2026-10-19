@@ -53,6 +53,7 @@ function renderOverview(state: BudgetState, today: string) {
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
       onPlan={() => undefined}
+      onEdit={() => undefined}
     />,
   );
   const hero = heroOf(markup);

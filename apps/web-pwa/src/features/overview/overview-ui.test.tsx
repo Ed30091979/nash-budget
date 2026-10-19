@@ -37,6 +37,7 @@ function propsFor(budget: BudgetState, overrides: Partial<OverviewScreenProps> =
     onOpenSheet: vi.fn(),
     onAddCategory: vi.fn(),
     onPlan: vi.fn(),
+    onEdit: vi.fn(),
     ...overrides,
   };
 }

@@ -38,6 +38,7 @@ function renderOverview(state: BudgetState, today: string, familyNews: readonly 
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
       onPlan={() => undefined}
+      onEdit={() => undefined}
     />,
   );
 }

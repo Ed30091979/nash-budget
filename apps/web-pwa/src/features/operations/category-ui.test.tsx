@@ -63,6 +63,7 @@ function overviewMarkup(state: BudgetState = fullCatalogue()): string {
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
       onPlan={vi.fn()}
+      onEdit={vi.fn()}
     />,
   );
 }
