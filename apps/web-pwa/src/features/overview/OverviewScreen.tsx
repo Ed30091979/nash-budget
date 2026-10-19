@@ -52,7 +52,7 @@ export interface OverviewScreenProps {
 }
 
 /**
- * «Обзор» (план волны 2, §1.1): месяц, «Всего на счетах», «Потрачено N из M», строка «Можно на
+ * «Обзор» (план волны 2, §1.1): месяц, «Всего на счетах», «Потрачено N» (по лимитам — «N из M»), строка «Можно на
  * повседневные» и три ряда плиток — доходы, счета, расходы. Касание — основной путь; выбор и его
  * следующий шаг решает автомат `pick-model.ts`, а подсказка говорит их словами в `role="status"`.
  */
@@ -118,9 +118,12 @@ export function OverviewScreen({
             <dt>Всего на счетах</dt>
             <dd className="overview-total"><Money value={model.totalInBaseMinor} breakDigits /></dd>
           </div>
+          {/* «Потрачено» — весь расход месяца, тот же, что в «Отчётах»; расход по лимитам против их
+              суммы — другое число, и у него своя подпись (ревью 2b, MEDIUM-8). */}
           <div>
             <dt>Потрачено</dt>
-            <dd>{spentLimited ? <><Money value={model.spentWithLimitMinor} /> из <Money value={model.limitsMinor ?? 0} /></> : <Money value={model.spentMinor} />}</dd>
+            <dd><Money value={model.spentMinor} /></dd>
+            {spentLimited ? <dd className="overview-limits">по лимитам <Money value={model.spentWithLimitMinor} /> из <Money value={model.limitsMinor ?? 0} /></dd> : null}
           </div>
         </dl>
         {model.unvaluedAccounts.length > 0 ? (

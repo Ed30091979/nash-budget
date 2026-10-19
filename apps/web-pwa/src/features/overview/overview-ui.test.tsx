@@ -1,7 +1,10 @@
-import { calculateAnnualPlan, makePlanningSeed, PLANNING_IDS, type BudgetState } from "@family-budget/domain";
+import { calculateAnnualPlan, calculateBudget, makePlanningSeed, PLANNING_IDS, type BudgetState } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BaseCurrencyProvider } from "../../components/Money";
+import { formatMoney } from "../../money";
+import { buildDemoBudgetState } from "../../onboarding/demo";
+import { categorySpend } from "../reports/ReportsScreen";
 import { periodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
 import { OverviewScreen, type OverviewScreenProps } from "./OverviewScreen";
@@ -50,7 +53,8 @@ describe("«Обзор»: разметка", () => {
     expect(markup).toContain('aria-label="Следующий месяц: август 2026"');
     const text = plain(markup);
     expect(text).toContain("Всего на счетах");
-    expect(text).toContain("Потрачено26 000 ₽ из 53 000 ₽");
+    // «Потрачено» — весь расход месяца; доля по лимитам — своей подписью (MEDIUM-8).
+    expect(text).toContain("Потрачено71 000 ₽по лимитам 26 000 ₽ из 53 000 ₽");
     expect(text).toContain("Можно на повседневные27 000 ₽");
     expect(markup).toMatch(/class="card reach-line [a-z]+"/u);
     // Одно число в строке — то, что ищут проверки и e2e (`.reach-line strong`).
@@ -126,5 +130,30 @@ describe("«Обзор»: месяц на краю календаря", () => {
     expect(last).toMatch(/<button class="month-arrow" type="button" disabled="" aria-label="Следующий месяц: нет — позже 2199 года месяцев нет">/u);
     expect(() => render({ month: "1900-01" })).not.toThrow();
     expect(() => render({ month: "2199-12" })).not.toThrow();
+  });
+});
+
+describe("«Обзор»: «Потрачено» — весь расход месяца", () => {
+  it("демо, октябрь 2026: 71 000 ₽ — столько же, сколько в «Отчётах»; по лимитам — 26 000 из 53 000 под своей подписью", () => {
+    // Ревью 2b, MEDIUM-8: шапка говорила «Потрачено 26 000 ₽ из 53 000 ₽», а расход октября —
+    // 71 000 ₽ (Жильё 45 000 + Продукты 22 000 + Транспорт 4 000). Слово «Потрачено» читают как весь
+    // расход; доля лимитов — другое число и названа словами «по лимитам».
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    const active = demo.budgets.find((item) => item.id === demo.activeBudgetId)!;
+    const plan = calculateAnnualPlan(demo, active.startDate.slice(0, 7), 24);
+    const markup = renderToStaticMarkup(<OverviewScreen {...propsFor(demo, {
+      today,
+      month: "2026-10",
+      clock: periodClock(active, [], today),
+      flexiblePlanMinor: plan.currentMonth.flexiblePlanMinor,
+    })} />);
+    const totals = plain(/<dl class="overview-totals">[\s\S]*?<\/dl>/u.exec(markup)?.[0] ?? "");
+    const reports = categorySpend(demo, calculateBudget(demo)).reduce((sum, row) => sum + row.spentMinor, 0);
+    expect(reports).toBe(7_100_000);
+    expect(calculateBudget(demo).expensesMinor).toBe(reports);
+    expect(totals).toContain(`Потрачено${plain(formatMoney(reports))}`);
+    expect(totals).toContain("по лимитам 26 000 ₽ из 53 000 ₽");
+    expect(plain(markup)).toContain("Можно на повседневные27 000 ₽");
   });
 });

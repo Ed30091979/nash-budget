@@ -72,10 +72,10 @@ export interface OverviewModel {
   readonly totalInBaseMinor: number;
   /** Счета, которые итог не смог оценить: нет курса или сумма не представима. */
   readonly unvaluedAccounts: readonly AccountTile[];
-  /** «Потрачено N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
+  /** «по лимитам N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
   readonly spentWithLimitMinor: number;
   readonly limitsMinor: number | null;
-  /** Весь расход месяца — когда лимитов нет, «Потрачено» называет его. */
+  /** «Потрачено» — весь расход месяца, тот же, что в «Отчётах» (`calculateBudget(...).expensesMinor`). */
   readonly spentMinor: number;
   readonly incomes: readonly IncomeTile[];
   readonly accounts: readonly AccountTile[];
