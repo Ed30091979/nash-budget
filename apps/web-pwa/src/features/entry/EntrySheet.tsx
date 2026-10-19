@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type Keyb
 import { baseCurrencyOf, type BudgetState, type ExchangeRateDraft, type Transaction } from "@family-budget/domain";
 import { AddCategorySheet, ENTRY_CATEGORY_DESCRIPTION } from "../overview/AddCategorySheet";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
-import { Icon } from "../../components/Icon";
+import { Icon, type IconName } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import { useDraftGuard } from "../../navigation/draft-guard";
@@ -12,10 +12,14 @@ import { Keypad, useKeypadAvailable } from "../operations/Keypad";
 import { operationLabel } from "../operations/transaction-words";
 import { currencySign, RateQuickSheet } from "../rates/RateQuickSheet";
 import { DateChips } from "./DateChips";
+import { formatDay } from "../../date-words";
 import {
+  dateChoice,
   draftCurrency,
   draftExponent,
   effectLine,
+  effectTone,
+  type EffectTone,
   foreignValue,
   foreignValueLine,
   MODE_LABELS,
@@ -96,6 +100,23 @@ export function isolateSiblings(element: Pick<HTMLElement, "parentElement">): ()
   };
 }
 
+/**
+ * Плашка «останется» (DESIGN 5.0 §6, макет 07): глиф и слово состояния — «Почти лимит:» перед строкой;
+ * перелимит строка называет сама («будет перелимит N ₽»). Цвет — третьим: янтарь и красный.
+ */
+const EFFECT_PLATES: Readonly<Record<EffectTone, { readonly icon: IconName; readonly word: string | null }>> = {
+  normal: { icon: "circle-check", word: null },
+  near: { icon: "triangle-alert", word: "Почти лимит:" },
+  over: { icon: "circle-alert", word: null },
+  account: { icon: "wallet", word: null },
+};
+
+/** День операции словом — подпись чипа даты в свёрнутой строке короткого экрана. */
+function dayWord(occurredOn: string, today: string): string {
+  const choice = dateChoice(occurredOn, today);
+  return choice === "today" ? "Сегодня" : choice === "yesterday" ? "Вчера" : occurredOn === "" ? "Другой день" : formatDay(occurredOn);
+}
+
 /** Что произносит клавиатура суммы после нажатия: набранное, а у выражения — и его итог. */
 function spokenAmount(text: string, minor: number | null, currency: string): string {
   if (text === "") return "Сумма пуста";
@@ -129,6 +150,8 @@ export function EntrySheet(props: EntrySheetProps) {
   const [confirmRefund, setConfirmRefund] = useState(false);
   const focusRefund = useRef(false);
   const [creating, setCreating] = useState<{ readonly side: EndpointSide; readonly type: "expense" | "income" } | null>(null);
+  // Короткий экран (ниже 700 pt): дата, комментарий и метки свёрнуты в строку, пока их не открыли.
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const shownPicker = useRef<EndpointSide | null>(null);
 
   useDraftGuard({
@@ -180,6 +203,8 @@ export function EntrySheet(props: EntrySheetProps) {
   const amount = evaluateAmount(draft.amount, exponent);
   const minor = amount.kind === "value" ? amount.minor : null;
   const effect = effectLine(budget, draft, today);
+  const tone = effectTone(budget, draft, today);
+  const plate = tone === null ? null : EFFECT_PLATES[tone];
   const outside = outsidePlanHint(budget, draft);
   const value = foreignValue(budget, draft);
   const valueLine = foreignValueLine(value);
@@ -298,8 +323,10 @@ export function EntrySheet(props: EntrySheetProps) {
           <div className="sheet-head">
             <button className="sheet-close" type="button" aria-label="Закрыть" onClick={onClose}><Icon name="x" size={24} /></button>
             <h2 id={ENTRY_SHEET_TITLE_ID} className="visually-hidden">{title}</h2>
+            {/* С «+» вид выбирают сегментом «Расход / Доход / Перевод»; с плитки он уже решён касаниями
+                и назван словом по центру. Справа — место под «Повторять» (регулярные — подволна 2e). */}
             {modeSwitch && draft.editId === null && draft.mode !== "refund" ? (
-              <div className="chip-row mode-switch" role="group" aria-label="Вид операции">
+              <div className="mode-switch" role="group" aria-label="Вид операции">
                 {SWITCHABLE.map((mode) => (
                   <button key={mode} className="chip" type="button" aria-pressed={draft.mode === mode} onClick={() => patch((current) => switchMode(budget, current, mode))}>
                     <span className="chip-face">{MODE_LABELS[mode]}</span>
@@ -307,6 +334,7 @@ export function EntrySheet(props: EntrySheetProps) {
                 ))}
               </div>
             ) : <p className="eyebrow sheet-kind" aria-hidden="true">{draft.editId === null ? MODE_LABELS[draft.mode] : `${MODE_LABELS[draft.mode]} · правка`}</p>}
+            <span className="sheet-head-end" aria-hidden="true" />
           </div>
 
           <div className="sheet-body">
@@ -327,23 +355,32 @@ export function EntrySheet(props: EntrySheetProps) {
             ) : <>
               <FromToTiles budget={budget} draft={draft} balances={balances} onPick={setPicker} />
               <div className="field entry-amount-field">
-                <label htmlFor="entry-amount">Сумма, {sign}</label>
+                <label htmlFor="entry-amount" className="visually-hidden">Сумма, {sign}</label>
                 {/* Поле настоящее: `inputmode="none"` просит не поднимать системную клавиатуру, и
-                    только. Физическая клавиатура, вставка и диктор работают как в любом поле. */}
-                <input
-                  ref={amountRef}
-                  id="entry-amount"
-                  inputMode={keypad ? "none" : "decimal"}
-                  autoComplete="off"
-                  maxLength={24}
-                  placeholder="0"
-                  value={draft.amount}
-                  aria-describedby={effect !== null ? "entry-effect" : undefined}
-                  onChange={(event) => patch((current) => ({ ...current, amount: event.target.value }))}
-                />
+                    только. Физическая клавиатура, вставка и диктор работают как в любом поле. Рамки у
+                    него нет — сумма стоит героем с кареткой, знак валюты светлее цифр рядом с ней. */}
+                <div className="entry-amount-row">
+                  <input
+                    ref={amountRef}
+                    id="entry-amount"
+                    inputMode={keypad ? "none" : "decimal"}
+                    autoComplete="off"
+                    maxLength={24}
+                    placeholder="0"
+                    value={draft.amount}
+                    aria-describedby={effect !== null ? "entry-state" : undefined}
+                    onChange={(event) => patch((current) => ({ ...current, amount: event.target.value }))}
+                  />
+                  <span className="entry-amount-sign" aria-hidden="true">{sign}</span>
+                </div>
                 {amount.kind === "value" && amount.compound ? <output htmlFor="entry-amount" className="amount-total">= <Money value={amount.minor} currency={currency} /></output> : null}
               </div>
-              {effect !== null ? <p className="entry-effect" id="entry-effect">{effect}</p> : null}
+              {effect !== null && plate !== null ? (
+                <div className={`entry-state ${tone ?? "normal"}`} id="entry-state">
+                  <Icon name={plate.icon} size={20} />
+                  <p>{plate.word === null ? null : <><b>{plate.word}</b> </>}<span className="entry-effect" id="entry-effect">{effect}</span></p>
+                </div>
+              ) : null}
               {outside !== null ? <p className="field-hint entry-outside" role="status">{outside}</p> : null}
 
               {value.kind === "missing" ? (
@@ -378,9 +415,23 @@ export function EntrySheet(props: EntrySheetProps) {
                 </div>
               ) : null}
 
-              <DateChips value={draft.occurredOn} today={today} onChange={(date) => patch((current) => ({ ...current, occurredOn: date }))} />
-              <NoteField value={draft.note} onChange={(note) => patch((current) => ({ ...current, note }))} />
-              <TagChips budget={budget} draft={draft} onChange={patch} />
+              {/* Ниже 700 pt высоты дата, комментарий и метки — одной строкой, пока их не открыли:
+                  клавиатура и «Записать» остаются на экране целиком (макет 07, 320×640). */}
+              <div className="entry-more-row">
+                {/* День операции — тем же видом, что выбранный чип даты: он и есть выбранное. Касание
+                    открывает дату, комментарий и метки целиком. */}
+                <button className="chip chip-current" type="button" aria-expanded={extrasOpen} aria-controls="entry-extras" onClick={() => setExtrasOpen((open) => !open)}>
+                  <span className="chip-face">{dayWord(draft.occurredOn, today)}</span>
+                </button>
+                <button className="chip" type="button" aria-expanded={extrasOpen} aria-controls="entry-extras" onClick={() => setExtrasOpen((open) => !open)}>
+                  <span className="chip-face"><Icon name="pencil" size={20} />Комментарий, метки</span>
+                </button>
+              </div>
+              <div className="entry-extras" id="entry-extras" data-open={extrasOpen ? "true" : undefined}>
+                <DateChips value={draft.occurredOn} today={today} onChange={(date) => patch((current) => ({ ...current, occurredOn: date }))} />
+                <NoteField value={draft.note} onChange={(note) => patch((current) => ({ ...current, note }))} />
+                <TagChips budget={budget} draft={draft} onChange={patch} />
+              </div>
 
               {editing !== null && draft.editId === editing.id ? (
                 <div className="entry-edit-actions">

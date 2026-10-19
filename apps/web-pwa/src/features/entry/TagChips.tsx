@@ -1,5 +1,6 @@
 import { useState, type KeyboardEvent } from "react";
 import { MAX_TAGS_PER_TRANSACTION, TAG_NAME_MAX_LENGTH, type BudgetState } from "@family-budget/domain";
+import { Icon } from "../../components/Icon";
 import { plainInputValue } from "../../plain-text";
 import { frequentTags, tagRoom, type EntryDraft } from "./entry-model";
 
@@ -33,19 +34,19 @@ export function TagChips({ budget, draft, onChange }: { readonly budget: BudgetS
   };
   return (
     <fieldset className="tag-chips">
-      <legend>Метки</legend>
+      <legend className="visually-hidden">Метки</legend>
       <div className="chip-row">
         {shown.map((id) => (
           <button key={id} className="chip" type="button" aria-pressed={draft.tagIds.includes(id)} onClick={() => toggle(id)}>
-            <span className="chip-face"><bdi dir="auto">{known.get(id) ?? "метка"}</bdi></span>
+            <span className="chip-face"><Icon name="hash" size={20} /><bdi dir="auto">{known.get(id) ?? "метка"}</bdi></span>
           </button>
         ))}
         {draft.newTags.map((tag) => (
           <button key={`new:${tag}`} className="chip" type="button" aria-pressed="true" aria-label={`Новая метка «${tag}», убрать`} onClick={() => onChange((current) => ({ ...current, newTags: current.newTags.filter((item) => item !== tag) }))}>
-            <span className="chip-face"><bdi dir="auto">{tag}</bdi></span>
+            <span className="chip-face"><Icon name="hash" size={20} /><bdi dir="auto">{tag}</bdi></span>
           </button>
         ))}
-        {room > 0 && !adding ? <button className="chip add-chip" type="button" aria-expanded={false} onClick={() => setAdding(true)}><span className="chip-face">+ метка</span></button> : null}
+        {room > 0 && !adding ? <button className="chip add-chip" type="button" aria-expanded={false} onClick={() => setAdding(true)}><span className="chip-face"><Icon name="plus" size={20} /><span className="visually-hidden">+ </span>метка</span></button> : null}
       </div>
       {adding ? <div className="tag-new">
         <div className="field">

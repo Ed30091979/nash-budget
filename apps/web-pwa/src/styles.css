@@ -638,7 +638,7 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
    Цифры — кегль заголовка весом 700, знаки — 400 и `--ink-muted` (7.16:1): цифры набирают,
    знаки — реже, и вес это говорит. Ноль шире вдвое, как на калькуляторе. */
 .keypad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-display); line-height: var(--lh-display); font-weight: 700; background: var(--surface-sunken); border: 0; border-radius: var(--radius-control); }
 .keypad button.key-wide { grid-column: span 2; }
 .keypad button.key-op { color: var(--ink-muted); font-weight: 400; }
 /* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
@@ -1060,30 +1060,65 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 
 /* §6 Лист ввода суммы — поверх экрана, с которого его открыли. Висит над краем экрана на 8 pt
    со всех сторон: скругление листа — роль, и у края оно тоже видно. */
-.sheet-backdrop.entry-backdrop { padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+/* Лист ввода — лист снизу во всю ширину (5.0, макет 07): скругление роли листа сверху, низ стоит на
+   краю экрана, и безопасная зона снизу — внутри подвала, под кнопкой записи. */
+.sheet-backdrop.entry-backdrop { padding: 8px 0 0; }
+.entry-sheet { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.entry-sheet .sheet-foot { padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: calc(16px + env(safe-area-inset-bottom)); padding-left: max(16px, env(safe-area-inset-left)); }
 .sheet { display: flex; width: min(520px, 100%); min-height: 0; max-height: calc(100dvh - 16px); flex-direction: column; overflow: hidden; color: var(--ink); background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
 .sheet-form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.sheet-head { display: flex; gap: 8px; align-items: center; padding: 8px 12px 0; }
+/* Голова листа (5.0, макет 07): «Закрыть» 48 слева, по центру — сегмент вида или слово вида, справа —
+   место той же ширины, чтобы центр стоял по центру. */
+.sheet-head { display: flex; gap: 4px; align-items: center; padding: 8px 4px 0; }
 .sheet-head h2 { min-width: 0; margin: 0; }
-.sheet-head > button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: var(--surface-sunken); border: 0; border-radius: var(--radius-control); }
-.sheet-kind { margin: 0; }
+.sheet-head > button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
+.sheet-head-end { width: 48px; flex: none; }
+.sheet-head > .sheet-kind { flex: 1; min-width: 0; margin: 0; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; letter-spacing: 0; text-align: center; text-transform: none; }
 .sheet-body { display: grid; min-height: 0; flex: 1; gap: 12px; align-content: start; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px; }
 .sheet-body > p { margin: 0; }
-.sheet-foot { display: grid; gap: 8px; padding: 8px 16px 16px; border-top: 1px solid var(--border); }
+.sheet-foot { display: grid; gap: 8px; padding: 8px 16px 16px; }
 .entry-sheet .keypad button { min-height: 52px; }
-.from-to { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: 8px; align-items: stretch; }
+/* Карточки «откуда → куда»: на холсте, подложка 40 с глифом (графит счёта или тон категории), над
+   именем — короткое слово стороны. Вся карточка — цель нажатия, открывающая выбор стороны. */
+.from-to { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: 4px; align-items: stretch; }
 .from-to-arrow { display: grid; place-items: center; color: var(--ink-muted); pointer-events: none; }
-.tile.endpoint { min-height: 64px; justify-content: flex-start; gap: 2px; }
-.endpoint-word { color: var(--ink-muted); }
-.tile-account .endpoint-word, .tile-account .endpoint-balance { color: var(--on-tile-account-muted); }
+button.endpoint, .endpoint.fixed { display: flex; min-width: 0; min-height: 64px; gap: 10px; align-items: center; padding: 8px 10px; color: var(--ink); text-align: left; background: var(--canvas); border: 0; }
+/* Скруглено то, что нажимают (§5): карточка-кнопка — радиусом кнопки; неизменяемая сторона возврата —
+   плашка в потоке, прямая. */
+button.endpoint { border-radius: var(--radius-control); }
+.endpoint-plate { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border-radius: var(--radius-plate); }
+.endpoint-plate.account { color: var(--on-tile-account); background: var(--tile-account); }
+.endpoint-copy { display: grid; min-width: 0; }
+.endpoint-word { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .endpoint-name { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: manual; }
-.endpoint-balance { font-size: inherit; }
 /* The amount sticks to the edge of the scrolling body: on a short screen, typing never pushes it out of sight. */
+/* Сумма — героем без рамки, с кареткой цвета фокуса; знак валюты светлее цифр рядом с числом (§7.7).
+   Поле растёт по содержимому (`field-sizing`), и знак стоит сразу за суммой; без этой возможности
+   поле во всю ширину, а знак — справа. */
 .entry-amount-field { position: sticky; top: 0; bottom: 0; z-index: 1; background: var(--surface); }
-.entry-amount-field input { min-height: 68px; padding: 8px 12px; font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; }
-.entry-amount-field input::placeholder { font-weight: 400; }
+.entry-amount-row { display: flex; min-width: 0; align-items: baseline; justify-content: center; }
+.entry-amount-field input { min-width: 48px; min-height: 68px; padding: 8px 2px; color: var(--ink); font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; caret-color: var(--focus); background: transparent; border: 0; border-radius: var(--radius-input); }
+@supports (field-sizing: content) {
+  .entry-amount-field input { width: auto; max-width: 100%; field-sizing: content; }
+}
+@supports not (field-sizing: content) {
+  .entry-amount-field input { width: 100%; }
+}
+.entry-amount-field input::placeholder { color: var(--ink-muted); font-weight: 400; }
+.entry-amount-sign { flex: none; margin-left: 6px; color: var(--ink-muted); font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 400; }
 .entry-amount-field .amount-total { text-align: center; }
-.entry-effect, .entry-foreign > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); text-align: center; }
+.entry-foreign > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); text-align: center; }
+/* Плашка «останется»: глиф и слово состояния, плашка в потоке — прямая (§5). Норма и остаток счёта —
+   утопленная плашка с чернилами (15.19:1), «почти» — янтарь (5.23:1), перелимит — красный (5.82:1). */
+.entry-state { display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; color: var(--ink); background: var(--surface-sunken); --money-currency-ink: currentColor; }
+.entry-state.near { color: var(--amber-ink); background: var(--amber-soft); }
+.entry-state.over { color: var(--red-ink); background: var(--red-soft); }
+.entry-state .icon { flex: none; }
+.entry-state > p { margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* Строка «Сегодня · Комментарий, метки» — только на коротком экране, где дата, комментарий и метки
+   свёрнуты. На обычном она не нужна: всё и так на виду. */
+.entry-more-row { display: none; }
+.entry-extras { display: grid; min-width: 0; gap: 4px; }
 .entry-foreign { display: grid; gap: 4px; justify-items: center; }
 .entry-notice { display: grid; gap: 8px; margin: 0; padding: 12px; color: var(--amber-ink); background: var(--amber-soft); }
 .entry-notice > p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); }
@@ -1106,9 +1141,37 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
    целями 8 (§9). Выбранный чип — чернильная пилюля: выбор говорит ещё и `aria-pressed`. */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-grid; min-width: 48px; min-height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-pill); }
-.chip .chip-face { display: inline-flex; align-items: center; padding: 7px 14px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill); }
+.chip .chip-face { display: inline-flex; gap: 6px; align-items: center; padding: 6px 14px 6px 12px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill); }
 .chip[aria-pressed="true"] .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
-.add-chip .chip-face { color: var(--ink-muted); border-style: dashed; }
+.add-chip .chip-face { color: var(--ink); border-style: dashed; }
+/* ── Дизайн 5.0, R1: лист ввода (§6, макет 07). ──
+   Сегмент вида «Расход / Доход / Перевод» — пилюля на утопленной плоскости, выбранный — белый с тенью
+   пилюли (§6 «Сегмент-переключатель»). Те же кнопки-чипы с `aria-pressed`: выбор говорит и не цвет. */
+/* Цель — вся высота пилюли, 48; видимая пилюля выбранного — 40 внутри неё, с полем 4. */
+.mode-switch { display: flex; flex: 1; min-width: 0; gap: 4px; padding: 0 4px; background: var(--surface-sunken); border-radius: var(--radius-pill); }
+.mode-switch > .chip { flex: 1; min-width: 0; }
+.mode-switch > .chip .chip-face { justify-content: center; width: 100%; padding: 9px 6px; color: var(--ink-muted); background: transparent; border: 0; }
+.mode-switch > .chip[aria-pressed="true"] .chip-face { color: var(--ink); font-weight: 700; background: var(--surface); box-shadow: var(--shadow-pill); }
+/* Клавиши — на утопленной плоскости без рамки (опознаются цифрой: §3, «Запреты»), 52 в высоту. */
+.entry-submit { min-height: 52px; font-size: var(--size-title); line-height: var(--lh-title); }
+/* Узкий экран: слова «Со счёта / В категорию» прячутся, имя остаётся (макет 07, 320). */
+@media (max-width: 22.4375em) {
+  .endpoint-word { display: none; }
+  button.endpoint, .endpoint.fixed { gap: 8px; padding: 8px; }
+}
+/* Короткий экран (ниже 700 pt): подписи сторон спрятаны, карточки и клавиши ниже, дата, комментарий и
+   метки свёрнуты в одну строку — сумма, клавиатура и «Записать» целиком на экране (макет 07, 320×640). */
+@media (max-height: 43.75em) {
+  .endpoint-word { display: none; }
+  button.endpoint, .endpoint.fixed { min-height: 52px; padding: 6px 8px; }
+  .entry-amount-field input { min-height: 60px; padding-top: 4px; padding-bottom: 4px; }
+  .entry-more-row { display: flex; flex-wrap: wrap; gap: 0 6px; }
+  .entry-more-row .chip .chip-face { padding-right: 8px; padding-left: 8px; }
+  .entry-more-row .chip-current .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+  .entry-extras:not([data-open]) { display: none; }
+  .entry-sheet .keypad button { min-height: 48px; }
+  .sheet-body { gap: 8px; padding-top: 8px; }
+}
 /* Тост с действием и числом, которое сдвинула запись. */
 .message-toast { --money-currency-ink: currentColor; }
 .toast-actions { display: flex; flex-wrap: wrap; gap: 8px; }

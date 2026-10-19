@@ -120,7 +120,7 @@ describe("форма", () => {
   /** Метка-пилюля: её форма — часть роли «короткое слово о состоянии», а не приглашение нажать. */
   const pillLabels = new Set([".status-chip", ".network-badge", ".sync-badge", ".save-receipt-change", ".tile-badge", ".tile-square .tile-check"]);
   /** Оправа группы переключателей: сама не нажимается, но обнимает то, что нажимается. */
-  const controlHousings = new Set([".segmented", '.dashboard-screen > header [role="group"]']);
+  const controlHousings = new Set([".segmented", '.dashboard-screen > header [role="group"]', ".mode-switch"]);
   /** Токен роли → его значение по §5 и то, кому он достаётся. */
   const roles: Record<string, { readonly px: string; readonly owns: (selector: string) => boolean }> = {
     // Пилюля и оправа при системном шрифте ниже 18em выпрямляются в прямоугольник кнопки (§5).

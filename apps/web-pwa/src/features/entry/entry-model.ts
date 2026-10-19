@@ -30,7 +30,7 @@ import {
   type TransactionDraft,
 } from "../operations/model";
 import { kindLabels } from "../operations/transaction-words";
-import { defaultAccountOf } from "../overview/overview-model";
+import { defaultAccountOf, limitStatus } from "../overview/overview-model";
 import type { SheetRequest } from "../overview/pick-model";
 
 /**
@@ -530,6 +530,34 @@ function effectWords(state: BudgetState, draft: EntryDraft, today: string): stri
   return incoming
     ? `На счёте «${target.name}» станет ${formatMoney(balance + minor, target.currency)}`
     : `На счёте «${target.name}» останется ${formatMoney(balance - minor, target.currency)}`;
+}
+
+/**
+ * Тон плашки «останется» (DESIGN 5.0 §6, лист ввода): что станет с лимитом категории после этой
+ * записи — тем же порогом «почти», что у плиток «Обзора» (`limitStatus`, `warningThreshold`
+ * бюджета; ровно лимит — уже «почти»), — или что это остаток счёта. `null` — строки нет.
+ *
+ * Состояние говорит не цвет: «Почти лимит:» словом перед строкой и глиф (треугольник, круг);
+ * перелимит назван в самой строке — «будет перелимит N ₽».
+ */
+export type EffectTone = "normal" | "near" | "over" | "account";
+
+export function effectTone(state: BudgetState, draft: EntryDraft, today: string): EffectTone | null {
+  if (effectLine(state, draft, today) === null) return null;
+  try {
+    const minor = draftAmountMinor(state, draft) ?? 0;
+    const target = effectTargetOf(state, draft, today);
+    if (target?.kind !== "category") return "account";
+    const value = valueInBase(state, draft, minor);
+    const metric = calculateBudget(state, target.budgetId).categoryMetrics[target.id];
+    if (value === null || metric === undefined) return "account";
+    const left = metric.remainingMinor - value;
+    const threshold = state.budgets.find((budget) => budget.id === target.budgetId)?.warningThreshold ?? 1;
+    const status = limitStatus(metric.availableMinor - left, metric.availableMinor, threshold);
+    return status === "over" || status === "near" ? status : "normal";
+  } catch {
+    return null;
+  }
 }
 
 /**

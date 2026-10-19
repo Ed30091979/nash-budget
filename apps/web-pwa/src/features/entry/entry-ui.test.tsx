@@ -56,11 +56,25 @@ describe("лист ввода: разметка", () => {
     expect(markup).toMatch(/<section class="sheet entry-sheet" role="dialog" aria-modal="true" aria-labelledby="entry-sheet-title" tabindex="-1">/u);
     expect(markup).toContain('<h2 id="entry-sheet-title" class="visually-hidden">Расход: Основной → Продукты</h2>');
     expect(markup).toContain('aria-label="Закрыть"');
-    expect(markup).toMatch(/<label for="entry-amount">Сумма, ₽<\/label><input id="entry-amount" inputMode="none"/u);
+    // Сумма без рамки, с подписью для диктора и знаком валюты рядом с числом (5.0, макет 07).
+    expect(markup).toMatch(/<label for="entry-amount" class="visually-hidden">Сумма, ₽<\/label><div class="entry-amount-row"><input id="entry-amount" inputMode="none"[^>]*><span class="entry-amount-sign" aria-hidden="true">₽<\/span><\/div>/u);
+    // Плашка «останется»: под суммой, глиф и строка; поле описано ею.
+    expect(markup).toContain('aria-describedby="entry-state"');
+    expect(markup).toMatch(/<div class="entry-state normal" id="entry-state"><svg[^>]*aria-hidden="true"[^>]*><use href="#glyph-circle-check"><\/use><\/svg><p><span class="entry-effect" id="entry-effect">В категории «Продукты» останется/u);
     expect(markup).not.toMatch(/<input id="entry-amount"[^>]*readonly/u);
     const text = plain(markup);
     expect(text).toContain("В категории «Продукты» останется 6 750 ₽ из 30 000 ₽");
     expect(text).toContain("Записать 1 250 ₽");
+  });
+
+  it("плашка «останется»: почти лимит — словом и треугольником, перелимит — кругом и словом в строке, остаток счёта — кошельком", () => {
+    // 24 000 из 30 000 — ровно порог 80 %: уже «почти», как у плитки «Обзора» (`limitStatus`).
+    const near = render({ ...food(), amount: "2000" });
+    expect(near).toMatch(/<div class="entry-state near" id="entry-state"><svg[^>]*><use href="#glyph-triangle-alert"><\/use><\/svg><p><b>Почти лимит:<\/b> <span class="entry-effect" id="entry-effect">В категории «Продукты» останется 6[\u00a0 ]000/u);
+    const over = render({ ...food(), amount: "9000" });
+    expect(over).toMatch(/<div class="entry-state over" id="entry-state"><svg[^>]*><use href="#glyph-circle-alert"><\/use><\/svg><p><span class="entry-effect" id="entry-effect">В категории «Продукты» будет перелимит 1[\u00a0 ]000/u);
+    const income = render({ ...newEntryDraft(state(), { kind: "income", accountId: MAIN, categoryId: null }, TODAY), amount: "500" });
+    expect(income).toMatch(/<div class="entry-state account" id="entry-state"><svg[^>]*><use href="#glyph-wallet"><\/use><\/svg><p><span class="entry-effect" id="entry-effect">На счёте «Основной» станет/u);
   });
 
   it("клавиатура: тот же набор клавиш с «÷», четыре колонки, кнопка записи — своей строкой под ней", () => {
@@ -78,9 +92,11 @@ describe("лист ввода: разметка", () => {
     expect(markup).toMatch(/aria-pressed="false"><span class="chip-face">Вчера<\/span>/u);
     expect(markup).toContain(">Другой день<");
     expect(markup).toMatch(/<input id="entry-note" dir="auto" autoComplete="off" maxLength="500"/u);
-    expect(markup).toMatch(/<legend>Метки<\/legend>/u);
+    expect(markup).toMatch(/<legend class="visually-hidden">Метки<\/legend>/u);
     expect(markup).toContain('<bdi dir="auto">Дом</bdi>');
-    expect(markup).toContain("+ метка");
+    // Метка — глиф «#» и имя; «+ метка» — глиф «+», а имя кнопки — по-прежнему «+ метка».
+    expect(markup).toContain('#glyph-hash');
+    expect(plain(markup)).toContain("+ метка");
     expect(render({ ...food(), occurredOn: "2026-07-01" })).toMatch(/aria-pressed="true" aria-expanded="true" aria-controls="entry-date"><span class="chip-face">1[\u00a0 ]июля<\/span>/u);
   });
 
@@ -95,7 +111,7 @@ describe("лист ввода: разметка", () => {
   it("счёт в другой валюте без курса — лист говорит это до записи и предлагает выход", () => {
     const dollars = { ...newEntryDraft(state(), { kind: "expense", accountId: DOLLARS, categoryId: PLANNING_IDS.categories.food }, TODAY), amount: "12,50" };
     const markup = render(dollars);
-    expect(markup).toMatch(/<label for="entry-amount">Сумма, \$<\/label>/u);
+    expect(markup).toMatch(/<label for="entry-amount" class="visually-hidden">Сумма, \$<\/label>/u);
     const text = plain(markup);
     expect(text).toContain("Курса USD на день операции нет: оценить её в RUB нечем.");
     expect(text).toContain("Задать курс");
@@ -171,7 +187,7 @@ describe("имена на плитках листа (ревью 2b, раунд 3
     const expense = budget.transactions.find((item) => item.kind === "expense" && item.categoryId === PLANNING_IDS.categories.food);
     if (expense === undefined || expense.kind !== "expense") throw new Error("the seed has a food expense");
     const refund = renderToStaticMarkup(<FromToTiles budget={budget} draft={{ ...food(), mode: "refund", originalTransactionId: expense.id }} balances={{}} onPick={vi.fn()} />);
-    expect(refund).toContain('<div class="endpoint fixed tone-');
+    expect(refund).toMatch(/<div class="endpoint fixed" role="group" aria-label="Возврат из категории: Продукты"><span class="endpoint-plate tone-[a-z]+"/u);
     expect(refund).toMatch(/role="group" aria-label="Возврат из категории: Продукты"/u);
     expect(labels(refund).filter((label) => label.includes(SOFT))).toEqual([]);
   });

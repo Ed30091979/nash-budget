@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { Icon } from "../../components/Icon";
+import { Icon, type IconName } from "../../components/Icon";
 import type { KeypadKey } from "./amount-expression";
 
 /**
@@ -86,15 +86,17 @@ interface KeyDefinition {
   readonly key: KeypadKey;
   /** Имя для читающего с экрана там, где глиф или знак сам себя не называет. */
   readonly label?: string;
+  /** Знак — глифом спрайта, а не текстовым символом (§6: текстовых глифов в роли иконок нет). */
+  readonly icon?: IconName;
   readonly className?: string;
 }
 
 /** Как у калькулятора: цифры слева, знаки правым столбцом, ноль шире. «=» нет — это кнопка записи. */
 const KEYS: readonly KeyDefinition[] = [
-  { key: "1" }, { key: "2" }, { key: "3" }, { key: "backspace", label: "Стереть", className: "key-op" },
-  { key: "4" }, { key: "5" }, { key: "6" }, { key: "+", label: "Плюс", className: "key-op" },
-  { key: "7" }, { key: "8" }, { key: "9" }, { key: "−", label: "Минус", className: "key-op" },
-  { key: "0", className: "key-wide" }, { key: ",", label: "Запятая" }, { key: "÷", label: "Разделить", className: "key-op" },
+  { key: "1" }, { key: "2" }, { key: "3" }, { key: "backspace", label: "Стереть", icon: "delete", className: "key-op" },
+  { key: "4" }, { key: "5" }, { key: "6" }, { key: "+", label: "Плюс", icon: "plus", className: "key-op" },
+  { key: "7" }, { key: "8" }, { key: "9" }, { key: "−", label: "Минус", icon: "minus", className: "key-op" },
+  { key: "0", className: "key-wide" }, { key: ",", label: "Запятая" }, { key: "÷", label: "Разделить", icon: "divide", className: "key-op" },
 ];
 
 /**
@@ -106,7 +108,7 @@ const KEYS: readonly KeyDefinition[] = [
  */
 export function Keypad({ onKey, disabled = false }: { readonly onKey: (key: KeypadKey) => void; readonly disabled?: boolean }) {
   return <div className="keypad" role="group" aria-label="Клавиатура суммы">
-    {KEYS.map(({ key, label, className }) => <button
+    {KEYS.map(({ key, label, icon, className }) => <button
       key={key}
       type="button"
       className={className}
@@ -114,6 +116,6 @@ export function Keypad({ onKey, disabled = false }: { readonly onKey: (key: Keyp
       aria-label={label}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => onKey(key)}
-    >{key === "backspace" ? <Icon name="delete" size={24} /> : key}</button>)}
+    >{icon === undefined ? key : <Icon name={icon} size={24} />}</button>)}
   </div>;
 }
