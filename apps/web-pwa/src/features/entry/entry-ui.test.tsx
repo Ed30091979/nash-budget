@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { WRITE_REFUSAL_TEXT } from "../../write-refusal";
 import { handleDialogKeyboard } from "../data-management/dialog-accessibility";
-import { RateQuickSheet } from "../rates/RateQuickSheet";
 import { EntrySheet, isolateSiblings, RefusedEntrySheet, type EntrySheetProps } from "./EntrySheet";
 import { blankEntryDraft, draftFromTransaction, newEntryDraft, submitCheck, type EntryDraft } from "./entry-model";
 
@@ -100,18 +99,6 @@ describe("лист ввода: разметка", () => {
     expect(text).toContain("Записать 12,50 $");
     // Знака рубля в сумме долларовой покупки нет нигде.
     expect(/12,50[\u00a0 ]₽/u.test(text)).toBe(false);
-  });
-
-  it("«Задать курс» — группа внутри формы листа, а не вторая форма: Enter и кнопка записывают курс сами", () => {
-    // Ревью 2b, HIGH-1: вложенная форма в Chromium отправлялась браузером мимо обработчика, и курс
-    // не записывался. Форма в листе одна; путь в браузере проверяет e2e `foreign.spec.ts`.
-    const quick = renderToStaticMarkup(<RateQuickSheet currency="USD" baseCurrency="RUB" date={TODAY} onSave={vi.fn(async () => null)} onCancel={vi.fn()} />);
-    expect(quick).not.toContain("<form");
-    expect(quick).toMatch(/^<div class="rate-quick" role="group" aria-labelledby="[^"]+">/u);
-    expect(quick).toMatch(/<button class="primary-button" type="button"[^>]*>Сохранить курс<\/button>/u);
-    expect(quick).not.toContain('type="submit"');
-    const sheet = render({ ...newEntryDraft(state(), { kind: "expense", accountId: DOLLARS, categoryId: PLANNING_IDS.categories.food }, TODAY), amount: "12,50" });
-    expect(sheet.match(/<form[\s>]/gu)).toHaveLength(1);
   });
 
   it("правка: «Сохранить», «Удалить» и у расхода — «Оформить возврат»; не записанный черновик — тревогой", () => {
