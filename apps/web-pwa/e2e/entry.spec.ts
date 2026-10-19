@@ -233,6 +233,62 @@ test("правка из «Операций»: «Сохранить», а «Уд�
   await expect(page.getByRole("button", { name: /^Изменить операцию «Расход 777\s₽/u }).first()).toBeVisible();
 });
 
+/** Первая строка расхода в «Операциях» и её доступное имя целиком — по нему её находят снова. */
+async function firstExpenseRow(page: Page): Promise<{ readonly row: Locator; readonly label: string }> {
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
+  const row = page.locator('button[aria-label^="Изменить операцию «Расход"]').first();
+  const label = (await row.getAttribute("aria-label")) ?? "";
+  expect(label).not.toBe("");
+  return { row: page.getByRole("button", { name: label, exact: true }), label };
+}
+
+test("нетронутая правка, закрытая и открытая снова, показывает операцию такой, какая она сейчас", async ({ page }) => {
+  // Ревью 2b, HIGH-2, сценарий 1: лист хранил прошлый черновик по адресу и после «Отменить»
+  // показывал старую сумму — правка одного комментария записала бы её поверх.
+  await loadDemo(page);
+  const { row, label } = await firstExpenseRow(page);
+  await row.click();
+  const original = await amountField(page).inputValue();
+  await amountField(page).fill("48123");
+  await submitButton(page).click();
+  await expect(toast(page, /Изменено: расход 48\s123\s₽/u)).toBeVisible();
+
+  // Открыть изменённую и закрыть нетронутой; «Отменить» в тосте возвращает прежнюю сумму.
+  const edited = page.getByRole("button", { name: /^Изменить операцию «Расход 48\s123\s₽/u }).first();
+  await edited.click();
+  await expect(amountField(page)).toHaveValue("48123");
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+  await toast(page, /Изменено/u).getByRole("button", { name: "Отменить" }).click();
+  await expect(toast(page, /^Отменено: расход 48\s123\s₽/u)).toBeVisible();
+
+  // Тот же адрес — лист с нынешней суммой; правка комментария её не трогает.
+  await row.click();
+  await expect(amountField(page)).toHaveValue(original);
+  await entrySheet(page).getByRole("textbox", { name: "Комментарий" }).fill("сверено");
+  await submitButton(page).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  // Сумма в строке — прежняя: записан комментарий, а не 48 123 ₽ из старого черновика.
+  await expect(page.locator(`button[aria-label^="${label.slice(0, label.indexOf("₽") + 1)}"]`).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Изменить операцию «Расход 48\s123\s₽/u })).toHaveCount(0);
+});
+
+test("«Оформить возврат», закрытый без набранного, не подменяет правку при следующем открытии", async ({ page }) => {
+  // Ревью 2b, HIGH-2, сценарий 2: «Изменить операцию» открывал лист возврата и записывал возврат.
+  await loadDemo(page);
+  const { row } = await firstExpenseRow(page);
+  await row.click();
+  await entrySheet(page).getByRole("button", { name: "Оформить возврат" }).click();
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Возврат: /u);
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(leaveDialog(page)).toHaveCount(0);
+
+  await row.click();
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: расход: /u);
+  await expect(submitButton(page)).toHaveText("Сохранить");
+});
+
 test("лист держит фокус: Tab ходит внутри, Esc с набранным спрашивает, без набранного — закрывает", async ({ page }) => {
   await loadDemo(page);
   await page.setViewportSize({ width: 390, height: 844 });

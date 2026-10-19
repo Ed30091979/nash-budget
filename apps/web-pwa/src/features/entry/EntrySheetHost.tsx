@@ -23,8 +23,9 @@ export interface EntrySheetHostProps {
  * Лист ввода поверх экрана: адрес говорит, с чем его открыли, черновик берётся из хранилища.
  *
  * Открытие узнаётся по ключу адреса: тот же адрес («Вперёд», «Вернуться к черновику») — тот же
- * черновик, другой — новый, из плиток или из операции. Пока запись уходит, листа нет: он закрылся
- * в момент нажатия, и адрес догоняет это возвратом по истории.
+ * набранный черновик, другой — новый, из плиток или из операции; нетронутый строится заново при
+ * каждом открытии. Пока запись уходит, листа нет: он закрылся в момент нажатия, и адрес догоняет
+ * это возвратом по истории.
  */
 export function EntrySheetHost({ route, budget, today, store, controller, writeRefusal, onClose }: EntrySheetHostProps) {
   const key = routeKey(route);
@@ -49,9 +50,12 @@ export function EntrySheetHost({ route, budget, today, store, controller, writeR
   const init = useRef(draftInit);
   init.current = draftInit;
   const openable = editId === undefined || opening?.kind === "draft";
+  // Закрытие листа — и нетронутый черновик забыт: следующее открытие построит его от нынешней
+  // операции, а не покажет то, что было при прошлом (ревью 2b, HIGH-2).
   useLayoutEffect(() => {
-    if (!openable) return;
+    if (!openable) return undefined;
     store.openEntry(key, () => init.current());
+    return () => store.close(key);
   }, [store, key, openable]);
 
   // Операции из адреса нет: оболочка уводит с листа и говорит «Запись не найдена».

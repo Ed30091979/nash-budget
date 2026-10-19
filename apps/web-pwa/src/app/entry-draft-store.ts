@@ -38,10 +38,16 @@ export interface EntryTicket {
 export interface EntryDraftStore {
   current(): StoredEntry | null;
   /**
-   * Лист открыт адресом `key`. Черновик того же открытия возвращается как был (лист открыли снова
-   * «Вперёд» или «Вернуться к черновику»); другое открытие — новый черновик из `init`.
+   * Лист открыт адресом `key`. Тронутый черновик того же открытия возвращается как был (лист открыли
+   * снова «Вперёд» или «Вернуться к черновику»); нетронутый строится заново из `init` — операция или
+   * плитки могли измениться, пока листа не было (ревью 2b, HIGH-2); другое открытие — новый черновик.
    */
   openEntry(key: string, init: () => EntryDraft): StoredEntry;
+  /**
+   * Лист адреса `key` закрылся. Нетронутый черновик в правке забывается: открытие заново построит
+   * его от нынешнего бюджета. Тронутый, записываемый и не записанный остаются.
+   */
+  close(key: string): void;
   update(change: (draft: EntryDraft) => EntryDraft): void;
   /** Заменить черновик целиком и снять снимок заново: смена вида на «Оформить возврат». */
   replace(draft: EntryDraft): void;
@@ -78,9 +84,14 @@ export function createEntryDraftStore(): EntryDraftStore {
   return {
     current: () => entry,
     openEntry(key, init) {
-      if (entry !== null && entry.key === key && entry.status !== "saving") {
-        // То же открытие: черновик возвращается к правке, не записанный — со своей причиной.
-        if (entry.status === "failed") set({ ...entry, status: "editing" });
+      if (entry !== null && entry.key === key && entry.status === "failed") {
+        // Не записанный: возвращается к правке со своей причиной.
+        const back: StoredEntry = { ...entry, status: "editing" };
+        set(back);
+        return back;
+      }
+      if (entry !== null && entry.key === key && entry.status === "editing" && draftDiffers(entry.draft, entry.pristine)) {
+        // То же открытие, и в нём что-то набрано: набранное на месте.
         return entry;
       }
       saving = createDraftSaving();
@@ -94,6 +105,11 @@ export function createEntryDraftStore(): EntryDraftStore {
       const opened: StoredEntry = { key, draft, pristine: draft, status: "editing", failure: null };
       set(opened);
       return opened;
+    },
+    close(key) {
+      if (entry === null || entry.key !== key || entry.status !== "editing" || draftDiffers(entry.draft, entry.pristine)) return;
+      saving = createDraftSaving();
+      set(null);
     },
     update(change) {
       if (entry === null || entry.status === "saving") return;

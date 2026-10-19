@@ -97,6 +97,49 @@ describe("черновик листа ввода живёт вне листа", 
     expect(store.current()).toBeNull();
   });
 
+  it("нетронутый лист, закрытый и открытый снова, строится заново: операция могла измениться без него", () => {
+    // Ревью 2b, HIGH-2, сценарий 1: правка 45 000 → Esc → операцию изменили в другом месте
+    // («Отменить», синхронизация, копия) → лист снова показывал 45 000 и записал бы их поверх.
+    const store = createEntryDraftStore();
+    const EDIT_KEY = `#/operations?sheet=entry&edit=${PLANNING_IDS.categories.food}`;
+    const as = (amount: string) => () => ({ ...food(), editId: "e3000000-0000-4000-8000-000000000001", amount });
+    store.openEntry(EDIT_KEY, as("45000"));
+    store.close(EDIT_KEY);
+    expect(store.current()).toBeNull();
+    expect(store.openEntry(EDIT_KEY, as("48000")).draft.amount).toBe("48000");
+    // Даже не закрытый (адрес сменился мимо листа) — чистый черновик строится от нынешней операции.
+    expect(store.openEntry(EDIT_KEY, as("51000")).draft.amount).toBe("51000");
+    // Тронутый — набранное остаётся и после закрытия: «Вперёд» возвращает его.
+    store.update((draft) => ({ ...draft, note: "к ужину" }));
+    store.close(EDIT_KEY);
+    expect(store.openEntry(EDIT_KEY, as("60000")).draft).toMatchObject({ amount: "51000", note: "к ужину" });
+  });
+
+  it("возврат, оформленный из правки и закрытый нетронутым, не подменяет правку при следующем открытии", () => {
+    // Ревью 2b, HIGH-2, сценарий 2: «Оформить возврат» → «Закрыть» → «Изменить операцию» открывал
+    // лист возврата и записывал возврат вместо правки.
+    const store = createEntryDraftStore();
+    const edit = () => ({ ...food(), editId: "e3000000-0000-4000-8000-000000000001", amount: "45000" });
+    store.openEntry(FOOD_KEY, edit);
+    store.replace({ ...food(), mode: "refund", amount: "45000" });
+    store.close(FOOD_KEY);
+    expect(store.openEntry(FOOD_KEY, edit).draft).toMatchObject({ mode: "expense", editId: "e3000000-0000-4000-8000-000000000001" });
+  });
+
+  it("закрытие не трогает ни записываемый, ни не записанный черновик, ни чужой ключ", () => {
+    const store = createEntryDraftStore();
+    store.openEntry(FOOD_KEY, food);
+    store.update((draft) => ({ ...draft, amount: "1250" }));
+    const ticket = store.beginSaving();
+    store.close(FOOD_KEY);
+    expect(store.current()?.status).toBe("saving");
+    store.fail(ticket, "Сервер семьи недоступен.");
+    store.close(FOOD_KEY);
+    expect(store.failed()?.key).toBe(FOOD_KEY);
+    store.close(PLUS_KEY);
+    expect(store.current()?.key).toBe(FOOD_KEY);
+  });
+
   it("смена вида на «Оформить возврат» — новый снимок; «Не сохранять» — черновика нет", () => {
     const store = createEntryDraftStore();
     store.openEntry(FOOD_KEY, food);
