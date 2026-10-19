@@ -97,8 +97,10 @@ export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
 export { calculateHoldings } from "./holdings.js";
 export {
   BASE_CURRENCY_LOCK_WORDS,
+  BASE_CURRENCY_MINOR_DIGITS_WORDS,
   baseCurrencyLock,
   BaseCurrencyValidationError,
+  canBeBaseCurrency,
   setBaseCurrency,
 } from "./household.js";
 export type { BaseCurrencyErrorCode, BaseCurrencyLock } from "./household.js";

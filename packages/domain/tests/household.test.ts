@@ -7,6 +7,7 @@ import {
   baseCurrencyOf,
   BaseCurrencyValidationError,
   calculateBudget,
+  canBeBaseCurrency,
   createAccount,
   HOUSEHOLD_ID,
   makeSeedBudget,
@@ -52,6 +53,22 @@ describe("setBaseCurrency", () => {
     expect(() => calculateBudget(next)).not.toThrow();
     expect(setBaseCurrency(next, "EUR")).toBe(next);
     expect(setBaseCurrency(state, "RUB")).toBe(state);
+  });
+
+  it("refuses a base without two minor digits: budget money is typed and kept in hundredths", () => {
+    // Ревью 2c, LOW-1: под иеной лимит «30 000» хранился как 3 000 000 иен, а начальный остаток
+    // счёта вырастал в сто раз — копейки читались целыми.
+    for (const currency of ["JPY", "KRW", "KWD", "BHD"]) {
+      expect(code(() => setBaseCurrency(empty(), currency)), currency).toBe("minor_digits");
+      expect(canBeBaseCurrency(currency), currency).toBe(false);
+    }
+    for (const currency of ["RUB", "USD", "EUR", "KZT"]) expect(canBeBaseCurrency(currency), currency).toBe(true);
+    expect(canBeBaseCurrency("XAU")).toBe(false);
+    try {
+      setBaseCurrency(empty(), "JPY");
+    } catch (error) {
+      expect((error as Error).message).toBe("Базовой может быть только валюта с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги бюджета считаются в сотых долях.");
+    }
   });
 
   it("refuses an unsupported code", () => {

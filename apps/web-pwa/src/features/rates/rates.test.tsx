@@ -14,7 +14,7 @@ import { BudgetWriteRefusal } from "../../write-refusal";
 import { RateQuickSheet } from "./RateQuickSheet";
 import { RatesScreen } from "./RatesScreen";
 import { formatDayYear, formatDayYearLine } from "../../date-words";
-import { baseCurrencyState, currencyRates, familyCurrencies, rateSavedText, rateWords, ratesErrorText, ratesNote } from "./rates-model";
+import { baseCurrencyState, currencyRates, familyCurrencies, NON_BASE_CURRENCIES, rateSavedText, rateWords, ratesErrorText, ratesNote } from "./rates-model";
 
 const TODAY = "2026-10-19";
 const DOLLARS = "e2c00000-0000-4000-8000-0000000000a1";
@@ -96,6 +96,22 @@ describe("курсы: модель", () => {
     expect(baseCurrencyState(setBaseCurrency(empty, "KZT"))).toEqual({ currency: "KZT", lockText: null });
     expect(baseCurrencyState({ ...empty, accounts: [...empty.accounts, { id: DOLLARS, name: "Доллары", type: "cash", currency: "USD", openingBalanceMinor: 0, active: true }] }).lockText)
       .toBe("Базовую валюту не сменить: есть счета в другой валюте.");
+  });
+
+  it("базовой — только валюта с двумя знаками после запятой: прочих в выборе нет, а отказ домена — словами", () => {
+    // Ревью 2c, LOW-1: база в иенах читала копейки лимитов и остатков целыми.
+    expect(NON_BASE_CURRENCIES).toEqual(expect.arrayContaining(["JPY", "KRW", "KWD", "BHD"]));
+    expect(NON_BASE_CURRENCIES).not.toEqual(expect.arrayContaining(["RUB"]));
+    for (const code of ["RUB", "USD", "EUR", "KZT"]) expect(NON_BASE_CURRENCIES).not.toContain(code);
+    const seed = makePlanningSeed();
+    const empty: BudgetState = { ...seed, transactions: [], budgets: seed.budgets.map((budget) => ({ ...budget, lines: [], plannedIncomeMinor: 0 })), annualCommitments: [], scheduledExpenses: [], goals: [] };
+    let refusal: unknown = null;
+    try {
+      setBaseCurrency(empty, "JPY");
+    } catch (error) {
+      refusal = error;
+    }
+    expect(ratesErrorText(refusal)).toBe("Базовой может быть только валюта с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги бюджета считаются в сотых долях.");
   });
 
   it("отказы — словами домена; задержка — словами задержки; прочее — общими словами записи", () => {

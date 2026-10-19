@@ -18,7 +18,7 @@ import { formatDayYear, formatDayYearLine } from "../../date-words";
 import { useFormDraft } from "../../navigation/draft-guard";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { currencySign, RateQuickSheet } from "./RateQuickSheet";
-import { baseCurrencyState, currencyRates, familyCurrencies, rateSavedText, rateWords, ratesErrorText, type CurrencyRates } from "./rates-model";
+import { baseCurrencyState, currencyRates, familyCurrencies, NON_BASE_CURRENCIES, rateSavedText, rateWords, ratesErrorText, type CurrencyRates } from "./rates-model";
 
 export interface RatesScreenProps {
   readonly budget: BudgetState;
@@ -231,7 +231,8 @@ function BaseCurrencySection({ budget, lockText, write, onDone, focusAfterRender
         <div className="base-currency-form">
           <div className="field">
             <label htmlFor="base-currency-select">Новая базовая валюта</label>
-            <CurrencySelect id="base-currency-select" value={choice} disabled={busy} onChange={setChoice} />
+            <CurrencySelect id="base-currency-select" value={choice} disabled={busy} exclude={NON_BASE_CURRENCIES} describedBy="base-currency-digits" onChange={setChoice} />
+            <p className="field-hint" id="base-currency-digits">Только валюты с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги считаются в сотых долях.</p>
           </div>
           {error === null ? null : <p className="field-error" role="alert">{error}</p>}
           <div className="rate-quick-actions">

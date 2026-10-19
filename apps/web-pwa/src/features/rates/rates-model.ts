@@ -4,7 +4,9 @@ import {
   baseCurrencyLock,
   baseCurrencyOf,
   BASE_CURRENCY_LOCK_WORDS,
+  canBeBaseCurrency,
   findRate,
+  SUPPORTED_CURRENCIES,
   RateValidationError,
   type BudgetState,
   type CurrencyCode,
@@ -84,6 +86,12 @@ export function rateSavedText({ rate, replaced }: ExchangeRateCreation): string 
     ? `Курс ${rate.currency} на ${formatDay(rate.date)} не изменился: ${now}.`
     : `Курс ${rate.currency} на ${formatDay(rate.date)} исправлен: был ${was}, стал ${now}.`;
 }
+
+/**
+ * Валюты, которым базовой не быть (`canBeBaseCurrency`): без двух знаков после запятой — иена,
+ * вона, динары. В выборе новой базы их нет; счёт в них завести можно.
+ */
+export const NON_BASE_CURRENCIES: readonly CurrencyCode[] = (Object.keys(SUPPORTED_CURRENCIES) as CurrencyCode[]).filter((code) => !canBeBaseCurrency(code));
 
 /** Базовая валюта: что сказать о ней и можно ли её сменить. */
 export interface BaseCurrencyState {

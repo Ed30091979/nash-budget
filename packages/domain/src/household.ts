@@ -1,4 +1,4 @@
-import { baseCurrencyOf, isSupportedCurrency } from "./currency.js";
+import { baseCurrencyOf, currencyExponent, isSupportedCurrency } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
 import type { BudgetState, CurrencyCode } from "./types.js";
 
@@ -15,7 +15,7 @@ import type { BudgetState, CurrencyCode } from "./types.js";
 /** Why the base currency can no longer change, in the order it is checked. */
 export type BaseCurrencyLock = "has_operations" | "has_plans" | "has_debts" | "foreign_accounts" | "has_rates";
 
-export type BaseCurrencyErrorCode = "unknown_currency" | BaseCurrencyLock;
+export type BaseCurrencyErrorCode = "unknown_currency" | "minor_digits" | BaseCurrencyLock;
 
 /** Refusal a person is meant to read: `code` for the caller, `message` for the screen. */
 export class BaseCurrencyValidationError extends Error {
@@ -39,6 +39,19 @@ export const BASE_CURRENCY_LOCK_WORDS: Readonly<Record<BaseCurrencyLock, string>
 };
 
 /**
+ * Can this currency be the base? Only a supported one with two minor digits: every budget amount —
+ * a limit, a planned income, an opening balance typed in the base — is typed and kept in hundredths,
+ * and under a currency with none (JPY) or three (KWD) a limit typed «30 000» would be kept as a
+ * hundred times or a tenth of itself. A foreign account may be in any of them; the base may not.
+ */
+export function canBeBaseCurrency(code: unknown): code is CurrencyCode {
+  return isSupportedCurrency(code) && currencyExponent(code) === 2;
+}
+
+export const BASE_CURRENCY_MINOR_DIGITS_WORDS =
+  "Базовой может быть только валюта с двумя знаками после запятой, как рубль, доллар или евро: лимиты и итоги бюджета считаются в сотых долях.";
+
+/**
  * What keeps the base currency where it is, or `null` while it may still change: any operation, any
  * plan — a limit, a planned income, a large payment, a schedule, a goal, a recurring rule — any debt,
  * an account kept in another currency, or a rate against the present base.
@@ -59,8 +72,8 @@ export function baseCurrencyLock(state: BudgetState): BaseCurrencyLock | null {
 }
 
 /**
- * Sets the household's base currency. Refuses an unsupported code and every state
- * {@link baseCurrencyLock} names. The accounts — every one of them kept in the old base, and none
+ * Sets the household's base currency. Refuses an unsupported code, a currency without two minor
+ * digits ({@link canBeBaseCurrency}) and every state {@link baseCurrencyLock} names. The accounts — every one of them kept in the old base, and none
  * named by anything — move to the new base with it: an opening balance is the only amount they hold,
  * and an account the family thinks of as «the main one» must not turn foreign under it. The base the
  * state already has changes nothing and returns the very same state.
@@ -69,6 +82,7 @@ export function setBaseCurrency(state: BudgetState, code: CurrencyCode): BudgetS
   if (!isSupportedCurrency(code)) throw new BaseCurrencyValidationError("unknown_currency", "Выберите валюту из списка.");
   const base = baseCurrencyOf(state);
   if (code === base) return state;
+  if (!canBeBaseCurrency(code)) throw new BaseCurrencyValidationError("minor_digits", BASE_CURRENCY_MINOR_DIGITS_WORDS);
   const lock = baseCurrencyLock(state);
   if (lock !== null) throw new BaseCurrencyValidationError(lock, BASE_CURRENCY_LOCK_WORDS[lock]);
   return {
