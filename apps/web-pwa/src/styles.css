@@ -1161,6 +1161,17 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
 .tile-edit { display: grid; flex: none; place-items: center; color: var(--ink-muted); }
 .manage-preview { width: max(104px, 8.5em); justify-self: start; }
 .manage-row .row-open:only-child { grid-column: 1 / -1; }
+/* «Метки»: строка — знак «#», имя и число операций; под ней «Изменить», «В архив», «Удалить».
+   Переименование — на месте строки, полем и двумя кнопками. «Удалить» — тихая кнопка красными
+   чернилами (6.84:1 на белом): на метку с операциями она отвечает словами домена у самой строки. */
+.tag-row { grid-template-columns: minmax(0, 1fr); }
+.tag-copy { display: grid; min-width: 0; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; }
+.tag-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.tag-rename { display: grid; min-width: 0; gap: 8px; }
+.tag-notice { margin: 0; }
+.quiet-button.danger-text { color: var(--red-ink); }
+.manage-hint { display: grid; gap: 8px; justify-items: start; }
+.manage-new-tag { margin: 0; }
 /* Выбор из немногих — вид счёта: кнопки 48 в две колонки, выбранная — чернильная, как чип (§6). */
 .option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .option-grid > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }

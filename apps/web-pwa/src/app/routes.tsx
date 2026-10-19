@@ -12,7 +12,8 @@ import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { PlanningScreen } from "../features/planning";
-import { accountsNote, categoriesNote, MoreScreen, monthNote } from "../features/more/MoreScreen";
+import { accountsNote, categoriesNote, MoreScreen, monthNote, tagsNote } from "../features/more/MoreScreen";
+import { TagsScreen } from "../features/tags/TagsScreen";
 import { CategoriesScreen } from "../features/categories/CategoriesScreen";
 import { CategoryScreen } from "../features/categories/CategoryScreen";
 import { AccountScreen } from "../features/accounts/AccountScreen";
@@ -178,6 +179,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             accountsNote={accountsNote(budget)}
             onCategories={() => navigate({ name: "categories", type: "expense" })}
             categoriesNote={categoriesNote(budget)}
+            onTags={() => navigate({ name: "tags" })}
+            tagsNote={tagsNote(budget)}
             onRates={() => navigate({ name: "rates" })}
             ratesNote={ratesNote(budget, app.today)}
             familyNote={family.membership === null
@@ -214,6 +217,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onDone={(message, type) => { setMessage(message); navigate({ name: "categories", type }); }}
             />
           ) : null}
+          {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}
           {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
           {route.name === "account" || route.name === "account-new" ? (
             <AccountScreen
