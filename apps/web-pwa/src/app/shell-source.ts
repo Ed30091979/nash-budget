@@ -16,7 +16,6 @@ export const APP_SOURCE_FILES = [
   "app/routes.tsx",
   "app/budget-store.ts",
   "components/BottomNav.tsx",
-  "features/today/TodayScreen.tsx",
   "features/overview/OverviewScreen.tsx",
   "features/entry/EntrySheetHost.tsx",
   "app/entry-controller.tsx",

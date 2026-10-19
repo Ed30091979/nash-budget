@@ -1,11 +1,14 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { makeSeedBudget, type BudgetState } from "@family-budget/domain";
+import { calculateAnnualPlan, makeSeedBudget, type BudgetState } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 
-import { HistoryScreen, OperationsScreen, operationsCount } from "./features/operations";
+import { MEMBER_FILTER_ALL, MEMBER_FILTER_NONE, memberFilterOptions, membersById } from "./features/family/model";
+import { HistoryScreen, operationsCount } from "./features/operations";
+import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { readAppSource } from "./app/shell-source";
+import { periodClock } from "./reach";
 
 const appSource = readAppSource();
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
@@ -62,14 +65,33 @@ describe("пустые состояния", () => {
     expect(markup).toContain(">Операции</h1>");
   });
 
-  it("на «Записать» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
+  it("на «Обзоре» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
+    // Прежде это говорило табло конвертов «Записать»; с 2b строка «Можно на повседневные» —
+    // и без лимитов она не врёт «0 ₽ · исчерпаны», а называет состояние и ведёт в план.
+    const budget = budgetWithoutLimits();
+    const plan = calculateAnnualPlan(budget, "2026-07", 24);
     const markup = renderToStaticMarkup(
-      <OperationsScreen budget={budgetWithoutLimits()} onChange={vi.fn()} onPlanning={vi.fn()} />,
+      <OverviewScreen
+        budget={budget}
+        today="2026-07-13"
+        month="2026-07"
+        onMonth={vi.fn()}
+        clock={periodClock({ startDate: "2026-07-01", endDate: "2026-07-31" }, [], "2026-07-13")}
+        flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
+        familyNews={[]}
+        monthToOpen={null}
+        openingMonth={false}
+        onOpenMonth={vi.fn()}
+        onOpenSheet={vi.fn()}
+        onAddCategory={vi.fn()}
+        onPlan={vi.fn()}
+      />,
     );
 
-    assertThreeRules(markup.slice(markup.indexOf('id="envelopes-title"')), "конверты");
+    assertThreeRules(markup.slice(markup.indexOf('class="card reach-line empty"')), "лимиты");
     expect(markup).toContain("Лимитов на этот месяц нет");
     expect(markup).toContain("Задать лимиты в плане");
+    expect(markup).not.toContain("Можно на повседневные");
   });
 
   it("демо остаётся вторым выходом там, где ему место, — на первом экране онбординга", () => {
@@ -81,16 +103,16 @@ describe("пустые состояния", () => {
     expect(onboarding).toContain("Хотите сначала посмотреть?");
   });
 
-  it("на «Сегодня» и на «Годе» пустые списки тоже говорят и ведут, а не молчат пустой карточкой", () => {
-    for (const [list, action] of [
-      ["TransactionList", "Записать первую операцию"],
-      ["CategoryList", "Задать лимиты в плане"],
+  it("на «Обзоре», в «Операциях» и на «Годе» пустые списки тоже говорят и ведут, а не молчат пустой карточкой", () => {
+    // Списки «Сегодня» (последние записи, повседневные лимиты) ушли вместе с ним; их пустые
+    // состояния живут там, куда переехали сами списки.
+    for (const [file, action] of [
+      ["./features/operations/HistoryScreen.tsx", "Записать первую операцию"],
+      ["./features/overview/ReachLine.tsx", "Задать лимиты в плане"],
     ] as const) {
-      const start = appSource.indexOf(`function ${list}(`);
-      expect(start, `${list} исчез из приложения`).toBeGreaterThan(-1);
-      const body = appSource.slice(start, appSource.indexOf("\n}", appSource.indexOf("empty-state", start)));
-      expect(body, `${list} по-прежнему рисует пустой список без слов`).toContain("empty-state");
-      expect(body, `${list} не даёт дороги к задаче`).toContain(action);
+      const source = readFileSync(new URL(file, import.meta.url), "utf8");
+      expect(source, `${file} по-прежнему рисует пустой список без слов`).toContain("empty-state");
+      expect(source, `${file} не даёт дороги к задаче`).toContain(action);
     }
     // Список платежей «Года» без единого платежа тоже объясняет, чем он наполняется.
     expect(appSource).toContain("Платежей в плане нет");
@@ -98,17 +120,31 @@ describe("пустые состояния", () => {
   });
 
   it("не выдаёт список, опустевший от фильтра участника, за пустой бюджет", () => {
-    // Настоящий дефект, найденный при проверке: «Последние записи» фильтруются по участнику, и у
+    // Настоящий дефект, найденный при проверке: «Последние записи» фильтровались по участнику, и у
     // участника без операций строка утверждала «Здесь появятся операции» — при полном бюджете
-    // рядом. Разные состояния системы обязаны и называться по-разному.
-    const start = appSource.indexOf("function TransactionList(");
-    const body = appSource.slice(start, appSource.indexOf("function transactionSign", start));
-
-    expect(body).toContain("hiddenByMemberFilter");
-    expect(body).toContain("У выбранного участника записей нет");
-    expect(body).toContain("Показать записи всех");
-    // Признак «спрятано фильтром» верен только тогда, когда в бюджете вообще есть записи.
-    expect(appSource).toContain("hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL}");
+    // рядом. С 2b фильтр «Кто записал» — в «Операциях», и правило то же: разные состояния системы
+    // называются по-разному.
+    const masha = "c6666666-6666-4666-8666-666666666601";
+    const seed = makeSeedBudget();
+    const budget: BudgetState = { ...seed, members: [{ id: masha, name: "Маша", role: "member", active: true }] };
+    const members = (filter: string) => ({ options: memberFilterOptions(budget), filter, onFilter: vi.fn(), byId: membersById(budget) });
+    const hidden = renderToStaticMarkup(<HistoryScreen budget={budget} members={members(masha)} onEdit={vi.fn()} onAdd={vi.fn()} />);
+    assertThreeRules(hidden.slice(hidden.indexOf(">Операции</h1>")), "фильтр участника");
+    expect(hidden).toContain("У выбранного участника записей нет");
+    expect(hidden).toContain("Показать записи всех");
+    expect(hidden).not.toContain("Записей пока нет");
+    expect(hidden).toContain('<label for="history-member-filter">Кто записал</label>');
+    // Записи без участника — свои: фильтр «Без участника» их показывает, и автор назван в строке.
+    const unattributed = renderToStaticMarkup(<HistoryScreen budget={budget} members={members(MEMBER_FILTER_NONE)} onEdit={vi.fn()} onAdd={vi.fn()} />);
+    expect(unattributed).not.toContain("У выбранного участника записей нет");
+    expect(unattributed).toContain("· Без участника");
+    // Пустой бюджет с фильтром — по-прежнему «Записей пока нет»: фильтру прятать нечего.
+    const empty = renderToStaticMarkup(<HistoryScreen budget={{ ...budget, transactions: [] }} members={members(masha)} onEdit={vi.fn()} onAdd={vi.fn()} />);
+    expect(empty).toContain("Записей пока нет");
+    // Без участников выбирать не из кого: ни фильтра, ни автора в строке.
+    const alone = renderToStaticMarkup(<HistoryScreen budget={seed} members={{ ...members(MEMBER_FILTER_ALL), options: memberFilterOptions(seed) }} onEdit={vi.fn()} onAdd={vi.fn()} />);
+    expect(alone).not.toContain("Кто записал");
+    expect(alone).not.toContain("Без участника");
   });
 
   it("склоняет счётное слово: число в русской строке тянет существительное за собой", () => {
@@ -158,8 +194,8 @@ describe("сообщение, которое накрывало кнопки", (
     expect(shell).toContain("position: sticky");
     expect(shell).toMatch(/bottom: calc\(var\(--nav-space\) \+ 28px\)/u);
     // Две липкие полосы с одним краем вставали друг на друга: плашка накрывала кнопки полосы
-    // записи. Там, где низ занят полосой, плашка стоит в потоке.
-    const yields = styles.match(/\.app-shell:has\(\.record-action\) > \.update-toast, \.app-shell:has\(\.record-action\) > \.message-toast \{([^}]*)\}/u)?.[1] ?? "";
+    // действия выписки. Там, где низ занят полосой, плашка стоит в потоке.
+    const yields = styles.match(/\.app-shell:has\(\.import-action\) > \.update-toast, \.app-shell:has\(\.import-action\) > \.message-toast \{([^}]*)\}/u)?.[1] ?? "";
     expect(yields).toContain("position: static");
   });
 

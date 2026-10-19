@@ -206,7 +206,7 @@ describe("адрес — только маршрут: исходники", () =>
       expect(ADDRESS_ACCESS.some(([, pattern]) => pattern.test(evasion)), evasion).toBe(true);
     }
     for (const writer of ['<a href="#/new?note=кофе">', "<a href={formatRoute(route)}>", "link.href = target;", "{ href: target }", 'link.setAttribute("href", target);', 'link["href"] = target;']) {
-      expect(violations("web/features/operations/OperationsScreen.tsx", writer), writer).not.toEqual([]);
+      expect(violations("web/features/entry/EntrySheet.tsx", writer), writer).not.toEqual([]);
     }
     // And it leaves alone what is not the address: a local list called `history`, a database
     // opened by name, a word in a comment, a draft scope.
@@ -218,7 +218,7 @@ describe("адрес — только маршрут: исходники", () =>
       "<form onSubmit={submit} noValidate>",
       "const isOpen = sheet !== null;",
     ]) {
-      expect(violations("web/features/operations/OperationsScreen.tsx", innocent), innocent).toEqual([]);
+      expect(violations("web/features/entry/EntrySheet.tsx", innocent), innocent).toEqual([]);
     }
   });
 

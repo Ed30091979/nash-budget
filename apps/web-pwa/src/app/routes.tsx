@@ -1,22 +1,20 @@
 import { useState, type ReactNode } from "react";
-import type { BudgetState, CategoryType, Member, Transaction } from "@family-budget/domain";
+import type { BudgetState, CategoryType, Transaction } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
 import { BackButton } from "../components/BackButton";
 import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup, type BackupRepair } from "../backup";
-import type { FamilyController, MemberFilter } from "../features/family";
+import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
 import { sheetOpeningOf, type SheetOpening } from "../features/entry/sheet-address";
-import { HistoryScreen } from "../features/operations";
+import { HistoryScreen, type HistoryMembers } from "../features/operations";
 import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { PlanningScreen } from "../features/planning";
 import { MoreScreen, monthNote } from "../features/more/MoreScreen";
-import { YearScreen } from "../features/plan-year/YearScreen";
-import { ReportsScreen } from "../features/reports/ReportsScreen";
-import type { AnnualPlan, BudgetMetrics, CategoryRow } from "../features/today/TodayScreen";
-import type { NavigateOptions } from "../navigation/router";
+import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
+import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
 import type { Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
@@ -35,16 +33,9 @@ export interface AppRouteContext {
   readonly metrics: BudgetMetrics;
   readonly clock: PeriodClock;
   readonly paydays: readonly number[];
-  readonly flexibleRows: CategoryRow[];
-  readonly safeToSpendMinor: number;
-  readonly flexibleSpentMinor: number;
-  readonly postedTransactions: readonly Transaction[];
-  readonly recentTransactions: Transaction[];
   readonly categoryById: Map<string, BudgetState["categories"][number]>;
-  readonly memberById: ReadonlyMap<string, Member>;
-  readonly memberOptions: readonly { readonly value: MemberFilter; readonly label: string }[];
-  readonly memberFilter: MemberFilter;
-  readonly setMemberFilter: (value: MemberFilter) => void;
+  /** «Кто записал» в «Операциях»: участники семьи и выбранный фильтр (память сессии). */
+  readonly members: HistoryMembers;
   readonly monthToOpen: string | null;
   readonly openingMonth: boolean;
   readonly openMonth: (month: string) => Promise<void>;
@@ -53,8 +44,6 @@ export interface AppRouteContext {
   readonly navigate: (route: Route) => void;
   /** Кнопка «назад» экрана: к родителю маршрута. */
   readonly back: () => void;
-  /** Переход без вопроса о черновике — адрес догоняет то, что уже случилось на экране. */
-  readonly redirect: (route: Route, options?: NavigateOptions) => void;
   /** Лист ввода поверх экрана, на котором стоишь: с плиток, с «+», из «Операций» (`sheet-address.ts`). */
   readonly openSheet: (opening: SheetOpening) => void;
   readonly openEdit: (transaction: Transaction) => void;
@@ -119,7 +108,7 @@ function OverviewRoute({ app, month }: { readonly app: AppRouteContext; readonly
         budget={budget}
         type={adding}
         onChange={(change) => write.run(change)}
-        onDone={(name) => {
+        onDone={(_categoryId, name) => {
           setAdding(null);
           setMessage(adding === "expense" ? `Категория «${name}» добавлена.` : `Источник дохода «${name}» добавлен.`);
         }}
@@ -140,14 +129,14 @@ function OverviewRoute({ app, month }: { readonly app: AppRouteContext; readonly
  */
 export function RouteView({ route, app }: { readonly route: Route; readonly app: AppRouteContext }) {
   const {
-    budget, plan, metrics, paydays, categoryById, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
+    budget, plan, metrics, paydays, categoryById, members, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
     isStandalone, lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family,
     familyScreen, syncIndicator,
   } = app;
   return <>
           {route.name === "overview" ? <OverviewRoute app={app} month={route.month} /> : null}
           {/* «Операции» — вкладка: строка открывает операцию в листе ввода, и адрес это называет. */}
-          {route.name === "operations" ? <HistoryScreen budget={budget} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}
+          {route.name === "operations" ? <HistoryScreen budget={budget} members={members} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}
           {route.name === "reports" ? <ReportsScreen budget={budget} metrics={metrics} /> : null}
           {route.name === "more" ? <MoreScreen
             budget={budget}

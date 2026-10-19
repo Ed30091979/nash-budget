@@ -2,7 +2,6 @@
 import { readFileSync } from "node:fs";
 import {
   calculateAnnualPlan,
-  calculateBudget,
   carryBudgetForward,
   makePlanningSeed,
   monthAfterPeriod,
@@ -11,8 +10,7 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./features/today/TodayScreen";
-import { MEMBER_FILTER_ALL } from "./features/family";
+import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { periodClock } from "./reach";
 import { readAppSource } from "./app/shell-source";
 
@@ -21,24 +19,19 @@ const appSource = readAppSource();
 /**
  * Выход из закрытого месяца — приёмка того самого дефекта, из-за которого приложение жило один
  * месяц: бюджет месяца заводился только в онбординге, и семья, прошедшая его в июле, в августе
- * упиралась в тупик — закрытый июль, покупки мимо конвертов, лимиты ни о чём.
+ * упиралась в тупик — закрытый июль, покупки мимо лимитов, лимиты ни о чём.
  *
- * Проверяется то, что читает человек: экран называет месяц, который предлагает открыть, говорит,
- * что при этом произойдёт, и даёт кнопку. И не даёт её, пока месяц плана идёт: открывать нечего.
+ * Проверяется то, что читает человек на «Обзоре»: строка повседневных лимитов называет месяц,
+ * который предлагает открыть, говорит, что при этом произойдёт, и даёт кнопку. И не даёт её, пока
+ * месяц плана идёт: открывать нечего.
  */
 function textOf(markup: string): string {
-  return markup.replace(/<[^>]*>/gu, " ").replaceAll(" ", " ").replace(/\s+/gu, " ").trim();
+  return markup.replace(/<[^>]*>/gu, " ").replace(/[\u00a0\u202f]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function renderToday(state: BudgetState, today: string) {
+function renderOverview(state: BudgetState, today: string) {
   const active = state.budgets.find((budget) => budget.id === state.activeBudgetId)!;
-  const metrics = calculateBudget(state);
   const plan = calculateAnnualPlan(state, active.startDate.slice(0, 7), 24);
-  const planned = new Set(active.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const flexibleRows = state.categories
-    .filter((category) => category.active && category.type === "expense" && planned.has(category.id))
-    .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }));
-  const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   const clock = periodClock(
     active,
     state.transactions.filter((item) => item.kind === "income").map((item) => item.occurredOn),
@@ -46,72 +39,69 @@ function renderToday(state: BudgetState, today: string) {
   );
   const opened: string[] = [];
   const markup = renderToStaticMarkup(
-    <TodayScreen
+    <OverviewScreen
       budget={state}
-      plan={plan}
-      flexibleRows={flexibleRows}
-      safeToSpendMinor={plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor}
-      flexibleSpentMinor={flexibleSpentMinor}
+      today={today}
+      month={today.slice(0, 7)}
+      onMonth={() => undefined}
       clock={clock}
-      recentTransactions={[]}
-      categoryById={new Map(state.categories.map((category) => [category.id, category]))}
-      memberById={new Map()}
-      memberOptions={[]}
-      memberFilter={MEMBER_FILTER_ALL}
-      onMemberFilterChange={() => undefined}
-      hasRecords
-      monthToOpen={clock.position === "after" ? monthAfterPeriod(active, today) : null}
-      onOpenMonth={(month) => opened.push(month)}
-      onAdd={() => undefined}
-      onYear={() => undefined}
-      onPlanning={() => undefined}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
       familyNews={[]}
+      monthToOpen={clock.position === "after" ? monthAfterPeriod(active, today) : null}
+      openingMonth={false}
+      onOpenMonth={(month) => opened.push(month)}
+      onOpenSheet={() => undefined}
+      onAddCategory={() => undefined}
+      onPlan={() => undefined}
     />,
   );
-  return { markup, text: textOf(markup), heroActions: heroActions(markup), opened };
+  const hero = heroOf(markup);
+  return { markup, text: textOf(markup), heroText: textOf(hero), heroActions: heroActions(hero), opened };
 }
 
-/** Кнопки карточки героя по порядку: чем они названы и какого веса. */
-function heroActions(markup: string): readonly { readonly weight: string; readonly label: string }[] {
-  const hero = markup.slice(0, markup.indexOf("</section>"));
-  return [...hero.matchAll(/<button class="(primary|secondary)-button"[^>]*>(.*?)<\/button>/gu)]
+/** Строка «Можно на повседневные» — то, что на «Обзоре» стоит на месте прежнего героя. */
+function heroOf(markup: string): string {
+  const start = markup.indexOf('<section class="card reach-line');
+  return markup.slice(start, markup.indexOf("</section>", start));
+}
+
+/** Кнопки строки по порядку: чем они названы и какого веса. */
+function heroActions(hero: string): readonly { readonly weight: string; readonly label: string }[] {
+  return [...hero.matchAll(/<button class="(primary|secondary)-button[^"]*"[^>]*>(.*?)<\/button>/gu)]
     .map(([, weight, body]) => ({ weight: weight!, label: textOf(body!) }));
 }
 
 describe("выход из закрытого месяца", () => {
   it("называет месяц, который предлагает открыть, и что при этом перенесётся", () => {
-    const { text, heroActions: actions } = renderToday(makePlanningSeed(), "2026-09-04");
+    const { heroText, heroActions: actions } = renderOverview(makePlanningSeed(), "2026-09-04");
 
-    expect(text).toContain("Июль закончился.");
-    expect(text).toContain("Открыть сентябрь — значит перенести в него те же лимиты и положить сверху остатки конвертов июля.");
-    expect(text).toContain("Июль останется в истории со своими числами.");
-    // Тупик назван — и тут же назван выход из него, с именем месяца в самой кнопке. Действий на
-    // карточке два, и главное из них одно: запись покупки уступает открытию месяца.
-    expect(actions).toEqual([
-      { weight: "primary", label: "Открыть сентябрь" },
-      { weight: "secondary", label: "Записать покупку" },
-    ]);
+    expect(heroText).toContain("Июль закрыт: осталось от повседневных лимитов июля");
+    expect(heroText).toContain("Открыть сентябрь — значит перенести в него те же лимиты и положить сверху остатки июля.");
+    expect(heroText).toContain("Июль останется в истории со своими числами");
+    // Тупик назван — и тут же назван выход из него, с именем месяца в самой кнопке. Главное
+    // действие одно: записывают плитками и «+», а здесь — открывают месяц.
+    expect(actions).toEqual([{ weight: "primary", label: "Открыть сентябрь" }]);
   });
 
   it("молчит про открытие месяца, пока месяц плана идёт", () => {
-    const { text, heroActions: actions } = renderToday(makePlanningSeed(), "2026-07-09");
+    const { text, heroText, heroActions: actions } = renderOverview(makePlanningSeed(), "2026-07-09");
 
     expect(text).not.toContain("Открыть");
-    expect(text).toContain("Можно на повседневные расходы");
-    expect(actions).toEqual([{ weight: "primary", label: "Записать покупку" }]);
+    expect(heroText).toContain("Можно на повседневные");
+    expect(actions).toEqual([]);
   });
 
-  it("после открытия месяца герой говорит уже про него, а не про закрытый", () => {
+  it("после открытия месяца строка говорит уже про него, а не про закрытый", () => {
     const july = makePlanningSeed();
     const september = carryBudgetForward(july, "2026-09").state;
-    const { markup, text } = renderToday(september, "2026-09-04");
+    const { markup, text, heroText } = renderOverview(september, "2026-09-04");
 
-    // Эйбрау называет месяц чисел и молчит про день: месяц идёт, сообщать нечего.
-    expect(text).toContain("сентябрь");
-    expect(text).not.toMatch(/сентябрь\s*·/u);
-    expect(text).toContain("Можно на повседневные расходы");
-    expect(text).not.toContain("закончился");
-    expect(markup).toContain("hero-reach");
+    // Заголовок называет месяц плиток и молчит про день: месяц идёт, сообщать нечего.
+    expect(text).toContain("Сентябрь 2026");
+    expect(text).not.toMatch(/сентябрь\s*·/iu);
+    expect(heroText).toContain("Можно на повседневные");
+    expect(text).not.toContain("закрыт");
+    expect(markup).toMatch(/class="card reach-line (?:reaches|short|out)"/u);
   });
 
   it("ведёт себя одинаково при отсутствии в два дня и в девять месяцев", () => {
@@ -119,11 +109,11 @@ describe("выход из закрытого месяца", () => {
     // перерыва, уже преодолел избегание, и экран не вправе взять с него за это плату — ни
     // словом о перерыве, ни другим устройством экрана. Разница между двумя открытиями — только
     // имя месяца, который предлагается открыть: тот, в котором семья живёт сейчас.
-    const twoDays = renderToday(makePlanningSeed(), "2026-08-02");
-    const nineMonths = renderToday(makePlanningSeed(), "2027-04-15");
-    const normalize = (text: string) => text.replace(/Открыть (?:август|апрель)/gu, "Открыть месяц").replace(/(?:2 августа|15 апреля)/gu, "сегодня");
+    const twoDays = renderOverview(makePlanningSeed(), "2026-08-02");
+    const nineMonths = renderOverview(makePlanningSeed(), "2027-04-15");
+    const normalize = (text: string) => text.replace(/Открыть (?:август|апрель)/gu, "Открыть месяц");
 
-    expect(normalize(twoDays.text)).toBe(normalize(nineMonths.text));
+    expect(normalize(twoDays.heroText)).toBe(normalize(nineMonths.heroText));
     expect(twoDays.heroActions.map((action) => action.weight)).toEqual(nineMonths.heroActions.map((action) => action.weight));
     expect(twoDays.heroActions[0]?.label).toBe("Открыть август");
     expect(nineMonths.heroActions[0]?.label).toBe("Открыть апрель");

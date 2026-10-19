@@ -3,6 +3,7 @@ import type { BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { accountIcon, categoryVisual } from "../../category-visual";
+import { AddTile } from "../../components/tiles/AddTile";
 import { UNCATEGORIZED_INCOME_NAME } from "../overview/overview-model";
 import type { EntryDraft } from "./entry-model";
 import type { EndpointSide } from "./FromToTiles";
@@ -37,6 +38,13 @@ export function pickOptions(budget: BudgetState, draft: EntryDraft, side: Endpoi
   }
 }
 
+/** Какую категорию можно завести прямо из выбора стороны: расходную — «куда», источник дохода — «откуда». */
+export function creatableCategory(draft: EntryDraft, side: EndpointSide): "expense" | "income" | null {
+  if (draft.mode === "expense" && side === "to") return "expense";
+  if (draft.mode === "income" && side === "from") return "income";
+  return null;
+}
+
 /** Выбранное сейчас значение стороны. */
 export function pickedValue(draft: EntryDraft, side: EndpointSide): string {
   switch (draft.mode) {
@@ -61,14 +69,17 @@ export function withPicked(draft: EntryDraft, side: EndpointSide, id: string): E
  * Выбор стороны операции внутри листа: плитки счетов или категорий, выбранная — нажатой. Фокус — на
  * первой плитке; «Назад» и Esc возвращают к листу, ничего не меняя.
  */
-export function TargetPicker({ budget, draft, side, balances, onPick, onBack }: {
+export function TargetPicker({ budget, draft, side, balances, onPick, onBack, onCreate }: {
   readonly budget: BudgetState;
   readonly draft: EntryDraft;
   readonly side: EndpointSide;
   readonly balances: Readonly<Record<string, number | null>>;
   readonly onPick: (id: string) => void;
   readonly onBack: () => void;
+  /** «Своя категория» — последней плиткой, где сторона — категория. */
+  readonly onCreate?: () => void;
 }) {
+  const creatable = creatableCategory(draft, side);
   const options = pickOptions(budget, draft, side, balances);
   const current = pickedValue(draft, side);
   const first = useRef<HTMLButtonElement>(null);
@@ -82,7 +93,7 @@ export function TargetPicker({ budget, draft, side, balances, onPick, onBack }: 
         <button className="secondary-button back-button" type="button" onClick={onBack}><Icon name="arrow-left" size={20} />Назад</button>
         <h3 id="entry-picker-title">{title}</h3>
       </div>
-      {options.length === 0 ? <p className="field-hint">Выбирать не из чего: активных счетов или категорий нет.</p> : (
+      {options.length === 0 && creatable === null ? <p className="field-hint">Выбирать не из чего: активных счетов или категорий нет.</p> : (
         <ul className="tile-grid tile-grid-grid picker-grid">
           {options.map((option, index) => (
             <li key={option.id === "" ? "none" : option.id}>
@@ -100,6 +111,9 @@ export function TargetPicker({ budget, draft, side, balances, onPick, onBack }: 
               </button>
             </li>
           ))}
+          {creatable !== null && onCreate !== undefined ? (
+            <li key="add"><AddTile label={creatable === "expense" ? "Своя категория расходов" : "Свой источник дохода"} onClick={onCreate} /></li>
+          ) : null}
         </ul>
       )}
     </section>

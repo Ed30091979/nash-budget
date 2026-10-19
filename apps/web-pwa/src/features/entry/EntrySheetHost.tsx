@@ -76,6 +76,7 @@ export function EntrySheetHost({ route, budget, today, store, controller, writeR
       onSubmit={controller.submit}
       onDelete={controller.remove}
       onSaveRate={controller.saveRate}
+      onCategoryChange={controller.change}
       isDirty={store.isDirty}
       onDiscard={store.clear}
     />

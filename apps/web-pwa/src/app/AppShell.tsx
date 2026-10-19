@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import {
+  baseCurrencyOf,
   calculateAnnualPlan,
   calculateBudget,
   carryBudgetForward,
@@ -14,6 +15,7 @@ import {
 import { Icon, IconSprite } from "../components/Icon";
 import { BottomNav } from "../components/BottomNav";
 import { Toast, toastDuration, type ToastMessage } from "../components/Toast";
+import { BaseCurrencyProvider } from "../components/Money";
 import { observeLayoutSpace } from "../layout-space";
 import { UpdatePrompt } from "../components/UpdatePrompt";
 import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
@@ -27,7 +29,6 @@ import {
   showsFamilyHoldScreen,
   familyNewsLines,
   familyNewsSince,
-  filterTransactionsByMember,
   memberFilterOptions,
   membersById,
   resolveSyncServerUrl,
@@ -60,7 +61,7 @@ import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
-import { createRouter, memoryRouterWindow, type NavigateOptions } from "../navigation/router";
+import { createRouter, memoryRouterWindow } from "../navigation/router";
 import { parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
 import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
@@ -603,18 +604,10 @@ export default function App() {
   if (!budget || !metrics || !plan) return <AppFrame className="loading-route" drafts={drafts} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
-  const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const activeExpenseCategories = budget.categories.filter((category) => category.active && category.type === "expense");
-  const flexibleRows = activeExpenseCategories
-    .filter((category) => category.active && flexibleIds.has(category.id))
-    .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }))
-    .filter((row) => row.metric);
-  const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
-  const safeToSpendMinor = plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor;
   // §6, часы периода. «Сегодня» берётся по календарю семьи, а не по UTC: последний день месяца в
   // UTC уже первый день следующего, и насечка прыгнула бы в начало полосы. Дата следующей выплаты
   // выводится из дат уже записанных доходов — в слое представления, как иконки и тона категорий.
-  // Часы одни на все экраны: «Сегодня», «Записать» и «Год» считают от одного и того же дня.
+  // Часы одни на все экраны: «Обзор», лист ввода и «Год» считают от одного и того же дня.
   const today = localToday(new Date());
   const incomeDates = budget.transactions
     .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
@@ -637,7 +630,7 @@ export default function App() {
       const opened = findBudgetForMonth(budget, month) === undefined;
       await write.run((state) => carryBudgetForward(state, month).state);
       setMessage(opened
-        ? `${monthNominative(month)} открыт: лимиты перенесены, остатки конвертов легли в них сверху. Всё это можно поправить в плане.`
+        ? `${monthNominative(month)} открыт: лимиты перенесены, остатки прошлого месяца легли в них сверху. Всё это можно поправить в плане.`
         : `${monthNominative(month)} уже был в плане — открыли его.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Не удалось открыть месяц.");
@@ -645,11 +638,7 @@ export default function App() {
       setOpeningMonth(false);
     }
   };
-  const postedTransactions = [...budget.transactions]
-    .filter((transaction) => transaction.status === "posted")
-    .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
-  const recentTransactions = filterTransactionsByMember(postedTransactions, memberFilter).slice(0, 5);
-  const memberOptions = memberFilterOptions(budget);
+  const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
@@ -693,7 +682,6 @@ export default function App() {
     if (opening === null) setMessage(ROUTE_NOT_FOUND_MESSAGE);
     else openSheet(opening);
   };
-  const redirect = (destination: Route, options?: NavigateOptions) => router.redirect(destination, options);
   const leaveQuestion = leaveRequest === null ? null : (
     <ConfirmDialog
       {...draftLeaveQuestion(leaveRequest.labels)}
@@ -737,9 +725,8 @@ export default function App() {
     setLoadState("empty");
   };
   const routeContext: AppRouteContext = {
-    budget, today, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
-    recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, redirect, openSheet, openEdit, write, budgetRef,
+    budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
+    openingMonth, openMonth, familyNewsText, navigate, back, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
@@ -747,6 +734,8 @@ export default function App() {
 
   return (
     <AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>
+      {/* Суммы без своей валюты — итоги, лимиты, траты по категориям — набираются в базовой валюте семьи. */}
+      <BaseCurrencyProvider currency={baseCurrencyOf(budget)}>
       <IconSprite />
       <SkipLink />
       <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
@@ -798,6 +787,7 @@ export default function App() {
       {toast !== null ? <Toast key={toast.key} toast={toast} onClose={() => setToast(null)} /> : null}
       {leaveQuestion}
       {replaceFailedQuestion}
+      </BaseCurrencyProvider>
     </AppFrame>
   );
 }

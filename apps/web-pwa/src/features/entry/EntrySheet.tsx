@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { baseCurrencyOf, type BudgetState, type ExchangeRateDraft, type Transaction } from "@family-budget/domain";
+import { AddCategorySheet, ENTRY_CATEGORY_DESCRIPTION } from "../overview/AddCategorySheet";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
@@ -30,7 +31,7 @@ import {
 import { FromToTiles, type EndpointSide } from "./FromToTiles";
 import { NoteField } from "./NoteField";
 import { TagChips } from "./TagChips";
-import { TargetPicker, withPicked } from "./TargetPicker";
+import { creatableCategory, TargetPicker, withPicked } from "./TargetPicker";
 
 export const ENTRY_SHEET_TITLE_ID = "entry-sheet-title";
 export const ENTRY_ERROR_ID = "entry-error";
@@ -61,6 +62,8 @@ export interface EntrySheetProps {
   readonly onSubmit: (draft: EntryDraft) => string | null;
   readonly onDelete: (transaction: Transaction) => Promise<string | null>;
   readonly onSaveRate: (draft: ExchangeRateDraft) => Promise<string | null>;
+  /** «Своя категория» из выбора: правка бюджета тем же путём записи. */
+  readonly onCategoryChange: (change: (state: BudgetState) => BudgetState) => Promise<unknown>;
   /** Черновик листа для реестра несохранённого: спрашивается синхронно в момент ухода. */
   readonly isDirty: () => boolean;
   readonly onDiscard: () => void;
@@ -105,7 +108,7 @@ function spokenAmount(text: string, minor: number | null, currency: string): str
  * если есть что терять), а после закрытия фокус возвращается на плитку, которая его открыла.
  */
 export function EntrySheet(props: EntrySheetProps) {
-  const { budget, draft, today, balances, modeSwitch, failure, writeRefusal, editing, onChange, onRefund, onClose, onSubmit, onDelete, onSaveRate } = props;
+  const { budget, draft, today, balances, modeSwitch, failure, writeRefusal, editing, onChange, onRefund, onClose, onSubmit, onDelete, onSaveRate, onCategoryChange } = props;
   const backdropRef = useRef<HTMLDivElement>(null);
   const sheetRef = useRef<HTMLElement>(null);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -118,6 +121,8 @@ export function EntrySheet(props: EntrySheetProps) {
   const [busy, setBusy] = useState(false);
   const [spoken, setSpoken] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [creating, setCreating] = useState<{ readonly side: EndpointSide; readonly type: "expense" | "income" } | null>(null);
+  const shownPicker = useRef<EndpointSide | null>(null);
 
   useDraftGuard({
     label: draft.editId === null ? "операция, которую вы набирали" : "изменения в операции",
@@ -136,6 +141,13 @@ export function EntrySheet(props: EntrySheetProps) {
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     };
   }, []);
+
+  // Выбор закрылся — фокус возвращается на плитку той стороны, с которой его открыли.
+  useEffect(() => {
+    const closed = shownPicker.current;
+    shownPicker.current = picker;
+    if (picker === null && closed !== null) sheetRef.current?.querySelector<HTMLElement>(`[data-side="${closed}"]`)?.focus();
+  }, [picker]);
 
   useLayoutEffect(() => {
     const caret = caretRef.current;
@@ -194,7 +206,7 @@ export function EntrySheet(props: EntrySheetProps) {
     const sheet = sheetRef.current;
     // События диалога подтверждения всплывают по дереву React и сюда: его клавиши — его.
     if (sheet === null || !(event.target instanceof Node) || !sheet.contains(event.target)) return;
-    handleDialogKeyboard(event, sheet, !busy, () => {
+    handleDialogKeyboard(event, sheet, !busy && creating === null, () => {
       if (picker !== null) setPicker(null);
       else if (rating) setRating(false);
       else onClose();
@@ -220,6 +232,15 @@ export function EntrySheet(props: EntrySheetProps) {
       setError(null);
     }
     return refusal;
+  };
+
+  /** Категория из «Своей категории» выбрана в черновике — та сторона, где её заводили. */
+  const choose = (categoryId: string) => {
+    const side = creating?.side;
+    setCreating(null);
+    if (side === undefined) return;
+    patch((current) => withPicked(current, side, categoryId));
+    setPicker(null);
   };
 
   const sign = currencySign(currency);
@@ -260,6 +281,10 @@ export function EntrySheet(props: EntrySheetProps) {
                 balances={balances}
                 onPick={(id) => { patch((current) => withPicked(current, picker, id)); setPicker(null); }}
                 onBack={() => setPicker(null)}
+                onCreate={() => {
+                  const type = creatableCategory(draft, picker);
+                  if (type !== null) setCreating({ side: picker, type });
+                }}
               />
             ) : <>
               <FromToTiles budget={budget} draft={draft} balances={balances} onPick={setPicker} />
@@ -335,6 +360,17 @@ export function EntrySheet(props: EntrySheetProps) {
           </div>
         </form>
       </section>
+      {creating !== null ? (
+        <AddCategorySheet
+          budget={budget}
+          type={creating.type}
+          description={ENTRY_CATEGORY_DESCRIPTION}
+          onChange={onCategoryChange}
+          onDone={(categoryId) => choose(categoryId)}
+          onChoose={(categoryId) => choose(categoryId)}
+          onClose={() => setCreating(null)}
+        />
+      ) : null}
       {confirmDelete && editing !== null ? (
         <ConfirmDialog
           title="Удалить операцию?"

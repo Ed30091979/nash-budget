@@ -60,7 +60,7 @@ describe("иконки", () => {
   });
 
   it("штрих 1.75, скруглённые концы и currentColor — по §6", () => {
-    const markup = renderToStaticMarkup(<Icon name="repeat" size={20} />);
+    const markup = renderToStaticMarkup(<Icon name="calendar-clock" size={20} />);
     expect(markup).toContain('stroke-width="1.75"');
     expect(markup).toContain('stroke-linecap="round"');
     expect(markup).toContain('stroke-linejoin="round"');

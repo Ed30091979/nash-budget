@@ -1,6 +1,7 @@
 import { calculateAnnualPlan, makePlanningSeed, PLANNING_IDS, type BudgetState } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { BaseCurrencyProvider } from "../../components/Money";
 import { periodClock } from "../../reach";
 import { OverviewScreen, type OverviewScreenProps } from "./OverviewScreen";
 
@@ -14,9 +15,9 @@ function state(): BudgetState {
   };
 }
 
-function render(overrides: Partial<OverviewScreenProps> = {}, budget = state()): string {
+function propsFor(budget: BudgetState, overrides: Partial<OverviewScreenProps> = {}): OverviewScreenProps {
   const plan = calculateAnnualPlan(budget, "2026-07", 24);
-  const props: OverviewScreenProps = {
+  return {
     budget,
     today: "2026-07-13",
     month: "2026-07",
@@ -32,7 +33,10 @@ function render(overrides: Partial<OverviewScreenProps> = {}, budget = state()):
     onPlan: vi.fn(),
     ...overrides,
   };
-  return renderToStaticMarkup(<OverviewScreen {...props} />);
+}
+
+function render(overrides: Partial<OverviewScreenProps> = {}, budget = state()): string {
+  return renderToStaticMarkup(<OverviewScreen {...propsFor(budget, overrides)} />);
 }
 
 const plain = (markup: string) => markup.replace(/<[^>]+>/gu, "").replace(/[\u00a0\u202f]/gu, " ");
@@ -85,6 +89,19 @@ describe("«Обзор»: разметка", () => {
     // Сетка — та, что из §5; кикеры рядов — заголовки секций.
     expect(markup).toContain('class="tile-grid tile-grid-grid" aria-label="Категории расходов"');
     for (const kicker of ["Доходы", "Счета", "Расходы"]) expect(markup).toContain(`class="row-kicker">${kicker}</h2>`);
+  });
+
+  it("итоги и плитки — в базовой валюте семьи, которую ставит оболочка, а не в рублях по умолчанию", () => {
+    const markup = renderToStaticMarkup(<BaseCurrencyProvider currency="USD"><OverviewScreen {...propsFor(state())} /></BaseCurrencyProvider>);
+    expect(markup).toMatch(/aria-label="Продукты: потрачено 22[\u00a0 ]000[\u00a0 ]\$ из 30[\u00a0 ]000[\u00a0 ]\$\. Записать расход"/u);
+    expect(markup).toMatch(/aria-label="Подработка и самозанятость: 0[\u00a0 ]\$ за июль/u);
+    // Доходы и расходы — в базовой валюте; счёт называет свою валюту сам: рублёвый счёт — в рублях.
+    const incomes = markup.slice(markup.indexOf('class="tile-grid tile-grid-row"'), markup.indexOf('class="tile-grid tile-grid-accounts"'));
+    const accounts = markup.slice(markup.indexOf('class="tile-grid tile-grid-accounts"'), markup.indexOf('class="tile-grid tile-grid-grid"'));
+    const expenses = markup.slice(markup.indexOf('class="tile-grid tile-grid-grid"'));
+    expect(plain(incomes)).not.toContain("₽");
+    expect(plain(expenses)).not.toContain("₽");
+    expect(plain(accounts)).toContain("₽");
   });
 
   it("закрытый месяц плана — словами, с выходом «Открыть октябрь»; инлайновых стилей нет", () => {

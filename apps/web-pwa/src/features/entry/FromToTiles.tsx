@@ -65,7 +65,7 @@ export function FromToTiles({ budget, draft, balances, onPick }: {
       {isAccount ? accountFace(side === "from" ? fromAccount : toAccount) : null}
     </>;
     return pickable
-      ? <button className={`tile endpoint ${tone}`} type="button" aria-label={`${word}: ${value}. Изменить`} onClick={() => onPick(side)}>{content}</button>
+      ? <button className={`tile endpoint ${tone}`} type="button" data-side={side} aria-label={`${word}: ${value}. Изменить`} onClick={() => onPick(side)}>{content}</button>
       : <div className={`endpoint fixed ${tone}`}>{content}</div>;
   };
 

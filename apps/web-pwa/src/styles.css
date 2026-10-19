@@ -185,7 +185,7 @@ p { line-height: var(--lh-body); text-wrap: pretty; }
    помещаться там, где раньше вылезали за карточку, — это §1 «ничего не обрезается», исполненный
    средствами набора, а не уменьшением кегля. Документ объявлен lang="ru", поэтому словарь
    переносов берётся русский. Число не переносится никогда: у него свои точки разрыва. */
-p, li, dd, dt, small, .body-copy, .field-hint, .empty-state, .hero-card > span { hyphens: auto; -webkit-hyphens: auto; }
+p, li, dd, dt, small, .body-copy, .field-hint, .empty-state { hyphens: auto; -webkit-hyphens: auto; }
 .money, .money-currency, .odometer, .fingerprint-value, .invite-code code { hyphens: manual; -webkit-hyphens: manual; }
 
 /* §7 Денежная величина. Цифры табличные и с одинаковой высотой, знак валюты — светлее их:
@@ -199,7 +199,7 @@ p, li, dd, dt, small, .body-copy, .field-hint, .empty-state, .hero-card > span {
 /* На цветной плашке приглушение берётся от её собственной пары контраста: `--ink-muted` там не
    измерен и читался бы грязью. На герое отдельного правила больше нет — плоскость там белая, и
    знак валюты приглушается тем же `--ink-muted`, что и везде (7.16:1 на белом). */
-.reserve-pill, .limit-alert, .explain-card, .year-preview, .sheet-hint,
+.explain-card, .sheet-hint,
 .transaction-row.income, .transaction-row.refund { --money-currency-ink: currentColor; }
 
 /* §6 Иконки. Спрайт живёт в разметке маршрута и ничего не рисует сам: нулевой размер и
@@ -242,7 +242,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .save-receipt-copy { min-width: 0; }
 .save-receipt-copy > strong { display: block; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 .save-receipt-copy > small { display: block; margin-top: 8px; font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.save-receipt-value { --odometer-line: var(--lh-title); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin-top: 2px; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 .save-receipt-change { flex: none; padding: 2px 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; background: var(--surface); border-radius: var(--radius-pill); }
 @keyframes receipt-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
@@ -282,35 +281,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .screen-heading h1 { margin-top: 8px; font-size: var(--size-title); line-height: var(--lh-title); }
 .screen-heading p { max-width: 620px; margin-top: 8px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
-/* §6 Герой-карточка «Сегодня»: одно огромное число и один голос под ним.
-   Плоскость белая. Градиент под числом был ровно тем декоративным цветом, которого §3 не
-   допускает: зелёный работал обоями и сигналом одновременно, поэтому не значил ничего. Теперь
-   нормальное состояние экрана цвета не имеет — и красное число видно за метр. */
-.hero-card { position: relative; container-type: inline-size; container-name: hero; padding: 16px; color: var(--ink); background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.hero-card > span, .hero-card > strong { display: block; }
-.hero-card > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-/* Ось ширины — бонус, а не несущая: она отыгрывает около 15 % на длинной сумме, но её поведение
-   вне WebKit не проверено, поэтому лестница ступеней ниже рассчитана на обычную ширину. */
-.hero-card > strong { margin-top: 2px; color: var(--ink); font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); overflow-wrap: normal; }
-.hero-card.danger > strong { color: var(--red-ink); }
-.hero-card p { margin: 12px 0 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
-.hero-card .primary-button { width: 100%; margin-top: 16px; }
-/* У закрытого месяца на карточке два действия: открыть месяц и записать покупку. Главное из них
-   одно — открыть, — а второе стоит под ним обычной кнопкой и ближе к нему, чем к тексту выше:
-   зазор говорит, что это пара действий, а не третий абзац. */
-.hero-card .secondary-button { width: 100%; margin-top: 8px; }
-
-/* §7.2 Денежная лестница: сумма понижает ступень и никогда не обрезается. Ступень ровно одна —
-   48 на 28: дальше число разрывается между разрядами, а не мельчает. Точки разрыва ставит сама
-   сумма, поэтому при системном увеличении герой переносится, а не выезжает за карточку.
-   Порог задан в `em`, а не в пикселях: в условии контейнерного запроса `em` считается от кегля
-   самого контейнера, поэтому при системном увеличении шрифта карточка «сужается» вместе с ним и
-   ступень понижается сама. Пиксельный порог этого не видел: экран оставался 390 pt, кегль рос
-   втрое, и число выезжало за карточку. 25.6em — это те же 384 px при обычном кегле 15. */
-@container hero (max-width: 25.6em) { .hero-card > strong[data-money-scale="l"] { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; } }
-@container hero (max-width: 19.73em) { .hero-card > strong[data-money-scale="m"] { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; } }
-@container hero (max-width: 13.87em) { .hero-card > strong[data-money-scale="s"] { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; } }
-
 /* §6 Плитка-статистика. */
 .quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
 .quick-card { display: flex; min-width: 0; flex-direction: column; container-type: inline-size; padding: 16px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
@@ -319,20 +289,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .quick-card strong { margin-top: auto; padding-top: 8px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
 @container (max-width: 108px) { .quick-card strong { font-size: var(--size-body); line-height: var(--lh-body); } }
 @container (max-width: 84px) { .quick-card strong { font-size: var(--size-caption); line-height: var(--lh-caption); } }
-
-/* §1 исследования: одно доминирующее число, остальное сгруппировано и приглушено, и приоритетная
-   одна колонка вместо сетки равнозначных плиток. Три числа месяца стояли тремя плитками в кегле
-   `h3` начертанием 700 и спорили с герой-числом; теперь это один блок в одну колонку, а
-   приглушение сделано весом и ролью, а не размером (§2). Побочный выигрыш — узкий экран: сетка
-   из трёх плиток на 320 pt разворачивалась в три полноразмерные карточки. */
-.month-split { display: grid; margin-top: 24px; padding: 4px 16px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-/* Сумма переносится под подпись, когда им не хватает строки: на 320 pt при ×2.7 строка «Платежи
-   месяца · 53 000 ₽» была шире карточки и давала экрану горизонтальную прокрутку. */
-.month-split > div { display: flex; flex-wrap: wrap; gap: 4px 12px; min-width: 0; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.month-split > div:last-child { border-bottom: 0; }
-.month-split dt { display: flex; gap: 8px; min-width: 0; align-items: center; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.month-split dt .icon { flex: none; color: var(--ink); }
-.month-split dd { flex: none; margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
 
 /* §6 Семейная новость: чужие записи с прошлого раза. Плашка в потоке под героем, той же
    анатомии, что обещание приватности на импорте: глиф 40 на белом, две строки текста.
@@ -347,25 +303,12 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .family-news small { display: block; margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
 /* §6 Плашка внимания. */
-.limit-alert { display: grid; gap: 4px; margin-top: 24px; padding: 16px; color: var(--amber-ink); background: var(--amber-soft); }
-.limit-alert b { font-size: var(--size-body); font-weight: 700; }
-.limit-alert.danger { color: var(--red-ink); background: var(--red-soft); }
-.limit-alert.danger b { color: var(--red-ink); }
-.limit-alert span { font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 
-.next-card { display: flex; gap: 16px; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.next-card h2, .next-card p { margin: 0; }
-.next-card h2 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); letter-spacing: 0; }
-.next-card p { margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.reserve-pill { flex: none; padding: 8px 12px; text-align: right; color: var(--ink); background: var(--surface-sunken); }
-.reserve-pill > span, .reserve-pill > b { display: block; }
-.reserve-pill > span { font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.reserve-pill b { margin-top: 4px; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
 
 .section-card, .entry-card { margin-top: 24px; padding: 16px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
 /* §5 Концентричные углы: вложенная поверхность получает радиус внешнего минус отступ — 24 − 16.
    Правило про поверхности, а не про элементы управления: у кнопок и полей свой радиус. */
-.section-card .limit-alert, .section-card .planning-edit-list > li, .collapsible-card > .dashboard-table-scroll { }
+.section-card .planning-edit-list > li, .collapsible-card > .dashboard-table-scroll { }
 .section-title { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .section-title > div { min-width: 0; }
 .section-title h2, .section-title p { margin: 0; }
@@ -376,16 +319,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    первой строкой; линейка — второй, во всю ширину карточки; числа — третьей.
    Линейка идёт во всю ширину нарочно: насечка у всех строк стоит на одной доле полосы, поэтому
    сквозь карточку проходит одна вертикаль, и сразу видно, какие конверты её не пересекают. */
-.category-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--border) calc(var(--reach-mark) - 1px) var(--reach-mark), transparent var(--reach-mark)); }
-.category-list > li { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.category-list > li:last-child { border-bottom: 0; }
-.category-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
 .category-tile { display: grid; width: 40px; height: 40px; flex: none; place-items: center; }
-.category-head strong { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
-.category-values { display: flex; gap: 12px; justify-content: space-between; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.category-values b { color: var(--ink); font-weight: 700; }
-.category-values .short { color: var(--amber-ink); }
-.category-values .out { color: var(--red-ink); }
 /* §6 Чип состояния. Пилюля со словом и глифом: цвет здесь третий по счёту носитель, а не
    единственный. Капса в чипе нет — капс живёт только в эйбрау месяца и в пилюле резерва (§4). */
 .status-chip { display: inline-flex; gap: 6px; align-items: center; width: fit-content; flex: none; padding: 4px 10px; color: var(--ink); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0; white-space: nowrap; background: var(--surface-sunken); border: 0; border-radius: var(--radius-pill); }
@@ -400,8 +334,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .row-disclosure > summary { display: flex; min-height: 48px; gap: 8px; align-items: center; color: var(--ink); font-size: var(--size-body); font-weight: 700; list-style: none; }
 .row-disclosure > summary::-webkit-details-marker { display: none; }
 .row-disclosure > .field-hint { margin-bottom: 8px; }
-.chip-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
-.chip-list .secondary-button { min-height: 48px; padding: 13px 16px; font-weight: 400; border-radius: var(--radius-pill); }
 .status-chip.reaches, .status-chip.normal, .status-chip.funded, .status-chip.on_track { color: var(--ink); background: var(--surface-sunken); }
 .status-chip.short, .status-chip.near_limit, .status-chip.exhausted, .status-chip.due_soon { color: var(--amber-ink); background: var(--amber-soft); }
 .status-chip.out, .status-chip.over_limit, .status-chip.overdue { color: var(--red-ink); background: var(--red-soft); }
@@ -425,7 +357,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    говорят слово в чипе, положение заливки относительно насечки и объявление полосы. */
 .limit-bar { --limit-ink: var(--ink); --fill: var(--limit-fill, 0%); --bar-height: 10px; --post-height: 6px; display: block; width: 100%; height: calc(var(--bar-height) + var(--post-height) * 2); margin: 2px 0; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 3px), var(--surface) calc(var(--reach-mark) - 3px) calc(var(--reach-mark) + 3px), transparent calc(var(--reach-mark) + 3px)), linear-gradient(to right, var(--limit-ink) 0 var(--fill), var(--surface-sunken) var(--fill)); background-size: 100% var(--post-height), 100% var(--post-height), 100% var(--bar-height), 100% var(--bar-height); background-position: 0 0, 0 100%, 0 var(--post-height), 0 var(--post-height); }
 /* Полоса героя толще: это главная линейка экрана, а не строка списка. */
-.hero-reach { --bar-height: 16px; --post-height: 7px; margin: 14px 0 0; }
 .limit-bar.short { --limit-ink: var(--amber-ink); }
 
 /* Шкала долей шагом 5 %: инлайновых стилей нет (CSP style-src 'self'), поэтому долю несёт
@@ -433,31 +364,13 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .limit-bar[data-spent="0"] { --limit-fill: 0%; } .limit-bar[data-spent="5"] { --limit-fill: 5%; } .limit-bar[data-spent="10"] { --limit-fill: 10%; } .limit-bar[data-spent="15"] { --limit-fill: 15%; } .limit-bar[data-spent="20"] { --limit-fill: 20%; } .limit-bar[data-spent="25"] { --limit-fill: 25%; } .limit-bar[data-spent="30"] { --limit-fill: 30%; }
 .limit-bar[data-spent="35"] { --limit-fill: 35%; } .limit-bar[data-spent="40"] { --limit-fill: 40%; } .limit-bar[data-spent="45"] { --limit-fill: 45%; } .limit-bar[data-spent="50"] { --limit-fill: 50%; } .limit-bar[data-spent="55"] { --limit-fill: 55%; } .limit-bar[data-spent="60"] { --limit-fill: 60%; } .limit-bar[data-spent="65"] { --limit-fill: 65%; }
 .limit-bar[data-spent="70"] { --limit-fill: 70%; } .limit-bar[data-spent="75"] { --limit-fill: 75%; } .limit-bar[data-spent="80"] { --limit-fill: 80%; } .limit-bar[data-spent="85"] { --limit-fill: 85%; } .limit-bar[data-spent="90"] { --limit-fill: 90%; } .limit-bar[data-spent="95"] { --limit-fill: 95%; } .limit-bar[data-spent="100"] { --limit-fill: 100%; }
-/* Конверт пуст: заливки нет вовсе, и пустая полоса читалась бы нетронутой строкой. Обрубок в
+/* Лимит исчерпан: заливки нет вовсе, и пустая полоса читалась бы нетронутой строкой. Обрубок в
    нуле — факт исчерпания, а не величина: у величины здесь нет длины, её длина равна нулю.
    Правило стоит после шкалы нарочно: у «.limit-bar.out» и «.limit-bar[data-spent="0"]» вес
    селектора одинаковый, и решает порядок. Пока оно стояло раньше, обрубок молча пропадал. */
 .limit-bar.out { --limit-ink: var(--red-ink); --limit-fill: 5px; }
-/* Подписи под линейкой героя: слева сегодня, у самой насечки — дата выплаты, за ней — запас.
-   Колонка ровно до насечки, поэтому дата выплаты стоит под своей вертикалью, а не рядом с ней. */
-.reach-legend { display: grid; grid-template-columns: var(--reach-mark) minmax(0, 1fr); gap: 0 8px; margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); hyphens: manual; }
-/* Слово «сегодня» стоит колонкой по содержимому, дата выплаты — остатком ширины и прижата к
-   насечке. Флексом это не собиралось: короткая подпись сжималась до одной буквы и ломалась
-   пополам, лишь бы длинная соседка уместилась в одну строку. */
-.reach-legend > span:first-child { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 8px; min-width: 0; }
-.reach-legend > span:first-child > span { white-space: nowrap; }
-/* Дата не рвётся по буквам ни при каком кегле: «30 с ент ас ябр я» — не подпись, а её обломки.
-   Общее правило маршрута рвёт длинные слова где угодно, и здесь оно снимается поимённо. */
-.reach-legend b { color: var(--ink); font-weight: 700; text-align: right; overflow-wrap: normal; }
-
-.year-preview { display: flex; width: 100%; gap: 12px; align-items: center; justify-content: space-between; margin-top: 24px; padding: 16px; color: var(--ink); text-align: left; background: var(--surface-sunken); border: 0; }
-.year-preview > span, .year-preview > b, .year-preview > small, .year-preview .row-copy > b, .year-preview .row-copy > small { display: block; }
-.year-preview b { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
-.year-preview small { margin-top: 4px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; opacity: .82; }
 /* §8 «Ещё»: строка настроек — иконка, название, шеврон. Шеврон только показывает переход,
    имя кнопке даёт её текст. */
-.year-preview > .row-mark { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--ink); background: var(--surface); }
-.year-preview > .row-copy { flex: 1; min-width: 0; }
 .row-chevron { flex: none; color: var(--ink); }
 
 /* §6 Сегмент-переключатель. */
@@ -518,7 +431,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .history-row { grid-template-columns: minmax(0, 1fr); }
 .row-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; min-width: 0; padding: 0; text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
 .row-open > b { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: right; overflow-wrap: normal; }
-.operations-screen .section-card > form > fieldset .danger-button { color: var(--red-ink); background: var(--surface); border-color: var(--red-ink); }
 /* §6: плитка 40×40 с глифом 24. Кружок со знаком «−» был текстовым глифом в роли иконки. */
 .transaction-icon { display: grid; width: 40px; height: 40px; place-items: center; border: 0; }
 /* Цвет плитки задаёт тон категории (`tone-*`), а не вид операции: цвет — метка категории.
@@ -584,12 +496,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Вне оболочки плашка стоит в потоке — в той же колонке, что и карточка, под ней. */
 .update-toast, .message-toast { width: min(520px, calc(100% - 32px)); margin: 24px auto 0; padding: 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); animation: toast-rise var(--motion-surface) var(--ease-enter); }
 .app-shell > .update-toast, .app-shell > .message-toast { position: sticky; bottom: calc(var(--nav-space) + 28px); z-index: 40; }
-/* Низ экрана занят, когда к навигации липнет полоса записи («Записать», предпросмотр выписки):
-   две полосы с одним краем вставали друг на друга, и плашка накрывала «Очистить черновик» и
-   кнопку записи во всех положениях прокрутки, кроме самого края потока. Полоса — главное
-   действие экрана и обязана оставаться под большим пальцем; плашка уступает и стоит в потоке.
-   Найдено измерением сообщений: прежняя проверка считала плашку держателем целей, а не помехой. */
-.app-shell:has(.record-action) > .update-toast, .app-shell:has(.record-action) > .message-toast { position: static; }
+/* Низ экрана занят, когда к навигации липнет полоса действия выписки: две полосы с одним краем
+   вставали друг на друга, и плашка накрывала кнопку записи во всех положениях прокрутки, кроме
+   самого края потока. Полоса — главное действие экрана и обязана оставаться под большим пальцем;
+   плашка уступает и стоит в потоке. Найдено измерением сообщений. */
+.app-shell:has(.import-action) > .update-toast, .app-shell:has(.import-action) > .message-toast { position: static; }
 .update-toast p, .message-toast p { margin: 0 0 12px; color: var(--on-ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .update-toast .primary-button, .message-toast .primary-button { color: var(--ink); background: var(--surface); border-color: var(--surface); }
 .update-toast .quiet-button, .message-toast .quiet-button { color: var(--on-ink); }
@@ -686,99 +597,21 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .planning-edit-list li > div:first-child > span { margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .planning-edit-list .text-button { padding-right: 8px; padding-left: 8px; text-align: center; }
 
-.operations-screen { min-width: 0; }
-.operations-screen > * + * { margin-top: 24px; }
-/* Одна форма: карточка суммы, квитанция, табло конвертов, «Вне конвертов», кнопка записи и
-   строка «Доход или перевод». Между ними 12, а не 24: это части одного действия. */
-.record-form > * + * { margin-top: 12px; }
-.record-form > .section-card:first-child { margin-top: 0; }
-.record-card fieldset { display: grid; min-width: 0; gap: 8px; padding: 0; margin: 12px 0 0; background: transparent; border: 0; }
-/* Имя набора полей остаётся для читающих с экрана: на экране его уже сказал заголовок. */
-.record-card legend { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.record-card fieldset:disabled { opacity: .72; }
-/* Строка факта: откуда деньги и когда — одной строкой, и «Изменить» справа от неё. */
-.record-fact { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.record-fact > p { min-width: 0; flex: 1; margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.record-fact > .text-button { flex: none; padding: 13px 8px; text-decoration: none; }
-.record-outside { padding: 12px; color: var(--amber-ink); background: var(--amber-soft); }
-.record-details { display: grid; gap: 8px; }
-.record-details[hidden] { display: none; }
-.record-card .field-hint b { color: var(--ink); }
-
-/* §6 Табло конвертов. Конверт — цель нажатия, и потому скруглён (§5); внутри — та же строка
-   лимита, что на «Сегодня»: плитка, название, линейка во всю ширину, слова под ней. Справа
-   стоит то, ради чего табло существует, — что останется после этой покупки. Направляющая
-   насечки проходит сквозь карточку: у всех конвертов она на одной доле ширины. */
-.envelope-board { display: grid; gap: 8px; }
-.envelope { position: relative; display: block; width: 100%; padding: 12px 16px 14px; color: var(--ink); text-align: left; background: var(--surface); border: 0; border-radius: var(--radius-control); box-shadow: var(--shadow-card); }
-.envelope.selected { box-shadow: inset 0 0 0 2px var(--ink), var(--shadow-card); }
-.envelope-board.closed .envelope { padding-bottom: 12px; }
-.envelope-head, .envelope-foot { position: relative; }
-.envelope-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
-.envelope-head::before { position: absolute; top: -12px; bottom: -14px; left: var(--reach-mark); width: 1px; content: ""; background: var(--border); }
-.envelope-board.closed .envelope-head::before { display: none; }
-.envelope-name { display: block; min-width: 0; }
-.envelope-name > strong, .envelope-name > small, .envelope-after > small, .envelope-after > b { display: block; }
-.envelope-name > strong { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
-.envelope-name > small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-/* Правая колонка стоит на белом: направляющая проходит под ней, а не сквозь цифры. */
-.envelope-after { position: relative; padding-left: 8px; text-align: right; background: var(--surface); }
-.envelope-after > small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.envelope-after > b { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
-.envelope-after.short > small, .envelope-after.short > b, .envelope-after.short .money-currency { color: var(--amber-ink); }
-.envelope-after.out > small, .envelope-after.out > b, .envelope-after.out .money-currency { color: var(--red-ink); }
-.envelope .limit-bar { position: relative; margin: 10px 0 0; }
-.envelope-foot { display: flex; gap: 12px; justify-content: space-between; margin-top: 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.envelope-foot > span:last-child { display: inline-flex; gap: 4px; align-items: center; padding-left: 6px; text-align: right; background: var(--surface); }
-.envelope-foot .short { color: var(--amber-ink); }
-.envelope-foot .out { color: var(--red-ink); }
-/* «Укус» покупки: штрихованный отрезок между «было» и «станет» поверх трека. Доля «было» едет
-   вторым атрибутом — шкала та же, что у заливки, — и рисуется отдельным слоем, чтобы четыре
-   градиента самой линейки остались четырьмя. */
-.limit-bar[data-bite]::after { position: absolute; top: var(--post-height); left: var(--limit-fill); width: calc(var(--bite-fill, 0%) - var(--limit-fill)); height: var(--bar-height); content: ""; background: repeating-linear-gradient(135deg, var(--ink) 0 2px, transparent 2px 6px); }
-.limit-bar[data-bite="0"] { --bite-fill: 0%; } .limit-bar[data-bite="5"] { --bite-fill: 5%; } .limit-bar[data-bite="10"] { --bite-fill: 10%; } .limit-bar[data-bite="15"] { --bite-fill: 15%; } .limit-bar[data-bite="20"] { --bite-fill: 20%; } .limit-bar[data-bite="25"] { --bite-fill: 25%; } .limit-bar[data-bite="30"] { --bite-fill: 30%; }
-.limit-bar[data-bite="35"] { --bite-fill: 35%; } .limit-bar[data-bite="40"] { --bite-fill: 40%; } .limit-bar[data-bite="45"] { --bite-fill: 45%; } .limit-bar[data-bite="50"] { --bite-fill: 50%; } .limit-bar[data-bite="55"] { --bite-fill: 55%; } .limit-bar[data-bite="60"] { --bite-fill: 60%; } .limit-bar[data-bite="65"] { --bite-fill: 65%; }
-.limit-bar[data-bite="70"] { --bite-fill: 70%; } .limit-bar[data-bite="75"] { --bite-fill: 75%; } .limit-bar[data-bite="80"] { --bite-fill: 80%; } .limit-bar[data-bite="85"] { --bite-fill: 85%; } .limit-bar[data-bite="90"] { --bite-fill: 90%; } .limit-bar[data-bite="95"] { --bite-fill: 95%; } .limit-bar[data-bite="100"] { --bite-fill: 100%; }
-/* Вне конвертов: свёрнутая строка той же анатомии, внутри — категории пилюлями по группам. */
-.outside-card { padding: 4px 16px; }
-.outside-card > summary { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 56px; padding: 8px 0; list-style: none; }
-.outside-card > summary::-webkit-details-marker { display: none; }
-.outside-card[open] > summary .row-chevron { transform: rotate(90deg); }
-.outside-card[open] { padding-bottom: 16px; }
-.outside-card > .chip-group { margin-top: 8px; }
-.outside-card > .chip-group > .field-hint { margin-bottom: 8px; }
-.outside-card > .chip-list { margin-top: 12px; }
-.chip-list .secondary-button[aria-pressed="true"] { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
-/* Кнопка записи липнет к низу экрана над навигацией, пока табло в поле зрения: она называет
-   выбранное словами, и ей место под большим пальцем, а не за десятью конвертами.
-   Полоса цвета холста едет поверх белых конвертов, и встречать их она обязана намеренно, а не
-   срезом: верхние 16 px — переход от прозрачного к холсту, и конверт уходит под полосу, как под
-   край листа, а не обрывается белой кромкой. Снизу полоса стоит вплотную на навигации — на
-   измеренной, а не на числе: при ×2.7 панель втрое выше проектной, и полоса на 56 уводила кнопку
-   записи под неё. Между ними нечему просвечивать. Она остаётся в потоке: fixed прятал бы конверты
-   насовсем. */
-.record-action { position: sticky; bottom: var(--nav-space); z-index: 10; display: grid; gap: 8px; padding: 24px 0 8px; background: linear-gradient(to bottom, transparent, var(--canvas) 16px); }
-.record-form > .limit-alert { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; margin-top: 12px; color: var(--amber-ink); background: var(--amber-soft); }
-.record-form > .limit-alert > b, .record-form > .limit-alert > span { grid-column: 1; }
-.record-form > .limit-alert > button { grid-row: 1 / span 2; }
-.record-form > .limit-alert > button:last-child { grid-column: 3; }
-/* §6 Клавиатура суммы: четыре ряда клавиш в той же липкой полосе, что и кнопка записи. Клавиша —
-   цель нажатия: 48 в высоту, между клавишами 8 (§9), скруглена (§5), белая с границей `--line`
-   на холсте полосы. Цифры — кегль заголовка весом 700, знаки — 400 и `--ink-muted` (7.16:1):
-   цифры набирают, знаки — реже, и вес это говорит. Ноль шире вдвое, как на калькуляторе. */
+/* Полоса действия выписки липнет к низу экрана над навигацией: «Записать N операций» называет
+   выбранное словами, и ей место под большим пальцем, а не за длинным списком строк выписки.
+   Полоса цвета холста едет поверх белых строк и встречает их намеренно, а не срезом: верхние
+   16 px — переход от прозрачного к холсту. Снизу она стоит вплотную на навигации — на измеренной,
+   а не на числе: при ×2.7 панель втрое выше проектной. Она остаётся в потоке: fixed прятал бы
+   последнюю строку насовсем. */
+.import-action { position: sticky; bottom: var(--nav-space); z-index: 10; display: grid; gap: 8px; padding: 24px 0 8px; background: linear-gradient(to bottom, transparent, var(--canvas) 16px); }
+/* §6 Клавиатура суммы: четыре ряда клавиш в подвале листа ввода, над кнопкой записи. Клавиша —
+   цель нажатия: 48 в высоту, между клавишами 8 (§9), скруглена (§5), белая с границей `--line`.
+   Цифры — кегль заголовка весом 700, знаки — 400 и `--ink-muted` (7.16:1): цифры набирают,
+   знаки — реже, и вес это говорит. Ноль шире вдвое, как на калькуляторе. */
 .keypad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
 .keypad button.key-wide { grid-column: span 2; }
 .keypad button.key-op { color: var(--ink-muted); font-weight: 400; }
-/* Правка операции: «Отмена» и «Удалить» рядом, а не столбцом, — полоса с клавиатурой и без того
-   высокая, и второй ряд кнопок отнял бы у табло последний конверт на 320 pt. */
-.record-edit-actions { display: grid; gap: 8px; }
-.record-action.with-keypad > .record-edit-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* Заголовок карточки суммы и «Очистить черновик» справа от него — не в полосе записи: полоса с
-   клавиатурой не меняет высоты от первой цифры, и под ней остаётся место конверту. */
-.record-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
-.record-head > h1 { min-width: 0; margin: 0; }
-.record-head > .text-button { flex: none; padding: 13px 8px; text-decoration: none; }
 /* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
 .amount-total { display: block; margin-top: 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 /* §8 «Вся история» — маршрут внутри «Ещё»: заголовок, число операций, поиск над списком. */
@@ -798,7 +631,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .summary-list div:last-child { border-bottom: 0; }
 .summary-list dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .summary-list dd { margin: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
-.operations-screen .planning-edit-list + .secondary-button { margin-top: 12px; }
 
 .dashboard-screen { min-width: 0; }
 .dashboard-screen > * + * { margin-top: 24px; }
@@ -970,7 +802,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dialog-aside-result { margin: 12px 0 0; }
 
 /* ── Выбор категории при записи операции. Поиск над списком, заголовки групп, «Своя категория». ── */
-.operations-screen .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .category-field { gap: 8px; }
 .category-field input[type="search"] { appearance: none; -webkit-appearance: none; }
 .category-field optgroup { color: var(--ink); font-weight: 700; }
@@ -1004,12 +835,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .sync-badge.error::before { background: var(--red-ink); }
 
 .header-badges { display: flex; gap: 8px; flex: none; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
-/* Бейдж внутри карточки-перехода: `.year-preview span` иначе делает его блоком и рвёт пилюлю.
-   Место бейджа — под описанием строки: в самой строке уже стоят иконка и шеврон, и втроём
-   они не оставляют названию ширины. */
-.year-preview .sync-badge { display: inline-flex; flex: none; margin-top: 8px; }
-.member-filter { margin-bottom: 16px; }
-
 .family-screen { min-width: 0; }
 /* Цель нажатия на экранах семьи — не меньше 48 pt. Ссылок в роли кнопки здесь нет: переход
    к сверке отпечатков — кнопка с переводом фокуса, а не адрес с решёткой. */
@@ -1102,6 +927,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .card { border-radius: var(--radius-card); }
 .reach-line { display: grid; gap: 12px; padding: 4px 16px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-card); }
 .reach-line.closed { padding-bottom: 16px; }
+.reach-line.empty { padding: 16px; }
 .reach-line > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .reach-line > button { display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 8px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
 .reach-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
@@ -1282,7 +1108,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .import-merchant .field > label > small { margin-top: 2px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .import-merchant .field > small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .import-screen .transaction-row.transfer > b { color: var(--ink-muted); }
-.import-screen .record-action > .field-hint { text-align: center; }
+.import-screen .import-action > .field-hint { text-align: center; }
 .import-screen .danger-button { color: var(--red-ink); background: var(--surface); border-color: var(--red-ink); }
 .import-screen .save-receipt { margin-top: 0; }
 .import-done > .body-copy { margin: 16px 0 0; }
@@ -1291,7 +1117,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 @media (min-width: 760px) {
   .app-shell { padding-bottom: 40px; }
   .content { width: min(960px, 100%); padding: 32px max(24px, env(safe-area-inset-right)) 56px max(24px, env(safe-area-inset-left)); }
-  .hero-card { padding: 32px; }
   .quick-grid { gap: 12px; }
   .entry-card { max-width: 680px; }
   .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1306,13 +1131,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .onboarding-card { padding: 32px; }
   .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
   .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
-  .record-action { bottom: 0; padding-bottom: 16px; }
+  .import-action { bottom: 0; padding-bottom: 16px; }
 }
 
 @media (max-width: 520px) {
   .screen-heading { align-items: flex-start; flex-direction: column; }
-  .next-card { align-items: flex-start; flex-direction: column; }
-  .reserve-pill { width: 100%; text-align: left; }
   .plan-row { grid-template-columns: 40px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
   .composition-options { grid-template-columns: 1fr; }
@@ -1321,8 +1144,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .planning-edit-list li { grid-template-columns: 1fr 1fr; align-items: stretch; }
   .planning-edit-list li > div:first-child, .planning-edit-list li > strong, .planning-edit-list li > .field { grid-column: 1 / -1; }
-  .record-form > .limit-alert { grid-template-columns: 1fr; }
-  .record-form > .limit-alert > b, .record-form > .limit-alert > span, .record-form > .limit-alert > button, .record-form > .limit-alert > button:last-child { grid-row: auto; grid-column: 1; }
   .pay-row { grid-template-columns: minmax(64px, auto) minmax(0, 1fr); }
   .pay-amount { grid-column: 2; text-align: left; }
   .pay-amount > b, .pay-amount > span { display: inline; }
@@ -1379,18 +1200,14 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    становится прямоугольником во всю ширину — тем, чем кнопка и должна быть, когда её подпись
    перестала помещаться в строку. */
 @media (max-width: 18em) {
-  .chip-list .secondary-button, .sheet-suggestions .secondary-button, .segmented label { width: 100%; border-radius: var(--radius-control); }
+  .sheet-suggestions .secondary-button, .segmented label { width: 100%; border-radius: var(--radius-control); }
   .skip-link { border-radius: var(--radius-control); }
   .segmented { grid-template-columns: 1fr; border-radius: var(--radius-control); }
   /* Сегмент горизонта — та же пилюля, и на этом масштабе он тоже выпрямляется в столбец. */
   .dashboard-screen > header [role="group"] { grid-template-columns: 1fr; border-radius: var(--radius-control); }
   .dashboard-screen > header button { border-radius: var(--radius-control); }
   .status-chip { white-space: normal; border-radius: var(--radius-control); }
-  /* Карточка ближайшего платежа встаёт столбцом и на широком экране: при ×2.7 в неё попадает и
-     768 pt, а пилюля во всю ширину рядом с текстом выезжала за правый край. */
-  .next-card { align-items: flex-start; flex-direction: column; }
-  .reserve-pill { width: 100%; text-align: left; }
-  /* Слово вправе переноситься где угодно: «Страхование» в заголовке ближайшего платежа при ×2.7
+  /* Слово вправе переноситься где угодно: «Страхование» в заголовке крупного платежа при ×2.7
      шире карточки на 320 pt — 294 против 256, — и карточка выезжала за край экрана. Переносы по
      слогам — там, где есть словарь; разрыв в любом месте — гарантия, что за край не выйдет ничто.
      Суммы не в списке: число рвать нельзя (§7). */
@@ -1404,21 +1221,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
      заголовка — 258 pt, и знак валюты уходил за край экрана; число рвать нельзя (§7). */
   .transaction-row > b, .row-open > b { grid-column: 1 / -1; text-align: left; }
   .transaction-row.income > b, .transaction-row.refund > b { font-size: var(--size-body); line-height: var(--lh-body); }
-  /* Подписи линейки встают столбцом: в три четверти экрана дата такого кегля не помещается, а
-     колонка под насечкой на этом масштабе всё равно уже не читается как колонка. */
-  .reach-legend, .reach-legend > span:first-child { grid-template-columns: minmax(0, 1fr); }
-  .reach-legend b { text-align: left; }
-  /* Строка факта: «Изменить» встаёт под текстом, а не сжимает его до слова в строке. То же с
-     заголовком и «Очистить»: на таком кегле им не хватает одной строки. */
-  .record-fact, .record-head { flex-direction: column; align-items: flex-start; gap: 0; }
-  .record-fact > .text-button, .record-head > .text-button { padding-left: 0; }
-  /* Конверт: колонка «останется» переезжает под название, подписи встают столбцом. */
-  .envelope-head { grid-template-columns: 40px minmax(0, 1fr); }
-  .envelope-after { grid-column: 2; padding-left: 0; text-align: left; }
-  .envelope-foot { flex-direction: column; gap: 2px; }
-  .envelope-foot > span:last-child { padding-left: 0; text-align: left; }
-  .outside-card > summary { grid-template-columns: 40px minmax(0, 1fr); }
-  .outside-card > summary .row-chevron { display: none; }
   /* Лестница: месяц и сумма в одну строку, полоса под ними во всю ширину; легенда без колонок. */
   .ladder { grid-template-columns: minmax(0, 1fr) auto; }
   .ladder-row .limit-bar { grid-column: 1 / -1; }
@@ -1447,7 +1249,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    кеглях: меньше шестнадцати строк — полоса встаёт в поток, и к кнопке доезжают, как к любой
    другой. При обычном кегле 16 строк — 256 pt, и таких экранов нет. */
 @media (max-width: 18em) and (max-height: 16em) {
-  .record-action { position: static; }
+  .import-action { position: static; }
 }
 
 /* §6 Тост при крупном шрифте стоит в потоке. При ×2.7 его текст и кнопка — около 430 pt, и

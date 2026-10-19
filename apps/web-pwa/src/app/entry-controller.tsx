@@ -22,7 +22,7 @@ import { createOperationsSubmissionGate } from "../features/operations/form-stat
 import { kindLabels, transactionCurrency } from "../features/operations/transaction-words";
 import { formatMoney } from "../money";
 import { parseRoute, withoutSheet, type Route } from "../navigation/routes";
-import { writeFailureText, type BudgetWriter } from "../write/useBudgetWrite";
+import { writeFailureText, type BudgetChange, type BudgetWriter } from "../write/useBudgetWrite";
 import type { EntryDraftStore } from "./entry-draft-store";
 
 /**
@@ -39,6 +39,8 @@ export interface EntryController {
   submit(draft: EntryDraft): string | null;
   remove(transaction: Transaction): Promise<string | null>;
   saveRate(draft: ExchangeRateDraft): Promise<string | null>;
+  /** Правка бюджета из листа, кроме самой операции: «Своя категория» над выбором категории. */
+  change(change: BudgetChange): Promise<BudgetState>;
   /** Открыть не записанный черновик там, откуда его записывали. */
   returnToDraft(): void;
 }
@@ -64,7 +66,7 @@ export function entryErrorText(error: unknown): string {
 }
 
 /** «Записано: расход 1 250 ₽» — вид и сумма в валюте счёта операции. */
-function operationWords(verb: string, transaction: Transaction, state: BudgetState): string {
+export function operationWords(verb: string, transaction: Transaction, state: BudgetState): string {
   return `${verb}: ${kindLabels[transaction.kind].toLowerCase()} ${formatMoney(transaction.amountMinor, transactionCurrency(transaction, state))}`;
 }
 
@@ -191,6 +193,8 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
         return entryErrorText(error);
       }
     },
+
+    change: (change) => options.write.run(change),
 
     returnToDraft,
   };

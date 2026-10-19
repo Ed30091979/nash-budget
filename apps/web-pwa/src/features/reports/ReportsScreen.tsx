@@ -1,11 +1,13 @@
-import type { BudgetState } from "@family-budget/domain";
+import type { BudgetState, calculateBudget } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { SectionTitle } from "../../components/SectionTitle";
 import { categoryVisual } from "../../category-visual";
 import { monthGenitive } from "../../date-words";
 import { TotalsFact } from "../operations";
-import type { BudgetMetrics } from "../today/TodayScreen";
+
+/** Исполнение месяца плана по категориям — `calculateBudget`. */
+export type BudgetMetrics = ReturnType<typeof calculateBudget>;
 
 const percent = new Intl.NumberFormat("ru-RU", { style: "percent", maximumFractionDigits: 0 });
 

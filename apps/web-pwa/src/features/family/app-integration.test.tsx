@@ -134,13 +134,15 @@ describe("приложение с экраном семьи", () => {
   });
 
   it("автор операции и фильтр по участнику подключены к истории", () => {
-    expect(source).toContain("filterTransactionsByMember(postedTransactions, memberFilter)");
-    expect(source).toContain("memberFilterOptions(budget)");
-    expect(source).toContain('<label htmlFor="history-member-filter">Кто записал</label>');
-    expect(source).toContain("transactionAuthorLabel(memberById, transaction.memberId)");
+    // С 2b «Последние записи» ушли вместе с «Сегодня»; «Кто записал» — в «Операциях».
+    const history = readFileSync(new URL("../operations/HistoryScreen.tsx", import.meta.url), "utf8");
+    expect(source).toContain("const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };");
+    expect(source).toContain("<HistoryScreen budget={budget} members={members}");
+    expect(history).toContain("filterTransactionsByMember(budget.transactions, memberFilter)");
+    expect(history).toContain('<label htmlFor="history-member-filter">Кто записал</label>');
+    expect(history).toContain("transactionAuthorLabel(members.byId, transaction.memberId)");
     // Без участников в бюджете экран остаётся ровно таким, каким был: ни фильтра, ни автора.
-    expect(source).toContain("memberOptions.length > 2 ?");
-    expect(source).toContain("showAuthor={memberOptions.length > 2}");
+    expect(history).toContain("const showMembers = members !== undefined && members.options.length > 2;");
   });
 
   it("адрес сервера читается из конфигурации сборки, а не зашит", () => {

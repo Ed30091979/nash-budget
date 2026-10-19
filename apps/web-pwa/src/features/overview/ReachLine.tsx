@@ -51,11 +51,25 @@ export function ReachLine({ line, clock, monthToOpen, openingMonth, onOpenMonth,
           <Icon name="chevron-right" size={24} className="row-chevron" />
         </button>
         {monthToOpen !== null ? <>
-          <p>Открыть {monthName(monthToOpen)} — значит перенести в него те же лимиты и положить сверху остатки {planMonthOf}. Покупки сегодняшним числом лягут в лимиты нового месяца.</p>
+          <p>Открыть {monthName(monthToOpen)} — значит перенести в него те же лимиты и положить сверху остатки {planMonthOf}. {line.planMonth === "" ? "Прошлый месяц" : monthNominative(line.planMonth)} останется в истории со своими числами, а покупки сегодняшним числом лягут в лимиты нового месяца.</p>
           <button className="primary-button wide" type="button" disabled={openingMonth} aria-busy={openingMonth} onClick={() => onOpenMonth(monthToOpen)}>
             <span className="icon-label"><Icon name="calendar-clock" size={20} />Открыть {monthName(monthToOpen)}</span>
           </button>
         </> : null}
+      </section>
+    );
+  }
+  if (!line.hasLimits) {
+    // Пустое состояние (§6 исследования, пункт 29): назвать, объяснить, дать дорогу. «Можно 0 ₽ ·
+    // лимиты исчерпаны» было бы неправдой: исчерпывать нечего, лимитов просто нет.
+    return (
+      <section className="card reach-line empty" aria-label="Повседневные лимиты">
+        <div className="empty-state">
+          <span className="empty-state-mark"><Icon name="target" size={32} /></span>
+          <h3>Лимитов на этот месяц нет</h3>
+          <p>Лимит — сумма на месяц по одной статье: продукты, транспорт, развлечения. С ним здесь видно, сколько ещё можно потратить и хватит ли до выплаты.</p>
+          <button className="primary-button" type="button" onClick={onPlan}>Задать лимиты в плане</button>
+        </div>
       </section>
     );
   }

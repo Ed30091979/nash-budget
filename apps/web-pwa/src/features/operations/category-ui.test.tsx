@@ -1,17 +1,22 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { makeDefaultCategories, type BudgetState, type Category } from "@family-budget/domain";
+import { calculateAnnualPlan, makeDefaultCategories, type BudgetState, type Category } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
-import { OperationsScreen } from "./OperationsScreen";
+import { blankEntryDraft, endpoints, submitCheck } from "../entry/entry-model";
+import { pickOptions, TargetPicker } from "../entry/TargetPicker";
+import { OverviewScreen } from "../overview/OverviewScreen";
+import { periodClock } from "../../reach";
+import { ENTRY_CATEGORY_DESCRIPTION } from "../overview/AddCategorySheet";
 import { CategorySheet, type CategorySheetDraft } from "./CategorySheet";
 
-const screenSource = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+const sheetSource = readFileSync(new URL("../entry/EntrySheet.tsx", import.meta.url), "utf8");
 
 const accountId = "10000000-0000-4000-8000-000000000001";
 const budgetId = "20000000-0000-4000-8000-000000000001";
 const lineId = "30000000-0000-4000-8000-000000000001";
 const archivedId = "40000000-0000-4000-8000-000000000001";
+const TODAY = "2026-07-13";
 
 function categoryIds(): () => string {
   let counter = 1;
@@ -41,73 +46,94 @@ function fullCatalogue(extra: readonly Category[] = []): BudgetState {
   };
 }
 
-function screenMarkup(state: BudgetState = fullCatalogue()): string {
-  return renderToStaticMarkup(<OperationsScreen budget={state} onChange={vi.fn(async () => undefined)} />);
+function overviewMarkup(state: BudgetState = fullCatalogue()): string {
+  const plan = calculateAnnualPlan(state, "2026-07", 24);
+  return renderToStaticMarkup(
+    <OverviewScreen
+      budget={state}
+      today={TODAY}
+      month="2026-07"
+      onMonth={vi.fn()}
+      clock={periodClock({ startDate: "2026-07-01", endDate: "2026-07-31" }, [], TODAY)}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
+      familyNews={[]}
+      monthToOpen={null}
+      openingMonth={false}
+      onOpenMonth={vi.fn()}
+      onOpenSheet={vi.fn()}
+      onAddCategory={vi.fn()}
+      onPlan={vi.fn()}
+    />,
+  );
 }
 
-describe("выбор категории на экране операций", () => {
-  it("категория без конверта достижима: «Вне конвертов» перечисляет остальные по группам", () => {
-    // Пятнадцать расходных категорий — стена, из-за которой «приходится всё время мотать».
-    // Поиск и системный список ушли с экрана; вместо них конверты с лимитом стоят табло, а
-    // всё, у чего лимита нет, лежит за одной свёрнутой строкой — пилюлями, сгруппированными
-    // по смыслу, чтобы «Кредиты» искали среди обязательных, а «Подарки» — среди личного.
-    const markup = screenMarkup();
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
+/** Имена плиток сетки «Расходы» — по порядку, из их доступных имён. */
+function expenseTiles(markup: string): string[] {
+  const grid = markup.slice(markup.indexOf('class="tile-grid tile-grid-grid"'));
+  return [...grid.matchAll(/<button class="tile tile-expense[^"]*"[^>]*aria-label="([^":]+):/gu)].map((match) => match[1] ?? "");
+}
 
-    for (const title of ["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]) {
-      expect(outside).toContain(`<p class="field-hint">${title}</p>`);
-    }
-    // Доходная группа в расходном табло не показывается.
-    expect(outside).not.toContain("Доходы");
-    for (const name of ["Кредиты и рассрочки", "Здоровье и аптека", "Подарки и праздники"]) {
-      expect(outside).toMatch(new RegExp(`<button class="secondary-button" type="button" aria-pressed="false">${name}</button>`, "u"));
-    }
-  });
-
-  it("не показывает конверт второй раз среди категорий без лимита", () => {
+describe("выбор категории: плитки «Обзора» и выбор в листе", () => {
+  it("категория без лимита достижима: каждая активная расходная — плиткой и в выборе листа, доходных среди них нет", () => {
+    // Пятнадцать расходных категорий — стена, из-за которой «приходится всё время мотать». Табло
+    // конвертов прятало всё, у чего лимита нет, за свёрнутой строкой; плитки стоят все — сеткой,
+    // по четыре в ряд, и та, у которой лимит есть, отличается полосой, а не местом.
     const state = fullCatalogue();
-    const envelope = state.categories.find((item) => item.type === "expense")!;
-    const markup = screenMarkup(state);
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
-
-    expect(markup).toMatch(new RegExp(`<button class="envelope" type="button" aria-pressed="false" aria-label="${envelope.name}:`, "u"));
-    expect(outside).not.toContain(`>${envelope.name}</button>`);
+    const expense = state.categories.filter((item) => item.type === "expense" && item.active).map((item) => item.name);
+    const income = state.categories.filter((item) => item.type === "income").map((item) => item.name);
+    expect(expense.length).toBeGreaterThan(10);
+    expect(expenseTiles(overviewMarkup(state))).toEqual(expense);
+    const picker = pickOptions(state, blankEntryDraft(state, "expense", TODAY), "to", {}).map((option) => option.name);
+    expect(picker).toEqual(expense);
+    for (const name of income) expect(picker).not.toContain(name);
   });
 
-  it("держит «Свою категорию» последней пилюлей списка", () => {
-    const markup = screenMarkup();
-    const outside = markup.slice(markup.indexOf('class="section-card outside-card"'), markup.indexOf('class="record-action'));
-    const chips = outside.slice(0, outside.indexOf('class="row-disclosure"')).match(/<button class="secondary-button"[^>]*>([^<]*)<\/button>/gu) ?? [];
-
-    expect(chips.length).toBeGreaterThan(10);
-    expect(chips.at(-1)).toContain("Своя категория");
+  it("не показывает категорию дважды: плитка одна, и в выборе листа — одна", () => {
+    const state = fullCatalogue();
+    const tiles = expenseTiles(overviewMarkup(state));
+    expect(new Set(tiles).size).toBe(tiles.length);
+    const picker = pickOptions(state, blankEntryDraft(state, "expense", TODAY), "to", {}).map((option) => option.id);
+    expect(new Set(picker).size).toBe(picker.length);
   });
 
-  it("оставляет архивную выбранную категорию видимой и подписанной", () => {
+  it("держит «Свою категорию» последней плиткой — и на «Обзоре», и в выборе листа", () => {
+    const markup = overviewMarkup();
+    const grid = markup.slice(markup.indexOf('class="tile-grid tile-grid-grid"'), markup.indexOf("</ul>", markup.indexOf('class="tile-grid tile-grid-grid"')));
+    const items = grid.split("<li").slice(1);
+    expect(items.at(-1)).toContain('aria-label="Добавить категорию расходов"');
+    const state = fullCatalogue();
+    const picker = renderToStaticMarkup(<TargetPicker budget={state} draft={blankEntryDraft(state, "expense", TODAY)} side="to" balances={{}} onPick={vi.fn()} onBack={vi.fn()} onCreate={vi.fn()} />);
+    const tiles = picker.split("<li").slice(1);
+    expect(tiles.length).toBeGreaterThan(10);
+    expect(tiles.at(-1)).toContain('aria-label="Своя категория расходов"');
+  });
+
+  it("архивную категорию новым операциям не предлагает, а в правке старой — называет и подписывает", () => {
     const archived: Category = { id: archivedId, name: "Дача", type: "expense", group: "personal", active: false, sortOrder: 900 };
-    const markup = screenMarkup(fullCatalogue([archived]));
-
-    // Невыбранная архивная категория новых операций не получает и в списке не стоит.
-    expect(markup).not.toContain("Дача");
-    // Выбранная — остаётся в списке даже из архива и подписана: список, из которого исчезло
-    // собственное значение, врал бы о том, что выбрано.
-    expect(screenSource).toContain('{option.archived ? " (в архиве)" : ""}');
+    const state = fullCatalogue([archived]);
+    // Невыбранная архивная категория новых операций не получает: ни плитки, ни строки в выборе.
+    expect(overviewMarkup(state)).not.toContain("Дача");
+    expect(pickOptions(state, blankEntryDraft(state, "expense", TODAY), "to", {}).map((option) => option.name)).not.toContain("Дача");
+    // Выбранная — названа там, где лист говорит, что выбрано, и подписана: лист, из которого
+    // исчезло собственное значение, врал бы о том, что выбрано.
+    expect(endpoints(state, { ...blankEntryDraft(state, "expense", TODAY), categoryId: archivedId }).to).toBe("Дача (в архиве)");
   });
 
-  it("не теряет сумму, дату и счёт при открытии листа", () => {
-    // Лист — брат формы, а не её замена: форма остаётся смонтированной, и единственное, что
-    // после сохранения меняется в черновике, — выбранная категория.
-    expect(screenSource).toContain("{sheet ? <CategorySheet");
-    expect(screenSource).toContain('patchDraft(current, "categoryId", id)');
-    expect(screenSource).not.toContain("setDraft(defaultDraft(draft.kind, budget)); // sheet");
-    const formEnd = screenSource.indexOf("</form>");
-    expect(screenSource.indexOf("{sheet ? <CategorySheet")).toBeGreaterThan(formEnd);
+  it("«Своя категория» из листа не теряет сумму, дату и счёт: выбирается только категория", () => {
+    // Лист «Своя категория» — брат листа ввода, а не его замена: черновик живёт в хранилище, лист
+    // ввода остаётся смонтированным, и после сохранения в черновике меняется только категория.
+    expect(sheetSource).toContain("<AddCategorySheet");
+    expect(sheetSource).toContain("description={ENTRY_CATEGORY_DESCRIPTION}");
+    expect(sheetSource).toContain("patch((current) => withPicked(current, side, categoryId));");
+    expect(sheetSource.indexOf("<AddCategorySheet")).toBeGreaterThan(sheetSource.indexOf("</section>"));
   });
 
   it("даёт доходу необязательную категорию", () => {
-    expect(screenSource).toContain("Категория дохода — не обязательно");
-    expect(screenSource).toContain('groupedCategoryOptions(budget, "income"');
-    expect(screenSource).toContain('{optional ? "Без категории" : "Выберите категорию"}');
+    const state = fullCatalogue();
+    const draft = { ...blankEntryDraft(state, "income", TODAY), amount: "1000" };
+    const options = pickOptions(state, draft, "from", {});
+    expect(options.at(-1)).toMatchObject({ id: "", name: "Без категории" });
+    expect(submitCheck(state, draft, null)).toEqual({ kind: "write" });
   });
 });
 
@@ -118,7 +144,7 @@ function sheetMarkup(draft: CategorySheetDraft, state: BudgetState = fullCatalog
     <CategorySheet
       budget={state}
       draft={draft}
-      description="Сумма, дата и счёт в форме останутся на месте. После сохранения категория сразу будет выбрана."
+      description={ENTRY_CATEGORY_DESCRIPTION}
       busy={false}
       error={null}
       onPatch={vi.fn()}
@@ -137,7 +163,7 @@ describe("лист «Своя категория»", () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
     expect(markup).toContain('aria-labelledby="category-sheet-title"');
-    expect(markup).toContain("Сумма, дата и счёт в форме останутся на месте.");
+    expect(markup).toContain("Сумма, дата и счёт в листе останутся на месте.");
     expect(markup).toContain("Готовые названия");
     expect(markup).toContain("Такси");
     expect(markup).toContain("Питомцы");

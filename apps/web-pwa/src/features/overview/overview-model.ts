@@ -227,18 +227,20 @@ export interface ReachLineModel {
   readonly safeToSpendMinor: number;
   /** Потрачено по ним — для темпа в день. */
   readonly flexibleSpentMinor: number;
+  /** Есть ли у месяца плана хоть один повседневный лимит: без них «можно» не из чего считать. */
+  readonly hasLimits: boolean;
 }
 
 export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): ReachLineModel {
   const budget = state.budgets.find((item) => item.id === state.activeBudgetId);
   const metrics = calculateBudget(state);
   const lines = new Set(budget?.lines.filter((line) => line.active !== false).map((line) => line.categoryId) ?? []);
-  const flexibleSpentMinor = state.categories
-    .filter((category) => category.active && category.type === "expense" && lines.has(category.id))
-    .reduce((sum, category) => sum + (metrics.categoryMetrics[category.id]?.actualMinor ?? 0), 0);
+  const limited = state.categories.filter((category) => category.active && category.type === "expense" && lines.has(category.id));
+  const flexibleSpentMinor = limited.reduce((sum, category) => sum + (metrics.categoryMetrics[category.id]?.actualMinor ?? 0), 0);
   return {
     planMonth: budget === undefined ? "" : monthOfDate(budget.startDate),
     safeToSpendMinor: flexiblePlanMinor - flexibleSpentMinor,
     flexibleSpentMinor,
+    hasLimits: limited.length > 0,
   };
 }

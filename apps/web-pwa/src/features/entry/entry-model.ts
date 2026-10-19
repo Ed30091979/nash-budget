@@ -369,10 +369,15 @@ export const MODE_LABELS: Readonly<Record<EntryMode, string>> = {
   refund: kindLabels.refund,
 };
 
-/** Имена «откуда» и «куда» — для плиток листа и доступного имени. */
+/**
+ * Имена «откуда» и «куда» — для плиток листа и доступного имени. Счёт или категория в архиве так и
+ * подписаны: правка старой операции показывает то, что в ней записано, а не молчит о нём.
+ */
 export function endpoints(state: BudgetState, draft: EntryDraft): { readonly from: string; readonly to: string } {
-  const account = (id: string) => state.accounts.find((item) => item.id === id)?.name ?? "счёт не выбран";
-  const category = (id: string) => state.categories.find((item) => item.id === id)?.name ?? "категория не выбрана";
+  const named = (item: { readonly name: string; readonly active: boolean } | undefined, missing: string) =>
+    item === undefined ? missing : item.active ? item.name : `${item.name} (в архиве)`;
+  const account = (id: string) => named(state.accounts.find((item) => item.id === id), "счёт не выбран");
+  const category = (id: string) => named(state.categories.find((item) => item.id === id), "категория не выбрана");
   switch (draft.mode) {
     case "expense": return { from: account(draft.accountId), to: category(draft.categoryId) };
     case "income": return { from: draft.incomeCategoryId === "" ? "Без категории" : category(draft.incomeCategoryId), to: account(draft.accountId) };

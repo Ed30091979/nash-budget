@@ -294,7 +294,6 @@ describe("оболочка спрашивает реестр", () => {
 
   it("каждый экран с черновиком регистрирует его, и только через реестр", () => {
     for (const file of [
-      "./features/operations/OperationsScreen.tsx",
       "./features/planning/PlanningScreen.tsx",
       "./features/import/ImportScreen.tsx",
     ]) {
@@ -303,6 +302,12 @@ describe("оболочка спрашивает реестр", () => {
       expect(screen, file).toContain("createDraftSaving");
       expect(screen, file).not.toContain("onDirtyChange");
     }
+    // Лист ввода регистрирует черновик, пока открыт; защёлка записи — у хранилища черновика,
+    // которое переживает лист (`app/entry-draft-store.ts`).
+    const sheet = readFileSync(new URL("./features/entry/EntrySheet.tsx", import.meta.url), "utf8");
+    expect(sheet).toContain("useDraftGuard(");
+    expect(sheet).not.toContain("onDirtyChange");
+    expect(readFileSync(new URL("./app/entry-draft-store.ts", import.meta.url), "utf8")).toContain("createDraftSaving");
   });
 
   it("protects browser unload only while a draft is dirty", () => {

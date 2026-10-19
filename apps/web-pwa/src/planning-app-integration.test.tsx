@@ -104,12 +104,15 @@ describe("planning app integration", () => {
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     // На подэкранах плана подсвечена вкладка «Ещё»: план живёт под ней.
     expect(source).toMatch(/case "plan-month":\s*case "plan-year":\s*case "family":\s*case "import":\s*return "more";/u);
-    expect(source).toContain("activeBudget.lines.filter((line) => line.active !== false)");
-    expect(source).toContain("category.active && flexibleIds.has(category.id)");
+    // Повседневные лимиты «Обзора» — только активные строки плана активных категорий.
+    const overviewModel = readFileSync(new URL("./features/overview/overview-model.ts", import.meta.url), "utf8");
+    expect(overviewModel).toContain("budget?.lines.filter((line) => line.active !== false)");
+    expect(overviewModel).toContain('category.active && category.type === "expense" && lines.has(category.id)');
     // Выключенная строка плана на «Год» не попадает — ни крупная, ни регулярная.
     expect(source).toMatch(/annualCommitments\s*\.filter\(\(item\) => item\.active\)/u);
     expect(source).toMatch(/scheduledExpenses\s*\.filter\(\(item\) => item\.active\)/u);
-    expect(source).toContain('budget.categories.filter((category) => category.active && category.type === "expense")');
+    // Плитки расходов «Обзора» — только активные расходные категории: архивная плитки не получает.
+    expect(overviewModel).toContain('state.categories.filter((category) => category.type === "expense" && category.active)');
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);

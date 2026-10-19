@@ -90,7 +90,7 @@ describe("история — вкладка «Операции»", () => {
   it("— вкладка навигации, и её строка открывает операцию в листе ввода по адресу правки", () => {
     // Вкладка «Операции» нижней навигации — второе место из пяти; на «Ещё» второй двери нет.
     expect(appSource).toContain('{ tab: "operations", label: "Операции", icon: "history" },');
-    expect(appSource).toContain('{route.name === "operations" ? <HistoryScreen budget={budget} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}');
+    expect(appSource).toContain('{route.name === "operations" ? <HistoryScreen budget={budget} members={members} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}');
     expect(appSource).not.toContain("Вся история</strong>");
     // Строка открывает лист поверх «Операций» адресом `#/operations?sheet=entry&edit=<id>`: в адрес
     // идёт только UUID операции, а лист находит её в бюджете в любом регистре.

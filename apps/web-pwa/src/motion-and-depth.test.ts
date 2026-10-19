@@ -98,10 +98,11 @@ describe("глубина", () => {
   });
 
   it("не заводит герою собственной тени: герой — карточка, и стоит он на возвышении карточки", () => {
-    // Прежде у героя был свой тон тени под зелёный градиент. Градиента нет, плоскость белая,
-    // и вторая тень означала бы вторую ступень возвышения там, где ступеней всего две.
+    // Прежде у героя «Сегодня» был свой тон тени под зелёный градиент. С 2b герой «Обзора» —
+    // строка «Можно на повседневные»: плоскость белая, и вторая тень означала бы вторую ступень
+    // возвышения там, где ступеней всего две.
     expect(withoutComments).not.toContain("--shadow-hero");
-    const hero = withoutComments.match(/\.hero-card \{([^}]*)\}/u)?.[1] ?? "";
+    const hero = withoutComments.match(/\n\.reach-line \{([^}]*)\}/u)?.[1] ?? "";
     expect(hero).toContain("background: var(--surface)");
     expect(hero).toContain("box-shadow: var(--shadow-card)");
   });
@@ -140,11 +141,11 @@ describe("форма", () => {
   };
   /** Поверхности 3.0, которые остаются прямыми, пока их экран не переписан (§5: роли — с компонентами). */
   const surfaces = [
-    ".hero-card", ".section-card, .entry-card", ".quick-card", ".month-split", ".next-card",
+    ".section-card, .entry-card", ".quick-card",
     ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
-    ".list-card", ".limit-alert", ".explain-card", ".record-outside", ".invite-code",
-    ".limit-bar", ".dialog-aside", ".step-progress-bar", ".envelope-board", ".month-shape, .ladder-block",
-    ".pay-row", ".record-action", ".family-news",
+    ".list-card", ".explain-card", ".invite-code",
+    ".limit-bar", ".dialog-aside", ".step-progress-bar", ".month-shape, .ladder-block",
+    ".pay-row", ".import-action", ".family-news",
   ];
 
   function radiusRules(): { selector: string; value: string }[] {

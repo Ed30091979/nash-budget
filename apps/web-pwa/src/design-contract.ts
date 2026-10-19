@@ -42,7 +42,7 @@ const TOUCH_TARGET_ELEMENTS = /(?:^|[\s>+~(])(?:button|select|input|textarea|sum
  * видимой пилюли `.chip-face`) и «+» навигации (`.fab`, `.nav-fab`). `.category-tile` сюда не входит:
  * это квадрат глифа внутри строки, а не то, что нажимают.
  */
-const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|nav-fab|fab|tile|chip|step-progress-step|row-open|remove-category|skip-link|danger-button|primary-button|secondary-button|quiet-button|text-button|envelope|list-row)(?![\w-])/u;
+const TOUCH_TARGET_CLASSES = /\.(?:file-button|nav-button|nav-fab|fab|tile|chip|step-progress-step|row-open|remove-category|skip-link|danger-button|primary-button|secondary-button|quiet-button|text-button|list-row)(?![\w-])/u;
 const TOUCH_TARGET_ATTRIBUTES = /\[(?:tabindex|role="button")/u;
 
 export function addressesTouchTarget(selector: string): boolean {

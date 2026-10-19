@@ -1,9 +1,11 @@
-import type { BudgetState } from "@family-budget/domain";
+import type { BudgetState, calculateAnnualPlan } from "@family-budget/domain";
 import { Icon, type IconName } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { SectionTitle } from "../../components/SectionTitle";
 import { DashboardScreen, monthsSpan, nextScheduledDate } from "../dashboard";
-import type { AnnualPlan } from "../today/TodayScreen";
+
+/** План на 12–24 месяца от месяца плана — то, что «Год» показывает, а «Ещё» пересказывает. */
+export type AnnualPlan = ReturnType<typeof calculateAnnualPlan>;
 
 /**
  * §6: состояние всегда несут слово и глиф вместе, цвет — третьим. Глиф объявлен рядом со словом

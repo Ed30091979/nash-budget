@@ -477,7 +477,7 @@ export function ReviewStage({ budget, stage, plan, busy, error, titleRef, onChoi
       </li>)}</ul>
     </details> : null}
 
-    <div className="record-action">
+    <div className="import-action">
       <button className="primary-button wide" type="button" disabled={busy || counts.included === 0} aria-busy={busy} onClick={onConfirm}>{busy ? "Записываем…" : submitLabel}</button>
       {counts.unassigned > 0 ? <p className="field-hint" role="status">{plural(counts.unassigned, OPERATIONS)} без категории не будут добавлены.</p> : null}
       <ErrorLine message={error} />
@@ -512,7 +512,7 @@ export function DoneStage({ stage, busy, error, titleRef, onUndo, onAnother, onB
           {parts ? <small>{parts}</small> : null}
         </div>
       </div>
-      <p className="body-copy">Операции стоят в истории и в конвертах месяца как записанные вручную: их можно править и удалять по одной на экране «Записать». А можно отменить весь импорт разом.</p>
+      <p className="body-copy">Операции стоят в «Операциях» и в лимитах месяца как записанные вручную: их можно править и удалять по одной — строкой в «Операциях». А можно отменить весь импорт разом.</p>
       <ErrorLine message={error} />
       <button className="secondary-button danger-button wide" type="button" disabled={busy} aria-busy={busy} onClick={onUndo}>{busy ? "Отменяем…" : `Отменить импорт — удалить ${plural(stage.count, OPERATIONS)}`}</button>
       <button className="primary-button wide" type="button" disabled={busy} onClick={onAnother}>Загрузить ещё одну выписку</button>

@@ -35,6 +35,7 @@ function render(draft: EntryDraft, overrides: Partial<EntrySheetProps> = {}): st
     onSubmit: vi.fn(() => null),
     onDelete: vi.fn(async () => null),
     onSaveRate: vi.fn(async () => null),
+    onCategoryChange: vi.fn(async () => undefined),
     isDirty: () => false,
     onDiscard: vi.fn(),
     ...overrides,

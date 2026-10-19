@@ -130,10 +130,11 @@ describe("operations app integration", () => {
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
-    expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);
-    expect(styles).toMatch(/\.operations-screen/);
+    // Экрана записи с табло больше нет — ни разметки, ни его стилей (DESIGN §11: удалить, а не перекрыть).
+    expect(styles).not.toMatch(/\.operations-screen|\.envelope|\.record-form|\.hero-card/u);
+    expect(styles).toMatch(/\.entry-sheet/u);
     expect(styles).not.toMatch(/\sstyle\s*=/);
   });
 

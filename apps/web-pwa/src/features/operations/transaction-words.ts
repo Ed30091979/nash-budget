@@ -55,10 +55,6 @@ export function operationsCount(count: number): string {
   return plural(count, ["операция", "операции", "операций"]);
 }
 
-export function rubles(minor: number): string {
-  return formatMoney(minor);
-}
-
 /**
  * Валюта, в которой записана сумма операции: валюта счёта, с которого она идёт. Счёт, которого в
  * бюджете нет, читается рублёвым — так писала каждая версия до валют.
@@ -89,18 +85,6 @@ export function operationLabel(transaction: Transaction, budget: Pick<BudgetStat
 /** Сумма в минимальных единицах валюты `currency`, словами экрана — тем же `formatMoney`, что и везде. */
 export function moneyIn(minor: number, currency: string): string {
   return formatMoney(minor, currency);
-}
-
-/**
- * Валюта суммы, набранной в форме: валюта счёта, с которого операция идёт, — того же счёта, по
- * которому {@link transactionCurrency} назовёт её валюту, когда она будет записана.
- */
-export function draftCurrency(
-  draft: { readonly kind: TransactionKind; readonly accountId?: string; readonly fromAccountId?: string },
-  budget: Pick<BudgetState, "accounts">,
-): string {
-  const accountId = draft.kind === "transfer" || draft.kind === "goal_contribution" ? draft.fromAccountId : draft.accountId;
-  return budget.accounts.find((account) => account.id === accountId)?.currency ?? DEFAULT_BASE_CURRENCY;
 }
 
 /** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
