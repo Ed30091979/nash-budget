@@ -234,7 +234,7 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
   await openMore(page, "Категории и доходы");
   await page.getByRole("button", { name: /^Продукты: /u }).click();
   const categoryHash = await page.evaluate(() => window.location.hash);
-  expect(categoryHash).toMatch(/^#\/more\/categories\/[0-9a-f-]{36}$/u);
+  expect(categoryHash).toMatch(/^#\/more\/categories\/[0-9a-f-]{36}\?type=expense$/u);
 
   const screens: readonly (readonly [string, string])[] = [
     ["#/more", "more"], ["#/more/accounts", "accounts"], ["#/more/accounts/new", "account-new"], [mainId, "account"], ["#/more/rates", "rates"],
@@ -340,4 +340,79 @@ test("поправка курса в тот же день становится �
     await expect(usd.locator(".rate-history > li"), value).toHaveCount(1);
   }
   await expect(page.locator(".manage-status")).toHaveText(/^Курс USD на \d+\s[а-я]+ исправлен: был 94,00, стал 95,00\.$/u);
+});
+
+test("категория и источник дохода: «Назад», системное «Назад» и «Сохранить» ведут к своему списку — и по ссылке тоже", async ({ page }) => {
+  // Ревью 2c, MEDIUM-1: родитель категории в истории был всегда списком расходов — источник дохода
+  // по «Назад» открывал расходы, а «Сохранить» копил записи над формой.
+  await loadDemo(page);
+  const list = page.getByRole("heading", { level: 1, name: "Категории и доходы" });
+  const more = page.getByRole("heading", { level: 1, name: /^Ещё/u });
+  const shows = (kind: "Расходы" | "Доходы") => expect(page.getByRole("button", { name: kind, exact: true })).toHaveAttribute("aria-pressed", "true");
+  const address = () => page.evaluate(() => window.location.hash);
+  const openCategories = async () => {
+    await page.getByRole("button", { name: /^Категории и доходы/u }).click();
+    await expect(list).toBeVisible();
+  };
+
+  // Расходы: системное «Назад» с категории — список расходов, ещё раз — «Ещё».
+  await openMore(page, "Категории и доходы");
+  await page.getByRole("button", { name: /^Продукты: /u }).click();
+  await expect(page.getByRole("button", { name: "К категориям" })).toBeVisible();
+  await page.goBack();
+  await expect(list).toBeVisible();
+  await shows("Расходы");
+  // «Сохранить» — к списку расходов, и над ним в истории нет формы: «Назад» ведёт в «Ещё».
+  await page.getByRole("button", { name: /^Продукты: /u }).click();
+  await page.getByLabel("Название").fill("Продукты и хозтовары");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(list).toBeVisible();
+  await shows("Расходы");
+  await page.goBack();
+  await expect(more).toBeAttached();
+
+  // Доходы: системное «Назад», «К источникам дохода» и «Сохранить» — к списку доходов.
+  await openCategories();
+  await page.getByRole("button", { name: "Доходы", exact: true }).click();
+  await shows("Доходы");
+  const source = page.locator(".categories-screen .tile").first();
+  await source.click();
+  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await page.goBack();
+  await expect(list).toBeVisible();
+  await shows("Доходы");
+  expect(await address()).toBe("#/more/categories?type=income");
+  await source.click();
+  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await shows("Доходы");
+  await page.goBack();
+  await expect(more).toBeAttached();
+  await openCategories();
+  await page.getByRole("button", { name: "Доходы", exact: true }).click();
+  await source.click();
+  const sourceAddress = await address();
+  expect(sourceAddress).toMatch(/^#\/more\/categories\/[0-9a-f-]{36}\?type=income$/u);
+  const name = page.getByLabel("Название");
+  await name.fill(`${await name.inputValue()} 2`);
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(list).toBeVisible();
+  await shows("Доходы");
+  await page.goBack();
+  await expect(more).toBeAttached();
+
+  // По ссылке — новая загрузка страницы, а не переход по якорю: под источником дохода в истории —
+  // список доходов.
+  await page.goto("about:blank");
+  await page.goto(`/${sourceAddress}`);
+  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await page.goBack();
+  await expect(list).toBeVisible();
+  await shows("Доходы");
+  // Старая ссылка без вида списка: адрес сам называет вид, и «назад» — к доходам.
+  await page.goto("about:blank");
+  await page.goto(`/${sourceAddress.replace(/\?type=income$/u, "")}`);
+  await expect.poll(address).toBe(sourceAddress);
+  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await expect(list).toBeVisible();
+  await shows("Доходы");
 });

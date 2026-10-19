@@ -66,8 +66,12 @@ export type Route =
   | ({ readonly name: "rates" } & SheetFields)
   /** Список категорий; `type` — расходы или доходы, без него — расходы. */
   | ({ readonly name: "categories"; readonly type?: CategoryListType } & SheetFields)
-  /** Категория или источник дохода, открытые для правки: `#/more/categories/<id>`. */
-  | ({ readonly name: "category"; readonly id: string } & SheetFields)
+  /**
+   * Категория или источник дохода, открытые для правки: `#/more/categories/<id>?type=income`. Вид
+   * списка — ключ из закрытого набора, как у списка: по нему родитель в истории — свой список, а не
+   * всегда расходы (ревью 2c, MEDIUM-1). Без него — расходы.
+   */
+  | ({ readonly name: "category"; readonly id: string; readonly type?: CategoryListType } & SheetFields)
   | ({ readonly name: "tags" } & SheetFields);
 
 export type RouteName = Route["name"];
@@ -135,9 +139,9 @@ export function parentRoute(route: Route): Route | null {
     case "account-new":
       return { name: "accounts" };
     case "category":
-      // Родитель чистый и бюджета не читает: вид категории в адресе не записан. Экран категории
-      // ведёт «назад» к своему списку сам (`CategoryScreen`), а это — «назад» по ссылке и мусору.
-      return { name: "categories", type: "expense" };
+      // Родитель чистый и бюджета не читает: вид списка записан в адресе. Ссылку без него, ведущую
+      // к источнику дохода, `resolveRoute` по бюджету переписывает на вид записи.
+      return { name: "categories", type: route.type ?? "expense" };
   }
 }
 
@@ -242,7 +246,7 @@ export const QUERY_GRAMMAR = {
   "account-new": SHEET_GRAMMAR,
   rates: SHEET_GRAMMAR,
   categories: { type: { kind: "enum", values: CATEGORY_LIST_TYPES }, ...SHEET_GRAMMAR },
-  category: SHEET_GRAMMAR,
+  category: { type: { kind: "enum", values: CATEGORY_LIST_TYPES }, ...SHEET_GRAMMAR },
   tags: SHEET_GRAMMAR,
 } as const satisfies QueryGrammar;
 
@@ -466,19 +470,24 @@ export function sameRecordId(stored: string, routed: string): boolean {
 export interface RouteRecords {
   readonly transaction: (id: string) => boolean;
   readonly account?: (id: string) => boolean;
-  readonly category?: (id: string) => boolean;
+  /** Вид категории — расходы или доходы; `null` — такой категории нет. */
+  readonly category?: (id: string) => CategoryListType | null;
 }
 
 /**
  * Проверка идентификаторов маршрута по бюджету: операция, счёт или категория, которых нет (удалены
  * здесь или на другом устройстве, ссылка из чужого бюджета), — тоже «Запись не найдена», и маршрут
- * уходит к родителю.
+ * уходит к родителю. Категория, чей вид списка в адресе не тот, что у записи (старая ссылка на
+ * источник дохода без `type`), — найдена, но маршрут её — с видом записи: по нему и «назад».
  */
 export function resolveRoute(route: Route, exists: RouteRecords): ParsedRoute {
   const screen = withoutSheet(route);
-  const missing = (screen.name === "account" && exists.account !== undefined && !exists.account(screen.id))
-    || (screen.name === "category" && exists.category !== undefined && !exists.category(screen.id));
+  const kind = screen.name === "category" && exists.category !== undefined ? exists.category(screen.id) : undefined;
+  const missing = (screen.name === "account" && exists.account !== undefined && !exists.account(screen.id)) || kind === null;
   if (missing) return notFound(parentRoute(screen) ?? ROOT_ROUTE);
+  if (route.name === "category" && kind !== undefined && kind !== null && (route.type ?? "expense") !== kind) {
+    return found({ ...route, type: kind });
+  }
   if (route.sheet !== undefined && route.edit !== undefined && !exists.transaction(route.edit)) {
     return notFound(withoutSheet(route));
   }

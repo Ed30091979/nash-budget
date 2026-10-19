@@ -204,7 +204,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onBack={back}
               // Вид списка — тот же экран: смена вида заменяет запись истории, а не копит их.
               onType={(type) => app.replace({ name: "categories", type })}
-              onOpen={(id) => navigate({ name: "category", id })}
+              onOpen={(id) => navigate({ name: "category", id, type: route.type ?? "expense" })}
               onMessage={setMessage}
             />
           ) : null}
@@ -214,8 +214,10 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               budget={budget}
               categoryId={route.id}
               write={write}
-              onBack={(type) => navigate({ name: "categories", type })}
-              onDone={(message, type) => { setMessage(message); navigate({ name: "categories", type }); }}
+              // К своему списку — родителю маршрута: вид списка записан в адресе категории, и
+              // запись истории под формой — этот список (ревью 2c, MEDIUM-1).
+              onBack={back}
+              onDone={(message) => { setMessage(message); back(); }}
             />
           ) : null}
           {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}

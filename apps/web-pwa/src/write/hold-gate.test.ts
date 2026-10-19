@@ -29,7 +29,7 @@ describe("задержка документа: форма записи не от
     // Экраны-формы — пять; всё остальное, что пишет бюджет, — лист ввода, с чем бы его ни открыли.
     expect(writing.filter((key) => !key.includes("sheet=entry"))).toEqual([
       "#/more/plan-month", "#/more/import",
-      `#/more/accounts/${ACCOUNT}`, "#/more/accounts/new", `#/more/categories/${CATEGORY}`,
+      `#/more/accounts/${ACCOUNT}`, "#/more/accounts/new", `#/more/categories/${CATEGORY}`, `#/more/categories/${CATEGORY}?type=income`,
     ]);
     expect(writing.filter((key) => key.includes("sheet=entry"))).toEqual(ALL_ROUTE_FIXTURES.filter((route) => route.sheet === "entry").map(formatRoute));
     // Списки справочников читают — остатки, курсы, числа операций — и открываются; запись из них

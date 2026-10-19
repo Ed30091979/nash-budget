@@ -142,9 +142,9 @@ export interface CategoryScreenProps {
   readonly budget: BudgetState;
   readonly categoryId: string;
   readonly write: BudgetWriter;
-  /** К своему списку: расходы или доходы — по виду категории. */
-  readonly onBack: (type: Category["type"]) => void;
-  readonly onDone: (message: string, type: Category["type"]) => void;
+  /** К своему списку — расходов или доходов: родитель маршрута, вид списка — в адресе. */
+  readonly onBack: () => void;
+  readonly onDone: (message: string) => void;
 }
 
 /**
@@ -188,7 +188,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
     write.run(categorySave(category, draft, pristine)).then(() => {
       saving.succeed(ticket);
       setBusy(false);
-      onDone(income ? `Источник дохода «${name}» сохранён.` : `Категория «${name}» сохранена.`, category.type);
+      onDone(income ? `Источник дохода «${name}» сохранён.` : `Категория «${name}» сохранена.`);
     }, (cause: unknown) => {
       saving.fail(ticket);
       setBusy(false);
@@ -217,7 +217,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
 
   return (
     <div className="manage-screen category-screen">
-      <div className="planning-toolbar"><BackButton label={income ? "К источникам дохода" : "К категориям"} onClick={() => onBack(category.type)} /></div>
+      <div className="planning-toolbar"><BackButton label={income ? "К источникам дохода" : "К категориям"} onClick={onBack} /></div>
       <header className="manage-head">
         <h1><bdi dir="auto">{category.name}</bdi></h1>
         <p>{income ? "Источник дохода" : "Категория расходов"}{category.active ? "" : " · в архиве"}</p>

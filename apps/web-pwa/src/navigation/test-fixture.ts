@@ -101,6 +101,9 @@ export const ROUTE_FIXTURES = {
     { name: "category", id: CATEGORY },
     { name: "category", id: CATEGORY, sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
     { name: "category", id: CATEGORY, sheet: "entry", edit: OPERATION },
+    { name: "category", id: CATEGORY, type: "income" },
+    { name: "category", id: CATEGORY, type: "expense", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "category", id: CATEGORY, type: "income", sheet: "entry", edit: OPERATION },
   ],
   tags: [
     { name: "tags" },
@@ -125,8 +128,8 @@ const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:
  */
 export const ROUTE_FRAGMENT = new RegExp(
   `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
-    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags|categories/${UUID}))(?:\\?${SHEET})?` +
-    `|more/categories(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
+    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags))(?:\\?${SHEET})?` +
+    `|more/categories(?:/${UUID})?(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
   "u",
 );
 

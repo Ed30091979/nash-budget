@@ -276,6 +276,8 @@ describe("справочники «Учёта» (подволна 2c)", () => {
     [{ name: "categories", type: "expense" }, "#/more/categories?type=expense"],
     [{ name: "categories", type: "income" }, "#/more/categories?type=income"],
     [{ name: "category", id: CATEGORY }, `#/more/categories/${CATEGORY}`],
+    [{ name: "category", id: CATEGORY, type: "income" }, `#/more/categories/${CATEGORY}?type=income`],
+    [{ name: "category", id: CATEGORY, type: "expense", sheet: "entry", edit: OPERATION }, `#/more/categories/${CATEGORY}?type=expense&sheet=entry&edit=${OPERATION}`],
     [{ name: "tags" }, "#/more/tags"],
     [{ name: "account", id: ACCOUNT, sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE }, `#/more/accounts/${ACCOUNT}?sheet=entry&op=transfer&src=${ACCOUNT}&dst=${RESERVE}`],
     [{ name: "categories", type: "income", sheet: "entry", edit: OPERATION }, `#/more/categories?type=income&sheet=entry&edit=${OPERATION}`],
@@ -306,10 +308,11 @@ describe("справочники «Учёта» (подволна 2c)", () => {
       ["#/more/tags/отпуск", { name: "tags" }],
       ["#/more/categories?type=Продукты", { name: "categories" }],
       ["#/more/categories?type=expense&type=income", { name: "categories" }],
+      [`#/more/categories/${CATEGORY}?type=Зарплата`, { name: "category", id: CATEGORY }],
       ["#/more/accounts%2Fnew", { name: "more" }],
     ];
     for (const [hash, route] of cases) expect(parseRoute(hash), hash).toEqual({ route, notFound: true });
-    // Ключ чужого маршрута отбрасывается молча: `type` бывает только у списка категорий.
+    // Ключ чужого маршрута отбрасывается молча: `type` бывает только у категорий и их списка.
     expect(parseRoute("#/more/tags?type=income")).toEqual({ route: { name: "tags" }, notFound: false });
     expect(parseRoute(`#/more/accounts/${ACCOUNT}?id=${RESERVE}`)).toEqual({ route: { name: "account", id: ACCOUNT }, notFound: false });
   });
@@ -321,6 +324,7 @@ describe("справочники «Учёта» (подволна 2c)", () => {
       { name: "account" },
       { name: "category", id: "Продукты" },
       { name: "categories", type: "Продукты" },
+      { name: "category", id: CATEGORY, type: "Зарплата" },
       { name: "accounts", id: ACCOUNT },
       { name: "tags", id: OPERATION },
       { name: "rates", currency: "USD" },
@@ -335,6 +339,10 @@ describe("справочники «Учёта» (подволна 2c)", () => {
     expect(parentRoute({ name: "account", id: ACCOUNT })).toEqual({ name: "accounts" });
     expect(parentRoute({ name: "account-new" })).toEqual({ name: "accounts" });
     expect(parentRoute({ name: "category", id: CATEGORY })).toEqual({ name: "categories", type: "expense" });
+    // Источник дохода — дитя списка доходов: «Назад» и история ведут к нему (ревью 2c, MEDIUM-1).
+    expect(parentRoute({ name: "category", id: CATEGORY, type: "income" })).toEqual({ name: "categories", type: "income" });
+    expect(routeChain({ name: "category", id: CATEGORY, type: "income" }).map(formatRoute))
+      .toEqual(["#/", "#/more", "#/more/categories?type=income", `#/more/categories/${CATEGORY}?type=income`]);
     expect(routeChain({ name: "account", id: ACCOUNT }).map(formatRoute)).toEqual(["#/", "#/more", "#/more/accounts", `#/more/accounts/${ACCOUNT}`]);
     expect(screenKey({ name: "account", id: ACCOUNT, sheet: "entry" })).toBe(`#/more/accounts/${ACCOUNT}`);
     // Лист поверх формы счёта экран не покидает: черновик формы не спрашивается.
@@ -344,11 +352,18 @@ describe("справочники «Учёта» (подволна 2c)", () => {
   });
 
   it("счёт или категория, которых в бюджете нет, — «Запись не найдена» и список", () => {
-    const records = { transaction: () => true, account: (id: string) => sameRecordId(ACCOUNT, id), category: () => false };
+    const records = { transaction: () => true, account: (id: string) => sameRecordId(ACCOUNT, id), category: () => null };
     expect(resolveRoute({ name: "account", id: ACCOUNT }, records)).toEqual({ route: { name: "account", id: ACCOUNT }, notFound: false });
     expect(resolveRoute({ name: "account", id: RESERVE }, records)).toEqual({ route: { name: "accounts" }, notFound: true });
     expect(resolveRoute({ name: "account", id: RESERVE, sheet: "entry" }, records)).toEqual({ route: { name: "accounts" }, notFound: true });
     expect(resolveRoute({ name: "category", id: CATEGORY }, records)).toEqual({ route: { name: "categories", type: "expense" }, notFound: true });
+    // Вид списка в адресе — по записи: ссылка без него на источник дохода становится точной.
+    const income = { transaction: () => true, category: () => "income" as const };
+    expect(resolveRoute({ name: "category", id: CATEGORY }, income)).toEqual({ route: { name: "category", id: CATEGORY, type: "income" }, notFound: false });
+    expect(resolveRoute({ name: "category", id: CATEGORY, type: "expense", sheet: "entry" }, income))
+      .toEqual({ route: { name: "category", id: CATEGORY, type: "income", sheet: "entry" }, notFound: false });
+    expect(resolveRoute({ name: "category", id: CATEGORY, type: "income" }, income)).toEqual({ route: { name: "category", id: CATEGORY, type: "income" }, notFound: false });
+    expect(resolveRoute({ name: "category", id: CATEGORY }, { transaction: () => true, category: () => "expense" as const })).toEqual({ route: { name: "category", id: CATEGORY }, notFound: false });
     // Без проверки записей (старый вызов) — маршрут как есть.
     expect(resolveRoute({ name: "account", id: RESERVE }, { transaction: () => true })).toEqual({ route: { name: "account", id: RESERVE }, notFound: false });
   });

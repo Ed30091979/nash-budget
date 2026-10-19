@@ -62,7 +62,7 @@ import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
 import { createRouter, memoryRouterWindow } from "../navigation/router";
-import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
+import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, sameRoute, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
 import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
 import { blankEntryDraft, carriedDraft, draftSummary, EDIT_VANISHED_TEXT, type EntryDraft } from "../features/entry/entry-model";
@@ -406,9 +406,14 @@ export default function App() {
     const resolved = resolveRoute(router.current(), {
       transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)),
       account: (id) => current.accounts.some((item) => sameRecordId(item.id, id)),
-      category: (id) => current.categories.some((item) => sameRecordId(item.id, id)),
+      category: (id) => current.categories.find((item) => sameRecordId(item.id, id))?.type ?? null,
     });
-    if (!resolved.notFound) return;
+    if (!resolved.notFound) {
+      // Маршрут найден, но назван неточно (старая ссылка на источник дохода без вида списка):
+      // адрес становится точным, и «назад» ведёт к своему списку. Сказать тут нечего.
+      if (!sameRoute(resolved.route, router.current())) router.redirect(resolved.route);
+      return;
+    }
     router.redirect(resolved.route);
     setMessage(ROUTE_NOT_FOUND_MESSAGE);
   }, [currentRouteKey, budgetReady, router]);
