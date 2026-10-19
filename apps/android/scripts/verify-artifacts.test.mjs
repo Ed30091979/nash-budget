@@ -27,6 +27,7 @@ import {
   expectedManifestPermissions,
   resolveConfiguredSyncOrigin,
 } from "./sync-network-policy.mjs";
+import { backNavigationProblems } from "./native-source-policy.mjs";
 
 const validSignerOutput = `Verifies
 Verified using v1 scheme (JAR signing): false
@@ -347,5 +348,20 @@ test("the packaged production page and the Gradle rule agree on both build modes
   assert.equal(
     gradleSaysConfigured(configuredPage),
     resolveConfiguredSyncOrigin(configuredPage) !== null,
+  );
+});
+
+test("system Back walks the web history and hands an exhausted one to the system", () => {
+  const source = readFileSync(
+    new URL("../android/app/src/main/java/com/edfurman/nashbudget/MainActivity.java", import.meta.url),
+    "utf8",
+  );
+  assert.deepEqual(backNavigationProblems(source), []);
+  // The rule catches the shapes it exists for: no callback, or a callback that closes the app.
+  const before = `package x;\nimport com.getcapacitor.BridgeActivity;\npublic class MainActivity extends BridgeActivity {}\n`;
+  assert.ok(backNavigationProblems(before).length >= 4);
+  assert.ok(
+    backNavigationProblems(source.replace("webView.goBack();", "finish();"))
+      .some((problem) => problem.includes("finish")),
   );
 });

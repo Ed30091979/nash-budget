@@ -35,6 +35,19 @@ unsigned local release AAB build, and the Android artifact/security scanner.
 Generated assets, build outputs, local SDK paths, and signing material are
 ignored by Git.
 
+## System Back
+
+`MainActivity` registers an `OnBackPressedCallback`: Back walks the WebView
+history while it can (`canGoBack()` → `goBack()`), and otherwise hands the press
+to the system, which leaves the app. The web app keeps its routes in that
+history (the address hash, `apps/web-pwa/src/navigation/`), so Back from a
+subscreen lands on its parent, from a tab on «Обзор», and an unsaved draft is
+asked about in the app's own dialog. `scripts/native-source-policy.mjs` checks
+the shape of the callback in the node tests and in the artifact scan. This was
+written without an Android SDK: run `verify:android` and press Back on an
+emulator (a subscreen, a tab, «Обзор», and a typed amount on «+») before the
+release.
+
 ## Family sync: configuring the server address
 
 The address of the family sync server is configuration of the **web** build and
