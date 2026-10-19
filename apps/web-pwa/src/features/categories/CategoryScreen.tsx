@@ -10,6 +10,7 @@ import { ReorderControls, type ReorderDirection } from "../../components/Reorder
 import { TonePicker } from "../../components/TonePicker";
 import { softHyphenate } from "../../hyphenation";
 import { useFormDraft } from "../../navigation/draft-guard";
+import { plainInputValue } from "../../plain-text";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { groupChoicesFor } from "../operations/category-picker";
 import { currencySign } from "../rates/RateQuickSheet";
@@ -79,7 +80,6 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
       </div>
       <div className="field">
         <label htmlFor="category-name">Название</label>
-        {/* TODO(2b-merge): поле имени — onChange через plainInputValue(event.currentTarget) из plain-text.ts (2b, раунд 3), и строка в plain-text.test.ts. */}
         <input
           id="category-name"
           dir="auto"
@@ -89,7 +89,7 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
           disabled={busy}
           aria-invalid={fieldError("name") === null ? undefined : true}
           aria-describedby={describedBy("name")}
-          onChange={(event) => onPatch({ name: event.target.value })}
+          onChange={(event) => onPatch({ name: plainInputValue(event.currentTarget) })}
         />
         <FieldError id="category-name" message={fieldError("name")} />
       </div>

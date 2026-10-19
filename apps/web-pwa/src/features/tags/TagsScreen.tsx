@@ -13,6 +13,7 @@ import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Icon } from "../../components/Icon";
 import { useFormDraft } from "../../navigation/draft-guard";
+import { plainInputValue } from "../../plain-text";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { archivedNamesake, deleteRefusal, tagCountWords, tagErrorText, tagsView, type TagRow } from "./tags-model";
 
@@ -124,8 +125,7 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
           <form className="tag-rename" onSubmit={(event) => void rename(event)} noValidate>
             <div className="field">
               <label htmlFor={`tag-rename-${tag.id}`}>Новое имя метки «<bdi dir="auto">{tag.name}</bdi>»</label>
-              {/* TODO(2b-merge): поле имени — onChange через plainInputValue(event.currentTarget) из plain-text.ts (2b, раунд 3), и строка в plain-text.test.ts. */}
-              <input id={`tag-rename-${tag.id}`} dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} value={editing.name} disabled={busy} aria-invalid={rowNotice === null ? undefined : true} aria-describedby={rowNotice === null ? undefined : `tag-notice-${tag.id}`} onChange={(event) => setEditing({ tag, name: event.target.value })} />
+              <input id={`tag-rename-${tag.id}`} dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} value={editing.name} disabled={busy} aria-invalid={rowNotice === null ? undefined : true} aria-describedby={rowNotice === null ? undefined : `tag-notice-${tag.id}`} onChange={(event) => setEditing({ tag, name: plainInputValue(event.currentTarget) })} />
             </div>
             <div className="tag-actions">
               <button className="primary-button" type="submit" disabled={busy} aria-busy={busy}>Сохранить</button>
@@ -169,8 +169,7 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
       <form className="tag-new manage-new-tag" onSubmit={(event) => void create(event)} noValidate>
         <div className="field">
           <label htmlFor="tag-new-name">Новая метка</label>
-          {/* TODO(2b-merge): поле имени — onChange через plainInputValue(event.currentTarget) из plain-text.ts (2b, раунд 3), и строка в plain-text.test.ts. */}
-          <input id="tag-new-name" dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} placeholder="Например, отпуск" value={name} disabled={busy} aria-invalid={createError === null ? undefined : true} aria-describedby={createError === null ? (namesake === null ? undefined : "tag-new-hint") : "tag-new-error"} onChange={(event) => { setName(event.target.value); setCreateError(null); }} />
+          <input id="tag-new-name" dir="auto" autoComplete="off" maxLength={TAG_NAME_MAX_LENGTH} placeholder="Например, отпуск" value={name} disabled={busy} aria-invalid={createError === null ? undefined : true} aria-describedby={createError === null ? (namesake === null ? undefined : "tag-new-hint") : "tag-new-error"} onChange={(event) => { setName(plainInputValue(event.currentTarget)); setCreateError(null); }} />
         </div>
         <button className="primary-button" type="submit" disabled={busy || name.trim() === ""} aria-busy={busy}>Добавить</button>
       </form>
