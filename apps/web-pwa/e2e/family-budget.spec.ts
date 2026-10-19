@@ -1,4 +1,5 @@
-import { expect, test, type Page, type Response } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import {
   G002_INITIAL_OPERATION_COUNT,
   makeG002BackupBuffer,

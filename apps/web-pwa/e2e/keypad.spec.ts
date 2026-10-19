@@ -11,7 +11,8 @@
  * клавиатура, каретка, вставка из буфера и имена для читающего с экрана. Всё проверяется
  * исполнением в браузере, а не по документации.
  */
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import { applyFontScale } from "./font-scale";
 
