@@ -630,6 +630,12 @@ export default function App() {
     if (source === null) throw new Error("Budget is not ready.");
     const backup = await createBudgetBackup(source, async () => undefined);
     await downloadTextFile(prepareJsonDownload(backup.text));
+    // Копия, которую эта версия не восстановит, последней успешной не становится, и человек узнаёт
+    // об этом сразу.
+    if (backup.restoreWarning !== null) {
+      setMessage(`Резервная копия JSON скачана. ${backup.restoreWarning}`);
+      return;
+    }
     await recordBackup(backup.createdAt);
   };
 

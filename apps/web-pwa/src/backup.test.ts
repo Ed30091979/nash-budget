@@ -1277,8 +1277,9 @@ describe("пределы числа записей: файл, а не докум
     // A state the app holds — its own, or the family's from the journal — is never refused for a count.
     expect(prepareBudgetState(state)).toEqual(state);
     // A file is refused, naming the first collection over its limit. Writing a copy of this state is
-    // refused too, but by the file format, not by a count of a kind: 50 001 operations are more
-    // entries than one list of a backup carries (over-limit.test.ts writes every other kind).
+    // refused too, but by the file format, not by a count of a kind: it carries about 12 500 plain
+    // operations (100 000 nodes, 5 MB; measured in over-limit.test.ts), and 50 001 are four times
+    // that (over-limit.test.ts writes every other kind past its limit).
     expect(() => prepareBudgetState(state, undefined, "file")).toThrow(`accounts: допускается не более ${BACKUP_LIMITS.accounts} элементов`);
     await expect(createBudgetBackup(state, vi.fn(async () => undefined))).rejects.toThrow(/Резервная копия содержит слишком/u);
   }, 60_000);

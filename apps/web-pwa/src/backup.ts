@@ -1035,7 +1035,13 @@ export function restoreLimitExcess(state: BudgetState): readonly string[] {
  * whose devices merged past a limit without any copy of its data. The file is then read back by the
  * very path a restore takes, and when this build would refuse it — a file past a limit is refused,
  * because the limits bound the work an untrusted file makes the app do — the copy says so in
- * {@link PreparedBudgetBackup.restoreWarning}, naming every count over its limit.
+ * {@link PreparedBudgetBackup.restoreWarning}, naming every count over its limit, and is not
+ * recorded as the last successful backup.
+ *
+ * The format bounds a whole file as well — 100 000 nodes and 5 MB (`@family-budget/storage`) — and
+ * that bound comes first: a copy stops being written at about 12 500 plain operations, about
+ * 11 000 with a short note each (measured, over-limit.test.ts), far below the 50 000 operations a
+ * document may hold. Raising it is an open item (docs/IMPLEMENTATION_STATUS.md).
  */
 export async function createBudgetBackup(
   state: BudgetState,
@@ -1052,9 +1058,11 @@ export async function createBudgetBackup(
     parseAndValidateBudgetBackup(text);
   } catch {
     const excess = restoreLimitExcess(state);
-    restoreWarning = `Восстановить эту копию эта версия приложения не сможет${excess.length > 0 ? `: ${excess.join(", ")}` : ""}. Пределы восстановления защищают приложение от чужого файла; эта копия восстановится, когда записей в бюджете станет не больше предела.`;
+    restoreWarning = `Эта версия приложения этот файл не восстановит${excess.length > 0 ? `: ${excess.join(", ")}` : ""}. Восстановление отказывает файлу, в котором записей больше этих пределов, — так оно защищает приложение от чужого файла, — а записанный файл уже не изменится. Чтобы получить копию, которую эта версия восстановит, уменьшите число записей до пределов и сделайте копию снова.`;
   }
-  await persistLastSuccessfulBackup(createdAt);
+  // A copy this build will not restore is not the last successful backup: the date shown as one
+  // would promise a way back the file does not give. The caller keeps it as written with a warning.
+  if (restoreWarning === null) await persistLastSuccessfulBackup(createdAt);
   return { text, createdAt, restoreWarning };
 }
 

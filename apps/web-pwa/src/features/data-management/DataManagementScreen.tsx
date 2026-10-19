@@ -92,6 +92,11 @@ export function DataManagementScreen({
 }: DataManagementScreenProps) {
   const [state, dispatch] = useReducer(recoveryReducer, initialRecoveryState);
   const [lastBackupAt, setLastBackupAt] = useState(lastSuccessfulBackup);
+  /**
+   * Копия, записанная с предупреждением, что эта версия её не восстановит, — отдельно от последней
+   * успешной: её дата не обещает дороги назад, которой файл не даёт.
+   */
+  const [warnedBackupAt, setWarnedBackupAt] = useState<string | null>(null);
   const gate = useRef(createRecoveryActionGate());
   const clearTriggerRef = useRef<HTMLButtonElement>(null);
   const cancelClearRef = useRef<HTMLButtonElement>(null);
@@ -118,6 +123,14 @@ export function DataManagementScreen({
       dispatch({ type: "start", activity: "backup" });
       try {
         const result = await onCreateBackup();
+        if (result.restoreWarning) {
+          // Копия за пределом восстановления записана целиком, и сказать это надо сейчас, а не при
+          // попытке восстановить её. Последней успешной она не становится.
+          await downloadTextFile(prepareJsonDownload(result.text));
+          setWarnedBackupAt(result.createdAt);
+          dispatch({ type: "succeed", message: `Резервная копия JSON скачана. ${result.restoreWarning}` });
+          return;
+        }
         const createdAt = await downloadThenRecordSuccessfulBackup(
           result,
           async () => {
@@ -126,12 +139,8 @@ export function DataManagementScreen({
           onRecordSuccessfulBackup,
         );
         setLastBackupAt(createdAt);
-        // Копия за пределом восстановления записана целиком, и сказать это надо сейчас, а не при
-        // попытке восстановить её.
-        dispatch({
-          type: "succeed",
-          message: result.restoreWarning ? `Резервная копия JSON скачана. ${result.restoreWarning}` : "Резервная копия JSON скачана.",
-        });
+        setWarnedBackupAt(null);
+        dispatch({ type: "succeed", message: "Резервная копия JSON скачана." });
       } catch {
         dispatch({ type: "fail", message: SAFE_ERRORS.backup });
       }
@@ -237,6 +246,7 @@ export function DataManagementScreen({
             <span className="list-copy">
               <strong>{state.activity === "backup" ? "Готовим копию…" : "Сделать резервную копию"}</strong>
               <small>Последняя успешная копия: {formatLastBackupDate(lastBackupAt)}</small>
+              {warnedBackupAt !== null ? <small>Копия от {formatLastBackupDate(warnedBackupAt)} записана с предупреждением: эта версия её не восстановит.</small> : null}
             </span>
             <Icon name="chevron-right" size={24} className="row-chevron" />
           </button>

@@ -173,20 +173,41 @@ describe("документ за пределом числа записей", () 
     const line = state.budgets.find((budget) => budget.id === state.activeBudgetId)!.lines[0]!;
     expect(archiveFlexibleLine(state, line.id).budgets.find((item) => item.id === state.activeBudgetId)?.lines.find((item) => item.id === line.id)?.active).toBe(false);
 
-    // The copy is written whole; that this build would not restore it is said at once, naming the count.
-    const backup = await createBudgetBackup(state, vi.fn(async () => undefined));
+    // The copy is written whole; that this build will not restore it is said at once, naming the
+    // count — and plainly: the file never changes, so no promise that it «восстановится» later
+    // (third review). Such a copy is not recorded as the last successful one.
+    const persist = vi.fn(async () => undefined);
+    const backup = await createBudgetBackup(state, persist);
     expect(backup.restoreWarning).toContain(label);
-    expect(backup.restoreWarning).toContain("Восстановить эту копию эта версия приложения не сможет");
+    expect(backup.restoreWarning).toContain("Эта версия приложения этот файл не восстановит");
+    expect(backup.restoreWarning).toContain("записанный файл уже не изменится");
+    expect(backup.restoreWarning).not.toContain("восстановится");
+    expect(persist).not.toHaveBeenCalled();
     // A budget past 500 lines has a category per line, so the restore names the categories first.
     const named = key === "budgets[0].lines" ? "categories" : key;
     expect(() => parseAndValidateBudgetBackup(backup.text)).toThrow(`${named}: допускается не более`);
   }, 60_000);
 
-  it("копия в пределах восстанавливается и предупреждения не несёт", async () => {
-    const backup = await createBudgetBackup(seed, vi.fn(async () => undefined));
+  it("копия в пределах восстанавливается, предупреждения не несёт и становится последней успешной", async () => {
+    const persist = vi.fn(async () => undefined);
+    const backup = await createBudgetBackup(seed, persist);
     expect(backup.restoreWarning).toBeNull();
     expect(parseAndValidateBudgetBackup(backup.text)).toEqual(seed);
+    expect(persist).toHaveBeenCalledWith(backup.createdAt);
   });
+
+  it("формат копии вмещает около 12 500 простых операций — не 50 000, которые держит документ", async () => {
+    // Third review: the file format bounds the whole file — 100 000 nodes and 5 MB — and a copy
+    // stops being written at about 12 500 plain operations (measured: 12 479 written, 12 494 not;
+    // about 11 100 with an 18-character note each). Raising it is an open item.
+    const plainExpenses = (count: number): BudgetState => ({
+      ...seed,
+      transactions: [...seed.transactions, ...more({ ...plainExpense, status: "posted" as const }, count, "c3900000")],
+    });
+    await expect(createBudgetBackup(plainExpenses(12_000), vi.fn(async () => undefined))).resolves.toMatchObject({ restoreWarning: null });
+    await expect(createBudgetBackup(plainExpenses(13_000), vi.fn(async () => undefined))).rejects.toThrow(/Резервная копия содержит слишком много данных/u);
+    expect(OPERATIONS_LIMITS.transactions).toBe(50_000);
+  }, 120_000);
 
   it("операций за пределом — правка и удаление работают, новая запись не создаётся, файл копии их не вмещает", async () => {
     const state: BudgetState = {
@@ -197,9 +218,9 @@ describe("документ за пределом числа записей", () 
     expect(() => createTransaction(state, expenseDraft, makeId)).toThrow("лимит операций");
     expect(deleteTransaction(state, plainExpense.id).transactions).toHaveLength(state.transactions.length - 1);
     expect(editTransaction(state, plainExpense.id, { ...expenseDraft, amount: "1" }).transactions).toHaveLength(state.transactions.length);
-    // The file format bounds the whole file — 100 000 nodes, 50 000 entries in a list, 5 MB — so a
-    // copy of 50 001 operations cannot be written in it at all; the refusal says so instead of a
-    // count of a kind.
+    // The file format bounds the whole file — 100 000 nodes and 5 MB — so a copy stops being
+    // written at about 12 500 operations, long before 50 001 (see the measured case above); the
+    // refusal says so instead of a count of a kind.
     await expect(createBudgetBackup(state, vi.fn(async () => undefined))).rejects.toThrow(/Резервная копия содержит слишком/u);
   }, 60_000);
 
