@@ -78,6 +78,8 @@ export function MoreScreen(props: {
   /** Справочники «Учёта» (подволна 2c): строка — путь, подпись — что за ним. */
   onAccounts: () => void;
   accountsNote: string;
+  onRates: () => void;
+  ratesNote: string;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
@@ -89,6 +91,7 @@ export function MoreScreen(props: {
       <h2 id="more-ledger-title" className="list-kicker">Учёт</h2>
       <ul className="list-card">
         <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 

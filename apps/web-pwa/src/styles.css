@@ -1137,6 +1137,25 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
 .manage-form { display: grid; min-width: 0; gap: 20px; }
 .manage-form > .primary-button { margin-top: 4px; }
 .manage-notice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; font-size: var(--size-caption); line-height: var(--lh-caption); --money-currency-ink: currentColor; }
+/* «Курсы валют»: карточка базовой валюты и карточка на каждую валюту семьи — курс сегодня крупно,
+   история строками с «Удалить», группа «Новый курс» на утопленной плашке (`.rate-quick`). */
+.manage-screen > .section-card { margin-top: 0; }
+.rate-card, .base-currency { display: grid; min-width: 0; gap: 8px; }
+.rate-card > h2, .base-currency > h2 { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 0; }
+.rate-code { padding: 2px 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; background: var(--surface-sunken); }
+.rate-now { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 0; }
+.rate-now > strong { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
+.rate-now > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.rate-now.missing { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; color: var(--amber-ink); }
+.rate-now.missing > span { color: var(--amber-ink); }
+.rate-card > .list-kicker { margin: 8px 0 0; }
+.rate-history { display: grid; margin: 0; padding: 0; list-style: none; }
+.rate-history > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: center; padding: 4px 0; border-top: 1px solid var(--border); }
+.rate-history-day { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.rate-history-value { grid-column: 1; font-weight: 700; overflow-wrap: normal; }
+.rate-history .quiet-button { grid-column: 2; grid-row: 1 / span 2; }
+.rate-card > .secondary-button, .base-currency .secondary-button { justify-self: start; }
+.base-currency-form { display: grid; gap: 12px; }
 /* Выбор из немногих — вид счёта: кнопки 48 в две колонки, выбранная — чернильная, как чип (§6). */
 .option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .option-grid > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }

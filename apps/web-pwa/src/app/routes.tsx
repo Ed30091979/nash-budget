@@ -15,6 +15,8 @@ import { PlanningScreen } from "../features/planning";
 import { accountsNote, MoreScreen, monthNote } from "../features/more/MoreScreen";
 import { AccountScreen } from "../features/accounts/AccountScreen";
 import { AccountsScreen } from "../features/accounts/AccountsScreen";
+import { RatesScreen } from "../features/rates/RatesScreen";
+import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
 import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
 import type { Route } from "../navigation/routes";
@@ -170,6 +172,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             onImportStatement={() => navigate({ name: "import" })}
             onAccounts={() => navigate({ name: "accounts" })}
             accountsNote={accountsNote(budget)}
+            onRates={() => navigate({ name: "rates" })}
+            ratesNote={ratesNote(budget, app.today)}
             familyNote={family.membership === null
               ? "Без входа приложение работает как сейчас"
               : `${plural(Math.max(1, family.members.length), ["участник", "участника", "участников"])} · приглашение, отпечатки ключей`}
@@ -182,6 +186,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {route.name === "family" ? familyScreen(back) : null}
           {/* Справочники «Учёта» (подволна 2c). Запись — по UUID из адреса; имени в адресе нет. */}
           {route.name === "accounts" ? <AccountsScreen budget={budget} today={app.today} write={write} onBack={back} onOpen={(id) => navigate({ name: "account", id })} onCreate={() => navigate({ name: "account-new" })} /> : null}
+          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
           {route.name === "account" || route.name === "account-new" ? (
             <AccountScreen
               key={route.name === "account" ? route.id : "new"}
