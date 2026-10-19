@@ -1,5 +1,6 @@
 import {
   type FormEvent,
+  type ReactNode,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -42,6 +43,8 @@ import { createDraftSaving, useDraftGuard, type DraftSaving } from "../../naviga
 interface PlanningScreenProps {
   readonly budget: BudgetState;
   readonly onChange: (change: (current: BudgetState) => BudgetState) => Promise<unknown>;
+  /** Карточка «Дни выплат» (R2, ревью M-4): сразу под заголовком, до слоёв плана. */
+  readonly paydays?: ReactNode;
 }
 
 /**
@@ -375,6 +378,7 @@ function FlexibleEditor({ budget, onChange }: PlanningEditorProps) {
 export function PlanningScreen(props: PlanningScreenProps) {
   return <div className="planning-screen">
     <header className="screen-heading"><div><span className="card-kicker">Настройки горизонта</span><h1>Плановые расходы</h1><p>Четыре слоя хранятся отдельно и сразу пересчитывают 12–24 месяца.</p></div></header>
+    {props.paydays}
     {/* Каждый редактор держит свой черновик в реестре: навигация и обновление спрашивают их все. */}
     <CommitmentsEditor {...props} />
     <SchedulesEditor {...props} />

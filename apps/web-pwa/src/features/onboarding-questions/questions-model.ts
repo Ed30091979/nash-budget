@@ -229,3 +229,13 @@ export function toggleCustomPayday(days: readonly number[], day: number): readon
   if (days.length >= MAX_CUSTOM_PAYDAYS) return days;
   return [...days, day].sort((left, right) => left - right);
 }
+
+/**
+ * Какой вариант листа отмечен, когда дни уже названы (правка из «Плана месяца», ревью R2, M-4): пара
+ * из списка — своим вариантом, остальное — «Другими числами» с этими числами; без дней — ничего.
+ */
+export function paydayOptionFor(days: readonly number[]): { readonly option: PaydayOption | null; readonly custom: readonly number[] } {
+  if (days.length === 0) return { option: null, custom: [] };
+  const pair = PAYDAY_OPTIONS.find((item) => item.days !== null && item.days.length === days.length && item.days.every((day, index) => day === days[index]));
+  return pair === undefined ? { option: "custom", custom: [...days] } : { option: pair.id, custom: [] };
+}

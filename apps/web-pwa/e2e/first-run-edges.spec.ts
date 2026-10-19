@@ -155,6 +155,45 @@ test.describe("сенсорный экран", () => {
   });
 });
 
+test("дни выплат меняются и снимаются: «Ещё» → «План месяца» и карточка «Можно тратить» на «Обзоре»", async ({ page }) => {
+  await skipToOverview(page);
+  await question(page, CHIPS).getByRole("button", { name: "Готово", exact: true }).click();
+  await question(page, ACCOUNTS).getByRole("button", { name: "Нет, это всё" }).click();
+  const sheet = question(page, PAYDAY);
+  await sheet.getByRole("radio", { name: "5-го и 20-го" }).click();
+  await sheet.getByRole("button", { name: "Готово", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  const planRow = page.getByRole("button", { name: /^План месяца/u });
+  await expect(planRow).toContainText("выплаты 5-го и 20-го");
+  await planRow.click();
+  const card = page.getByRole("region", { name: "Дни выплат" });
+  await expect(card).toContainText("5-го и 20-го");
+  const change = card.getByRole("button", { name: "Изменить дни выплат" });
+  await change.click();
+  await expect(sheet.getByRole("radio", { name: "5-го и 20-го" })).toHaveAttribute("aria-checked", "true");
+  await sheet.getByRole("radio", { name: "10-го и 25-го" }).click();
+  await sheet.getByRole("button", { name: "Готово", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(card).toContainText("10-го и 25-го");
+  await expect(change).toBeFocused();
+  await page.getByRole("button", { name: "К разделу «Ещё»" }).click();
+  await expect(planRow).toContainText("выплаты 10-го и 25-го");
+
+  // С «Обзора»: карточка «Можно тратить» ведёт в план месяца, а там — та же правка.
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
+  await page.locator(".reach-line button").first().click();
+  await expect(card).toContainText("10-го и 25-го");
+  await change.click();
+  await sheet.getByRole("radio", { name: "Нет постоянной" }).click();
+  await sheet.getByRole("button", { name: "Готово", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(card).toContainText("Не названы");
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await expect(planRow).toContainText("даты выплат — из доходов");
+});
+
 test("«Удалить данные» стирает память первого запуска, а пример её обнуляет", async ({ page }) => {
   await skipToOverview(page);
   for (const name of [CHIPS, ACCOUNTS, PAYDAY]) {

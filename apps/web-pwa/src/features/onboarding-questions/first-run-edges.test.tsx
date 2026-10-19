@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
-import type { BudgetState } from "@family-budget/domain";
+import { setHouseholdPaydays, type BudgetState } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { buildDemoBudgetState } from "../../onboarding/demo";
@@ -8,8 +8,9 @@ import { buildOnboardingBudgetState } from "../../onboarding/model";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { coachVisible } from "./hints-model";
 import { createFirstRunStore, EMPTY_FIRST_RUN, type FirstRunMemory, type FirstRunState } from "./memory";
+import { PaydayQuestion } from "./PaydayQuestion";
 import { QuestionHost } from "./QuestionHost";
-import { beginFirstRun, finishFirstRun, firstRunBelongsTo, nextQuestion } from "./questions-model";
+import { beginFirstRun, finishFirstRun, firstRunBelongsTo, nextQuestion, paydayOptionFor } from "./questions-model";
 
 /*
  * Края первого запуска, найденные ревью R2: бюджет, заменённый копией или документом семьи (M-1),
@@ -90,3 +91,35 @@ describe("M-3: взмах пальцем по слайду", () => {
   });
 });
 
+describe("M-4: дни выплат меняются и снимаются", () => {
+  it("лист открывается с нынешним ответом: пара — своим вариантом, остальное — «Другими числами»", () => {
+    expect(paydayOptionFor([])).toEqual({ option: null, custom: [] });
+    expect(paydayOptionFor([5, 20])).toEqual({ option: "5-20", custom: [] });
+    expect(paydayOptionFor([1, 15])).toEqual({ option: "1-15", custom: [] });
+    expect(paydayOptionFor([3, 25])).toEqual({ option: "custom", custom: [3, 25] });
+    expect(paydayOptionFor([20])).toEqual({ option: "custom", custom: [20] });
+  });
+
+  it("правка: отмечен нынешний вариант, крестик — «Закрыть без изменений»", () => {
+    const markup = renderToStaticMarkup(<PaydayQuestion write={write} initial={[10, 25]} onAnswered={() => undefined} onLater={() => undefined} />);
+    expect(markup).toMatch(/aria-checked="true" tabindex="0"[^>]*>(?:(?!<\/button>)[\s\S])*10-го и 25-го/u);
+    expect(markup.match(/aria-checked="true"/gu)).toHaveLength(1);
+    expect(markup).toContain('aria-label="Закрыть без изменений"');
+    const custom = renderToStaticMarkup(<PaydayQuestion write={write} initial={[3, 25]} onAnswered={() => undefined} onLater={() => undefined} />);
+    expect(custom).toContain('aria-pressed="true" aria-label="3-го"');
+    expect(custom).toContain('aria-pressed="true" aria-label="25-го"');
+  });
+
+  it("карточка «Дни выплат» в плане месяца: что названо — и «Изменить дни выплат»", async () => {
+    const { PaydaysCard } = await import("./PaydaysCard");
+    const named = renderToStaticMarkup(<PaydaysCard budget={setHouseholdPaydays(preset(), [5, 20])} write={write} onMessage={() => undefined} />);
+    expect(named).toContain('aria-labelledby="paydays-title"');
+    expect(named).toContain(">Дни выплат</h2>");
+    expect(named).toContain("5-го и 20-го");
+    expect(named).toContain(">Изменить дни выплат</button>");
+    const none = renderToStaticMarkup(<PaydaysCard budget={preset()} write={write} onMessage={() => undefined} />);
+    expect(none).toContain("Не названы");
+    const routes = readFileSync(new URL("../../app/routes.tsx", import.meta.url), "utf8");
+    expect(routes).toMatch(/<PlanningScreen [^\n]*paydays=\{<PaydaysCard /u);
+  });
+});

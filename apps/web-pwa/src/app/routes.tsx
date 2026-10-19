@@ -6,6 +6,7 @@ import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup, type Ba
 import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
 import { CoachMark } from "../features/onboarding-questions/CoachMark";
 import { HintCards } from "../features/onboarding-questions/HintCards";
+import { PaydaysCard } from "../features/onboarding-questions/PaydaysCard";
 import { coachCategoryId, coachDone, coachVisible, finishCoach } from "../features/onboarding-questions/hints-model";
 import { firstRunStore, type HintId } from "../features/onboarding-questions/memory";
 import { QuestionHost, useFirstRun } from "../features/onboarding-questions/QuestionHost";
@@ -258,7 +259,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
-          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
+          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} paydays={<PaydaysCard budget={budget} write={write} onMessage={setMessage} />} /></> : null}
           {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
