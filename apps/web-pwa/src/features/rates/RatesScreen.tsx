@@ -6,17 +6,18 @@ import {
   type BudgetState,
   type CurrencyCode,
   type ExchangeRate,
+  type ExchangeRateCreation,
   type ExchangeRateDraft,
 } from "@family-budget/domain";
 import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { CurrencySelect, currencyLabel, currencyName } from "../../components/CurrencySelect";
 import { Icon } from "../../components/Icon";
-import { formatDay, formatDayYear } from "../../date-words";
+import { formatDayYear } from "../../date-words";
 import { useFormDraft } from "../../navigation/draft-guard";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { currencySign, RateQuickSheet } from "./RateQuickSheet";
-import { baseCurrencyState, currencyRates, familyCurrencies, rateWords, ratesErrorText, type CurrencyRates } from "./rates-model";
+import { baseCurrencyState, currencyRates, familyCurrencies, rateSavedText, rateWords, ratesErrorText, type CurrencyRates } from "./rates-model";
 
 export interface RatesScreenProps {
   readonly budget: BudgetState;
@@ -44,15 +45,20 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
   const [error, setError] = useState<string | null>(null);
 
   const saveRate = async (draft: ExchangeRateDraft): Promise<string | null> => {
+    const outcome: { saved?: ExchangeRateCreation } = {};
     try {
-      // Отказ домена — до записи и словами поля; запись повторяет его на настоящем состоянии.
+      // Отказ домена — до записи и словами поля; запись повторяет его на настоящем состоянии, и
+      // слова о записи — по тому, что записалось: новый день или поправка курса этого дня.
       addExchangeRate(budget, draft);
-      await write.run((state) => addExchangeRate(state, draft).state);
+      await write.run((state) => {
+        outcome.saved = addExchangeRate(state, draft);
+        return outcome.saved.state;
+      });
     } catch (cause) {
       return ratesErrorText(cause);
     }
     setAdding(null);
-    setStatus(`Курс ${draft.currency} с ${formatDay(draft.date)} записан.`);
+    setStatus(outcome.saved === undefined ? `Курс ${draft.currency} записан.` : rateSavedText(outcome.saved));
     return null;
   };
   const remove = async (rate: ExchangeRate) => {

@@ -1,4 +1,5 @@
 import {
+  addExchangeRate,
   BaseCurrencyValidationError,
   findRate,
   makePlanningSeed,
@@ -12,7 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BudgetWriteRefusal } from "../../write-refusal";
 import { RateQuickSheet } from "./RateQuickSheet";
 import { RatesScreen } from "./RatesScreen";
-import { baseCurrencyState, currencyRates, familyCurrencies, rateWords, ratesErrorText, ratesNote } from "./rates-model";
+import { baseCurrencyState, currencyRates, familyCurrencies, rateSavedText, rateWords, ratesErrorText, ratesNote } from "./rates-model";
 
 const TODAY = "2026-10-19";
 const DOLLARS = "e2c00000-0000-4000-8000-0000000000a1";
@@ -67,6 +68,16 @@ describe("курсы: модель", () => {
     expect(rateWords(kzt!.current!)).toBe("100 KZT = 18,40\u00a0₽");
     expect(ratesNote(state(), TODAY)).toBe("база RUB · 1 USD = 93,00 · 100 KZT = 18,40 · EUR — нет курса · 1 GBP = 118,00");
     expect(ratesNote(makePlanningSeed(), TODAY)).toBe("база RUB · курсов нет");
+  });
+
+  it("после записи: новый день — «записан», тот же день — «исправлен: был…, стал…», то же значение — «не изменился»", () => {
+    const fresh = addExchangeRate(state(), { currency: "USD", date: "2026-10-19", rate: { baseMinor: 9_400, quoteMinor: 100 } }, () => rate("90", "", "", 0, 0).id);
+    expect(rateSavedText(fresh)).toBe("Курс USD с 19\u00a0октября записан.");
+    // 15 октября — два курса с двух устройств; поправка исправляет тот, что был текущим, 93,00.
+    const corrected = addExchangeRate(state(), { currency: "USD", date: "2026-10-15", rate: { baseMinor: 9_350, quoteMinor: 100 } });
+    expect(rateSavedText(corrected)).toBe("Курс USD на 15\u00a0октября исправлен: был 93,00, стал 93,50.");
+    const kzt = addExchangeRate(state(), { currency: "KZT", date: "2026-10-10", rate: { baseMinor: 1_840, quoteMinor: 10_000 } });
+    expect(rateSavedText(kzt)).toBe("Курс KZT на 10\u00a0октября не изменился: 18,40.");
   });
 
   it("базовая валюта: пока бюджет пуст — меняется, иначе — словами того, что её держит", () => {

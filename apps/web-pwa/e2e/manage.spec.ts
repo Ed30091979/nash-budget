@@ -7,7 +7,7 @@
 import { expect, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 import type { BudgetState } from "@family-budget/domain";
-import { demoBudget, restoreBudget } from "./budgets";
+import { demoBudget, restoreBudget, withDollarAccount } from "./budgets";
 import { applyFontScale } from "./font-scale";
 import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { amountField, entrySheet, goToOverview, leaveDialog, loadDemo, recordExpense, submitButton, tile, toast } from "./sheet";
@@ -320,4 +320,21 @@ test("имена на плитках справочника и на плитке
   await applyFontScale(page, 1);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await softHyphenedNames(page), "форма категории").toEqual([]);
+});
+
+test("поправка курса в тот же день становится текущей — и в истории она одна", async ({ page }) => {
+  // Ревью 2c, HIGH-1: шесть поправок курса USD на сегодня «записывались», а текущим оставался то
+  // прежний, то новый — между записями одного дня выбирал больший идентификатор.
+  await loadDemo(page);
+  await restoreBudget(page, withDollarAccount(demoBudget()));
+  await openMore(page, "Курсы валют");
+  const usd = page.locator("section.rate-card", { has: page.getByRole("heading", { name: /^USD/u }) });
+  for (const value of ["90,00", "91,00", "92,00", "93,00", "94,00", "95,00"]) {
+    await usd.getByRole("button", { name: "Добавить курс USD" }).click();
+    await usd.getByRole("textbox", { name: "Сколько ₽ за 1 USD" }).fill(value);
+    await usd.getByRole("button", { name: "Сохранить курс" }).click();
+    await expect(usd.locator(".rate-now strong"), value).toHaveText(new RegExp(`^1 USD = ${value}\\s₽$`, "u"));
+    await expect(usd.locator(".rate-history > li"), value).toHaveCount(1);
+  }
+  await expect(page.locator(".manage-status")).toHaveText(/^Курс USD на \d+\s[а-я]+ исправлен: был 94,00, стал 95,00\.$/u);
 });

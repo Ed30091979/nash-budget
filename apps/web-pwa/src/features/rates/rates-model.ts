@@ -9,7 +9,9 @@ import {
   type BudgetState,
   type CurrencyCode,
   type ExchangeRate,
+  type ExchangeRateCreation,
 } from "@family-budget/domain";
+import { formatDay } from "../../date-words";
 import { writeFailureText } from "../../write/useBudgetWrite";
 import { currencySign } from "./RateQuickSheet";
 import { formatRateValue, ratePer } from "./rate-input";
@@ -66,6 +68,21 @@ export function currencyRates(state: BudgetState, today: string): readonly Curre
 export function rateWords(rate: ExchangeRate): string {
   const per = ratePer(rate.currency);
   return `${per} ${rate.currency} = ${formatRateValue(rate.rate, rate.currency, rate.baseCurrency, per)}\u00a0${currencySign(rate.baseCurrency)}`;
+}
+
+/**
+ * Что сказать после записи курса. Курс валюты на день — одна запись (`addExchangeRate`): новый день —
+ * «записан», тот же день — «исправлен» с прежним и новым значением, чтобы поправку было видно.
+ */
+export function rateSavedText({ rate, replaced }: ExchangeRateCreation): string {
+  const per = ratePer(rate.currency);
+  const value = (of: ExchangeRate) => formatRateValue(of.rate, of.currency, of.baseCurrency, per);
+  if (replaced === null) return `Курс ${rate.currency} с ${formatDay(rate.date)} записан.`;
+  const was = value(replaced);
+  const now = value(rate);
+  return was === now
+    ? `Курс ${rate.currency} на ${formatDay(rate.date)} не изменился: ${now}.`
+    : `Курс ${rate.currency} на ${formatDay(rate.date)} исправлен: был ${was}, стал ${now}.`;
 }
 
 /** Базовая валюта: что сказать о ней и можно ли её сменить. */

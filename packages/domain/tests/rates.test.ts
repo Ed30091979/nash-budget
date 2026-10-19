@@ -92,11 +92,41 @@ describe("addExchangeRate / deleteExchangeRate", () => {
     expect(addExchangeRate(inEuro, { currency: "USD", date: "2026-10-15", rate: RATE_92_50 }, () => RATE_ID).rate.baseCurrency).toBe("EUR");
   });
 
-  it("второй курс того же дня — не дубль: оба остаются, выбор между ними делает findRate", () => {
-    const first = addExchangeRate(withDollarAccount(), { currency: "USD", date: "2026-10-15", rate: RATE_92_50 }, () => RATE_ID).state;
-    const second = addExchangeRate(first, { currency: "USD", date: "2026-10-15", rate: { baseMinor: 9_300, quoteMinor: 100 } }, () => OTHER_RATE_ID).state;
-    expect(second.exchangeRates).toHaveLength(2);
-    expect(baseSnapshot(100, "USD", "RUB", indexRates(second.exchangeRates ?? []), "2026-10-15")?.baseAmountMinor).toBe(9_300);
+  it("поправка в тот же день становится текущей: курс валюты на день — одна запись", () => {
+    // Ревью 2c, HIGH-1: второй курс того же дня добавлялся рядом с первым, и `findRate` выбирал
+    // между ними по большему идентификатору — поправка «записывалась», но в половине случаев не
+    // действовала. Теперь курс того же дня и той же валюты заменяет прежний той же записью.
+    let state = withDollarAccount();
+    const ids = ["8e000000-0000-4000-8000-0000000000f9", "8e000000-0000-4000-8000-0000000000a1", "8e000000-0000-4000-8000-0000000000f5", "8e000000-0000-4000-8000-000000000001", "8e000000-0000-4000-8000-0000000000ff", "8e000000-0000-4000-8000-0000000000b0"];
+    const values = [9_000, 9_100, 9_200, 9_300, 9_400, 9_500];
+    values.forEach((baseMinor, index) => {
+      const added = addExchangeRate(state, { currency: "USD", date: "2026-10-15", rate: { baseMinor, quoteMinor: 100 } }, () => ids[index]!);
+      state = added.state;
+      expect(added.replaced === null, `поправка ${index}`).toBe(index === 0);
+      expect(state.exchangeRates, `поправка ${index}`).toHaveLength(1);
+      expect(baseSnapshot(100, "USD", "RUB", indexRates(state.exchangeRates ?? []), "2026-10-15")?.baseAmountMinor, `поправка ${index}`).toBe(baseMinor);
+    });
+    // Поправка — та же запись: идентификатор первого курса, новое значение; журнал видит правку.
+    expect(state.exchangeRates?.[0]).toEqual({ id: ids[0], currency: "USD", baseCurrency: "RUB", date: "2026-10-15", rate: { baseMinor: 9_500, quoteMinor: 100 } });
+    // Другой день и другая валюта — не поправка, а новый курс.
+    const nextDay = addExchangeRate(state, { currency: "USD", date: "2026-10-16", rate: RATE_92_50 }, () => RATE_ID);
+    expect(nextDay.replaced).toBeNull();
+    expect(nextDay.state.exchangeRates).toHaveLength(2);
+    const euro = addExchangeRate(nextDay.state, { currency: "EUR", date: "2026-10-15", rate: RATE_92_50 }, () => OTHER_RATE_ID);
+    expect(euro.replaced).toBeNull();
+    expect(euro.state.exchangeRates).toHaveLength(3);
+  });
+
+  it("два курса одного дня, пришедшие с двух устройств, — выбор `findRate`; поправка сводит их в одну запись", () => {
+    const twins = { ...withDollarAccount(), exchangeRates: [rateOf(RATE_ID, "2026-10-15"), rateOf(OTHER_RATE_ID, "2026-10-15", { baseMinor: 9_300, quoteMinor: 100 })] };
+    // Детерминированный выбор между записями двух устройств остаётся: больший идентификатор.
+    expect(baseSnapshot(100, "USD", "RUB", indexRates(twins.exchangeRates), "2026-10-15")?.baseAmountMinor).toBe(9_300);
+    const corrected = addExchangeRate(twins, { currency: "USD", date: "2026-10-15", rate: { baseMinor: 9_400, quoteMinor: 100 } }, () => "8e000000-0000-4000-8000-000000000003");
+    expect(corrected.replaced?.id).toBe(OTHER_RATE_ID);
+    expect(corrected.state.exchangeRates).toEqual([rateOf(OTHER_RATE_ID, "2026-10-15", { baseMinor: 9_400, quoteMinor: 100 })]);
+    // Поправка не упирается в предел числа курсов: она ничего не добавляет.
+    const full = { ...withDollarAccount(), exchangeRates: Array.from({ length: COLLECTION_LIMITS.exchangeRates }, (_unused, index) => rateOf(`8e000000-0000-4000-8000-${String(index).padStart(12, "0")}`, index === 0 ? "2026-10-15" : "2026-01-01")) };
+    expect(addExchangeRate(full, { currency: "USD", date: "2026-10-15", rate: RATE_92_50 }, () => RATE_ID).state.exchangeRates).toHaveLength(COLLECTION_LIMITS.exchangeRates);
   });
 
   it("отказывает словами: неизвестная валюта, база, дата вне окна, курс вне пределов, предел числа, чужой id", () => {
