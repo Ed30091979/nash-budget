@@ -228,8 +228,10 @@ export function EntrySheet(props: EntrySheetProps) {
   const saveRate = async (rate: ExchangeRateDraft) => {
     const refusal = await onSaveRate(rate);
     if (refusal === null) {
+      // The rate form goes away with its button; the amount is where the person goes on from here.
       setRating(false);
       setError(null);
+      amountRef.current?.focus({ preventScroll: true });
     }
     return refusal;
   };
