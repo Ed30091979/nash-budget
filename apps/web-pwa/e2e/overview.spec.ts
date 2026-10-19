@@ -384,7 +384,7 @@ test("месяц плана закрыт — «Открыть …» залито
 /** Текст итога «На счетах» / «Расходы» / «Можно тратить» без неразрывных пробелов. */
 async function totalText(page: Page, label: string): Promise<string> {
   const total = page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") });
-  return (await total.innerText()).replace(/[  \s]+/gu, " ").trim();
+  return (await total.innerText()).replace(/[\u00a0\u202f\s]+/gu, " ").trim();
 }
 
 test("три итога на демо — 554 000 · 71 000 · 27 000; каждый ведёт туда, где число раскладывается", async ({ page }) => {
