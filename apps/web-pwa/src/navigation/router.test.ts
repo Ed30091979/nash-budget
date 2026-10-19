@@ -1,100 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createRouter, type NavigationGuard, type RouterWindow } from "./router";
-import { formatRoute, type Route } from "./routes";
+import { createRouter } from "./router";
+import { formatRoute } from "./routes";
+import { draftGuard, expectHonestHistory, FakeBrowser, go, settle, started } from "./test-fixture";
 
 const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
-
-/**
- * История браузера в миниатюре: записи, позиция, `go` асинхронно с `popstate` — как в браузере,
- * где переход по истории приходит событием, а `pushState`/`replaceState` событий не шлют.
- */
-class FakeBrowser implements RouterWindow {
-  entries: { state: unknown; hash: string }[];
-  index = 0;
-  readonly history: RouterWindow["history"] & { scrollRestoration: ScrollRestoration };
-  readonly location: RouterWindow["location"];
-  private readonly listeners = new Set<() => void>();
-
-  constructor(hash = "", state: unknown = null) {
-    this.entries = [{ state, hash }];
-    const entry = () => this.entries[this.index];
-    this.location = { get hash() { return entry()?.hash ?? ""; } };
-    const push = (state: unknown, url?: string | null) => {
-      this.entries = this.entries.slice(0, this.index + 1);
-      this.entries.push({ state: structuredClone(state), hash: url ?? this.hash });
-      this.index += 1;
-    };
-    const replace = (state: unknown, url?: string | null) => {
-      this.entries[this.index] = { state: structuredClone(state), hash: url ?? this.hash };
-    };
-    const go = (delta: number) => {
-      const target = this.index + delta;
-      if (target < 0 || target >= this.entries.length) return;
-      setTimeout(() => { this.index = target; this.fire(); }, 0);
-    };
-    this.history = {
-      scrollRestoration: "auto",
-      get state() { return entry()?.state ?? null; },
-      pushState: (state, _unused, url) => push(state, url),
-      replaceState: (state, _unused, url) => replace(state, url),
-      go,
-    };
-  }
-
-  get hash(): string { return this.entries[this.index]?.hash ?? ""; }
-  get hashes(): string[] { return this.entries.map((entry) => entry.hash); }
-
-  addEventListener(type: "popstate" | "hashchange", listener: () => void) { this.listenersOf(type).add(listener); }
-  removeEventListener(type: "popstate" | "hashchange", listener: () => void) { this.listenersOf(type).delete(listener); }
-  private readonly hashListeners = new Set<() => void>();
-  private listenersOf(type: "popstate" | "hashchange") { return type === "popstate" ? this.listeners : this.hashListeners; }
-  fire() { for (const listener of [...this.listeners]) listener(); }
-  /** Браузер, который на переходе по якорю прислал только `hashchange`. */
-  fireHashOnly() { for (const listener of [...this.hashListeners]) listener(); }
-
-  /** Системное «Назад» или «Вперёд»: браузер сам меняет позицию и шлёт `popstate`. */
-  async press(delta: number) {
-    this.history.go(delta);
-    await settle();
-  }
-  /** Адрес, набранный руками: новая запись без `state` и `popstate`. */
-  async type(hash: string) {
-    this.entries = this.entries.slice(0, this.index + 1);
-    this.entries.push({ state: null, hash });
-    this.index += 1;
-    this.fire();
-    await settle();
-  }
-}
-
-const settle = () => new Promise<void>((resolve) => { setTimeout(resolve, 5); });
-
-/** Черновик, который можно сделать грязным, и ответ человека на вопрос о нём. */
-function draftGuard() {
-  const asked: (() => void)[] = [];
-  let dirty = false;
-  const guard: NavigationGuard = {
-    blocks: () => dirty,
-    confirm: (proceed) => { asked.push(proceed); },
-  };
-  return {
-    guard,
-    asked,
-    setDirty: (value: boolean) => { dirty = value; },
-  };
-}
-
-function started(hash = "", state: unknown = null, extra: Partial<Parameters<typeof createRouter>[0]> = {}) {
-  const frame = new FakeBrowser(hash, state);
-  const router = createRouter({ window: frame, ...extra });
-  const stop = router.start();
-  return { frame, router, stop };
-}
-
-const go = async (router: ReturnType<typeof createRouter>, route: Route, replace = false) => {
-  router.navigate(route, { replace });
-  await settle();
-};
 
 describe("история: «Обзор» — корень, вкладка на вкладку — замена", () => {
   it("первое открытие ставит «Обзор» в адрес и не плодит записей", () => {
@@ -402,4 +311,172 @@ describe("ключи истории", () => {
       ["#/", "#/operations", formatRoute({ name: "entry", edit: OPERATION })],
     ]);
   });
+});
+
+describe("история остаётся правдой и впереди, и позади (ревью 2a, п. 5)", () => {
+  it("«Ещё» → «План на год» → вкладка → «Вперёд»: впереди нет устаревших записей, «К разделу «Ещё»» — в «Ещё»", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "more" });
+    await go(router, { name: "plan-year" });
+    await go(router, { name: "operations" });
+    expectHonestHistory(frame);
+    // Вкладка встала над «Обзором» наращиванием: записи «Ещё» и «Плана на год» впереди отрезаны,
+    // и «Вперёд» не ведёт туда, где цепочка в записи — уже неправда.
+    expect(frame.hashes).toEqual(["#/", "#/operations"]);
+    await frame.press(1);
+    expect(router.current()).toEqual({ name: "operations" });
+    expect(frame.hash).toBe("#/operations");
+    // «Вперёд», которому есть куда идти, приходит на запись с правдивой цепочкой, и «назад» экрана
+    // ведёт к её родителю.
+    await go(router, { name: "more" });
+    await go(router, { name: "plan-year" });
+    await frame.press(-1);
+    expect(router.current()).toEqual({ name: "more" });
+    await frame.press(1);
+    expect(router.current()).toEqual({ name: "plan-year" });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "more" });
+    expect(frame.hash).toBe("#/more");
+    expect(frame.index).toBe(1);
+    expectHonestHistory(frame);
+  });
+
+  it("черновик на «+», адрес набран руками → «Продолжить ввод» → «Обзор» → «Не сохранять»: и экран, и адрес — «Обзор»", async () => {
+    const drafts = draftGuard();
+    const { frame, router, stop } = started("", null, { guard: drafts.guard });
+    await go(router, { name: "entry" });
+    drafts.setDirty(true);
+    await frame.type("#/reports");
+    // Набранная запись заменена записью «+», а не накрыта ещё одной: адрес — снова «+».
+    expect(drafts.asked).toHaveLength(1);
+    expect(router.current()).toEqual({ name: "entry" });
+    expect(frame.hash).toBe("#/new");
+    expect(frame.hashes).toEqual(["#/", "#/new", "#/new"]);
+    expectHonestHistory(frame);
+    // «Продолжить ввод» — ничего; затем «Обзор» и «Не сохранять».
+    await go(router, { name: "overview" });
+    expect(drafts.asked).toHaveLength(2);
+    drafts.setDirty(false);
+    drafts.asked[1]?.();
+    await settle();
+    await settle();
+    expect(router.current()).toEqual({ name: "overview" });
+    expect(frame.hash).toBe("#/");
+    expectHonestHistory(frame);
+    // Перезагрузка открывает то, что на экране, а не «+».
+    stop();
+    const reloaded = createRouter({ window: frame, guard: drafts.guard });
+    reloaded.start();
+    expect(reloaded.current()).toEqual({ name: "overview" });
+  });
+
+  it("набранный адрес с черновиком и «Не сохранять» ведёт туда, куда его набрали", async () => {
+    const drafts = draftGuard();
+    const { frame, router } = started("", null, { guard: drafts.guard });
+    await go(router, { name: "operations" });
+    await go(router, { name: "entry" });
+    drafts.setDirty(true);
+    await frame.type("#/more/family");
+    expect(frame.hash).toBe("#/new");
+    // «Не сохранять» убирает черновик.
+    drafts.setDirty(false);
+    drafts.asked[0]?.();
+    await settle();
+    await settle();
+    expect(router.current()).toEqual({ name: "family" });
+    expect(frame.hash).toBe("#/more/family");
+    expectHonestHistory(frame);
+    await frame.press(-1);
+    expect(router.current()).toEqual({ name: "more" });
+  });
+
+  it("каждый путь оставляет в истории только `{ mark, stack }` с правдивой цепочкой", async () => {
+    // Системное «Назад» с черновиком: запись возвращается поверх той, куда пришли.
+    const drafts = draftGuard();
+    const guarded = started("", null, { guard: drafts.guard });
+    await go(guarded.router, { name: "operations" });
+    await go(guarded.router, { name: "entry" });
+    drafts.setDirty(true);
+    await guarded.frame.press(-1);
+    expectHonestHistory(guarded.frame);
+    // «Не сохранять» на этом вопросе.
+    drafts.asked[0]?.();
+    await settle();
+    expectHonestHistory(guarded.frame);
+    // Переход без вопроса, потому что записи больше нет.
+    drafts.setDirty(false);
+    await go(guarded.router, { name: "entry", edit: OPERATION });
+    drafts.setDirty(true);
+    guarded.router.redirect({ name: "operations" });
+    await settle();
+    expectHonestHistory(guarded.frame);
+    // Набранный адрес, свой и мусорный.
+    drafts.setDirty(false);
+    await guarded.frame.type("#/more/plan-month");
+    expectHonestHistory(guarded.frame);
+    await guarded.frame.type("#/more/plan-month/../../x?edit=1200&note=%D0%BA%D0%BE%D1%84%D0%B5");
+    expect(guarded.frame.hash).toBe("#/more/plan-month");
+    expectHonestHistory(guarded.frame);
+    // «Назад» и «Вперёд».
+    await guarded.frame.press(-1);
+    await guarded.frame.press(-1);
+    await guarded.frame.press(1);
+    expectHonestHistory(guarded.frame);
+
+    // Перезагрузка с открытым листом.
+    const sheet = started();
+    await go(sheet.router, { name: "operations" });
+    await go(sheet.router, { name: "operations", sheet: "entry" });
+    sheet.stop();
+    createRouter({ window: sheet.frame }).start();
+    expectHonestHistory(sheet.frame);
+
+    // Ссылка, мусор и чужое `state` при запуске.
+    for (const [hash, state] of [
+      ["#/more/import", null],
+      ["#/?amount=1200", null],
+      ["#/new?edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/new?edit=not-a-uuid"] }],
+      ["#/reports", { mark: "nash-budget/route", stack: ["#/reports"], note: "кофе" }],
+    ] as const) {
+      const link = started(hash, state);
+      expectHonestHistory(link.frame);
+    }
+  });
+
+  it("сотня случайных шагов — история правдива, адрес совпадает с экраном", async () => {
+    const routes = [
+      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" },
+      { name: "entry" }, { name: "entry", edit: OPERATION }, { name: "plan-month" }, { name: "plan-year" },
+      { name: "family" }, { name: "import" }, { name: "operations", sheet: "entry" },
+    ] as const;
+    const typed = ["#/reports", "#/more/family", "#/bogus", "#/new?edit=1200", "#/more", "#/"] as const;
+    for (const seed of [1, 7, 42]) {
+      let value = seed;
+      const random = (limit: number) => {
+        value = (value * 1103515245 + 12345) % 2147483648;
+        return value % limit;
+      };
+      const drafts = draftGuard();
+      const { frame, router } = started("", null, { guard: drafts.guard });
+      for (let step = 0; step < 60; step += 1) {
+        const pick = random(10);
+        const asked = drafts.asked.length;
+        if (pick < 4) await go(router, routes[random(routes.length)] ?? { name: "overview" }, random(5) === 0);
+        else if (pick < 5) { router.back(); await settle(); }
+        else if (pick < 7) await frame.press(random(2) === 0 ? -1 : 1);
+        else if (pick < 8) await frame.type(typed[random(typed.length)] ?? "#/");
+        else drafts.setDirty(random(2) === 0);
+        // Вопрос задан — человек отвечает сразу: «Не сохранять» или «Продолжить ввод».
+        if (drafts.asked.length > asked && random(2) === 0) {
+          drafts.setDirty(false);
+          drafts.asked[drafts.asked.length - 1]?.();
+          await settle();
+        }
+        await settle();
+        expectHonestHistory(frame);
+        expect(frame.hash, `seed ${seed}, step ${step}`).toBe(formatRoute(router.current()));
+      }
+    }
+  }, 20_000);
 });

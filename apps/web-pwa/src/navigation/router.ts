@@ -22,19 +22,25 @@ import {
  *   вкладки ведёт на «Обзор»;
  * - подэкран и запись («+», лист) кладут запись поверх; маршрут, который уже лежит ниже в истории,
  *   не кладётся второй раз — приложение возвращается к нему;
- * - кнопка «назад» внутри экрана ведёт к родителю маршрута, а не слепым `history.back()`: если
- *   родитель — запись под текущей, приложение возвращается на неё (дубля в истории не остаётся);
- *   если нет (адрес открыт ссылкой), текущая запись заменяется родителем;
+ * - кнопка «назад» внутри экрана ведёт к родителю маршрута, а не слепым `history.back()`:
+ *   приложение возвращается по истории к записи родителя, и дубля в истории не остаётся;
  * - маршрут, открытый ссылкой или перезагрузкой, получает в истории цепочку родителей, и «Назад»
  *   ведёт по ней, а не прочь из приложения; лист при перезагрузке закрыт.
  *
  * Каждая запись истории несёт в `state` ключи своей цепочки от корня — так роутер знает, что под
- * ней, не заглядывая в чужие записи. Несохранённый черновик спрашивается синхронно в момент
- * нажатия (`NavigationGuard`); системное «Назад» с черновиком возвращает адрес на место и задаёт
- * тот же вопрос.
+ * ней, не заглядывая в чужие записи. Цепочки обязаны оставаться правдой и для записей «вперёд»,
+ * поэтому история меняется только наращиванием: вернуться по истории к последней общей записи и
+ * положить остальное (`pushState` отрезает всё, что было впереди). Запись на месте не заменяется
+ * никогда, кроме той, что только что появилась (адрес, набранный руками), и первой при запуске:
+ * замена оставила бы впереди записи, чьи цепочки описывают уже не то, что под ними (ревью 2a, п. 5).
+ * Несохранённый черновик спрашивается синхронно в момент нажатия (`NavigationGuard`); системное
+ * «Назад» с черновиком возвращает адрес на место и задаёт тот же вопрос.
  */
 
 const STATE_MARK = "nash-budget/route";
+const ROOT_KEY = routeKey(ROOT_ROUTE);
+/** Сколько раз подряд роутер вернётся по истории, пока цепочка не сойдётся. Больше — не ходить вслепую. */
+const MAX_TRAVERSALS = 8;
 
 interface EntryState {
   readonly mark: typeof STATE_MARK;
@@ -47,6 +53,8 @@ function entryState(value: unknown): EntryState | null {
   const candidate = value as { readonly mark?: unknown; readonly stack?: unknown };
   if (candidate.mark !== STATE_MARK || !Array.isArray(candidate.stack) || candidate.stack.length === 0) return null;
   if (!candidate.stack.every((key): key is string => typeof key === "string")) return null;
+  // Цепочка начинается с корня — иначе это не наша запись, а подделка под неё.
+  if (candidate.stack[0] !== ROOT_KEY) return null;
   return { mark: STATE_MARK, stack: candidate.stack };
 }
 
@@ -107,8 +115,6 @@ export interface Router {
   start(): () => void;
 }
 
-const ROOT_KEY = routeKey(ROOT_ROUTE);
-
 function commonPrefix(left: readonly string[], right: readonly string[]): number {
   let length = 0;
   while (length < left.length && length < right.length && left[length] === right[length]) length += 1;
@@ -158,7 +164,7 @@ export function createRouter(options: RouterOptions): Router {
   let route: Route = forReload(parseRoute(frame.location.hash).route);
   let stack: readonly string[] = [ROOT_KEY];
   /** Переход по истории, начатый самим роутером: его `popstate` вопроса о черновике не задаёт. */
-  let pending: { readonly arrive: () => void } | null = null;
+  let pending: { readonly expected: readonly string[]; readonly arrive: () => void } | null = null;
   let queued: (() => void) | null = null;
 
   const notify = () => {
@@ -181,8 +187,9 @@ export function createRouter(options: RouterOptions): Router {
       frame.history.pushState(stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY);
     }
   };
-  const replaceAt = (chain: readonly string[], index: number) => {
-    frame.history.replaceState(stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY);
+  /** Заменить текущую запись — только ту, над которой ничего нет: новую или первую при запуске. */
+  const replaceCurrent = (chain: readonly string[]) => {
+    frame.history.replaceState(stateOf(chain), "", chain[chain.length - 1] ?? ROOT_KEY);
   };
 
   /** Цепочка записей, которой история должна стать, чтобы показать `target`. */
@@ -202,41 +209,49 @@ export function createRouter(options: RouterOptions): Router {
     return routeChain(target).map(routeKey);
   };
 
-  /** Привести историю к цепочке: положить, заменить или вернуться по истории — что короче. */
-  const apply = (chain: readonly string[]) => {
+  /**
+   * Привести историю к цепочке. Если текущая цепочка — её начало, недостающее кладётся сверху.
+   * Иначе — возврат по истории к последней общей записи (асинхронно), и по приходу то же самое
+   * считается заново от цепочки, которую несёт запись, куда пришли, а не от ожидаемой: так
+   * расхождение, если оно есть, не накапливается.
+   */
+  const apply = (chain: readonly string[], traversals = 0) => {
     const shared = commonPrefix(stack, chain);
     if (shared === stack.length) {
       pushFrom(chain, shared);
       commit(chain);
       return;
     }
-    if (shared === stack.length - 1 && chain.length > shared) {
-      replaceAt(chain, shared);
-      pushFrom(chain, shared + 1);
-      commit(chain);
+    if (shared === 0 || traversals >= MAX_TRAVERSALS) {
+      // История не сходится с цепочкой: вслепую по ней не ходить — нужный маршрут встаёт сверху.
+      const onTop = [...stack, chain[chain.length - 1] ?? ROOT_KEY];
+      pushFrom(onTop, stack.length);
+      commit(onTop);
       return;
     }
-    // Нужная запись лежит ниже: вернуться к ней по истории (асинхронно) и достроить остальное.
-    const landing = chain.length > shared ? shared : shared - 1;
+    const landing = shared - 1;
+    const expected = stack.slice(0, landing + 1);
     pending = {
-      arrive: () => {
-        if (chain.length > shared) {
-          replaceAt(chain, shared);
-          pushFrom(chain, shared + 1);
-        }
-        commit(chain);
-      },
+      expected,
+      arrive: () => apply(chain, traversals + 1),
     };
     frame.history.go(landing - (stack.length - 1));
   };
 
-  const perform = (target: Route, replace: boolean) => {
+  /** Выполнить сейчас или, если история ещё едет, — сразу после неё. */
+  const whenSettled = (action: () => void) => {
     if (pending !== null) {
-      queued = () => perform(target, replace);
+      queued = action;
       return;
     }
-    if (sameRoute(target, route) && !replace) return;
-    apply(chainFor(target, replace));
+    action();
+  };
+
+  const perform = (target: Route, replace: boolean) => {
+    whenSettled(() => {
+      if (sameRoute(target, route) && !replace) return;
+      apply(chainFor(target, replace));
+    });
   };
 
   const navigate = (target: Route, navigateOptions: NavigateOptions = {}) => {
@@ -254,7 +269,8 @@ export function createRouter(options: RouterOptions): Router {
     if (pending !== null) {
       const arrival = pending;
       pending = null;
-      stack = state?.stack ?? stack;
+      // Цепочка — та, что несёт запись, куда пришли; без неё — та, что ожидалась.
+      stack = state?.stack ?? arrival.expected;
       arrival.arrive();
       const next = queued;
       queued = null;
@@ -263,30 +279,36 @@ export function createRouter(options: RouterOptions): Router {
     }
     const parsed = parseRoute(frame.location.hash);
     const landed = state?.stack ?? null;
+    const leaving = routeKey(route);
+    if (landed === null) {
+      // Запись не приложения: адрес набран руками или пришёл по старой ссылке. Она только что
+      // появилась над той, на которой стояли, — её заменить можно, и адрес набран как переход.
+      const typed = forReload(parsed.route);
+      const above = [...stack, options.guard?.blocks() ? leaving : routeKey(typed)];
+      replaceCurrent(above);
+      stack = above;
+      if (options.guard?.blocks()) {
+        // С черновиком набранный адрес — та же просьба уйти: адрес возвращается, вопрос задаётся.
+        options.guard.confirm(() => {
+          perform(typed, false);
+          if (parsed.notFound) options.onNotFound?.();
+        });
+        return;
+      }
+      if (parsed.notFound) options.onNotFound?.();
+      apply(chainFor(typed, false));
+      return;
+    }
     if (options.guard?.blocks()) {
-      // Системное «Назад» с несохранённым черновиком: адрес возвращается в историю, и человек
-      // отвечает на тот же вопрос, что и при нажатии на вкладку.
-      const leaving = routeKey(route);
-      const below = landed ?? stack;
-      frame.history.pushState(stateOf([...below, leaving]), "", leaving);
-      stack = [...below, leaving];
-      options.guard.confirm(() => {
-        pending = { arrive: () => commit(landed ?? below) };
-        frame.history.go(-1);
-      });
+      // Системное «Назад» или «Вперёд» с несохранённым черновиком: адрес возвращается в историю
+      // поверх записи, куда пришли, и человек отвечает на тот же вопрос, что и при нажатии на вкладку.
+      const restored = [...landed, leaving];
+      frame.history.pushState(stateOf(restored), "", leaving);
+      stack = restored;
+      options.guard.confirm(() => whenSettled(() => apply(landed)));
       return;
     }
-    if (landed !== null && !parsed.notFound) {
-      commit(landed);
-      return;
-    }
-    // Запись не приложения: адрес набран руками или пришёл по старой ссылке. Она встаёт поверх
-    // той, на которой стояли, — уже под правильным адресом.
-    const target = forReload(parsed.route);
-    const chain = isRoot(target) ? [ROOT_KEY] : [...stack, routeKey(target)];
-    frame.history.replaceState(stateOf(chain), "", chain[chain.length - 1] ?? ROOT_KEY);
-    commit(chain);
-    if (parsed.notFound) options.onNotFound?.();
+    commit(landed);
   };
 
   // Переход по якорю (`#…` набран руками, старая ссылка) браузер объявляет `popstate`, а затем
@@ -309,11 +331,11 @@ export function createRouter(options: RouterOptions): Router {
     } else if (state !== null && !parsed.notFound && state.stack[state.stack.length - 1] === routeKey(parsed.route)) {
       // Перезагрузка с открытым листом: лист закрыт, запись остаётся на месте под адресом экрана.
       stack = [...state.stack.slice(0, -1), key];
-      replaceAt(stack, stack.length - 1);
+      replaceCurrent(stack);
     } else {
       // Первое открытие, ссылка или мусор в адресе: история получает цепочку родителей.
       const chain = routeChain(target).map(routeKey);
-      frame.history.replaceState(stateOf(chain.slice(0, 1)), "", chain[0] ?? ROOT_KEY);
+      replaceCurrent(chain.slice(0, 1));
       pushFrom(chain, 1);
       stack = chain;
     }

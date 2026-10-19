@@ -108,6 +108,34 @@ test("несохранённый черновик «Назад» не теряе
   expect(await hash(page)).toBe("#/");
 });
 
+test("адрес, набранный руками поверх черновика, не расходится с экраном: «Не сохранять» → «Обзор» и в адресе, и после перезагрузки", async ({ page }) => {
+  await loadDemo(page);
+  await tab(page, "Записать").click();
+  const amount = page.getByLabel("Сумма, ₽");
+  await amount.fill("1234");
+
+  // Набранный адрес — переход по якорю внутри открытой страницы, как из адресной строки.
+  await page.goto("/#/reports");
+  const dialog = page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
+  await expect(dialog).toBeVisible();
+  expect(await hash(page)).toBe("#/new");
+  await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(amount).toHaveValue("1234");
+
+  await tab(page, "Обзор").click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Не сохранять" }).click();
+  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect.poll(() => hash(page)).toBe("#/");
+
+  // Перезагрузка открывает то, что было на экране, а не «+».
+  await page.reload();
+  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(amount).toHaveCount(0);
+  expect(await hash(page)).toBe("#/");
+});
+
 test("ссылка на подэкран достраивает историю родителями, мусор в адресе — «Запись не найдена»", async ({ page }) => {
   await loadDemo(page);
   // Открытие по ссылке — новая загрузка страницы, а не переход по якорю внутри открытой.

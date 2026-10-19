@@ -20,7 +20,8 @@ function sources(): { readonly path: string; readonly text: string }[] {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
-      else if (/\.tsx?$/u.test(name) && !/\.test\.tsx?$/u.test(name)) files.push(path);
+      // Test files and their fixtures never ship (the next check keeps it so).
+      else if (/\.tsx?$/u.test(name) && !/\.test\.tsx?$/u.test(name) && name !== "test-fixture.ts") files.push(path);
     }
   };
   walk(root);
@@ -28,6 +29,11 @@ function sources(): { readonly path: string; readonly text: string }[] {
 }
 
 describe("адрес — только маршрут", () => {
+  it("приложение не тянет к себе опоры проверок: поддельная история не попадает в сборку", () => {
+    const importing = sources().filter(({ text }) => /from\s+["'][^"']*test-fixture["']/u.test(text)).map(({ path }) => path);
+    expect(importing).toEqual([]);
+  });
+
   it("историю и решётку адреса трогает один модуль — роутер", () => {
     const touching = sources()
       .filter(({ text }) => /\.(?:pushState|replaceState)\(|history\.go\(|location\.(?:hash|search|href)\b/u.test(text))
@@ -40,10 +46,8 @@ describe("адрес — только маршрут", () => {
     const writes = [...router.matchAll(/frame\.history\.(pushState|replaceState)\(([^;]*)\);/gu)].map((match) => match[2]);
     expect(writes).toEqual([
       'stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY',
-      'stateOf(chain.slice(0, index + 1)), "", chain[index] ?? ROOT_KEY',
-      'stateOf([...below, leaving]), "", leaving',
       'stateOf(chain), "", chain[chain.length - 1] ?? ROOT_KEY',
-      'stateOf(chain.slice(0, 1)), "", chain[0] ?? ROOT_KEY',
+      'stateOf(restored), "", leaving',
     ]);
     // Состояние записи истории — только ключи цепочки, ничего из бюджета.
     expect(router).toContain("return { mark: STATE_MARK, stack: [...stack] };");
