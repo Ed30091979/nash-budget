@@ -44,6 +44,10 @@ export interface SheetFields {
 /** Ключи, которые бывают только у открытого листа. */
 const SHEET_ONLY_KEYS = ["op", "src", "dst", "edit"] as const satisfies readonly (keyof SheetFields)[];
 
+/** Какой список «Категорий и доходов» открыт: расходы или источники дохода. */
+export const CATEGORY_LIST_TYPES = ["expense", "income"] as const;
+export type CategoryListType = (typeof CATEGORY_LIST_TYPES)[number];
+
 export type Route =
   /** «Обзор»; `month` — месяц плиток, `ГГГГ-ММ`, без него — текущий. */
   | ({ readonly name: "overview"; readonly month?: string } & SheetFields)
@@ -53,7 +57,18 @@ export type Route =
   | ({ readonly name: "plan-month" } & SheetFields)
   | ({ readonly name: "plan-year" } & SheetFields)
   | ({ readonly name: "family" } & SheetFields)
-  | ({ readonly name: "import" } & SheetFields);
+  | ({ readonly name: "import" } & SheetFields)
+  /** Справочники «Учёта» (подволна 2c): счета, курсы, категории и доходы, метки. */
+  | ({ readonly name: "accounts" } & SheetFields)
+  /** Счёт, открытый для правки; `id` — его UUID, в пути: `#/more/accounts/<id>`. */
+  | ({ readonly name: "account"; readonly id: string } & SheetFields)
+  | ({ readonly name: "account-new" } & SheetFields)
+  | ({ readonly name: "rates" } & SheetFields)
+  /** Список категорий; `type` — расходы или доходы, без него — расходы. */
+  | ({ readonly name: "categories"; readonly type?: CategoryListType } & SheetFields)
+  /** Категория или источник дохода, открытые для правки: `#/more/categories/<id>`. */
+  | ({ readonly name: "category"; readonly id: string } & SheetFields)
+  | ({ readonly name: "tags" } & SheetFields);
 
 export type RouteName = Route["name"];
 
@@ -64,8 +79,23 @@ export type TabName = (typeof TAB_NAMES)[number];
 export const ROOT_ROUTE: Route = { name: "overview" };
 
 /** Подэкраны «Ещё»: путь `#/more/<name>`. */
-const MORE_CHILDREN = ["plan-month", "plan-year", "family", "import"] as const satisfies readonly RouteName[];
+const MORE_CHILDREN = ["plan-month", "plan-year", "family", "import", "accounts", "rates", "categories", "tags"] as const satisfies readonly RouteName[];
 type MoreChild = (typeof MORE_CHILDREN)[number];
+
+/**
+ * Маршруты, у которых в пути стоит идентификатор записи: `#/more/accounts/<id>`,
+ * `#/more/categories/<id>`. Идентификатор — UUID и ничего больше: имя счёта или категории в адрес
+ * не попадает никогда, как и всякий свободный текст (SECURITY §7.3).
+ */
+const PATH_ID_ROUTES = ["account", "category"] as const satisfies readonly RouteName[];
+type PathIdRoute = (typeof PATH_ID_ROUTES)[number];
+
+function hasPathId(name: unknown): name is PathIdRoute {
+  return typeof name === "string" && (PATH_ID_ROUTES as readonly string[]).includes(name);
+}
+
+/** UUID в пути — по тому же правилу, что и в запросе: в любом регистре на входе, строчными в адресе. */
+const PATH_ID: QueryValue = { kind: "uuid" };
 
 /** Адрес длиннее этого — не наш: настоящие адреса приложения короче сотни знаков. */
 const MAX_HASH_LENGTH = 512;
@@ -96,7 +126,18 @@ export function parentRoute(route: Route): Route | null {
     case "plan-year":
     case "family":
     case "import":
+    case "accounts":
+    case "rates":
+    case "categories":
+    case "tags":
       return { name: "more" };
+    case "account":
+    case "account-new":
+      return { name: "accounts" };
+    case "category":
+      // Родитель чистый и бюджета не читает: вид категории в адресе не записан. Экран категории
+      // ведёт «назад» к своему списку сам (`CategoryScreen`), а это — «назад» по ссылке и мусору.
+      return { name: "categories", type: "expense" };
   }
 }
 
@@ -126,7 +167,19 @@ function pathOf(route: Route): string {
     case "plan-year":
     case "family":
     case "import":
+    case "accounts":
+    case "rates":
+    case "categories":
+    case "tags":
       return `#/more/${route.name}`;
+    case "account-new":
+      return "#/more/accounts/new";
+    case "account":
+    case "category": {
+      const id = canonicalValue(PATH_ID, route.id);
+      if (id === null) throw new Error("A route value is outside the address grammar.");
+      return `#/more/${route.name === "account" ? "accounts" : "categories"}/${id}`;
+    }
     default:
       // A route object built around the type system (a cast, a stale build) has no address.
       throw new Error("Unknown route.");
@@ -153,7 +206,8 @@ export type QuerySpec = QueryValue & {
   readonly invalid?: "close-sheet";
 };
 
-type QueryKeysOf<N extends RouteName> = Exclude<keyof Extract<Route, { readonly name: N }>, "name">;
+/** Ключи запроса маршрута: всё, кроме имени и идентификатора в пути. */
+type QueryKeysOf<N extends RouteName> = Exclude<keyof Extract<Route, { readonly name: N }>, "name" | "id">;
 
 /** Every optional field of every route has exactly one spec: a new field without one does not compile. */
 type QueryGrammar = { readonly [N in RouteName]: { readonly [K in QueryKeysOf<N>]-?: QuerySpec } };
@@ -183,6 +237,13 @@ export const QUERY_GRAMMAR = {
   "plan-year": SHEET_GRAMMAR,
   family: SHEET_GRAMMAR,
   import: SHEET_GRAMMAR,
+  accounts: SHEET_GRAMMAR,
+  account: SHEET_GRAMMAR,
+  "account-new": SHEET_GRAMMAR,
+  rates: SHEET_GRAMMAR,
+  categories: { type: { kind: "enum", values: CATEGORY_LIST_TYPES }, ...SHEET_GRAMMAR },
+  category: SHEET_GRAMMAR,
+  tags: SHEET_GRAMMAR,
 } as const satisfies QueryGrammar;
 
 /**
@@ -255,7 +316,8 @@ export function formatRoute(route: Route): string {
   if (grammar === null) throw new Error("Unknown route.");
   const fields = route as unknown as Readonly<Record<string, unknown>>;
   for (const key of Object.keys(fields)) {
-    if (key !== "name" && !Object.hasOwn(grammar, key)) throw new Error("A route field is outside the address grammar.");
+    if (key === "name" || (key === "id" && hasPathId(route.name))) continue;
+    if (!Object.hasOwn(grammar, key)) throw new Error("A route field is outside the address grammar.");
   }
   const pairs: string[] = [];
   for (const [key, spec] of Object.entries(grammar)) {
@@ -319,7 +381,16 @@ function routeOfPath(segments: readonly string[]): ParsedRoute {
       if (!tail) return found({ name: "more" });
       const child = (MORE_CHILDREN as readonly string[]).includes(second) ? second as MoreChild : null;
       if (child === null) return notFound({ name: "more" });
-      return rest.length > 0 ? notFound({ name: child }) : found({ name: child });
+      if (rest.length === 0) return found({ name: child });
+      // Запись справочника — один сегмент после списка: UUID (или «new» у счетов). Всё прочее —
+      // имя, сумма, лишний сегмент — к списку и «Запись не найдена».
+      const [record, ...beyond] = rest;
+      const id = canonicalValue(PATH_ID, record);
+      if (beyond.length > 0) return notFound({ name: child });
+      if (child === "accounts" && record === "new") return found({ name: "account-new" });
+      if (child === "accounts" && id !== null) return found({ name: "account", id });
+      if (child === "categories" && id !== null) return found({ name: "category", id });
+      return notFound({ name: child });
     }
     default:
       return notFound(ROOT_ROUTE);
@@ -391,11 +462,23 @@ export function sameRecordId(stored: string, routed: string): boolean {
   return stored.toLowerCase() === routed.toLowerCase();
 }
 
+/** Что есть в бюджете: по этому маршрут проверяет идентификаторы, которые несёт. */
+export interface RouteRecords {
+  readonly transaction: (id: string) => boolean;
+  readonly account?: (id: string) => boolean;
+  readonly category?: (id: string) => boolean;
+}
+
 /**
- * Проверка идентификаторов маршрута по бюджету: операция, которой нет (удалена здесь или на другом
- * устройстве), — тоже «Запись не найдена», и маршрут уходит к родителю.
+ * Проверка идентификаторов маршрута по бюджету: операция, счёт или категория, которых нет (удалены
+ * здесь или на другом устройстве, ссылка из чужого бюджета), — тоже «Запись не найдена», и маршрут
+ * уходит к родителю.
  */
-export function resolveRoute(route: Route, exists: { readonly transaction: (id: string) => boolean }): ParsedRoute {
+export function resolveRoute(route: Route, exists: RouteRecords): ParsedRoute {
+  const screen = withoutSheet(route);
+  const missing = (screen.name === "account" && exists.account !== undefined && !exists.account(screen.id))
+    || (screen.name === "category" && exists.category !== undefined && !exists.category(screen.id));
+  if (missing) return notFound(parentRoute(screen) ?? ROOT_ROUTE);
   if (route.sheet !== undefined && route.edit !== undefined && !exists.transaction(route.edit)) {
     return notFound(withoutSheet(route));
   }

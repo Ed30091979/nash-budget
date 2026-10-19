@@ -69,6 +69,44 @@ export const ROUTE_FIXTURES = {
     { name: "import", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
     { name: "import", sheet: "entry", edit: OPERATION },
   ],
+  // Справочники «Учёта» (2c): идентификатор записи — в пути, вид списка категорий — в запросе.
+  accounts: [
+    { name: "accounts" },
+    { name: "accounts", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "accounts", sheet: "entry", edit: OPERATION },
+  ],
+  account: [
+    { name: "account", id: ACCOUNT },
+    { name: "account", id: RESERVE, sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
+    { name: "account", id: ACCOUNT, sheet: "entry", edit: OPERATION },
+  ],
+  "account-new": [
+    { name: "account-new" },
+    { name: "account-new", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "account-new", sheet: "entry", edit: OPERATION },
+  ],
+  rates: [
+    { name: "rates" },
+    { name: "rates", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "rates", sheet: "entry", edit: OPERATION },
+  ],
+  categories: [
+    { name: "categories" },
+    { name: "categories", type: "expense" },
+    { name: "categories", type: "income" },
+    { name: "categories", type: "income", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "categories", type: "expense", sheet: "entry", edit: OPERATION },
+  ],
+  category: [
+    { name: "category", id: CATEGORY },
+    { name: "category", id: CATEGORY, sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "category", id: CATEGORY, sheet: "entry", edit: OPERATION },
+  ],
+  tags: [
+    { name: "tags" },
+    { name: "tags", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "tags", sheet: "entry", edit: OPERATION },
+  ],
 } as const satisfies { readonly [N in RouteName]: readonly Extract<Route, { readonly name: N }>[] };
 
 export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
@@ -81,12 +119,14 @@ const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:
 
 /**
  * The whole address language, written out by hand rather than derived from the grammar it checks:
- * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month. No free
- * text fits. A new query key is a deliberate edit here.
+ * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month, the kind of
+ * a category list. A record of a directory is a UUID in the path, never its name. No free text fits.
+ * A new query key or path is a deliberate edit here.
  */
 export const ROUTE_FRAGMENT = new RegExp(
   `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
-    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import))(?:\\?${SHEET})?)$`,
+    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags|categories/${UUID}))(?:\\?${SHEET})?` +
+    `|more/categories(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
   "u",
 );
 

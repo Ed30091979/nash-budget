@@ -264,3 +264,92 @@ describe("родители маршрутов", () => {
     expect(resolveRoute(blank, { transaction: () => false })).toEqual({ route: blank, notFound: false });
   });
 });
+
+describe("справочники «Учёта» (подволна 2c)", () => {
+  /** Каждая форма адреса справочника — список, запись по UUID в пути, новая запись, вид списка. */
+  const DIRECTORY: readonly (readonly [Route, string])[] = [
+    [{ name: "accounts" }, "#/more/accounts"],
+    [{ name: "account", id: ACCOUNT }, `#/more/accounts/${ACCOUNT}`],
+    [{ name: "account-new" }, "#/more/accounts/new"],
+    [{ name: "rates" }, "#/more/rates"],
+    [{ name: "categories" }, "#/more/categories"],
+    [{ name: "categories", type: "expense" }, "#/more/categories?type=expense"],
+    [{ name: "categories", type: "income" }, "#/more/categories?type=income"],
+    [{ name: "category", id: CATEGORY }, `#/more/categories/${CATEGORY}`],
+    [{ name: "tags" }, "#/more/tags"],
+    [{ name: "account", id: ACCOUNT, sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE }, `#/more/accounts/${ACCOUNT}?sheet=entry&op=transfer&src=${ACCOUNT}&dst=${RESERVE}`],
+    [{ name: "categories", type: "income", sheet: "entry", edit: OPERATION }, `#/more/categories?type=income&sheet=entry&edit=${OPERATION}`],
+  ];
+
+  it("каждый адрес справочника пишется и читается обратно тем же маршрутом", () => {
+    for (const [route, address] of DIRECTORY) {
+      expect(formatRoute(route)).toBe(address);
+      expect(parseRoute(address), address).toEqual({ route, notFound: false });
+    }
+    // UUID в пути — в любом регистре на входе, строчными в адресе.
+    expect(formatRoute({ name: "account", id: ACCOUNT.toUpperCase() })).toBe(`#/more/accounts/${ACCOUNT}`);
+    expect(parseRoute(`#/more/categories/${CATEGORY.toUpperCase()}`)).toEqual({ route: { name: "category", id: CATEGORY }, notFound: false });
+    expect(parseRoute("#/more/accounts/")).toEqual({ route: { name: "accounts" }, notFound: false });
+  });
+
+  it("имя, сумма и лишний сегмент вместо UUID — к списку и «Запись не найдена»", () => {
+    const cases: readonly (readonly [string, Route])[] = [
+      ["#/more/accounts/Карта", { name: "accounts" }],
+      ["#/more/accounts/1250", { name: "accounts" }],
+      [`#/more/accounts/${ACCOUNT}/edit`, { name: "accounts" }],
+      ["#/more/accounts/new/x", { name: "accounts" }],
+      ["#/more/accounts/NEW", { name: "accounts" }],
+      ["#/more/categories/Продукты", { name: "categories" }],
+      [`#/more/categories/${CATEGORY}/x`, { name: "categories" }],
+      ["#/more/categories/new", { name: "categories" }],
+      ["#/more/rates/USD", { name: "rates" }],
+      ["#/more/tags/отпуск", { name: "tags" }],
+      ["#/more/categories?type=Продукты", { name: "categories" }],
+      ["#/more/categories?type=expense&type=income", { name: "categories" }],
+      ["#/more/accounts%2Fnew", { name: "more" }],
+    ];
+    for (const [hash, route] of cases) expect(parseRoute(hash), hash).toEqual({ route, notFound: true });
+    // Ключ чужого маршрута отбрасывается молча: `type` бывает только у списка категорий.
+    expect(parseRoute("#/more/tags?type=income")).toEqual({ route: { name: "tags" }, notFound: false });
+    expect(parseRoute(`#/more/accounts/${ACCOUNT}?id=${RESERVE}`)).toEqual({ route: { name: "account", id: ACCOUNT }, notFound: false });
+  });
+
+  it("имя записи в адрес не попадает: `formatRoute` бросает на всём, что не UUID и не перечень", () => {
+    for (const route of [
+      { name: "account", id: "Карта Сбера" },
+      { name: "account", id: `${ACCOUNT}/edit` },
+      { name: "account" },
+      { name: "category", id: "Продукты" },
+      { name: "categories", type: "Продукты" },
+      { name: "accounts", id: ACCOUNT },
+      { name: "tags", id: OPERATION },
+      { name: "rates", currency: "USD" },
+      { name: "account-new", name2: "Карта" },
+    ]) {
+      expect(() => formatRoute(route as unknown as Route), JSON.stringify(route)).toThrow();
+    }
+  });
+
+  it("родители: списки — дети «Ещё», запись — дитя своего списка; вкладка подсвечена «Ещё»", () => {
+    for (const name of ["accounts", "rates", "categories", "tags"] as const) expect(parentRoute({ name })).toEqual({ name: "more" });
+    expect(parentRoute({ name: "account", id: ACCOUNT })).toEqual({ name: "accounts" });
+    expect(parentRoute({ name: "account-new" })).toEqual({ name: "accounts" });
+    expect(parentRoute({ name: "category", id: CATEGORY })).toEqual({ name: "categories", type: "expense" });
+    expect(routeChain({ name: "account", id: ACCOUNT }).map(formatRoute)).toEqual(["#/", "#/more", "#/more/accounts", `#/more/accounts/${ACCOUNT}`]);
+    expect(screenKey({ name: "account", id: ACCOUNT, sheet: "entry" })).toBe(`#/more/accounts/${ACCOUNT}`);
+    // Лист поверх формы счёта экран не покидает: черновик формы не спрашивается.
+    expect(leftBehind({ name: "account", id: ACCOUNT }, { name: "account", id: ACCOUNT, sheet: "entry" })).toBeNull();
+    expect(leftBehind({ name: "account", id: ACCOUNT }, { name: "accounts" })).toBe("screen");
+    expect(leftBehind({ name: "categories", type: "expense" }, { name: "categories", type: "income" })).toBe("screen");
+  });
+
+  it("счёт или категория, которых в бюджете нет, — «Запись не найдена» и список", () => {
+    const records = { transaction: () => true, account: (id: string) => sameRecordId(ACCOUNT, id), category: () => false };
+    expect(resolveRoute({ name: "account", id: ACCOUNT }, records)).toEqual({ route: { name: "account", id: ACCOUNT }, notFound: false });
+    expect(resolveRoute({ name: "account", id: RESERVE }, records)).toEqual({ route: { name: "accounts" }, notFound: true });
+    expect(resolveRoute({ name: "account", id: RESERVE, sheet: "entry" }, records)).toEqual({ route: { name: "accounts" }, notFound: true });
+    expect(resolveRoute({ name: "category", id: CATEGORY }, records)).toEqual({ route: { name: "categories", type: "expense" }, notFound: true });
+    // Без проверки записей (старый вызов) — маршрут как есть.
+    expect(resolveRoute({ name: "account", id: RESERVE }, { transaction: () => true })).toEqual({ route: { name: "account", id: RESERVE }, notFound: false });
+  });
+});

@@ -29,6 +29,13 @@ export function activeTab(route: Route): TabName | null {
     case "plan-year":
     case "family":
     case "import":
+    case "accounts":
+    case "account":
+    case "account-new":
+    case "rates":
+    case "categories":
+    case "category":
+    case "tags":
       return "more";
   }
 }

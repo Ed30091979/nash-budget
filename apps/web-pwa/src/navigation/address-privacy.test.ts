@@ -310,6 +310,19 @@ describe("адрес — только маршрут: грамматика", () 
       { name: "entry" },
       { name: "spent" },
       { name: "more", sheet: "entry", from: "2026-10-01" },
+      // Справочники: имя счёта или категории — не идентификатор, а вид списка — только из перечня.
+      { name: "account", id: "Карта Сбера" },
+      { name: "account", id: "1250" },
+      { name: "account" },
+      { name: "accounts", id: OPERATION },
+      { name: "account-new", id: OPERATION },
+      { name: "category", id: "Продукты" },
+      { name: "category", id: OPERATION, type: "income" },
+      { name: "categories", type: "Продукты" },
+      { name: "categories", id: CATEGORY },
+      { name: "tags", note: "отпуск" },
+      { name: "tags", id: OPERATION },
+      { name: "rates", amount: 9250 },
     ];
     for (const route of outside) expect(() => formatRoute(route as unknown as Route), JSON.stringify(route)).toThrow();
   });
@@ -320,7 +333,9 @@ describe("адрес — только маршрут: грамматика", () 
     for (const seed of [3, 11, 2026]) {
       const random = generator(seed);
       for (const route of ALL_ROUTE_FIXTURES) {
-        const fields = ["name", ...Object.keys(QUERY_GRAMMAR[route.name]), "q", "note", "amount", "from"];
+        // `id` — идентификатор записи в пути (`#/more/accounts/<id>`): у счёта и категории свой,
+        // у всех прочих маршрутов его нет вовсе. Враждебное имя вместо UUID адреса не получает.
+        const fields = ["name", "id", ...Object.keys(QUERY_GRAMMAR[route.name]), "q", "note", "amount", "from"];
         for (const field of fields) {
           for (const value of hostileValues(random)) {
             const candidate = { ...route, [field]: value } as unknown as Route;
@@ -344,8 +359,13 @@ describe("адрес — только маршрут: грамматика", () 
 
   it("перебор адресов: что бы ни пришло в решётке, прочитанный маршрут пишется языком адреса", () => {
     const random = generator(19);
-    const heads = ["#/", "#/new", "#/operations", "#/more/plan-month", "#/reports", "#/spent", "#/more"];
-    const keys = ["edit", "sheet", "op", "src", "dst", "month", "q", "note", "amount", "EDIT", "edit[]", ""];
+    const heads = [
+      "#/", "#/new", "#/operations", "#/more/plan-month", "#/reports", "#/spent", "#/more",
+      "#/more/accounts", "#/more/accounts/new", `#/more/accounts/${OPERATION}`, `#/more/accounts/${OPERATION.toUpperCase()}`,
+      "#/more/accounts/Карта", "#/more/rates", "#/more/categories", `#/more/categories/${CATEGORY}`, "#/more/categories/Продукты",
+      "#/more/tags", "#/more/tags/отпуск",
+    ];
+    const keys = ["edit", "sheet", "op", "src", "dst", "month", "type", "id", "q", "note", "amount", "EDIT", "edit[]", ""];
     for (let attempt = 0; attempt < 2000; attempt += 1) {
       const values = hostileValues(random).map((value) => (typeof value === "string" ? value : JSON.stringify(value) ?? ""));
       const query = Array.from({ length: random.next(4) }, () => `${random.pick(keys)}=${random.pick(values)}`).join("&");
@@ -389,7 +409,9 @@ describe("адрес — только маршрут: история, котор
         expectHonestHistory(frame);
       }
     }
-  }, 30_000);
+    // Время — ожидание событий истории (по 5 мс на переход), а не счёт: маршрутов с 2c больше, и
+    // переходов между ними — квадрат их числа.
+  }, 120_000);
 
   it("после каждого пути — возврат с черновиком, набранный адрес, лист при перезагрузке, уход без вопроса, «Назад» и «Вперёд»", async () => {
     // Системное «Назад» с черновиком: запись возвращается поверх той, куда пришли.
@@ -457,6 +479,9 @@ describe("адрес — только маршрут: история, котор
     // Запуск со ссылкой, мусором и чужим `state`.
     for (const [hash, state] of [
       ["#/more/import", null],
+      [`#/more/categories/${CATEGORY}`, null],
+      ["#/more/accounts/Карта%20Сбера", null],
+      ["#/more/categories?type=income&note=кофе", null],
       ["#/?amount=1200", null],
       ["#/new?edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/new?edit=not-a-uuid"] }],
       ["#/operations?sheet=entry&edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/", "#/operations?sheet=entry&edit=not-a-uuid"] }],

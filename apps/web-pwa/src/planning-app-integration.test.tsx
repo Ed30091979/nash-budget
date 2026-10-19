@@ -9,6 +9,7 @@ import { makeCanonicalPlanningState, makePlanningTestState, TEST_IDS } from "./f
 import { createBudgetRepository } from "./storage-repository";
 import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./app/budget-store";
 import { readAppSource } from "./app/shell-source";
+import { activeTab } from "./components/BottomNav";
 
 const databaseNames = new Set<string>();
 
@@ -103,7 +104,8 @@ describe("planning app integration", () => {
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     // На подэкранах плана подсвечена вкладка «Ещё»: план живёт под ней.
-    expect(source).toMatch(/case "plan-month":\s*case "plan-year":\s*case "family":\s*case "import":\s*return "more";/u);
+    // С 2c под «Ещё» живут и справочники, поэтому проверяется поведение, а не порядок строк `case`.
+    for (const name of ["plan-month", "plan-year", "family", "import"] as const) expect(activeTab({ name }), name).toBe("more");
     // Повседневные лимиты «Обзора» — только активные строки плана активных категорий.
     const overviewModel = readFileSync(new URL("./features/overview/overview-model.ts", import.meta.url), "utf8");
     expect(overviewModel).toContain("budget?.lines.filter((line) => line.active !== false)");

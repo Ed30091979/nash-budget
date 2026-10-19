@@ -403,7 +403,11 @@ export default function App() {
     const current = budgetRef.current;
     if (current === null) return;
     // Идентификатор в адресе пишется строчными, а в бюджете может храниться в любом регистре.
-    const resolved = resolveRoute(router.current(), { transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)) });
+    const resolved = resolveRoute(router.current(), {
+      transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)),
+      account: (id) => current.accounts.some((item) => sameRecordId(item.id, id)),
+      category: (id) => current.categories.some((item) => sameRecordId(item.id, id)),
+    });
     if (!resolved.notFound) return;
     router.redirect(resolved.route);
     setMessage(ROUTE_NOT_FOUND_MESSAGE);
