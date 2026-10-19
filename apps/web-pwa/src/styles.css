@@ -1404,6 +1404,9 @@ button.intro-skip { border-radius: var(--radius-control); }
    его низу — у длинного листа чипов «Готово» видно всегда. Ниже 18em варианты встают в колонку. */
 .sheet-backdrop.q-backdrop { padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
 .sheet-backdrop.q-backdrop[hidden] { display: none; }
+/* Лист поверх «Обзора» стоит в потоке маршрута, и правило ритма `.route-screen > * + *` давало
+   затемнению отступ 24 сверху: полоса над листом оставалась светлой, шапка — незатемнённой. */
+.route-screen > .sheet-backdrop { margin-top: 0; }
 .sheet.q-sheet { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(94dvh, 820px); padding: 0 16px 16px; overflow-y: auto; overscroll-behavior: contain; color: var(--ink); text-align: left; background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
 .q-grab { display: block; flex: none; margin: 8px auto 0; }
 .q-grab::before { content: ""; display: block; width: 36px; height: 5px; border-radius: var(--radius-pill); background: var(--border); }

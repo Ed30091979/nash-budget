@@ -181,8 +181,8 @@ async function expectMessageClearance(page: Page, label: string): Promise<void> 
 }
 
 /** Лист ввода: каждую цель можно домотать внутри листа, и ни плашка, ни что-то ещё её не накрывает. */
-async function expectSheetClearance(page: Page, label: string): Promise<void> {
-  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM);
+async function expectSheetClearance(page: Page, label: string, sheetSelector?: string): Promise<void> {
+  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM, sheetSelector);
   expect(geometry.targets, `${label}: цели листа найдены`).toBeGreaterThan(5);
   expect(geometry.scrollWidth, `${label}: горизонтальная прокрутка`).toBeLessThanOrEqual(geometry.clientWidth);
   expect(geometry.unreachable, `${label}: каждая цель листа доматывается и ничем не накрыта`).toEqual([]);
@@ -202,6 +202,28 @@ async function openFromMore(page: Page, row: RegExp): Promise<void> {
   await page.getByRole("button", { name: row }).click();
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
 }
+
+test("самый высокий лист первого запуска — «На что вы тратите?» — под плашкой сервис-воркера: каждая цель доматывается", async ({ page }) => {
+  // Ревью R2, L-9: прежний онбординг мерил под плашкой свою самую высокую карточку; теперь самая
+  // высокая поверхность первого запуска — лист чипов поверх «Обзора», и плашка стоит под ним.
+  test.setTimeout(240_000);
+  await page.goto("/");
+  const toast = page.locator(".update-toast");
+  await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
+  await page.getByRole("button", { name: "Пропустить" }).click();
+  const chips = page.getByRole("dialog", { name: "На что вы тратите?" });
+  await expect(chips).toBeVisible();
+  await expect(toast).toContainText(OFFLINE_READY);
+  // Мерить — то, что видит палец: лист уже поднялся, затемнение проявилось.
+  await page.locator(".q-backdrop").evaluate((backdrop) => Promise.all(backdrop.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+  for (const scale of FONT_SCALES) {
+    await applyFontScale(page, scale);
+    for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await expectSheetClearance(page, `лист чипов, ${viewport.name} ×${scale}`, "section.q-sheet[role='dialog']");
+    }
+  }
+});
 
 test("плашка сервис-воркера не накрывает ни одной цели — со слайдов первого запуска до «Ещё»", async ({ page }) => {
   test.setTimeout(480_000);

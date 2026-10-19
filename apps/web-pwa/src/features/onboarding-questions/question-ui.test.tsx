@@ -35,6 +35,11 @@ describe("лист-вопрос: модальный диалог, вопрос, 
     expect(source).toContain("headingRef.current?.focus({ preventScroll: true })");
   });
 
+  it("затемнение листа — от самого верха экрана: ритм маршрута не даёт ему отступа", () => {
+    const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+    expect(styles).toContain(".route-screen > .sheet-backdrop { margin-top: 0; }");
+  });
+
   it("цели листа — не меньше норматива §9", () => {
     const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
     const minimum = designTouchTargetMinimum();
