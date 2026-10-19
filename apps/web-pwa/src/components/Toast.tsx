@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import { useModalDialogOpen } from "./modal-presence";
 
 export interface ToastAction {
   readonly label: string;
@@ -26,8 +27,6 @@ export const TOAST_RESUME_MINIMUM_MS = 3_000;
 
 export interface ToastProps {
   readonly toast: ToastMessage;
-  /** Лист или диалог поверх: тост под затемнением, и его время не идёт. */
-  readonly paused: boolean;
   readonly onClose: () => void;
   /** Куда вернуть фокус, если он был на тосте, а элемента, с которого он пришёл, уже нет. */
   readonly fallbackFocus: () => void;
@@ -39,11 +38,12 @@ export interface ToastProps {
  * целиком, вместе с числом и действием.
  *
  * Время у него своё и останавливается (WCAG 2.2.1): пока на тосте фокус или указатель и пока
- * поверх него лист или диалог, — после паузы он стоит ещё не меньше `TOAST_RESUME_MINIMUM_MS`.
+ * поверх него любой вопрос приложения — модальный диалог, лист ввода в том числе
+ * (`modal-presence.ts`), — после паузы он стоит ещё не меньше `TOAST_RESUME_MINIMUM_MS`.
  * Закрытый тост, на котором был фокус, отдаёт его туда, откуда тот пришёл, а не телу страницы
  * (WCAG 2.4.3; ревью 2b, MEDIUM-5).
  */
-export function Toast({ toast, paused, onClose, fallbackFocus }: ToastProps) {
+export function Toast({ toast, onClose, fallbackFocus }: ToastProps) {
   const action = toast.action;
   const ref = useRef<HTMLElement>(null);
   const [focused, setFocused] = useState(false);
@@ -55,7 +55,9 @@ export function Toast({ toast, paused, onClose, fallbackFocus }: ToastProps) {
     latest.current = { onClose, fallbackFocus };
   });
 
-  const stopped = paused || focused || hovered;
+  // Под вопросом тост закрыт затемнением и выключен вместе с корнем — прочесть и нажать его нельзя.
+  const covered = useModalDialogOpen();
+  const stopped = covered || focused || hovered;
   useEffect(() => {
     if (stopped) return undefined;
     const started = Date.now();
