@@ -98,7 +98,7 @@ describe("planning app integration", () => {
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     expect(source).toContain('{route.name === "plan-year" ? <><MoreTitleBar title="План на год" onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}');
     expect(source).toContain('<TitleBar back={{ label: "Ещё", onClick: onBack }} title={title} />');
-    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => write.run(change)} />');
+    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => write.run(change)} paydays={<PaydaysCard budget={budget} write={write} onMessage={setMessage} />} />');
     // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');

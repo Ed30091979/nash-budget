@@ -11,7 +11,7 @@ import { ALWAYS_ACTIVE_EXPENSE, ARCHIVED_STARTERS, PRESET_EXPENSES } from "../..
 import { daysBetween } from "../../reach";
 import { archiveCategoryWithLimits } from "../categories/category-model";
 import { createOperationCategory, restoreCategory } from "../operations/model";
-import { QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord } from "./memory";
+import { EMPTY_FIRST_RUN, QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord } from "./memory";
 
 /*
  * Вопросы первого запуска (§e, пп. 3–5): какой задать сейчас и что сделает ответ. Чистые функции —
@@ -22,15 +22,38 @@ import { QUESTION_IDS, type FirstRunState, type QuestionId, type QuestionRecord 
 export const LATER_RETURN_DAYS = 7;
 export const LATER_LIMIT = 2;
 
-/** Набор этого устройства: вопросы, подсказка и всё остальное §e начинаются отсюда. */
-export function beginFirstRun(today: string): FirstRunState {
+/**
+ * Набор этого устройства: вопросы, подсказка и всё остальное §e начинаются отсюда. `budgetId` —
+ * месяц плана, который создал набор: по нему видно, что бюджет на устройстве всё ещё тот самый.
+ */
+export function beginFirstRun(today: string, budgetId: string | null = null): FirstRunState {
   const pending: QuestionRecord = { status: "pending", on: today, postponed: 0 };
   return {
     startedOn: today,
+    budgetId,
     questions: Object.fromEntries(QUESTION_IDS.map((id) => [id, pending])),
     coach: "pending",
     closedHints: [],
   };
+}
+
+/**
+ * Первый запуск — про бюджет, который создал набор. Восстановленная копия, документ семьи на
+ * устройстве участника, пример, загруженный в другой вкладке, — другой бюджет: месяца плана набора в
+ * нём нет, и спрашивать «На что вы тратите?» над чужими категориями нельзя (ревью R2, M-1).
+ * Память без привязки (`budgetId === null`) ни о каком бюджете не спрашивает и считается своей.
+ */
+export function firstRunBelongsTo(state: FirstRunState, budget: BudgetState): boolean {
+  return state.budgetId === null || budget.budgets.some((item) => item.id === state.budgetId);
+}
+
+/**
+ * Первый запуск закончен: вопросов и подсказки на первую трату больше нет, а закрытые карточки
+ * остаются закрытыми — их закрыл человек, а не набор.
+ */
+export function finishFirstRun(state: FirstRunState): FirstRunState {
+  if (state.startedOn === null && state.budgetId === null && state.coach === null && Object.keys(state.questions).length === 0) return state;
+  return { ...EMPTY_FIRST_RUN, closedHints: state.closedHints };
 }
 
 /** Можно ли задать этот вопрос сегодня. */
@@ -91,6 +114,30 @@ export interface CategoryChip {
   readonly group: CategoryGroup;
   readonly icon: IconName;
   readonly tone: CategoryTone;
+  /**
+   * Почему снять отметку нельзя (ревью R2, L-7): у категории уже есть записи, лимит открытого месяца
+   * или регулярный платёж. Лист, показанный снова через неделю, не убирает такую категорию в архив —
+   * лимит молча погас бы, а строка листа обещает «Поменять можно в любой момент». `null` — можно.
+   */
+  readonly locked: ChipLock | null;
+}
+
+export type ChipLock = "records" | "limit" | "payment";
+
+/** Короткая пометка на чипе, который снять нельзя. */
+export const CHIP_LOCK_WORDS: Readonly<Record<ChipLock, string>> = {
+  records: "есть записи",
+  limit: "есть лимит",
+  payment: "есть платёж",
+};
+
+/** Что держит категорию на «Обзоре»: записи, лимит открытого месяца, регулярный или крупный платёж. */
+export function chipLock(state: BudgetState, categoryId: string): ChipLock | null {
+  if (state.transactions.some((item) => "categoryId" in item && item.categoryId === categoryId)) return "records";
+  if (state.budgets.some((budget) => budget.status !== "closed" && budget.lines.some((line) => line.categoryId === categoryId && line.active !== false))) return "limit";
+  if (state.scheduledExpenses.some((item) => item.categoryId === categoryId && item.active)
+    || state.annualCommitments.some((item) => item.categoryId === categoryId && item.active)) return "payment";
+  return null;
 }
 
 export interface CategoryChips {
@@ -106,7 +153,8 @@ export function categoryChips(state: BudgetState): CategoryChips {
   const always = categoryNameKey(ALWAYS_ACTIVE_EXPENSE);
   const chip = (name: string, source: CategoryChip["source"], categoryId: string | null, group: CategoryGroup): CategoryChip => {
     const visual = categoryVisual({ name, type: "expense", group });
-    return { key: categoryNameKey(name), name, source, categoryId, group, icon: visual.icon, tone: visual.tone };
+    const locked = source === "active" && categoryId !== null ? chipLock(state, categoryId) : null;
+    return { key: categoryNameKey(name), name, source, categoryId, group, icon: visual.icon, tone: visual.tone, locked };
   };
   // Порядок листа — порядок набора (§e: от «Продуктов» до «Подарков»); своё — следом, по месту в списке.
   const presetIndex = (name: string) => {
@@ -158,7 +206,8 @@ export function applyCategoryChoice(
 ): BudgetState {
   let next = state;
   for (const item of chips.frequent) {
-    if (chosen.has(item.key) || item.categoryId === null) continue;
+    // Категорию с записями, лимитом или платежом лист в архив не убирает никогда.
+    if (chosen.has(item.key) || item.categoryId === null || item.locked !== null) continue;
     const current = next.categories.find((category) => category.id === item.categoryId);
     if (current?.active) next = archiveCategoryWithLimits(next, item.categoryId);
   }
@@ -205,4 +254,14 @@ export function toggleCustomPayday(days: readonly number[], day: number): readon
   if (days.includes(day)) return days.filter((item) => item !== day);
   if (days.length >= MAX_CUSTOM_PAYDAYS) return days;
   return [...days, day].sort((left, right) => left - right);
+}
+
+/**
+ * Какой вариант листа отмечен, когда дни уже названы (правка из «Плана месяца», ревью R2, M-4): пара
+ * из списка — своим вариантом, остальное — «Другими числами» с этими числами; без дней — ничего.
+ */
+export function paydayOptionFor(days: readonly number[]): { readonly option: PaydayOption | null; readonly custom: readonly number[] } {
+  if (days.length === 0) return { option: null, custom: [] };
+  const pair = PAYDAY_OPTIONS.find((item) => item.days !== null && item.days.length === days.length && item.days.every((day, index) => day === days[index]));
+  return pair === undefined ? { option: "custom", custom: [...days] } : { option: pair.id, custom: [] };
 }

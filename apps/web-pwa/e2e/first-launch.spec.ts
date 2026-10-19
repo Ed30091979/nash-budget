@@ -13,6 +13,10 @@ import { amountField, entrySheet, startDemo, submitButton, tile, toast } from ".
 
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 
+// Язык устройства — русский, как у аудитории: набор в рублях, и результат не зависит от машины
+// прогона (ревью R2, L-2). Казахский и смена валюты — `first-run-edges.spec.ts`.
+test.use({ locale: "ru-RU" });
+
 const slideHeading = (page: Page) => page.getByRole("heading", { level: 1 });
 const question = (page: Page, name: string) => page.getByRole("dialog", { name });
 const CHIPS = "На что вы тратите?";
@@ -115,6 +119,8 @@ test("первый запуск целиком: слайды → «Начать�
   await expect(tile(page, "Рыбалка")).toBeVisible();
   await expect(tile(page, "Одежда и обувь")).toHaveCount(0);
   for (const name of ["Карта", "Наличные", "Вклад", "Зарплата"]) await expect(tile(page, name)).toBeVisible();
+  await expect(tile(page, "Карта")).toContainText("0 ₽");
+  await expect(tile(page, "Вклад")).toContainText("50 000 ₽");
   await expect(coach(page)).toBeVisible();
   await expect(page.locator(".coach-text")).toHaveText("Коснитесь категории, чтобы записать расход");
   // Кольцо обводит квадрат «Продуктов», а не всю колонку с именем и суммой (макет 05).

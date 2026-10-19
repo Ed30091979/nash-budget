@@ -35,6 +35,12 @@ export type HintId = (typeof HINT_IDS)[number];
 export interface FirstRunState {
   /** День, когда на этом устройстве создан набор первого запуска; `null` — набора здесь не было. */
   readonly startedOn: string | null;
+  /**
+   * Месяц плана (`budgets[].id`), который создал набор: вопросы и подсказка — про этот бюджет. Бюджет
+   * без него — восстановленная копия, документ семьи, пример из другой вкладки — чужой, и первый
+   * запуск над ним закончен (`firstRunBelongsTo`, ревью R2, M-1). `null` — привязки нет.
+   */
+  readonly budgetId: string | null;
   readonly questions: Readonly<Partial<Record<QuestionId, QuestionRecord>>>;
   /** Подсказка на первую трату: ждёт, показана и закрыта — или её здесь не было (`null`). */
   readonly coach: "pending" | "done" | null;
@@ -42,7 +48,7 @@ export interface FirstRunState {
   readonly closedHints: readonly HintId[];
 }
 
-export const EMPTY_FIRST_RUN: FirstRunState = { startedOn: null, questions: {}, coach: null, closedHints: [] };
+export const EMPTY_FIRST_RUN: FirstRunState = { startedOn: null, budgetId: null, questions: {}, coach: null, closedHints: [] };
 
 export interface FirstRunMemory {
   load(): Promise<FirstRunState>;
@@ -56,6 +62,7 @@ const KEY = "state";
 const VERSION = 1;
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
+const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const STATUSES: readonly QuestionStatus[] = ["pending", "asked", "answered", "later"];
 
 function isDay(value: unknown): value is string {
@@ -88,6 +95,7 @@ export function readFirstRunState(value: unknown): FirstRunState {
     : [];
   return {
     startedOn: isDay(raw.startedOn) ? raw.startedOn : null,
+    budgetId: typeof raw.budgetId === "string" && ID_PATTERN.test(raw.budgetId) ? raw.budgetId : null,
     questions,
     coach: raw.coach === "pending" || raw.coach === "done" ? raw.coach : null,
     closedHints,
@@ -200,6 +208,12 @@ export function createFirstRunStore(memory: FirstRunMemory): FirstRunStore {
       );
     },
     async update(change) {
+      // Правка до чтения с диска сначала дожидается его: иначе пустая память перетёрла бы записанную
+      // (закрытые карточки, ответы) — например, копия восстановлена с «Ещё» сразу после перезагрузки.
+      if (state === null) {
+        store.load();
+        await loading;
+      }
       const base = state ?? EMPTY_FIRST_RUN;
       const next = change(base);
       if (next === base) return;

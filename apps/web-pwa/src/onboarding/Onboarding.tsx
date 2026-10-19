@@ -38,8 +38,28 @@ export const FREE_PROMISE = INTRO_SLIDES[2]!.text;
 /** Сдвиг пальца по горизонтали, после которого слайд перелистывается. */
 const SWIPE_DISTANCE = 56;
 
+/** Что стало с набором: сохранён — или в другой вкладке бюджет уже был, и открыт он (`createIfAbsent`). */
+export type OnboardingOutcome = "created" | "existing";
+
+/**
+ * Набор и память первого запуска. Память — до публикации бюджета: «Обзор» спрашивает её в первом же
+ * кадре. Если бюджет уже создан в другой вкладке (там, например, открыли пример), набор не записан, и
+ * память первого запуска обнуляется: вопросы над чужим бюджетом не задаются ни здесь, ни там
+ * (ревью R2, L-1). Сбой памяти набору не мешает — вопросы тогда просто не зададутся.
+ */
+export async function startFirstRun(
+  state: BudgetState,
+  day: string,
+  firstRun: FirstRunStore,
+  onComplete: (state: BudgetState) => Promise<OnboardingOutcome | void>,
+): Promise<void> {
+  await firstRun.replace(beginFirstRun(day, state.activeBudgetId)).catch(() => undefined);
+  const outcome = await onComplete(state);
+  if (outcome === "existing") await firstRun.replace(EMPTY_FIRST_RUN).catch(() => undefined);
+}
+
 interface OnboardingProps {
-  readonly onComplete: (state: BudgetState) => Promise<void>;
+  readonly onComplete: (state: BudgetState) => Promise<OnboardingOutcome | void>;
   readonly onDemo: () => Promise<void>;
   /** Память первого запуска этого устройства (по умолчанию — общая на вкладку). */
   readonly firstRun?: FirstRunStore;
@@ -100,10 +120,7 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
       await operationLock.current.run(async () => {
         const day = today();
         const state = buildOnboardingBudgetState({ today: day, currency: currencyForLocale(language()) });
-        // Память первого запуска — до публикации бюджета: «Обзор» спрашивает её в первом же кадре.
-        // Сбой памяти набору не мешает — вопросы тогда просто не зададутся.
-        await firstRun.replace(beginFirstRun(day)).catch(() => undefined);
-        await onComplete(state);
+        await startFirstRun(state, day, firstRun, onComplete);
       });
     } catch {
       setError(onboardingFailureMessage("save"));
@@ -141,8 +158,14 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
       go(index - 1);
     }
   };
+  // Взмах пальцем. Горизонтальный жест слайд оставляет себе (`touch-action: pan-y` в стилях), иначе
+  // браузер забирал его на прокрутку и вместо `pointerup` присылал `pointercancel` (ревью R2, M-3);
+  // вертикальная прокрутка по-прежнему его, и её отмена сбрасывает начатый взмах.
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     swipe.current = event.pointerType === "mouse" ? null : { x: event.clientX, y: event.clientY };
+  };
+  const onPointerCancel = () => {
+    swipe.current = null;
   };
   const onPointerUp = (event: PointerEvent<HTMLElement>) => {
     const from = swipe.current;
@@ -160,7 +183,7 @@ export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), tod
         <span className="intro-brand"><BrandMark />Наш бюджет</span>
         {last ? null : <button className="intro-skip" type="button" aria-disabled={busy || undefined} onClick={() => void start()}>Пропустить</button>}
       </header>
-      <section className="intro-slide" key={slide.key} aria-roledescription="слайд" aria-label={`${index + 1} из ${INTRO_SLIDES.length}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+      <section className="intro-slide" key={slide.key} aria-roledescription="слайд" aria-label={`${index + 1} из ${INTRO_SLIDES.length}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
         <div className="intro-art"><slide.Illustration /></div>
         <p className="intro-dots" role="img" aria-label={`Шаг ${index + 1} из ${INTRO_SLIDES.length}`}>
           {INTRO_SLIDES.map((item, dot) => <span key={item.key} className={dot === index ? "current" : undefined} />)}

@@ -71,16 +71,20 @@ export const ARCHIVED_STARTERS: readonly string[] = DEFAULT_EXPENSE_CATEGORIES
   .filter((name) => !PRESET_EXPENSES.some((preset) => categoryNameKey(preset) === categoryNameKey(name)));
 
 /*
- * Валюта по языку устройства (§e): ru → рубль, kk → тенге, be → белорусский рубль, иначе — по
- * региону, запасной вариант — рубль. Базовой бывает только валюта с двумя знаками после запятой
- * (D-031, `canBeBaseCurrency`): у иены или вона лимит «30 000» хранился бы в сто раз больше, поэтому
- * такой регион получает рубль, а свою валюту человек сможет выбрать позже, пока бюджет пуст.
+ * Валюта набора (§e; решение ревью R2, L-3). Аудитория — Россия: по умолчанию рубль, и русский с
+ * английским телефоном молча долларов не получает. Другая валюта — только по явному признаку:
+ * регион в теге языка, у которого своя валюта с двумя знаками после запятой (`ru-KZ`, `en-US`,
+ * `de-DE`), или язык, который сам говорит о стране, — казахский (тенге) и белорусский (белорусский
+ * рубль). Тег без региона (`en`, `de`, `zh`, `es`, `pt`) — рубль: страну по языку не угадать.
+ * Базовой бывает только валюта с двумя знаками (D-031, `canBeBaseCurrency`): иена, вона, донг и
+ * исландская крона дают рубль. Выбрать свою валюту можно на первом листе вопросов, пока бюджет пуст.
  */
-const LANGUAGE_CURRENCY: Readonly<Record<string, CurrencyCode>> = { ru: "RUB", kk: "KZT", be: "BYN" };
+const LANGUAGE_CURRENCY: Readonly<Record<string, CurrencyCode>> = { kk: "KZT", be: "BYN" };
 
 const EURO_REGIONS = ["AT", "BE", "BG", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK"] as const;
 
-const REGION_CURRENCY: Readonly<Record<string, CurrencyCode>> = {
+/** Регион тега — валюта страны. Только явный регион: вероятный регион языка не угадывается. */
+export const REGION_CURRENCY: Readonly<Record<string, CurrencyCode>> = {
   RU: "RUB", BY: "BYN", KZ: "KZT", UA: "UAH", UZ: "UZS", KG: "KGS", TJ: "TJS", TM: "TMT", AM: "AMD", AZ: "AZN", GE: "GEL", MD: "MDL",
   US: "USD", GB: "GBP", CA: "CAD", AU: "AUD", CH: "CHF", PL: "PLN", CZ: "CZK", SE: "SEK", NO: "NOK", DK: "DKK", HU: "HUF",
   RS: "RSD", RO: "RON", TR: "TRY", IL: "ILS", AE: "AED", CN: "CNY", IN: "INR", TH: "THB",
@@ -88,11 +92,11 @@ const REGION_CURRENCY: Readonly<Record<string, CurrencyCode>> = {
   ...Object.fromEntries(EURO_REGIONS.map((region) => [region, "EUR"])),
 };
 
-/** Язык и регион тега BCP 47; без региона — вероятный регион языка («de» → DE). */
+/** Язык и явный регион тега BCP 47 (`ru-KZ` → ru, KZ; `en` → en, без региона). */
 function localeParts(tag: string): { readonly language: string; readonly region: string | null } | null {
   try {
-    const locale = new Intl.Locale(tag);
-    return { language: locale.language.toLowerCase(), region: (locale.region ?? locale.maximize().region ?? null)?.toUpperCase() ?? null };
+    const locale = new Intl.Locale(tag.replace(/_/gu, "-"));
+    return { language: locale.language.toLowerCase(), region: locale.region?.toUpperCase() ?? null };
   } catch {
     return null;
   }
@@ -103,10 +107,11 @@ export function currencyForLocale(tag: string | null | undefined): CurrencyCode 
   if (typeof tag !== "string" || tag.trim() === "") return DEFAULT_BASE_CURRENCY;
   const parts = localeParts(tag.trim());
   if (parts === null) return DEFAULT_BASE_CURRENCY;
-  const byLanguage = Object.hasOwn(LANGUAGE_CURRENCY, parts.language) ? LANGUAGE_CURRENCY[parts.language] : undefined;
   const byRegion = parts.region !== null && Object.hasOwn(REGION_CURRENCY, parts.region) ? REGION_CURRENCY[parts.region] : undefined;
-  const candidate = byLanguage ?? byRegion;
-  return candidate !== undefined && canBeBaseCurrency(candidate) ? candidate : DEFAULT_BASE_CURRENCY;
+  if (byRegion !== undefined && canBeBaseCurrency(byRegion)) return byRegion;
+  const byLanguage = Object.hasOwn(LANGUAGE_CURRENCY, parts.language) ? LANGUAGE_CURRENCY[parts.language] : undefined;
+  if (byLanguage !== undefined && canBeBaseCurrency(byLanguage)) return byLanguage;
+  return DEFAULT_BASE_CURRENCY;
 }
 
 /** Язык этого устройства, если браузер его называет. */
@@ -149,9 +154,14 @@ export function buildOnboardingBudgetState({ today, currency = DEFAULT_BASE_CURR
   }));
   const budgetId = id();
   const preset = new Set([...PRESET_EXPENSES, PRESET_INCOME].map(categoryNameKey));
-  const categories: Category[] = makeDefaultCategories(id).map((category) => (
-    preset.has(categoryNameKey(category.name)) ? category : { ...category, active: false }
-  ));
+  // Порядок внутри группы — порядок набора (D-041): «Продукты», «Кафе и доставка», «Транспорт»,
+  // «Дом и хозяйство»… Стартовые в архиве встают следом: вернувшись, они не обгоняют выбранные.
+  const presetOrder = (name: string) => PRESET_EXPENSES.findIndex((item) => categoryNameKey(item) === categoryNameKey(name));
+  const categories: Category[] = makeDefaultCategories(id).map((category, index) => {
+    const order = category.type === "expense" ? presetOrder(category.name) : -1;
+    const sortOrder = category.type !== "expense" ? category.sortOrder : order === -1 ? (PRESET_EXPENSES.length + index + 1) * 10 : (order + 1) * 10;
+    return preset.has(categoryNameKey(category.name)) ? { ...category, sortOrder } : { ...category, sortOrder, active: false };
+  });
   const month = monthOfDate(today);
 
   const state: BudgetState = {

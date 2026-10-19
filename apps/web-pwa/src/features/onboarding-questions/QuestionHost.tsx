@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { BudgetState } from "@family-budget/domain";
+import { categoryNameKey, type BudgetState } from "@family-budget/domain";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { AddCategorySheet } from "../overview/AddCategorySheet";
 import { AccountsQuestion } from "./AccountsQuestion";
 import { CategoriesQuestion } from "./CategoriesQuestion";
 import { firstRunStore, type FirstRunState, type FirstRunStore, type QuestionId } from "./memory";
 import { PaydayQuestion } from "./PaydayQuestion";
-import { markAnswered, markAsked, markLater, nextQuestion } from "./questions-model";
+import { finishFirstRun, firstRunBelongsTo, markAnswered, markAsked, markLater, nextQuestion } from "./questions-model";
 
-/** Состояние первого запуска этого устройства — с перерисовкой, когда оно меняется; `null` — ещё читается. */
-export function useFirstRun(store: FirstRunStore = firstRunStore()): FirstRunState | null {
+/**
+ * Состояние первого запуска этого устройства — с перерисовкой, когда оно меняется; `null` — ещё
+ * читается. С бюджетом — только если первый запуск про него: над чужим бюджетом (копия, документ
+ * семьи) он закончен сразу, в этом же кадре, а память дописывается следом (`firstRunBelongsTo`).
+ */
+export function useFirstRun(store: FirstRunStore = firstRunStore(), budget?: BudgetState): FirstRunState | null {
   // Хранилище живёт только в браузере; разметка проверок читает тот же снимок.
   const state = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
   useEffect(() => store.load(), [store]);
-  return state;
+  const foreign = state !== null && budget !== undefined && !firstRunBelongsTo(state, budget);
+  useEffect(() => {
+    if (foreign && budget !== undefined) void store.update((current) => (firstRunBelongsTo(current, budget) ? current : finishFirstRun(current)));
+  }, [foreign, budget, store]);
+  return foreign ? finishFirstRun(state) : state;
 }
 
 export interface QuestionHostProps {
@@ -46,8 +54,18 @@ function focusScreenHeading(): void {
  * нет (отложенный — по правилу повтора, `LATER_RETURN_DAYS`).
  */
 export function QuestionHost({ budget, today, write, blocked, onAddAccount, store = firstRunStore() }: QuestionHostProps) {
-  const state = useFirstRun(store);
+  const state = useFirstRun(store, budget);
   const [custom, setCustom] = useState(false);
+  // Чип, на который вернётся фокус, когда лист «Своя категория» закроется: заведённая категория.
+  const [returnFocusTo, setReturnFocusTo] = useState<string | null>(null);
+  const closeCustom = (key: string | null) => {
+    setReturnFocusTo(key);
+    setCustom(false);
+  };
+  const keyOf = (categoryId: string) => {
+    const category = budget.categories.find((item) => item.id === categoryId);
+    return category === undefined ? null : categoryNameKey(category.name);
+  };
   const question = state === null || blocked ? null : nextQuestion(state, today);
   const shown = useRef<QuestionId | null>(null);
 
@@ -69,6 +87,7 @@ export function QuestionHost({ budget, today, write, blocked, onAddAccount, stor
           budget={budget}
           write={write}
           hidden={custom}
+          returnFocusTo={returnFocusTo}
           onAnswered={() => answer("categories")}
           onLater={() => later("categories")}
           onCustom={() => setCustom(true)}
@@ -79,9 +98,9 @@ export function QuestionHost({ budget, today, write, blocked, onAddAccount, stor
             type="expense"
             description="Новая категория встанет на «Обзоре» и в этом списке — уже отмеченной."
             onChange={(change) => write.run(change)}
-            onDone={() => setCustom(false)}
-            onChoose={() => setCustom(false)}
-            onClose={() => setCustom(false)}
+            onDone={(_categoryId, name) => closeCustom(categoryNameKey(name))}
+            onChoose={(categoryId) => closeCustom(keyOf(categoryId))}
+            onClose={() => closeCustom(null)}
           />
         ) : null}
       </>;

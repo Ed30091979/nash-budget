@@ -44,14 +44,15 @@ describe("выбор категории", () => {
   it("раскладывает категории по группам домена в порядке групп", () => {
     const groups = groupedCategoryOptions(defaults(), "expense");
 
+    // «Каждый день» — первым (D-041).
     expect(groups.map((group) => group.title)).toEqual([
-      "Обязательные платежи",
       "Каждый день",
+      "Обязательные платежи",
       "Личное и досуг",
       "Прочее",
     ]);
     expect(groups[0]?.options.map((option) => option.name)).toEqual([
-      "Жильё", "ЖКХ", "Связь и подписки", "Кредиты и рассрочки",
+      "Продукты", "Транспорт", "Дом и хозяйство", "Здоровье и аптека", "Дети",
     ]);
     expect(groups.flatMap((group) => group.options)).toHaveLength(15);
     // Порядок групп — из закрытого перечня домена, а не из порядка появления категорий.
@@ -101,7 +102,7 @@ describe("выбор категории", () => {
 
     const filtered = categoryPickerView(state, "expense", "транспорт", "00000000-0000-4000-8000-000000000001");
     expect(filtered.groups.flatMap((group) => group.options).map((option) => option.name))
-      .toEqual(["Жильё", "Транспорт"]);
+      .toEqual(["Транспорт", "Жильё"]);
 
     const archived = groupedCategoryOptions(state, "expense", "", archivedId)
       .flatMap((group) => group.options)
@@ -118,7 +119,7 @@ describe("выбор категории", () => {
 
   it("предлагает выбирать группу только из перечня своего вида", () => {
     expect(groupChoicesFor("expense").map((group) => group.key))
-      .toEqual(["mandatory", "everyday", "personal", "other"]);
+      .toEqual(["everyday", "mandatory", "personal", "other"]);
     expect(groupChoicesFor("income")).toEqual([{ key: "income", title: "Доходы" }]);
   });
 });

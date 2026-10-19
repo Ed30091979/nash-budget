@@ -6,10 +6,11 @@ import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup, type Ba
 import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
 import { CoachMark } from "../features/onboarding-questions/CoachMark";
 import { HintCards } from "../features/onboarding-questions/HintCards";
+import { PaydaysCard } from "../features/onboarding-questions/PaydaysCard";
 import { coachCategoryId, coachDone, coachVisible, finishCoach } from "../features/onboarding-questions/hints-model";
 import { firstRunStore, type HintId } from "../features/onboarding-questions/memory";
 import { QuestionHost, useFirstRun } from "../features/onboarding-questions/QuestionHost";
-import { nextQuestion } from "../features/onboarding-questions/questions-model";
+import { finishFirstRun, nextQuestion } from "../features/onboarding-questions/questions-model";
 import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
@@ -96,7 +97,7 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
   const thisMonth = currentMonth(today);
   // Первый запуск (R2, DIRECTION §e): вопросы листами, подсказка на первую трату и карточки в конце.
   // Ждут, пока поверх «Обзора» лист, показан другой месяц или документ семьи задержан (только чтение).
-  const firstRun = useFirstRun();
+  const firstRun = useFirstRun(undefined, budget);
   const held = app.family.inFamily && (app.family.status?.hold ?? null) !== null;
   const blocked = adding !== null || sheetOpen || (month ?? thisMonth) !== thisMonth || held;
   const questionPending = firstRun !== null && nextQuestion(firstRun, today) !== null;
@@ -167,7 +168,7 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
       onReports={() => navigate({ name: "reports" })}
       onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: "expense" })}
       coach={showCoach ? <CoachMark target={`category:${coachTarget}`} onDismiss={() => void firstRunStore().update(finishCoach)} /> : null}
-      hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} onAction={hintAction} />}
+      hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} syncAvailable={app.family.serverUrl !== null} onAction={hintAction} />}
     />
     <QuestionHost budget={budget} today={today} write={write} blocked={blocked} onAddAccount={() => navigate({ name: "account-new", type: "savings" })} />
     {adding !== null ? (
@@ -223,6 +224,9 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 () => undefined,
                 (repair) => { repairs.push(repair); },
               );
+              // Восстановленный бюджет — уже не тот, что создал набор: первый запуск над ним закончен,
+              // и через неделю «На что вы тратите?» не откроется над его категориями (ревью R2, M-1).
+              await firstRunStore().update(finishFirstRun);
               // Каждый вид ремонта называется своими словами: снятая метка — не снятый участник.
               const notice = describeBackupRepairs(repairs);
               if (notice !== null) setMessage(notice);
@@ -257,7 +261,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
-          {route.name === "plan-month" ? <><MoreTitleBar title="План месяца" onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
+          {route.name === "plan-month" ? <><MoreTitleBar title="План месяца" onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} paydays={<PaydaysCard budget={budget} write={write} onMessage={setMessage} />} /></> : null}
           {route.name === "plan-year" ? <><MoreTitleBar title="План на год" onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
@@ -291,19 +295,25 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {/* Заглушки до подволны 2e: пустое состояние той же анатомии, что у меток (R2). */}
           {route.name === "debts" || route.name === "goals" || route.name === "recurring" ? <PlaceholderScreen budget={budget} kind={route.name} onBack={back} /> : null}
           {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
-          {route.name === "account" || route.name === "account-new" ? (
-            <AccountScreen
-              key={route.name === "account" ? route.id : "new"}
-              budget={budget}
-              today={app.today}
-              accountId={route.name === "account" ? route.id : null}
-              {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
-              write={write}
-              onBack={back}
-              // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
-              // заведённый счёт возвращает туда, где ждёт следующий вопрос (роутер вернётся по истории).
-              onDone={(message) => { setMessage(message); if (route.name === "account-new" && route.type !== undefined) navigate({ name: "overview" }); else back(); }}
-            />
-          ) : null}
+          {route.name === "account" || route.name === "account-new" ? (() => {
+            // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
+            // и «назад», и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
+            // по истории), а не в список счетов (ревью R2, L-5).
+            const fromQuestion = route.name === "account-new" && route.type !== undefined;
+            const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
+            return (
+              <AccountScreen
+                key={route.name === "account" ? route.id : "new"}
+                budget={budget}
+                today={app.today}
+                accountId={route.name === "account" ? route.id : null}
+                {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
+                write={write}
+                onBack={leave}
+                {...(fromQuestion ? { backLabel: "Обзор" } : {})}
+                onDone={(message) => { setMessage(message); leave(); }}
+              />
+            );
+          })() : null}
   </>;
 }

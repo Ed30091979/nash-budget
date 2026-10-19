@@ -12,6 +12,8 @@ export interface QuestionSheetProps {
   readonly subtitle: string;
   /** Крестик «Спросить позже» и Esc: набор остаётся как есть, вопрос вернётся по правилу повтора. */
   readonly onLater: () => void;
+  /** Подпись крестика; у правки уже данного ответа — «Закрыть без изменений». */
+  readonly closeLabel?: string;
   /** Запись идёт: крестик и Esc молчат, кнопки не нажимаются дважды. */
   readonly busy?: boolean;
   /** Отказ записи словами (`writeFailureText`): задержка семьи, конфликт вкладок, сбой. */
@@ -31,7 +33,7 @@ export interface QuestionSheetProps {
  * кругу внутри листа, Esc — то же, что крестик, тост под листом стоит на паузе. Фокус при открытии
  * — на вопросе: читающий с экрана слышит его и пояснение, а не подпись крестика.
  */
-export function QuestionSheet({ id, title, subtitle, onLater, busy = false, error = null, hidden = false, tall = false, children, footer }: QuestionSheetProps) {
+export function QuestionSheet({ id, title, subtitle, onLater, closeLabel = "Спросить позже", busy = false, error = null, hidden = false, tall = false, children, footer }: QuestionSheetProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
@@ -58,7 +60,7 @@ export function QuestionSheet({ id, title, subtitle, onLater, busy = false, erro
         <span className="q-grab" aria-hidden="true" />
         <header className="q-head">
           <h2 id={`${id}-title`} ref={headingRef} tabIndex={-1}><Hyphenated text={title} /></h2>
-          <button className="q-later" type="button" aria-label="Спросить позже" aria-disabled={busy || undefined} onClick={later}>
+          <button className="q-later" type="button" aria-label={closeLabel} aria-disabled={busy || undefined} onClick={later}>
             <Icon name="x" size={24} />
           </button>
         </header>

@@ -20,6 +20,8 @@ export interface HintCardsProps {
   readonly today: string;
   readonly lastSuccessfulBackup: string | null;
   readonly inFamily: boolean;
+  /** Сервер семьи задан в сборке: без него карточки о семье нет. */
+  readonly syncAvailable: boolean;
   /** Касание действия карточки: куда вести — решает оболочка (копия, счёт, выписка, цели, семья). */
   readonly onAction: (id: HintId) => Promise<void> | void;
   readonly store?: FirstRunStore;
@@ -30,12 +32,12 @@ export interface HintCardsProps {
  * навсегда — на этом устройстве (`memory.ts`). Когда какая к месту — `hints-model.ts`. Карточка —
  * не сообщение: она не всплывает, не мигает и не уходит сама, а стоит в потоке под плитками.
  */
-export function HintCards({ budget, today, lastSuccessfulBackup, inFamily, onAction, store = firstRunStore() }: HintCardsProps) {
-  const state = useFirstRun(store);
+export function HintCards({ budget, today, lastSuccessfulBackup, inFamily, syncAvailable, onAction, store = firstRunStore() }: HintCardsProps) {
+  const state = useFirstRun(store, budget);
   const [running, setRunning] = useState<HintId | null>(null);
   const totalInBaseMinor = useMemo(() => calculateHoldings(budget, today).totalInBaseMinor, [budget, today]);
   if (state === null) return null;
-  const hints = visibleHints({ state, budget, today, totalInBaseMinor, lastSuccessfulBackup, inFamily });
+  const hints = visibleHints({ state, budget, today, totalInBaseMinor, lastSuccessfulBackup, inFamily, syncAvailable });
   if (hints.length === 0) return null;
 
   const act = async (id: HintId) => {

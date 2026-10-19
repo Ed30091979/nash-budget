@@ -112,10 +112,10 @@ export interface SheetTargets {
  * прокрутки три — цель по центру, у нижнего края и у верхнего: на коротком экране сумма липнет к
  * краю тела листа, и цель достаточно увидеть хотя бы в одном из них, как это сделал бы палец.
  */
-export async function measureSheetTargets(page: Page, minimum: number): Promise<SheetTargets> {
-  return page.evaluate((min) => {
-    const sheet = document.querySelector<HTMLElement>("section.entry-sheet[role='dialog']");
-    if (!sheet) throw new Error("Лист ввода не открыт.");
+export async function measureSheetTargets(page: Page, minimum: number, sheetSelector = "section.entry-sheet[role='dialog']"): Promise<SheetTargets> {
+  return page.evaluate(({ min, sheetSelector: selectorOfSheet }) => {
+    const sheet = document.querySelector<HTMLElement>(selectorOfSheet);
+    if (!sheet) throw new Error(`Лист не открыт: ${selectorOfSheet}.`);
     const selector = [
       "button:not(:disabled)",
       "input:not(:disabled):not([type='file']):not([type='radio']):not([type='checkbox'])",
@@ -169,5 +169,5 @@ export async function measureSheetTargets(page: Page, minimum: number): Promise<
       undersized,
       targets: targets.length,
     };
-  }, minimum);
+  }, { min: minimum, sheetSelector });
 }

@@ -15,6 +15,8 @@ import {
   coachDone,
   coachVisible,
   finishCoach,
+  GOALS_SCREEN_READY,
+  hintEligible,
   MAX_HINTS,
   visibleHints,
   type HintInput,
@@ -40,7 +42,7 @@ function withRecords(state: BudgetState, count: number, on = TODAY): BudgetState
 }
 
 function input(patch: Partial<HintInput> & { readonly budget: BudgetState }): HintInput {
-  return { state: beginFirstRun(TODAY), today: TODAY, totalInBaseMinor: 0, lastSuccessfulBackup: null, inFamily: false, ...patch };
+  return { state: beginFirstRun(TODAY), today: TODAY, totalInBaseMinor: 0, lastSuccessfulBackup: null, inFamily: false, syncAvailable: true, ...patch };
 }
 
 describe("подсказка на первую трату (05)", () => {
@@ -48,7 +50,8 @@ describe("подсказка на первую трату (05)", () => {
     const state = preset();
     expect(state.categories.find((item) => item.id === coachCategoryId(state))?.name).toBe("Продукты");
     const without = { ...state, categories: state.categories.map((item) => (item.name === "Продукты" ? { ...item, active: false } : item)) };
-    expect(without.categories.find((item) => item.id === coachCategoryId(without))?.name).toBe("Жильё");
+    // Без «Продуктов» первая плитка — «Транспорт»: «Каждый день» стоит первым (D-041).
+    expect(without.categories.find((item) => item.id === coachCategoryId(without))?.name).toBe("Транспорт");
   });
 
   it("стоит, пока нет ни одной записи и ни одного вопроса; первая запись или «Понятно» снимают её навсегда", () => {
@@ -96,7 +99,7 @@ describe("карточки-подсказки в конце «Обзора» (06
     expect(visibleHints(input({ budget: nine, totalInBaseMinor: 1 }))).toEqual(["import"]);
     expect(visibleHints(input({ budget: withRecords(state, 10), totalInBaseMinor: 1 }))).toEqual(["backup", "import"]);
     expect(visibleHints(input({ budget: nine, totalInBaseMinor: 1, today: "2026-10-26" }))).toEqual(["backup", "import"]);
-    expect(visibleHints(input({ budget: withRecords(state, 10), totalInBaseMinor: 1, lastSuccessfulBackup: "2026-10-18T10:00:00.000Z" }))).toEqual(["import", "goal"]);
+    expect(visibleHints(input({ budget: withRecords(state, 10), totalInBaseMinor: 1, lastSuccessfulBackup: "2026-10-18T10:00:00.000Z" }))).toEqual(["import"]);
   });
 
   it("не больше двух сразу, по важности; закрытая — навсегда, и на её место встаёт следующая", () => {
@@ -107,23 +110,36 @@ describe("карточки-подсказки в конце «Обзора» (06
     let state: FirstRunState = closeHint(all.state, "opening-balance");
     expect(visibleHints({ ...all, state })).toEqual(["backup", "import"]);
     state = closeHint(closeHint(state, "backup"), "import");
-    expect(visibleHints({ ...all, state })).toEqual(["goal", "family"]);
+    expect(visibleHints({ ...all, state })).toEqual(["family"]);
     expect(closeHint(state, "import")).toBe(state);
     // «Ведёте бюджет вдвоём?» — поздняя и только вне семьи.
-    expect(visibleHints({ ...all, state, inFamily: true })).toEqual(["goal"]);
-    expect(visibleHints({ ...all, state, budget: withRecords(preset(), 12), today: TODAY })).toEqual(["goal"]);
+    expect(visibleHints({ ...all, state, inFamily: true })).toEqual([]);
+    expect(visibleHints({ ...all, state, budget: withRecords(preset(), 12), today: TODAY })).toEqual([]);
+  });
+
+  it("без тупиков в сборке: «Поставьте цель» ждёт экран целей (2e), «Ведёте бюджет вдвоём?» — сервер семьи", () => {
+    const busy = withRecords(preset(), 40);
+    const late = closeHint(closeHint(closeHint(beginFirstRun(TODAY), "opening-balance"), "backup"), "import");
+    const all = input({ budget: busy, today: "2026-11-30", state: late });
+    expect(GOALS_SCREEN_READY).toBe(false);
+    expect(hintEligible("goal", all)).toBe(false);
+    expect(visibleHints(all)).toEqual(["family"]);
+    // Синхронизация в сборке выключена — карточка вела бы на «выключена»: её нет.
+    expect(visibleHints({ ...all, syncAvailable: false })).toEqual([]);
+    const routes = readFileSync(new URL("../../app/routes.tsx", import.meta.url), "utf8");
+    expect(routes).toContain("syncAvailable={app.family.serverUrl !== null}");
   });
 
   it("на демо — копия и выписка, как в макете 06b; у бюджета без набора неделя считается от первой записи", () => {
     const demo = buildDemoBudgetState(TODAY);
-    expect(visibleHints({ state: EMPTY_FIRST_RUN, budget: demo, today: TODAY, totalInBaseMinor: 55_400_000, lastSuccessfulBackup: null, inFamily: false })).toEqual(["backup", "import"]);
+    expect(visibleHints({ state: EMPTY_FIRST_RUN, budget: demo, today: TODAY, totalInBaseMinor: 55_400_000, lastSuccessfulBackup: null, inFamily: false, syncAvailable: false })).toEqual(["backup", "import"]);
   });
 
   it("разметка: заголовок, строка, действие и крестик «Скрыть подсказку «…»» у каждой; без снимка — ничего", async () => {
     const memory: FirstRunMemory = { load: async () => EMPTY_FIRST_RUN, save: async () => undefined, clear: async () => undefined };
     const store = createFirstRunStore(memory);
     const demo = buildDemoBudgetState(TODAY);
-    const render = () => renderToStaticMarkup(<HintCards budget={demo} today={TODAY} lastSuccessfulBackup={null} inFamily={false} onAction={() => undefined} store={store} />);
+    const render = () => renderToStaticMarkup(<HintCards budget={demo} today={TODAY} lastSuccessfulBackup={null} inFamily={false} syncAvailable={false} onAction={() => undefined} store={store} />);
     expect(render()).toBe("");
     await store.replace(EMPTY_FIRST_RUN);
     const markup = render();
