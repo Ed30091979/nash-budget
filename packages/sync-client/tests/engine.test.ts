@@ -539,6 +539,100 @@ describe("движок синхронизации", () => {
     expect((await founder.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
   });
 
+  /** The active budget of G-002, and its deletion by a peer: the journal can no longer show anything. */
+  const JULY_BUDGET = "74444444-4444-4444-8444-444444444441";
+  const budgetGone = (lamport: number) =>
+    stampDrafts(DEVICE_A, [{ entity: "budget", action: "delete", targetId: JULY_BUDGET }], lamport)[0]!;
+  /** The write that restores it: a budget created and activated in one write. */
+  const RESTORED_BUDGET = "74444444-4444-4444-8444-4444444444e1";
+  const restoringDrafts = [
+    { entity: "budget" as const, action: "create" as const, targetId: RESTORED_BUDGET, fields: { startDate: "2026-07-01", endDate: "2026-07-31", status: "open" as const, plannedIncomeMinor: 0, warningThreshold: 0.8 } },
+    { entity: "budget" as const, action: "activate" as const, targetId: RESTORED_BUDGET },
+  ];
+
+  it("журнал, который нельзя показать, на семейном документе — только чтение, кроме записи, которая его восстанавливает", async () => {
+    // Third review, S2: the document kept the last state that could be shown, writes were reported
+    // saved, did not appear, and their stale entities undid a peer's edits.
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "not-ready-a");
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "not-ready-b");
+    await alpha.engine.enqueue(g002Drafts());
+    await alpha.engine.push();
+    await beta.engine.pull();
+    server.seed(await sealOperation(family.key, budgetGone(100_000)));
+    await beta.engine.pull();
+
+    expect((await beta.engine.status()).hold).toEqual({ reason: "journal_not_ready", document: "kept" });
+    const document = await beta.repository.loadVersioned();
+    const queued = await beta.repository.countOutbox();
+    const refusal = await beta.engine.enqueue([extraExpense(1)]).catch((failure: unknown) => failure);
+    expect((refusal as SyncClientError).code).toBe("journal_not_ready");
+    expect(await beta.repository.countOutbox()).toBe(queued);
+    expect(await beta.repository.loadVersioned()).toEqual(document);
+
+    // The write whose result can be shown goes, and the hold goes with it.
+    const restored = await beta.engine.enqueue(restoringDrafts);
+    expect(restored.snapshot.integrity.ready).toBe(true);
+    expect((await beta.engine.status()).hold).toBeNull();
+    expect((await beta.repository.load())!.activeBudgetId).toBe(RESTORED_BUDGET);
+    // And then everything else does.
+    expect((await beta.engine.enqueue([extraExpense(2)])).queued).toBe(1);
+  });
+
+  it("свёртка, после которой состояние нельзя показать, не снимает задержку, а запись не делает состояние непоказуемым", async () => {
+    // Third review, S2b: one `budget delete` lifted a hold and reopened writes from the held document.
+    const { server, family, beta } = await heldBeta("not-ready-held");
+    server.seed(await sealOperation(family.key, budgetGone(100_001)));
+    await beta.engine.pull();
+    expect((await beta.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
+    expect(await beta.engine.settleDocument()).toBe(false);
+    expect((await beta.engine.status()).hold).toEqual({ reason: "rejected_by_app", document: "kept" });
+    expect(((await beta.engine.enqueue([extraExpense(3)]).catch((failure: unknown) => failure)) as SyncClientError).code).toBe("document_held");
+
+    // On a family document a write of its own may not leave the state unshowable either.
+    const clean = new FakeSyncServer();
+    const founder = await rig(clean, family.key, family.digest, DEVICE_A, "not-ready-founder", undefined, undefined, true);
+    await founder.engine.enqueue(g002Drafts());
+    const refusal = await founder.engine.enqueue([{ entity: "budget", action: "delete", targetId: JULY_BUDGET }]).catch((failure: unknown) => failure);
+    expect((refusal as SyncClientError).code).toBe("journal_not_ready");
+    expect((await founder.engine.status()).hold).toBeNull();
+  });
+
+  it("сборка, обновлённая на журнал, который нельзя показать, отмечает задержку первой же записью", async () => {
+    const server = new FakeSyncServer();
+    const family = await createFamilyKey();
+    const alpha = await rig(server, family.key, family.digest, DEVICE_A, "not-ready-upgrade-a");
+    const beta = await rig(server, family.key, family.digest, DEVICE_B, "not-ready-upgrade-b");
+    await alpha.engine.enqueue(g002Drafts());
+    await alpha.engine.push();
+    await beta.engine.pull();
+    server.seed(await sealOperation(family.key, budgetGone(100_002)));
+    await beta.engine.pull();
+    // A build that kept no record of it: the hold is gone, the journal still cannot be shown. The
+    // settle at the start of a round stays two reads for a family document without a hold, so it
+    // is the first write that finds out — refused, and recorded for the screen.
+    await beta.repository.writeSyncState([{ key: "hold", value: null }]);
+    expect(await beta.engine.settleDocument()).toBe(false);
+    const queued = await beta.repository.countOutbox();
+    const refusal = await beta.engine.enqueue([extraExpense(4)]).catch((failure: unknown) => failure);
+    expect((refusal as SyncClientError).code).toBe("journal_not_ready");
+    expect(await beta.repository.countOutbox()).toBe(queued);
+    expect((await beta.engine.status()).hold).toEqual({ reason: "journal_not_ready", document: "kept" });
+
+    // Without the record that the document is the family's, the settle reads the journal and says so.
+    await beta.repository.writeSyncState([{ key: "hold", value: null }, { key: "family-document", value: null }]);
+    const founderOfIt = await rig(server, family.key, family.digest, DEVICE_B, "not-ready-upgrade-b", beta.name, undefined, true);
+    expect(await founderOfIt.engine.settleDocument()).toBe(false);
+    expect((await founderOfIt.engine.status()).hold).toEqual({ reason: "journal_not_ready", document: "kept" });
+
+    // A device whose document is not the family's records nothing: the verdict says it all.
+    const stranger = await rig(server, family.key, family.digest, "0000000c-0000-4000-8000-000000000003", "not-ready-stranger");
+    await stranger.engine.pull();
+    expect((await stranger.engine.status()).hold).toBeNull();
+    expect(await stranger.repository.loadVersioned()).toBeNull();
+  });
+
   it("запись о семейном документе, которой эта сборка не писала, — порча", async () => {
     const server = new FakeSyncServer();
     const family = await createFamilyKey();

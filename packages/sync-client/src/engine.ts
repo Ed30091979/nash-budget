@@ -593,6 +593,26 @@ export class SyncEngine {
   }
 
   /**
+   * The hold a write leaves behind when the journal's state does not reach the document: refused by
+   * the application (`ready`), or not showable at all.
+   *
+   * A state that cannot be shown never lifts a hold already in force — one `budget delete` would
+   * otherwise reopen writes from a held document (third review, S2b) — and on a family document it
+   * is a hold of its own (`journal_not_ready`). On any other device it is what it always was: the
+   * integrity verdict says so, and nothing more is recorded. A journal with nothing in it — a
+   * founder's before its first write — is not a journal waiting for anything.
+   */
+  private async nextHold(ready: boolean, hasDocument: boolean, snapshot: JournalSnapshot): Promise<DocumentHold | null> {
+    const family = await this.holdsFamilyDocument();
+    const document: DocumentHold["document"] = hasDocument && family ? "kept" : "empty";
+    if (ready) return { reason: "rejected_by_app", document };
+    const previous = await this.readHold();
+    if (previous !== null) return previous;
+    if (!family || snapshot.entries.length === 0) return null;
+    return { reason: "journal_not_ready", document };
+  }
+
+  /**
    * The two fields of {@link status} that decide whether this device may write, read without the
    * cursor: a write does not touch the cursor, and a cursor this build cannot place (an epoch
    * conflict) is no reason to refuse one.
@@ -742,13 +762,14 @@ export class SyncEngine {
     // A build that now opens the journal's state lifts the hold here, before the write is judged.
     await this.settleDocument();
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+      const document = await this.repository.loadVersioned();
       // Read-only while a hold is in force — see `SyncEngineOptions.acceptsState`. Checked on every
       // attempt, inside the loop: a delivery folded in another tab between two attempts may have
-      // started one.
-      if ((await this.readHold()) !== null) {
+      // started one. A hold over a state that cannot be shown lets one write through, below.
+      const hold = await this.readHold();
+      if (hold !== null && hold.reason === "rejected_by_app") {
         throw new SyncClientError("document_held", "the document is held: this build does not open the journal's state");
       }
-      const document = await this.repository.loadVersioned();
       const journal = await this.readJournal();
 
       let clock = createClock(this.deviceId, journal.lamport);
@@ -757,6 +778,27 @@ export class SyncEngine {
         const local = createLocalOperation(clock, draft);
         clock = local.clock;
         operations.push(local.operation);
+      }
+
+      const snapshot = applyOperations(journal, operations);
+      if (snapshot.integrity.ready && !this.acceptsState(snapshot.state)) {
+        // This write, on top of the family's journal, would leave a state the application does not
+        // open. Queued, it would start a hold of this device's own making and travel to every
+        // device of the family; refused, nothing is written and nothing is sent.
+        throw new SyncClientError("state_refused", "the write would leave a state this build does not open");
+      }
+      if (!snapshot.integrity.ready && (hold !== null || (await this.holdsFamilyDocument()))) {
+        // A family document over a journal that cannot be shown is read-only, and only a write whose
+        // result can be shown — the one that restores the family's budget — goes. Any other would be
+        // built from the last state that could be shown, reported saved, and never appear.
+        if (hold === null && !journal.integrity.ready) {
+          // The journal was not ready before this write either, and nothing has recorded it yet — a
+          // device that updated its build onto such a journal. Recorded now, so the screen says so.
+          await this.repository.writeSyncState([
+            { key: SYNC_STATE_KEYS.hold, value: { reason: "journal_not_ready", document: document === null ? "empty" : "kept" } satisfies DocumentHold },
+          ]);
+        }
+        throw new SyncClientError("journal_not_ready", "the journal's state cannot be shown, and this write does not restore it");
       }
 
       const appends: OutboxAppend[] = [];
@@ -782,13 +824,6 @@ export class SyncEngine {
         });
       }
 
-      const snapshot = applyOperations(journal, operations);
-      if (snapshot.integrity.ready && !this.acceptsState(snapshot.state)) {
-        // This write, on top of the family's journal, would leave a state the application does not
-        // open. Queued, it would start a hold of this device's own making and travel to every
-        // device of the family; refused, nothing is written and nothing is sent.
-        throw new SyncClientError("state_refused", "the write would leave a state this build does not open");
-      }
       const commit = await this.commit(
         document,
         snapshot,
@@ -830,9 +865,7 @@ export class SyncEngine {
     const ready = snapshot.integrity.ready;
     const accepted = ready && this.acceptsState(snapshot.state);
     const value = accepted ? snapshot.state : document?.value;
-    const kept = value !== undefined && (accepted || (await this.holdsFamilyDocument()));
-    const hold: DocumentHold | null =
-      ready && !accepted ? { reason: "rejected_by_app", document: kept ? "kept" : "empty" } : null;
+    const hold = accepted ? null : await this.nextHold(ready, value !== undefined, snapshot);
     const entries = [
       ...syncState,
       { key: SYNC_STATE_KEYS.hold, value: hold },
@@ -861,24 +894,33 @@ export class SyncEngine {
    * The same step takes up the family's state on a device whose document the record does not yet
    * call the family's although the journal opens — a device of a build that kept no record — and
    * starts a hold when this build refuses a state an older one accepted. Returns whether the
-   * document was rewritten. With no hold and the record in place, it costs two reads.
+   * document's content was replaced — a hold lifted, or a document written where there was none —
+   * which is when a screen showing the old one is stale. With no hold and the record in place, it
+   * costs two reads.
    */
   async settleDocument(): Promise<boolean> {
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const hold = await this.readHold();
       if (hold === null && (await this.recordedFamilyDocument())) return false;
+      // The document before the journal, as `enqueue` and `pull` read them: the revision checked by
+      // the commit below then covers the journal read too, and a write another tab makes in between
+      // is a conflict to retry rather than a state written over it (third review, LOW S3).
+      const document = await this.repository.loadVersioned();
       const journal = await this.readJournal();
       if (!journal.integrity.ready) {
-        // Not showable is not a refusal: the integrity verdict says so by itself. A hold recorded
-        // over a state that this build no longer calls ready is lifted without touching the document.
-        if (hold !== null) await this.repository.writeSyncState([{ key: SYNC_STATE_KEYS.hold, value: null }]);
+        // A state that cannot be shown never lifts a hold, and on a family document it is a hold of
+        // its own — recorded here for a device that updated its build onto such a journal.
+        const next = await this.nextHold(false, document !== null, journal);
+        if (next !== null && hold === null) await this.repository.writeSyncState([{ key: SYNC_STATE_KEYS.hold, value: next }]);
         return false;
       }
       // Already refused, and refused still: nothing to write.
       if (hold !== null && !this.acceptsState(journal.state)) return false;
-      const document = await this.repository.loadVersioned();
       const commit = await this.commit(document, journal, [], []);
-      if (commit.status === "saved") return hold !== null || commit.revision !== (document?.revision ?? null);
+      // Rewritten means the content may have moved under the screen: a hold lifted, or a document
+      // where there was none. A device that only lacked the record already showed this very state
+      // — every accepted write put it there — so writing the record is not news for the screen.
+      if (commit.status === "saved") return hold !== null || document === null;
     }
     throw new SyncClientError("write_conflict", "settling the document lost its revision check");
   }

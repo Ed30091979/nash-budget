@@ -48,6 +48,12 @@ export const SYNC_CLIENT_ERROR_CODES = [
    * write would otherwise have started a hold of this device's own making.
    */
   "state_refused",
+  /**
+   * A local write was refused because the journal's state cannot be shown on a device whose
+   * document is the family's ({@link DocumentHoldReason} `journal_not_ready`), and the write would
+   * not make it showable. Nothing was queued.
+   */
+  "journal_not_ready",
 ] as const;
 
 export type SyncClientErrorCode = (typeof SYNC_CLIENT_ERROR_CODES)[number];

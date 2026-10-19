@@ -191,6 +191,16 @@ export const DOCUMENT_HOLD_REASONS = [
    * told, instead of looking at yesterday's budget in silence or writing over today's.
    */
   "rejected_by_app",
+  /**
+   * The journal's state cannot be shown at all — no active budget, or one the journal does not
+   * hold — on a device whose document is the family's (third review of wave 1). The document holds
+   * the last state that could be shown, and that is not the journal's state: a write built from it
+   * would be reported saved, would not appear, and would carry stale entities that undo a peer's
+   * edits. So local writes are refused (`journal_not_ready`) except one whose result is ready — the
+   * write that restores the family's budget, opening a month for one. Never recorded over a hold
+   * already in force, and never lifted by a fold that ends not ready.
+   */
+  "journal_not_ready",
 ] as const;
 
 export type DocumentHoldReason = (typeof DOCUMENT_HOLD_REASONS)[number];
