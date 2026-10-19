@@ -194,6 +194,17 @@ test("дни выплат меняются и снимаются: «Ещё» →
   await expect(planRow).toContainText("даты выплат — из доходов");
 });
 
+test("«Да, добавить» → форма счёта: «назад» возвращает на «Обзор», где ждёт следующий вопрос", async ({ page }) => {
+  await skipToOverview(page);
+  await question(page, CHIPS).getByRole("button", { name: "Готово", exact: true }).click();
+  await question(page, ACCOUNTS).getByRole("button", { name: "Да, добавить" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Новый счёт" })).toBeVisible();
+  await page.getByRole("button", { name: "К разделу «Обзор»" }).click();
+  await expect(page.locator(".overview-screen")).toBeVisible();
+  expect(await page.evaluate(() => window.location.hash)).toMatch(/^(?:#\/?)?$/u);
+  await expect(question(page, PAYDAY)).toBeVisible();
+});
+
 test("валюта набора: рубль при русском языке, «Поменять» на первом листе — пока бюджет пуст", async ({ page }) => {
   await skipToOverview(page);
   const chips = question(page, CHIPS);

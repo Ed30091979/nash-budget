@@ -48,6 +48,11 @@ export const BACKUP_AFTER_RECORDS = 10;
 export const BACKUP_AFTER_DAYS = 7;
 /** «Поставьте цель» — когда записи уже вошли в привычку. */
 export const GOAL_AFTER_RECORDS = 10;
+/**
+ * Экран целей приходит с подволной 2e; до неё «К целям» вёл бы на заглушку «Раздел появится…», и
+ * карточка не показывается вовсе (ревью R2, L-4). 2e включит её здесь.
+ */
+export const GOALS_SCREEN_READY = false;
 /** «Ведёте бюджет вдвоём?» — поздняя карточка: через месяц записей или две недели. */
 export const FAMILY_AFTER_RECORDS = 30;
 export const FAMILY_AFTER_DAYS = 14;
@@ -61,6 +66,11 @@ export interface HintInput {
   /** Последняя успешная копия; `null` — копии на этом устройстве ещё не было. */
   readonly lastSuccessfulBackup: string | null;
   readonly inFamily: boolean;
+  /**
+   * Сервер семьи задан в сборке. Без него «Ведёте бюджет вдвоём?» вела бы на «Синхронизация в этой
+   * сборке выключена» — тупик, и карточки нет (ревью R2, L-4).
+   */
+  readonly syncAvailable: boolean;
 }
 
 /**
@@ -86,9 +96,9 @@ export function hintEligible(id: HintId, input: HintInput): boolean {
     case "import":
       return records > 0;
     case "goal":
-      return input.budget.goals.length === 0 && records >= GOAL_AFTER_RECORDS;
+      return GOALS_SCREEN_READY && input.budget.goals.length === 0 && records >= GOAL_AFTER_RECORDS;
     case "family":
-      return !input.inFamily && (records >= FAMILY_AFTER_RECORDS || waited(FAMILY_AFTER_DAYS));
+      return input.syncAvailable && !input.inFamily && (records >= FAMILY_AFTER_RECORDS || waited(FAMILY_AFTER_DAYS));
   }
 }
 

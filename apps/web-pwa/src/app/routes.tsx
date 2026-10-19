@@ -166,7 +166,7 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
       onPlan={() => navigate({ name: "plan-month" })}
       onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: row === "incomes" ? "income" : "expense" })}
       coach={showCoach ? <CoachMark target={`category:${coachTarget}`} onDismiss={() => void firstRunStore().update(finishCoach)} /> : null}
-      hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} onAction={hintAction} />}
+      hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} syncAvailable={app.family.serverUrl !== null} onAction={hintAction} />}
     />
     <QuestionHost budget={budget} today={today} write={write} blocked={blocked} onAddAccount={() => navigate({ name: "account-new", type: "savings" })} />
     {adding !== null ? (
@@ -293,19 +293,25 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {/* Заглушки до подволны 2e: пустое состояние той же анатомии, что у меток (R2). */}
           {route.name === "debts" || route.name === "goals" || route.name === "recurring" ? <PlaceholderScreen budget={budget} kind={route.name} onBack={back} /> : null}
           {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
-          {route.name === "account" || route.name === "account-new" ? (
-            <AccountScreen
-              key={route.name === "account" ? route.id : "new"}
-              budget={budget}
-              today={app.today}
-              accountId={route.name === "account" ? route.id : null}
-              {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
-              write={write}
-              onBack={back}
-              // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
-              // заведённый счёт возвращает туда, где ждёт следующий вопрос (роутер вернётся по истории).
-              onDone={(message) => { setMessage(message); if (route.name === "account-new" && route.type !== undefined) navigate({ name: "overview" }); else back(); }}
-            />
-          ) : null}
+          {route.name === "account" || route.name === "account-new" ? (() => {
+            // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
+            // и «назад», и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
+            // по истории), а не в список счетов (ревью R2, L-5).
+            const fromQuestion = route.name === "account-new" && route.type !== undefined;
+            const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
+            return (
+              <AccountScreen
+                key={route.name === "account" ? route.id : "new"}
+                budget={budget}
+                today={app.today}
+                accountId={route.name === "account" ? route.id : null}
+                {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
+                write={write}
+                onBack={leave}
+                {...(fromQuestion ? { backLabel: "К разделу «Обзор»" } : {})}
+                onDone={(message) => { setMessage(message); leave(); }}
+              />
+            );
+          })() : null}
   </>;
 }

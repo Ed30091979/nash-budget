@@ -199,6 +199,8 @@ export interface AccountScreenProps {
   readonly initialType?: AccountType;
   readonly write: BudgetWriter;
   readonly onBack: () => void;
+  /** Подпись кнопки «назад»: к списку счетов — или туда, откуда форму открыли (вопрос на «Обзоре»). */
+  readonly backLabel?: string;
   /** Записано: назад к списку, со словами о сделанном. */
   readonly onDone: (message: string) => void;
 }
@@ -211,7 +213,7 @@ const ACCOUNT_RESTORE_ID = "account-restore";
  * диалог приложения; отправленный — «записывается» до первого `await`, отказ записи оставляет его
  * на месте с отказом у поля. Порядок и архив — отдельные записи сразу, черновик они не трогают.
  */
-export function AccountScreen({ budget, today, accountId, initialType, write, onBack, onDone }: AccountScreenProps) {
+export function AccountScreen({ budget, today, accountId, initialType, write, onBack, backLabel = "К счетам", onDone }: AccountScreenProps) {
   const account = accountId === null ? null : budget.accounts.find((item) => item.id.toLowerCase() === accountId.toLowerCase()) ?? null;
   // Снимок при открытии — не пересчитывается от бюджета: правка с другого устройства не делает
   // форму «грязной» и не стирает набранное.
@@ -289,7 +291,7 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
 
   return (
     <div className="manage-screen account-screen">
-      <div className="planning-toolbar"><BackButton label="К счетам" onClick={onBack} /></div>
+      <div className="planning-toolbar"><BackButton label={backLabel} onClick={onBack} /></div>
       <header className="manage-head">
         <h1>{account === null ? "Новый счёт" : <bdi dir="auto">{account.name}</bdi>}</h1>
         {account === null ? <p>Счёт — место, где лежат деньги: карта, наличные, накопления. Его остаток виден на «Обзоре» плиткой.</p> : (
