@@ -114,6 +114,57 @@ describe("показ догоняет документ на диске", () => {
     expect(screen.revision).toBe(disk.revision);
   });
 
+  it("пока своя запись не легла, сверка не читает диск и экран не трогает", async () => {
+    // Без очереди сверка прочла бы диск посреди записи и показала бы чужую ревизию поверх своей
+    // будущей; проверка — по времени, а не по порядку микрозадач (ревью исправления синхронизации).
+    const initial = prepareBudgetState(makeG000State());
+    const disk = { value: initial as BudgetState, revision: "r1" };
+    const screen = { value: initial, revision: "r1" as string | null };
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const coordinator = createAppBudgetSaveCoordinator({
+      repository: {
+        loadVersioned: async () => {
+          reads += 1;
+          return { value: disk.value, revision: disk.revision };
+        },
+        saveIfRevision: async (_expected, state) => {
+          await gate;
+          disk.value = state;
+          disk.revision = "r2";
+          return { status: "saved", value: state, revision: "r2" };
+        },
+      },
+      getCurrent: () => screen.value,
+      getRevision: () => screen.revision,
+      setRevision: (revision) => {
+        screen.revision = revision;
+      },
+      publish: (state, revision) => {
+        screen.value = state;
+        screen.revision = revision;
+      },
+    });
+    const write = coordinator.apply((state) => ({ ...state, members: [] }));
+    disk.revision = "remote";
+    const caught = coordinator.catchUp((state, revision) => {
+      screen.value = state;
+      screen.revision = revision;
+      return true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(reads).toBe(0);
+    expect(screen.revision).toBe("r1");
+    release();
+    await write.catch(() => undefined);
+    await caught;
+    expect(reads).toBe(1);
+    expect(screen.revision).toBe("r2");
+  });
+
   it("документ, который не собирается в показуемый бюджет, не показывается", async () => {
     const { disk, screen, coordinator } = harness();
     disk.value = { broken: true } as unknown as BudgetState;

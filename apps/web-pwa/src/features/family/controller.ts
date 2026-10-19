@@ -1379,8 +1379,10 @@ export function useFamily(
           void (async () => {
             // Офлайн — не ошибка сценария, но и не «синхронизировано»: исход круга запоминается
             // здесь тем же способом, что и в опросе, и индикатор показывает именно его.
+            // Семья запоминается до сети: вышедшему за время круга журнал ушедшей семьи не показывается.
+            const familyId = sessionRef.current?.familyId ?? null;
             setSyncRound((await runSyncRound(engine)).outcome);
-            await showStored(sessionRef.current?.familyId ?? null, true);
+            await showStored(familyId, true);
             await refreshSyncState(engine);
           })();
         },
