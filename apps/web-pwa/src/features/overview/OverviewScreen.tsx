@@ -5,7 +5,7 @@ import { Money } from "../../components/Money";
 import { AccountTile } from "../../components/tiles/AccountTile";
 import { AddTile } from "../../components/tiles/AddTile";
 import { CategoryTile } from "../../components/tiles/CategoryTile";
-import { IncomeTile } from "../../components/tiles/IncomeTile";
+import { ArchivedIncomeTile, IncomeTile } from "../../components/tiles/IncomeTile";
 import type { TileDrag } from "../../components/tiles/Tile";
 import { TileGrid } from "../../components/tiles/TileGrid";
 import { monthName } from "../../date-words";
@@ -156,6 +156,7 @@ export function OverviewScreen({
         <h2 id="overview-incomes" className="row-kicker">Доходы</h2>
         <TileGrid label="Источники дохода" layout="row">
           {model.incomes.map((tile) => {
+            if (tile.archived) return <ArchivedIncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} />;
             const key: PickTile = { kind: "income", id: tile.id };
             return <IncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
           })}

@@ -47,6 +47,11 @@ export interface IncomeTile {
   readonly name: string;
   readonly icon: IconName;
   readonly amountMinor: number;
+  /**
+   * Источник в архиве, но с доходом этого месяца: плитка-итог, которую не нажимают, — новый доход
+   * в архивный источник не записывают, и лист «Без категории» был бы неправдой (ревью 2b, LOW-7).
+   */
+  readonly archived: boolean;
 }
 
 export interface AccountTile {
@@ -168,10 +173,11 @@ export function overviewModel(state: BudgetState, month: string, today: string):
       name: category.name,
       icon: categoryVisual(category).icon,
       amountMinor: incomeByCategory.get(category.id) ?? 0,
+      archived: !category.active,
     }));
   // Доход без категории — законное состояние (D-026): у него своя плитка, когда он есть.
   if ((incomeByCategory.get(null) ?? 0) !== 0) {
-    incomes.push({ id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", amountMinor: incomeByCategory.get(null) ?? 0 });
+    incomes.push({ id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", amountMinor: incomeByCategory.get(null) ?? 0, archived: false });
   }
 
   const asOf = asOfFor(month, today);

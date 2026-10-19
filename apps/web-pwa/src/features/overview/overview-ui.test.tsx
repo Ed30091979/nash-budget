@@ -179,3 +179,22 @@ describe("«Обзор»: имена, набранные семьёй, — из�
     expect(hint).toBe('Выбран счёт «<bdi dir="auto">حساب 2</bdi>». Теперь категория — расход с него, другой счёт — перевод, этот же счёт — снять выбор.');
   });
 });
+
+describe("«Обзор»: источник дохода в архиве", () => {
+  it("с доходом этого месяца — плитка-итог «в архиве», которую не нажать: лист с «Без категории» она не откроет", () => {
+    // Ревью 2b, LOW-7: плитка архивного источника открывала лист дохода «Без категории».
+    const GIFTS = "a2000000-0000-4000-8000-0000000000c2";
+    const base = state();
+    const budget: BudgetState = {
+      ...base,
+      categories: [...base.categories, { id: GIFTS, name: "Подарки", type: "income", group: "income", active: false, sortOrder: 110 }],
+      transactions: [...base.transactions, { id: "a2000000-0000-4000-8000-0000000000e9", kind: "income", status: "posted", occurredOn: "2026-07-05", amountMinor: 500_000, accountId: base.accounts[0]!.id, categoryId: GIFTS }],
+    };
+    const markup = render({}, budget);
+    const tile = /<div class="tile tile-income tile-static"[^>]*>[\s\S]*?<\/div>/u.exec(markup)?.[0] ?? "";
+    expect(tile).toMatch(/^<div class="tile tile-income tile-static" role="group" aria-label="Подарки, в архиве: 5[\u00a0 ]000[\u00a0 ]₽ за июль">/u);
+    expect(plain(tile)).toContain("в архиве");
+    expect(markup).not.toMatch(/<button[^>]*aria-label="Подарки/u);
+    expect(markup).not.toContain('data-tile="income:a2000000-0000-4000-8000-0000000000c2"');
+  });
+});
