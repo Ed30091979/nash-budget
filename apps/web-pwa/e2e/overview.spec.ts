@@ -470,3 +470,23 @@ test("подписи итогов, кикеров, карточки и вкла�
   }
   await applyFontScale(page, 1);
 });
+
+test("имена плиток не обрезаются: ни многоточия, ни строк под краем — на 320 и 390 pt при ×1 и ×2.7, «Развлечения и хобби» целиком", async ({ page }) => {
+  // Ревью R2: на старой плитке имя резалось двумя строками — «Развлече-ния и хо…». Плитка 5.0
+  // переносит имя по слогам на столько строк, сколько нужно, и ничего не прячет.
+  test.setTimeout(120_000);
+  await loadDemo(page);
+  for (const [width, scale] of [[320, 1], [390, 1], [320, 2.7], [390, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    const clipped = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".overview-screen .tile-name")].flatMap((name) => {
+      const style = getComputedStyle(name);
+      const hidden = name.scrollHeight > name.clientHeight + 1 || name.scrollWidth > name.clientWidth + 1;
+      const cut = style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none" || /hidden|clip/u.test(style.overflowY);
+      return hidden || cut ? [`${name.textContent?.replace(/­/gu, "")}`] : [];
+    }));
+    expect(clipped, `${width} pt ×${scale}`).toEqual([]);
+    await expect(tile(page, "Развлечения и хобби").locator(".tile-name")).toHaveText(/^Раз.*хоб.*би$/u);
+  }
+  await applyFontScale(page, 1);
+});

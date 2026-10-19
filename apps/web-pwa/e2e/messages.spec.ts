@@ -310,3 +310,36 @@ test("плашка сервис-воркера не накрывает ни од
   // И спрятанная плашка вернулась — с тем же состоянием.
   await expect(toast).toContainText(OFFLINE_READY);
 });
+
+test("плашка не накрывает и подсказки первого запуска: «Понятно» у пузыря и карточки в конце «Обзора»", async ({ page }) => {
+  // Новичок: слайды, «Начать», три вопроса — и на «Обзоре» сразу пузырь на «Продуктах» и карточки-
+  // подсказки, а плашка «готово работать без интернета» ещё стоит: её поднял первый запуск. Цели
+  // подсказок обязаны быть доматываемыми мимо плашки, как и все остальные.
+  test.setTimeout(240_000);
+  await page.goto("/");
+  const toast = page.locator(".update-toast");
+  await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await page.getByRole("button", { name: "Начать", exact: true }).click();
+  await page.getByRole("dialog", { name: "На что вы тратите?" }).getByRole("button", { name: "Готово" }).click();
+  await page.getByRole("dialog", { name: "Есть ещё места, где лежат деньги?" }).getByRole("button", { name: "Нет, это всё" }).click();
+  const payday = page.getByRole("dialog", { name: "Когда приходит зарплата?" });
+  await payday.getByRole("radio", { name: "5-го и 20-го" }).click();
+  await payday.getByRole("button", { name: "Готово" }).click();
+  await expect(page.locator(".coach-layer[data-placed] .coach-bubble")).toBeVisible();
+  await expect(toast).toContainText(OFFLINE_READY);
+
+  for (const scale of FONT_SCALES) {
+    await applyFontScale(page, scale);
+    for (const viewport of [PHONE_VIEWPORTS[0]!, PHONE_VIEWPORTS[2]!]) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      // Меряются именно подсказки: без них проверка прошла бы и на пустом экране.
+      await expect(page.locator(".coach-bubble").getByRole("button", { name: "Понятно", exact: true })).toBeVisible();
+      await expect(page.locator(".hint-cards .hint-action").first()).toBeVisible();
+      await expect(page.locator(".hint-cards .hint-close").first()).toBeVisible();
+      await expectMessageClearance(page, `первый запуск, «Обзор» с подсказками, ${viewport.name} ×${scale}`);
+    }
+  }
+  await applyFontScale(page, 1);
+});
