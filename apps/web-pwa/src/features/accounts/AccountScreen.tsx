@@ -91,6 +91,7 @@ export function AccountFormView({ budget, account, draft, pristine, error, busy,
     <form className="manage-form" onSubmit={submit} noValidate aria-describedby={error?.field === "form" ? ACCOUNT_FORM_ERROR_ID : undefined}>
       <div className="field">
         <label htmlFor="account-name">Название</label>
+        {/* TODO(2b-merge): поле имени — onChange через plainInputValue(event.currentTarget) из plain-text.ts (2b, раунд 3), и строка в plain-text.test.ts. */}
         <input
           id="account-name"
           dir="auto"

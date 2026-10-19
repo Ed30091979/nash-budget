@@ -8,6 +8,7 @@ import { CATEGORY_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { useBaseCurrency } from "../../components/Money";
 import { ReorderControls, type ReorderDirection } from "../../components/ReorderControls";
 import { TonePicker } from "../../components/TonePicker";
+import { softHyphenate } from "../../hyphenation";
 import { useFormDraft } from "../../navigation/draft-guard";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { groupChoicesFor } from "../operations/category-picker";
@@ -74,10 +75,11 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
     <form className="manage-form" onSubmit={submit} noValidate aria-describedby={error?.field === "form" ? CATEGORY_FORM_ERROR_ID : undefined}>
       <div className={`tile ${expense ? "tile-expense" : "tile-income"} tone-${expense ? tone : "lilac"} manage-preview`} aria-hidden="true">
         <span className="tile-top"><span className="tile-glyph"><Icon name={icon} size={20} /></span></span>
-        <span className="tile-name"><bdi dir="auto">{draft.name.trim() === "" ? category.name : draft.name}</bdi></span>
+        <span className="tile-name"><bdi dir="auto">{softHyphenate(draft.name.trim() === "" ? category.name : draft.name)}</bdi></span>
       </div>
       <div className="field">
         <label htmlFor="category-name">Название</label>
+        {/* TODO(2b-merge): поле имени — onChange через plainInputValue(event.currentTarget) из plain-text.ts (2b, раунд 3), и строка в plain-text.test.ts. */}
         <input
           id="category-name"
           dir="auto"
