@@ -100,8 +100,8 @@ test("первый запуск целиком: слайды → «Начать�
   expect(await page.evaluate(() => window.location.hash)).toBe("#/more/accounts/new?type=savings");
   await expect(page.getByRole("radio", { name: "Накопления" })).toBeChecked();
   await page.getByLabel("Название").fill("Вклад");
-  await page.getByLabel(/^Начальный остаток/u).fill("50000");
-  await page.getByRole("button", { name: "Завести счёт" }).click();
+  await page.getByLabel(/^Сколько сейчас на счёте/u).fill("50000");
+  await page.getByRole("dialog", { name: "Новый счёт" }).getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(toast(page, "Счёт «Вклад» заведён.")).toBeVisible();
 
   // Снова «Обзор» — и следующий вопрос: дни выплат, «Другие числа» — до четырёх.
@@ -363,7 +363,7 @@ for (const [width, scale] of [[320, 1], [320, 2.7], [390, 2.7]] as const) {
     // Быстрая метка — одним касанием.
     await page.getByRole("button", { name: "Создать метку «дача»" }).click();
     await expect(page.locator(".manage-status")).toHaveText("Метка «дача» добавлена.");
-    await expect(page.getByRole("button", { name: "Переименовать метку «дача»" })).toBeFocused();
+    await expect(page.getByRole("button", { name: "дача: ни одной операции. Изменить" })).toBeFocused();
     await page.getByRole("button", { name: "Назад: Ещё", exact: true }).click();
     await page.getByRole("button", { name: /^Регулярные/u }).click();
     await expect(page.getByRole("heading", { level: 2, name: "Регулярных пока нет" })).toBeVisible();

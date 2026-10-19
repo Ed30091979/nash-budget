@@ -194,12 +194,12 @@ test("дни выплат меняются и снимаются: «Ещё» →
   await expect(planRow).toContainText("даты выплат — из доходов");
 });
 
-test("«Да, добавить» → форма счёта: «назад» возвращает на «Обзор», где ждёт следующий вопрос", async ({ page }) => {
+test("«Да, добавить» → лист счёта: крестик возвращает на «Обзор», где ждёт следующий вопрос", async ({ page }) => {
   await skipToOverview(page);
   await question(page, CHIPS).getByRole("button", { name: "Готово", exact: true }).click();
   await question(page, ACCOUNTS).getByRole("button", { name: "Да, добавить" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Новый счёт" })).toBeVisible();
-  await page.getByRole("button", { name: "Назад: Обзор", exact: true }).click();
+  await page.getByRole("dialog", { name: "Новый счёт" }).getByRole("button", { name: "Закрыть", exact: true }).click();
   await expect(page.locator(".overview-screen")).toBeVisible();
   expect(await page.evaluate(() => window.location.hash)).toMatch(/^(?:#\/?)?$/u);
   await expect(question(page, PAYDAY)).toBeVisible();
@@ -211,7 +211,10 @@ test("валюта набора: рубль при русском языке, «
   await expect(chips.getByText("Валюта бюджета:")).toBeVisible();
   await expect(tile(page, "Карта")).toContainText("0 ₽");
   await chips.getByRole("button", { name: "Поменять валюту бюджета" }).click();
-  await chips.getByLabel("Валюта бюджета").selectOption("KZT");
+  // Валюта — чипами (R3), без системного списка: тенге среди частых.
+  await expect(chips.locator("select")).toHaveCount(0);
+  await expect(chips.getByRole("radio", { name: "Рубль — RUB" })).toBeFocused();
+  await chips.getByRole("radiogroup", { name: "Валюта бюджета" }).getByRole("radio", { name: "Тенге — KZT" }).click();
   await chips.getByRole("button", { name: "Сохранить валюту" }).click();
   await expect(chips.getByRole("button", { name: "Поменять валюту бюджета" })).toBeFocused();
   await chips.getByRole("button", { name: "Готово", exact: true }).click();

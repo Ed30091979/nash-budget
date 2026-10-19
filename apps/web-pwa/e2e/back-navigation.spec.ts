@@ -284,12 +284,16 @@ test("строка заголовка: «‹ Ещё» на каждом подэ
     expect(await hash(page), `${title} → «Ещё»`).toBe("#/more");
     await expect(page.getByRole("heading", { level: 1, name: "Ещё" })).toBeFocused();
   }
-  // Вглубь — к своему родителю: форма счёта → «‹ Счета», категория → «‹ Расходы».
+  // Вглубь — к своему родителю: лист счёта (R3, макет 12) поверх списка, его крестик — к «Счетам».
   await page.getByRole("button", { name: /^Счета/u }).click();
   await page.getByRole("button", { name: /^Резерв платежей: .*Изменить$/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Резерв платежей" })).toBeFocused();
-  await expectTitleBarBack(page, "Назад: Счета");
-  await page.getByRole("button", { name: "Назад: Счета", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Счёт" })).toBeFocused();
+  await expect(page.getByRole("heading", { level: 1 }), "лист: заголовок экрана один").toHaveCount(1);
+  const close = page.getByRole("dialog", { name: "Счёт" }).getByRole("button", { name: "Закрыть", exact: true });
+  const box = await close.boundingBox();
+  expect(box?.width ?? 0, "крестик листа: ширина цели").toBeGreaterThanOrEqual(48);
+  expect(box?.height ?? 0, "крестик листа: высота цели").toBeGreaterThanOrEqual(48);
+  await close.click();
   expect(await hash(page)).toBe("#/more/accounts");
   await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeFocused();
   // Вкладки — крупным заголовком, без «назад».
