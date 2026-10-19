@@ -140,6 +140,8 @@ export const ROUTE_FRAGMENT = new RegExp(
 export class FakeBrowser implements RouterWindow {
   entries: { state: unknown; hash: string }[];
   index = 0;
+  /** Traversals `go` has started whose `popstate` has not arrived yet. */
+  pendingTraversals = 0;
   readonly history: RouterWindow["history"] & { scrollRestoration: ScrollRestoration };
   readonly location: RouterWindow["location"];
   private readonly listeners = new Set<() => void>();
@@ -160,7 +162,8 @@ export class FakeBrowser implements RouterWindow {
     const go = (delta: number) => {
       const target = this.index + delta;
       if (target < 0 || target >= this.entries.length) return;
-      setTimeout(() => { this.index = target; this.fire(); }, 0);
+      this.pendingTraversals += 1;
+      setTimeout(() => { this.pendingTraversals -= 1; this.index = target; this.fire(); }, 0);
     };
     const all = () => this.entries;
     this.history = {
@@ -233,6 +236,16 @@ export function started(hash = "", state: unknown = null, extra: Partial<Omit<Ro
 export const go = async (router: ReturnType<typeof createRouter>, route: Route, replace = false) => {
   router.navigate(route, { replace });
   await settle();
+};
+
+/**
+ * Navigate and wait exactly as long as the history takes: until every traversal the router started
+ * has arrived as `popstate` (the router reacts to each arrival synchronously, starting the next one
+ * if any). A push needs no wait at all, so a long sweep costs its traversals, not 5 ms a step.
+ */
+export const goSettled = async (router: ReturnType<typeof createRouter>, frame: FakeBrowser, route: Route) => {
+  router.navigate(route);
+  while (frame.pendingTraversals > 0) await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 };
 
 /** A key the router may write: a canonical route address in the address language, nothing else. */

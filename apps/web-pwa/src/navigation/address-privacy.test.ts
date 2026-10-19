@@ -15,6 +15,7 @@ import {
   CATEGORY,
   FakeBrowser,
   go,
+  goSettled,
   OPERATION,
   ROUTE_FIXTURES,
   ROUTE_FRAGMENT,
@@ -402,17 +403,22 @@ describe("адрес — только маршрут: месяц на краю �
 
 describe("адрес — только маршрут: история, которую строит роутер", () => {
   it("переход к каждому маршруту с каждого — в истории только `{ mark, stack }` и адреса языка", async () => {
+    // Все пары маршрутов, как и прежде, — квадрат их числа. Ждём не по 5 мс на переход, а ровно
+    // столько, сколько идёт история (`goSettled`): переход вперёд не ждёт вовсе, возврат — до своего
+    // `popstate`. И каждый переход проверяется тем, что пришёл туда, куда шёл: без этого переход,
+    // не дождавшийся истории, ушёл бы в очередь роутера незамеченным.
     for (const from of ALL_ROUTE_FIXTURES) {
       const { frame, router } = started(formatRoute(from));
       expectHonestHistory(frame);
       for (const to of ALL_ROUTE_FIXTURES) {
-        await go(router, to);
+        await goSettled(router, frame, to);
+        const key = formatRoute(to);
+        expect(frame.hash, `${formatRoute(from)} → ${key}`).toBe(key);
+        expect(formatRoute(router.current()), `${formatRoute(from)} → ${key}`).toBe(key);
         expectHonestHistory(frame);
       }
     }
-    // Время — ожидание событий истории (по 5 мс на переход), а не счёт: маршрутов с 2c больше, и
-    // переходов между ними — квадрат их числа.
-  }, 120_000);
+  }, 30_000);
 
   it("после каждого пути — возврат с черновиком, набранный адрес, лист при перезагрузке, уход без вопроса, «Назад» и «Вперёд»", async () => {
     // Системное «Назад» с черновиком: запись возвращается поверх той, куда пришли.
