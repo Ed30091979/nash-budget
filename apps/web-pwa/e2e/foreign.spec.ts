@@ -80,3 +80,36 @@ test("правка операции в долларах оценивает её 
   await goToOverview(page);
   await expect(tile(page, "Продукты")).toHaveAttribute("aria-label", before ?? "");
 });
+
+test("«Задать курс»: «Отмена» и Esc возвращают фокус на «Задать курс», и следующий Esc закрывает лист", async ({ page }) => {
+  // Ревью 2b, раунд 3, NEW-1: фокус падал на тело страницы, и Esc лист уже не закрывал.
+  await loadDemo(page);
+  await restoreBudget(page, withDollarAccount(demoBudget()));
+  await goToOverview(page);
+  const open = async () => {
+    await tile(page, DOLLARS_NAME).click();
+    await tile(page, "Продукты").click();
+    await expect(entrySheet(page)).toBeVisible();
+  };
+  const sheet = entrySheet(page);
+  const setRate = sheet.getByRole("button", { name: "Задать курс" });
+
+  // «Отмена» с клавиатуры.
+  await open();
+  await setRate.click();
+  await sheet.getByRole("button", { name: "Отмена" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(sheet.getByRole("textbox", { name: "Сколько ₽ за 1 USD" })).toHaveCount(0);
+  await expect(setRate).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+
+  // Esc в поле курса.
+  await open();
+  await setRate.click();
+  await sheet.getByRole("textbox", { name: "Сколько ₽ за 1 USD" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(setRate).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+});
