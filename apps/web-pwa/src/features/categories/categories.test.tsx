@@ -173,7 +173,7 @@ describe("категории: модель", () => {
   });
 });
 
-const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/[ ­]/gu, (char) => (char === "­" ? "" : " ")).trim();
+const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/[\u00a0\u00ad]/gu, (char) => (char === "\u00ad" ? "" : " ")).trim();
 
 describe("категории: разметка", () => {
   const render = (type: "expense" | "income") => renderToStaticMarkup(

@@ -65,7 +65,7 @@ export function currencyRates(state: BudgetState, today: string): readonly Curre
 /** «1 USD = 92,50 ₽», «100 KZT = 18,40 ₽» — курс так, как его набирают и читают вслух. */
 export function rateWords(rate: ExchangeRate): string {
   const per = ratePer(rate.currency);
-  return `${per} ${rate.currency} = ${formatRateValue(rate.rate, rate.currency, rate.baseCurrency, per)} ${currencySign(rate.baseCurrency)}`;
+  return `${per} ${rate.currency} = ${formatRateValue(rate.rate, rate.currency, rate.baseCurrency, per)}\u00a0${currencySign(rate.baseCurrency)}`;
 }
 
 /** Базовая валюта: что сказать о ней и можно ли её сменить. */

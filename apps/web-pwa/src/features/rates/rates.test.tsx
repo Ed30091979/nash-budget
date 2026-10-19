@@ -63,8 +63,8 @@ describe("курсы: модель", () => {
 
   it("курс словами — как его набирают: «1 USD = 93,00 ₽», для слабых валют — за сотню", () => {
     const [usd, kzt] = currencyRates(state(), TODAY);
-    expect(rateWords(usd!.current!)).toBe("1 USD = 93,00 ₽");
-    expect(rateWords(kzt!.current!)).toBe("100 KZT = 18,40 ₽");
+    expect(rateWords(usd!.current!)).toBe("1 USD = 93,00\u00a0₽");
+    expect(rateWords(kzt!.current!)).toBe("100 KZT = 18,40\u00a0₽");
     expect(ratesNote(state(), TODAY)).toBe("база RUB · 1 USD = 93,00 · 100 KZT = 18,40 · EUR — нет курса · 1 GBP = 118,00");
     expect(ratesNote(makePlanningSeed(), TODAY)).toBe("база RUB · курсов нет");
   });
@@ -87,7 +87,7 @@ describe("курсы: модель", () => {
   });
 });
 
-const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/ /gu, " ").trim();
+const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/\u00a0/gu, " ").trim();
 
 describe("курсы: разметка", () => {
   const render = (budget = state()) => renderToStaticMarkup(<RatesScreen budget={budget} today={TODAY} write={{ run: vi.fn() }} onBack={vi.fn()} />);

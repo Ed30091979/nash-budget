@@ -143,7 +143,7 @@ describe("форма счёта: модель", () => {
     // Архивный тёзка — не дубль: его можно вернуть, а можно завести новый.
     expect(run({ ...blank, name: "Старая карта" })).toBeNull();
     expect(run({ ...blank, name: "Кошелёк", opening: "1,234" })).toEqual({ field: "opening", message: "Введите положительную сумму, не более двух знаков после запятой." });
-    expect(run({ ...blank, name: "Кошелёк​" })).toEqual({ field: "name", message: "Уберите скрытые или служебные символы." });
+    expect(run({ ...blank, name: "Кошелёк\u200b" })).toEqual({ field: "name", message: "Уберите скрытые или служебные символы." });
     expect(accountFormError(new AccountValidationError("currency_in_use", "currency", "x"))).toEqual({ field: "currency", message: "x" });
     expect(accountFormError(new BudgetWriteRefusal("held"))).toEqual({ field: "form", message: new BudgetWriteRefusal("held").userMessage });
     expect(accountFormError(new Error(BUDGET_WRITE_CONFLICT_MESSAGE))).toEqual({ field: "form", message: BUDGET_WRITE_CONFLICT_MESSAGE });
@@ -171,7 +171,7 @@ describe("форма счёта: модель", () => {
     const dollars = list.active[2]!;
     expect(dollars).toMatchObject({ icon: "dollar-sign", tone: "lilac", balanceMinor: 50_000, meta: "Наличные · USD" });
     expect(list.archived[0]).toMatchObject({ meta: "Карта или счёт · вне итога", tone: null, icon: "credit-card" });
-    expect(accountRowLabel(dollars)).toBe("Доллары: 500 $, наличные · usd. Изменить");
+    expect(accountRowLabel(dollars)).toBe("Доллары: 500\u00a0$, наличные · usd. Изменить");
   });
 });
 
@@ -187,7 +187,7 @@ describe("счета: разметка", () => {
     expect(markup).toContain('aria-label="Основной — выше" aria-disabled="true"');
     expect(markup).toContain('aria-label="Доллары — ниже" aria-disabled="true"');
     expect(markup).toContain('aria-label="Вернуть «Старая карта» из архива"');
-    expect(markup).toMatch(/Доллары<\/bdi>[^]*?500<span class="money-currency"> \$<\/span>/u);
+    expect(markup).toMatch(/Доллары<\/bdi>[^]*?500<span class="money-currency">\u00a0\$<\/span>/u);
     // Тон счёта — подложка глифа; без тона — тёмная, как плитка «Обзора».
     expect(markup).toContain('class="icon-plate tone-lilac"');
     expect(markup).toContain('class="icon-plate account-plate"');
@@ -223,7 +223,7 @@ describe("форма счёта: разметка", () => {
     const pristine = accountDraftOf(main);
     const markup = view({ account: main, pristine, draft: { ...pristine, opening: "1500" } });
     expect(markup).toContain("Начальный остаток меняет остатки в прошлом");
-    expect(markup).toMatch(/Остатки «<bdi dir="auto">Основной<\/bdi>» за все прошлые дни сдвинутся на <span class="money">\+1 500<span class="money-currency"> ₽<\/span><\/span>/u);
+    expect(markup).toMatch(/Остатки «<bdi dir="auto">Основной<\/bdi>» за все прошлые дни сдвинутся на <span class="money">\+1\u00a0500<span class="money-currency">\u00a0₽<\/span><\/span>/u);
     expect(markup).toMatch(/<select id="account-currency" disabled="" aria-describedby="account-currency-lock">/u);
     expect(markup).toContain("Цели и планы ведутся только в базовой валюте RUB.");
   });
