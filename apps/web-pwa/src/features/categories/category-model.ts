@@ -6,6 +6,7 @@ import {
   monthOfDate,
   resolveCategoryGroup,
   updateCategory,
+  type BudgetLine,
   type BudgetState,
   type Category,
   type CategoryGroup,
@@ -168,20 +169,49 @@ export function categorySave(category: Category, draft: CategoryFormDraft, prist
 }
 
 /**
- * Архив категории с экрана категорий: её лимиты гаснут вместе с ней — у архивной категории доступно
- * ноль в любом месяце, и строка лимита в плане месяца без категории на экране была бы призраком.
- * Регулярный платёж и крупный платёж по ней архив по-прежнему не пропускают (`archiveCategory`).
+ * Архив категории с экрана категорий: её лимиты в открытых месяцах — месяце плана и черновиках
+ * следующих — гаснут вместе с ней: у архивной категории доступно ноль, и строка лимита в плане
+ * без категории на экране была бы призраком. Закрытые месяцы архив не трогает: их строки — прошлое,
+ * и после «Вернуть» цифры прошлых месяцев те же, что до архива. Снятый лимит открытого месяца при
+ * возврате не возвращается — его задают заново. Регулярный и крупный платёж по категории архив
+ * по-прежнему не пропускают (`archiveCategory`).
  */
 export function archiveCategoryWithLimits(state: BudgetState, categoryId: string): BudgetState {
   const withoutLines: BudgetState = {
     ...state,
     budgets: state.budgets.map((budget) => (
-      budget.lines.some((line) => line.categoryId === categoryId && line.active !== false)
-        ? { ...budget, lines: budget.lines.map((line) => (line.categoryId === categoryId && line.active !== false ? { ...line, active: false } : line)) }
+      budget.status !== "closed" && budget.lines.some((line) => holdsLimit(line, categoryId))
+        ? { ...budget, lines: budget.lines.map((line) => (holdsLimit(line, categoryId) ? { ...line, active: false } : line)) }
         : budget
     )),
   };
-  return archiveCategory(withoutLines, categoryId);
+  return archiveCategory(withoutLines, categoryId, { closedMonthsKeepLimits: true });
+}
+
+function holdsLimit(line: BudgetLine, categoryId: string): boolean {
+  return line.categoryId === categoryId && line.active !== false;
+}
+
+/**
+ * Что спросить перед архивом — ровно то, что он сделает: уйдёт с «Обзора» и из выбора, операции
+ * останутся; лимиты открытых месяцев снимутся и при возврате не вернутся; закрытые месяцы — как были.
+ */
+export function categoryArchiveText(state: BudgetState, category: Category): string {
+  const income = category.type === "income";
+  const open = state.budgets
+    .filter((budget) => budget.status !== "closed" && budget.lines.some((line) => holdsLimit(line, category.id)))
+    .sort((left, right) => (left.startDate < right.startDate ? -1 : 1))
+    .map((budget) => monthName(monthOfDate(budget.startDate)));
+  const closed = state.budgets.some((budget) => budget.status === "closed" && budget.lines.some((line) => line.categoryId === category.id));
+  const parts = [
+    `${income ? "Источник уйдёт" : "Категория уйдёт"} с «Обзора» и из выбора при записи. Записанные операции останутся в «Операциях» и отчётах.`,
+    open.length === 0 ? null : open.length === 1
+      ? `Лимит на ${open[0]} снимется и при возврате не вернётся — его можно будет задать заново.`
+      : `Лимиты на ${open.slice(0, -1).join(", ")} и ${open[open.length - 1]} снимутся и при возврате не вернутся — их можно будет задать заново.`,
+    closed ? "Закрытые месяцы не меняются: их лимиты по ней останутся как были." : null,
+    "Вернуть можно в любой момент.",
+  ];
+  return parts.filter((part) => part !== null).join(" ");
 }
 
 export { restoreCategory };

@@ -16,11 +16,11 @@ import { groupChoicesFor } from "../operations/category-picker";
 import { currencySign } from "../rates/RateQuickSheet";
 import {
   archiveCategoryWithLimits,
+  categoryArchiveText,
   CATEGORY_NAME_MAX_LENGTH,
   categoryDraftDiffers,
   categoryDraftOf,
   categoryFormError,
-  categoryLimit,
   categoryPosition,
   categorySave,
   planMonthWord,
@@ -213,7 +213,6 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
     (state) => moveCategory(state, category.id, direction),
     `Теперь «${category.name}» — ${direction === "up" ? position - 1 : position + 1}-я из ${count} в группе.`,
   );
-  const limit = categoryLimit(budget, category.id);
   const what = income ? "источник дохода" : "категорию";
 
   return (
@@ -260,7 +259,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
       {asking ? (
         <ConfirmDialog
           title={`Убрать «${category.name}» в архив?`}
-          description={`${income ? "Источник уйдёт" : "Категория уйдёт"} с «Обзора» и из выбора при записи. Записанные операции останутся в «Операциях» и отчётах.${limit === null ? "" : " Лимит этого месяца снимется вместе с ней."} Вернуть можно в любой момент.`}
+          description={categoryArchiveText(budget, category)}
           cancelLabel="Оставить"
           confirmLabel="Убрать в архив"
           onCancel={() => setAsking(false)}

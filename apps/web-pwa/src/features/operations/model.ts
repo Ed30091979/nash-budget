@@ -732,13 +732,23 @@ export function recreateTransaction(
   return { state: validateResult({ ...state, transactions: [...state.transactions, recreated] }), ids: [id] };
 }
 
-export function archiveCategory(state: BudgetState, id: string): BudgetState {
+export interface ArchiveCategoryOptions {
+  /**
+   * Лимиты закрытых месяцев архиву не помеха: это прошлое, и архив его не переписывает. Так
+   * архивирует экран категорий, который сам снимает лимиты открытых месяцев
+   * (`archiveCategoryWithLimits`); форма операции по-прежнему просит снять каждый.
+   */
+  readonly closedMonthsKeepLimits?: boolean;
+}
+
+export function archiveCategory(state: BudgetState, id: string, options: ArchiveCategoryOptions = {}): BudgetState {
   validateState(state);
   assertIdentifier(id, "categoryId");
   const category = state.categories.find((item) => item.id === id);
   if (!category) fail("categoryId", "Категория не найдена.");
   const hasActiveLine = state.budgets.some((budget) =>
-    budget.lines.some((line) => line.categoryId === id && line.active !== false),
+    !(options.closedMonthsKeepLimits === true && budget.status === "closed")
+    && budget.lines.some((line) => line.categoryId === id && line.active !== false),
   );
   const hasActiveSchedule = state.scheduledExpenses.some(
     (schedule) => schedule.categoryId === id && schedule.active,

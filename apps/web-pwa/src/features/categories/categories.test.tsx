@@ -16,6 +16,7 @@ import { CategoriesScreen, categoryCardLabel } from "./CategoriesScreen";
 import {
   archiveCategoryWithLimits,
   categoriesView,
+  categoryArchiveText,
   categoryDraftDiffers,
   categoryDraftOf,
   categoryFormError,
@@ -121,18 +122,64 @@ describe("категории: модель", () => {
     expect(created.categories).toHaveLength(budget.categories.length);
   });
 
-  it("архив прячет категорию с «Обзора» и гасит её лимиты; операции остаются; возврат — без лимита", () => {
+  it("архив прячет категорию с «Обзора» и снимает лимит месяца плана; операции остаются; возврат — без лимита", () => {
     const budget = state();
     expect(overviewModel(budget, "2026-07", "2026-07-20").categories.some((tile) => tile.id === FOOD)).toBe(true);
     const archived = archiveCategoryWithLimits(budget, FOOD);
     expect(category(archived, FOOD).active).toBe(false);
-    expect(archived.budgets.flatMap((item) => item.lines).filter((line) => line.categoryId === FOOD).every((line) => line.active === false)).toBe(true);
+    expect(activeLine(budget, FOOD)?.active).not.toBe(false);
+    expect(activeLine(archived, FOOD)?.active).toBe(false);
     expect(overviewModel(archived, "2026-07", "2026-07-20").categories.some((tile) => tile.id === FOOD)).toBe(false);
     expect(archived.transactions).toEqual(budget.transactions);
     expect(calculateBudget(archived).expensesMinor).toBe(calculateBudget(budget).expensesMinor);
     const restored = restoreCategory(archived, FOOD);
     expect(category(restored, FOOD).active).toBe(true);
     expect(categoryLimit(restored, FOOD)).toBeNull();
+  });
+
+  it("архив и «Вернуть» не трогают закрытые месяцы: лимит июня на месте, лимит июля и черновика августа снят и не возвращается", () => {
+    // Ревью 2c, HIGH-2: архив гасил строки категории во всех месяцах, и «Вернуть» навсегда стирал
+    // лимиты закрытых месяцев. Июнь закрыт, июль — месяц плана, август — черновик.
+    const JUNE = "e2c00000-0000-4000-8000-0000000000c1";
+    const AUGUST = "e2c00000-0000-4000-8000-0000000000c2";
+    const seed = state();
+    const july = seed.budgets[0]!;
+    const budget: BudgetState = {
+      ...seed,
+      budgets: [
+        { ...july, id: JUNE, startDate: "2026-06-01", endDate: "2026-06-30", status: "closed", lines: [{ id: "e2c00000-0000-4000-8000-0000000000c3", categoryId: FOOD, plannedMinor: 3_000_000 }] },
+        july,
+        { ...july, id: AUGUST, startDate: "2026-08-01", endDate: "2026-08-31", status: "draft", lines: [{ id: "e2c00000-0000-4000-8000-0000000000c4", categoryId: FOOD, plannedMinor: 3_200_000, active: true }] },
+      ],
+    };
+    const june = calculateBudget(budget, JUNE).categoryMetrics[FOOD];
+    expect(june?.availableMinor).toBe(3_000_000);
+    const archived = archiveCategoryWithLimits(budget, FOOD);
+    expect(archived.budgets[0]).toBe(budget.budgets[0]);
+    expect(activeLine(archived, FOOD)?.active).toBe(false);
+    expect(archived.budgets[2]?.lines[0]?.active).toBe(false);
+    const restored = restoreCategory(archived, FOOD);
+    expect(restored.budgets[0]).toBe(budget.budgets[0]);
+    expect(calculateBudget(restored, JUNE).categoryMetrics[FOOD]).toEqual(june);
+    expect(categoryLimit(restored, FOOD)).toBeNull();
+    expect(restored.budgets[2]?.lines[0]?.active).toBe(false);
+    // Только закрытый месяц с лимитом — архиву не помеха: прошлое не держит категорию.
+    const onlyJune: BudgetState = { ...budget, budgets: [budget.budgets[0]!, { ...july, lines: july.lines.filter((line) => line.categoryId !== FOOD) }] };
+    expect(category(archiveCategoryWithLimits(onlyJune, FOOD), FOOD).active).toBe(false);
+    // Вопрос перед архивом говорит ровно это.
+    expect(categoryArchiveText(budget, category(budget, FOOD))).toBe(
+      "Категория уйдёт с «Обзора» и из выбора при записи. Записанные операции останутся в «Операциях» и отчётах. "
+      + "Лимиты на июль и август снимутся и при возврате не вернутся — их можно будет задать заново. "
+      + "Закрытые месяцы не меняются: их лимиты по ней останутся как были. Вернуть можно в любой момент.",
+    );
+    expect(categoryArchiveText(onlyJune, category(onlyJune, FOOD))).toBe(
+      "Категория уйдёт с «Обзора» и из выбора при записи. Записанные операции останутся в «Операциях» и отчётах. "
+      + "Закрытые месяцы не меняются: их лимиты по ней останутся как были. Вернуть можно в любой момент.",
+    );
+    expect(categoryArchiveText(state(), category(state(), FOOD))).toContain("Лимит на июль снимется и при возврате не вернётся — его можно будет задать заново.");
+    expect(categoryArchiveText(state(), category(state(), SALARY))).toBe(
+      "Источник уйдёт с «Обзора» и из выбора при записи. Записанные операции останутся в «Операциях» и отчётах. Вернуть можно в любой момент.",
+    );
   });
 
   it("архив не пропускает категорию с крупным или регулярным платежом — словами формы операции", () => {

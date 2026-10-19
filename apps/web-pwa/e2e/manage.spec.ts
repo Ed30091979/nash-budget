@@ -102,6 +102,9 @@ test("категория: имя, иконка, цвет и лимит — од�
   await page.getByRole("button", { name: "Убрать в архив" }).click();
   const question = page.getByRole("alertdialog", { name: "Убрать «Кафе» в архив?" });
   await expect(question).toContainText("Записанные операции останутся в «Операциях» и отчётах.");
+  // Ревью 2c, HIGH-2: вопрос говорит ровно то, что сделает архив, — лимит месяца плана снимется
+  // и при возврате не вернётся.
+  await expect(question).toContainText(/Лимит на [а-я]+ снимется и при возврате не вернётся — его можно будет задать заново\./u);
   await question.getByRole("button", { name: "Убрать в архив" }).click();
   await expect(page.locator(".manage-status")).toContainText("«Кафе» в архиве.");
   await expect(page.getByRole("button", { name: "Вернуть из архива" })).toBeVisible();
