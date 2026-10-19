@@ -36,7 +36,7 @@ export function CategoryTile({ tile, onPick, drag }: { readonly tile: CategoryTi
         {tile.status === "near" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="triangle-alert" size={20} /></span> : null}
         {tile.status === "over" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="circle-alert" size={20} /></span> : null}
       </span>
-      <span className="tile-name" aria-hidden="true">{tile.name}</span>
+      <span className="tile-name" aria-hidden="true"><bdi dir="auto">{tile.name}</bdi></span>
       <span className="tile-sum" aria-hidden="true">
         <Money value={tile.spentMinor} />
         {tile.limitMinor === null ? null : <small> / <Money value={tile.limitMinor} /></small>}

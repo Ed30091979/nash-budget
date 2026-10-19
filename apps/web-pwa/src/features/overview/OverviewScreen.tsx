@@ -12,7 +12,7 @@ import { monthName } from "../../date-words";
 import type { PeriodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
 import { overviewModel, reachLineModel, UNCATEGORIZED_INCOME_NAME } from "./overview-model";
-import { isDragSource, isPicked, pick, pickHint, PICK_IDLE, type PickEvent, type PickState, type PickTile, type SheetRequest } from "./pick-model";
+import { isDragSource, isPicked, pick, pickHintParts, PICK_IDLE, type HintPart, type PickEvent, type PickState, type PickTile, type SheetRequest } from "./pick-model";
 import { ReachLine } from "./ReachLine";
 
 /** Перетаскивание — только при точном указателе (§9): на касаниях оно мешало бы прокрутке. */
@@ -31,6 +31,11 @@ function finePointer(): boolean {
 
 function useFinePointer(): boolean {
   return useSyncExternalStore(subscribeFinePointer, finePointer, () => false);
+}
+
+/** Подсказка автомата касаний: имена, набранные семьёй, изолированы от слов приложения (LOW-4). */
+export function PickHintText({ parts }: { readonly parts: readonly HintPart[] }) {
+  return <>{parts.map((part, index) => (typeof part === "string" ? part : <bdi key={index} dir="auto">{part.name}</bdi>))}</>;
 }
 
 export interface OverviewScreenProps {
@@ -75,7 +80,7 @@ export function OverviewScreen({
 
   const accountName = (id: string) => budget.accounts.find((account) => account.id === id)?.name ?? "счёт";
   const incomeName = (id: string | null) => (id === null ? UNCATEGORIZED_INCOME_NAME : budget.categories.find((category) => category.id === id)?.name ?? "доход");
-  const hint = pickHint(picked, { account: accountName, income: incomeName });
+  const hint = pickHintParts(picked, { account: accountName, income: incomeName });
 
   /** Перетаскивание через тот же автомат: взятая плитка — источник, плитка под курсором — цель. */
   const dragFor = (tile: PickTile): TileDrag | undefined => {
@@ -129,7 +134,7 @@ export function OverviewScreen({
         {model.unvaluedAccounts.length > 0 ? (
           <p className="overview-note">
             <Icon name="triangle-alert" size={20} />
-            <span>В итог не вошли: {model.unvaluedAccounts.map((tile) => `«${tile.name}» — нет курса ${tile.currency}`).join("; ")}.</span>
+            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>» — нет курса {tile.currency}</span>)}.</span>
           </p>
         ) : null}
       </header>
@@ -145,7 +150,7 @@ export function OverviewScreen({
         </div>
       </div> : null}
 
-      <p className="pick-hint" role="status">{hint}</p>
+      <p className="pick-hint" role="status"><PickHintText parts={hint} /></p>
 
       <section className="tile-section" aria-labelledby="overview-incomes">
         <h2 id="overview-incomes" className="row-kicker">Доходы</h2>

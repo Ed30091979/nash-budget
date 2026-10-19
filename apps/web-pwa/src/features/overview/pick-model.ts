@@ -102,17 +102,26 @@ export function isDragSource(tile: PickTile): boolean {
   return tile.kind !== "category";
 }
 
+/** Часть подсказки: слова приложения — строкой, имя, набранное семьёй, — отдельно: его изолируют. */
+export type HintPart = string | { readonly name: string };
+
 /**
  * Подсказка под рядом плиток — что сейчас выбрано и что сделает следующее касание. Имена не
- * склоняются: они стоят в кавычках рядом с рамочным словом.
+ * склоняются: они стоят в кавычках рядом с рамочным словом. Имя — отдельной частью: экран
+ * изолирует его `<bdi dir="auto">`, чтобы имя справа налево не перемешалось с фразой (ревью 2b, LOW-4).
  */
-export function pickHint(state: PickState, names: { readonly account: (id: string) => string; readonly income: (id: string | null) => string }): string {
+export function pickHintParts(state: PickState, names: { readonly account: (id: string) => string; readonly income: (id: string | null) => string }): readonly HintPart[] {
   const selected = state.selected;
-  if (selected === null) return "Коснитесь категории, чтобы записать расход. Счёт, а затем категория или другой счёт — расход с него или перевод.";
+  if (selected === null) return ["Коснитесь категории, чтобы записать расход. Счёт, а затем категория или другой счёт — расход с него или перевод."];
   if (selected.kind === "account") {
-    return `Выбран счёт «${names.account(selected.id)}». Теперь категория — расход с него, другой счёт — перевод, этот же счёт — снять выбор.`;
+    return ["Выбран счёт «", { name: names.account(selected.id) }, "». Теперь категория — расход с него, другой счёт — перевод, этот же счёт — снять выбор."];
   }
-  return `Выбран доход «${names.income(selected.id)}». Теперь счёт, на который он пришёл.`;
+  return ["Выбран доход «", { name: names.income(selected.id) }, "». Теперь счёт, на который он пришёл."];
+}
+
+/** Подсказка одной строкой — так её слышит читающий с экрана. */
+export function pickHint(state: PickState, names: { readonly account: (id: string) => string; readonly income: (id: string | null) => string }): string {
+  return pickHintParts(state, names).map((part) => (typeof part === "string" ? part : part.name)).join("");
 }
 
 /** Выбрана ли плитка: `aria-pressed`, галочка и кольцо. */

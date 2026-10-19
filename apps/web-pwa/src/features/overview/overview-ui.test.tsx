@@ -7,7 +7,8 @@ import { buildDemoBudgetState } from "../../onboarding/demo";
 import { categorySpend } from "../reports/ReportsScreen";
 import { periodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
-import { OverviewScreen, type OverviewScreenProps } from "./OverviewScreen";
+import { OverviewScreen, PickHintText, type OverviewScreenProps } from "./OverviewScreen";
+import { pickHintParts, PICK_IDLE } from "./pick-model";
 
 const SALARY = "a2000000-0000-4000-8000-0000000000c1";
 
@@ -155,5 +156,26 @@ describe("«Обзор»: «Потрачено» — весь расход ме�
     expect(totals).toContain(`Потрачено${plain(formatMoney(reports))}`);
     expect(totals).toContain("по лимитам 26 000 ₽ из 53 000 ₽");
     expect(plain(markup)).toContain("Можно на повседневные27 000 ₽");
+  });
+});
+
+describe("«Обзор»: имена, набранные семьёй, — изолированно от соседнего текста", () => {
+  it("имя на плитке, в подсказке и в «В итог не вошли» — в `<bdi dir=\"auto\">`", () => {
+    // Ревью 2b, LOW-4: имя справа налево или с цифрами в конце перемешивалось с рамкой фразы.
+    const base = state();
+    const RTL_ACCOUNT = "a2000000-0000-4000-8000-0000000000d7";
+    const named: BudgetState = {
+      ...base,
+      accounts: [...base.accounts, { id: RTL_ACCOUNT, name: "حساب 2", type: "cash", currency: "USD", openingBalanceMinor: 1_000, active: true }],
+      categories: base.categories.map((category) => (category.id === PLANNING_IDS.categories.food ? { ...category, name: "مطبخ" } : category)),
+    };
+    const markup = render({}, named);
+    expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">مطبخ</bdi></span>');
+    expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">حساب 2</bdi></span>');
+    expect(markup).toContain('<span class="tile-name"><bdi dir="auto">Подработка и самозанятость</bdi></span>');
+    expect(markup).toContain('«<bdi dir="auto">حساب 2</bdi>» — нет курса USD');
+    const selected = { ...PICK_IDLE, selected: { kind: "account" as const, id: RTL_ACCOUNT } };
+    const hint = renderToStaticMarkup(<PickHintText parts={pickHintParts(selected, { account: () => "حساب 2", income: () => "" })} />);
+    expect(hint).toBe('Выбран счёт «<bdi dir="auto">حساب 2</bdi>». Теперь категория — расход с него, другой счёт — перевод, этот же счёт — снять выбор.');
   });
 });

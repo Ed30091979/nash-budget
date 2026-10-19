@@ -24,7 +24,7 @@ export function AccountTile({ tile, pressed, onPick, drag }: { readonly tile: Ac
         <span className="tile-glyph" aria-hidden="true"><Icon name={tile.icon} size={20} /></span>
         {negative ? <span className="tile-state negative" aria-hidden="true"><Icon name="circle-alert" size={20} /></span> : null}
       </span>
-      <span className="tile-name" aria-hidden="true">{tile.name}</span>
+      <span className="tile-name" aria-hidden="true"><bdi dir="auto">{tile.name}</bdi></span>
       <span className="tile-sum" aria-hidden="true">{tile.balanceMinor === null ? "—" : <Money value={tile.balanceMinor} currency={tile.currency} />}</span>
       {!tile.includeInTotal ? <small className="tile-note" aria-hidden="true">вне итога</small> : tile.unvalued ? <small className="tile-note" aria-hidden="true">нет курса</small> : null}
     </Tile>
