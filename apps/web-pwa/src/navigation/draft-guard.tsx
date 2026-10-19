@@ -27,17 +27,29 @@ export interface DraftEntry {
    * в «Семью»: код запрошен, и форма кода вернётся, а перезагрузка её потеряет.
    */
   readonly guardsNavigation?: boolean;
+  /**
+   * Где черновик живёт: на экране (по умолчанию) или в листе поверх экрана. Лист, открытый или
+   * закрытый над экраном, экран не покидает: о черновике экрана тогда не спрашивают и его не
+   * забывают (ревью 2b, MEDIUM-4).
+   */
+  readonly layer?: DraftLayer;
 }
 
 export type DraftScope = "navigation" | "unload";
 
+/** Что переход оставляет позади: экран вместе с листом над ним — или только лист (`leftBehind`). */
+export type DraftLayer = "screen" | "sheet";
+
 export interface DraftRegistry {
   register(entry: { readonly current: DraftEntry }): () => void;
-  /** Синхронно: есть ли грязный черновик для перехода (`navigation`) или для ухода со страницы. */
-  hasUnsavedDrafts(scope?: DraftScope): boolean;
+  /**
+   * Синхронно: есть ли грязный черновик для перехода (`navigation`) или для ухода со страницы.
+   * `leaving` — что переход оставляет: экран (всё) или только лист над ним.
+   */
+  hasUnsavedDrafts(scope?: DraftScope, leaving?: DraftLayer): boolean;
   /** Подписи грязных черновиков — для текста вопроса. */
-  dirtyLabels(scope?: DraftScope): string[];
-  discardAll(scope?: DraftScope): void;
+  dirtyLabels(scope?: DraftScope, leaving?: DraftLayer): string[];
+  discardAll(scope?: DraftScope, leaving?: DraftLayer): void;
   /** Пересчитать после отрисовки зарегистрированного экрана и сообщить подписчикам, если ответ изменился. */
   refresh(): void;
   subscribe(listener: () => void): () => void;
@@ -50,8 +62,10 @@ export function createDraftRegistry(): DraftRegistry {
   const listeners = new Set<() => void>();
   let last = false;
 
-  const inScope = (entry: DraftEntry, scope: DraftScope) => scope === "unload" || entry.guardsNavigation !== false;
-  const dirty = (scope: DraftScope) => [...entries].filter((entry) => inScope(entry.current, scope) && entry.current.isDirty());
+  const inScope = (entry: DraftEntry, scope: DraftScope, leaving: DraftLayer) =>
+    scope === "unload" || (entry.guardsNavigation !== false && (leaving === "screen" || entry.layer === "sheet"));
+  const dirty = (scope: DraftScope, leaving: DraftLayer = "screen") =>
+    [...entries].filter((entry) => inScope(entry.current, scope, leaving) && entry.current.isDirty());
 
   const refresh = () => {
     const now = dirty("unload").length > 0;
@@ -69,10 +83,10 @@ export function createDraftRegistry(): DraftRegistry {
         refresh();
       };
     },
-    hasUnsavedDrafts: (scope = "unload") => dirty(scope).length > 0,
-    dirtyLabels: (scope = "unload") => dirty(scope).map((entry) => entry.current.label),
-    discardAll(scope = "navigation") {
-      for (const entry of dirty(scope)) entry.current.discard?.();
+    hasUnsavedDrafts: (scope = "unload", leaving = "screen") => dirty(scope, leaving).length > 0,
+    dirtyLabels: (scope = "unload", leaving = "screen") => dirty(scope, leaving).map((entry) => entry.current.label),
+    discardAll(scope = "navigation", leaving = "screen") {
+      for (const entry of dirty(scope, leaving)) entry.current.discard?.();
     },
     refresh,
     subscribe(listener) {

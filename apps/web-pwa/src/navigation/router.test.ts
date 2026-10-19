@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRouter } from "./router";
-import { formatRoute } from "./routes";
+import { formatRoute, routeKey, type Route } from "./routes";
 import { draftGuard, expectHonestHistory, FakeBrowser, go, settle, started } from "./test-fixture";
 
 const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
@@ -271,6 +271,25 @@ describe("переход по якорю", () => {
 });
 
 describe("черновик и переходы", () => {
+  it("защиту спрашивают, откуда и куда переход: нажатие, «Назад» листа и системное «Назад» (ревью 2b, MEDIUM-4)", async () => {
+    const asked: string[] = [];
+    const record = (from: Route, to: Route) => { asked.push(`${routeKey(from)} → ${routeKey(to)}`); };
+    const { frame, router } = started("", null, { guard: { blocks: (from, to) => { record(from, to); return false; }, confirm: () => undefined } });
+    await go(router, { name: "plan-month" });
+    await go(router, { name: "plan-month", sheet: "entry" });
+    router.back();
+    await settle();
+    await go(router, { name: "plan-month", sheet: "entry" });
+    await frame.press(-1);
+    expect(asked).toEqual([
+      "#/ → #/more/plan-month",
+      "#/more/plan-month → #/more/plan-month?sheet=entry",
+      "#/more/plan-month?sheet=entry → #/more/plan-month",
+      "#/more/plan-month → #/more/plan-month?sheet=entry",
+      "#/more/plan-month?sheet=entry → #/more/plan-month",
+    ]);
+  });
+
   it("с грязным черновиком переход спрашивает и ничего не меняет до ответа", async () => {
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });

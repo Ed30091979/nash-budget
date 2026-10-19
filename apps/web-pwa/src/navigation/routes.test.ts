@@ -5,6 +5,7 @@ import {
   formatRoute,
   isRoot,
   isTab,
+  leftBehind,
   parentRoute,
   parseRoute,
   resolveRoute,
@@ -220,6 +221,20 @@ describe("родители маршрутов", () => {
     expect(screenKey({ name: "overview", month: "2026-08", sheet: "entry", op: "expense", dst: CATEGORY })).toBe("#/");
     expect(screenKey({ name: "operations", sheet: "entry", edit: OPERATION })).toBe("#/operations");
     expect(screenKey({ name: "plan-year", sheet: "entry" })).toBe("#/more/plan-year");
+  });
+
+  it("что переход оставляет позади: экран — с листом над ним, только лист — или ничего (ревью 2b, MEDIUM-4)", () => {
+    // Лист открылся поверх экрана — экран не покинут: его черновик не спрашивается и не стирается.
+    expect(leftBehind({ name: "plan-month" }, { name: "plan-month", sheet: "entry" })).toBeNull();
+    expect(leftBehind({ name: "import" }, { name: "import", sheet: "entry", op: "expense", dst: CATEGORY })).toBeNull();
+    // Лист закрылся на свой экран или сменился другим листом над ним — покинут только лист.
+    expect(leftBehind({ name: "plan-month", sheet: "entry" }, { name: "plan-month" })).toBe("sheet");
+    expect(leftBehind({ name: "overview", sheet: "entry", op: "expense", dst: CATEGORY }, { name: "overview", sheet: "entry" })).toBe("sheet");
+    // Другой экран — покинуто всё; другой месяц «Обзора» — тот же экран.
+    expect(leftBehind({ name: "plan-month", sheet: "entry" }, { name: "overview" })).toBe("screen");
+    expect(leftBehind({ name: "plan-month" }, { name: "overview", sheet: "entry" })).toBe("screen");
+    expect(leftBehind({ name: "overview" }, { name: "overview", month: "2026-08" })).toBeNull();
+    expect(leftBehind({ name: "operations" }, { name: "operations" })).toBeNull();
   });
 
   it("идентификатор из адреса находит операцию, записанную в любом регистре (ревью 2a, п. 4)", () => {

@@ -128,6 +128,7 @@ export function EntrySheet(props: EntrySheetProps) {
     label: draft.editId === null ? "операция, которую вы набирали" : "изменения в операции",
     isDirty: props.isDirty,
     discard: props.onDiscard,
+    layer: "sheet",
   });
 
   // Открытие: фокус — в поле суммы, всё вокруг листа выключено; закрытие — фокус на плитку.

@@ -405,6 +405,18 @@ export function screenKey(route: Route): string {
 }
 
 /**
+ * Что переход с `from` на `to` оставляет позади (ревью 2b, MEDIUM-4): другой экран — `"screen"`
+ * (и лист над ним); лист, закрытый на свой экран или сменённый другим листом над ним, —
+ * `"sheet"`; лист, открытый поверх экрана, и другой месяц «Обзора» — ничего: экран на месте, его
+ * черновик не спрашивается и не забывается.
+ */
+export function leftBehind(from: Route, to: Route): "screen" | "sheet" | null {
+  if (screenKey(from) !== screenKey(to)) return "screen";
+  if (from.sheet !== undefined && routeKey(from) !== routeKey(to)) return "sheet";
+  return null;
+}
+
+/**
  * Цепочка от корня до маршрута по родителям: так выглядит история, когда маршрут открыт по
  * ссылке или перезагрузкой, — «назад» ведёт к родителю, а не прочь из приложения.
  */

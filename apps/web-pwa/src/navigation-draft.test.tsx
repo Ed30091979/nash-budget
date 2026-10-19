@@ -76,6 +76,26 @@ describe("реестр черновиков", () => {
     expect(registry.hasUnsavedDrafts()).toBe(false);
   });
 
+  it("лист поверх экрана: уход с листа спрашивает только о листе, «Не сохранять» забывает только его (ревью 2b, MEDIUM-4)", () => {
+    const registry = createDraftRegistry();
+    const plan = draft("крупный платёж в плане");
+    const sheet = draft("операция, которую вы набирали", { layer: "sheet" });
+    registry.register(plan.entry);
+    registry.register(sheet.entry);
+    plan.setDirty(true);
+    // Лист открыт и не тронут: закрыть его — не уход с плана.
+    expect(registry.hasUnsavedDrafts("navigation", "sheet")).toBe(false);
+    sheet.setDirty(true);
+    expect(registry.dirtyLabels("navigation", "sheet")).toEqual(["операция, которую вы набирали"]);
+    registry.discardAll("navigation", "sheet");
+    expect(sheet.discard).toHaveBeenCalledOnce();
+    expect(plan.discard).not.toHaveBeenCalled();
+    // Уход с экрана — обо всём, что на нём и над ним.
+    sheet.setDirty(true);
+    expect(registry.dirtyLabels("navigation", "screen")).toEqual(["крупный платёж в плане", "операция, которую вы набирали"]);
+    expect(registry.dirtyLabels("navigation")).toEqual(registry.dirtyLabels("navigation", "screen"));
+  });
+
   it("сообщает подписчикам, только когда ответ для ухода со страницы изменился", () => {
     const registry = createDraftRegistry();
     const listener = vi.fn();
@@ -274,8 +294,9 @@ describe("оболочка спрашивает реестр", () => {
   it("переход спрашивает реестр в момент нажатия и задаёт вопрос своим диалогом", () => {
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
     // Роутер спрашивает реестр и на нажатии, и на системном «Назад»; вопрос — диалог приложения.
-    expect(source).toMatch(/guard: \{\s*blocks: \(\) => drafts\.hasUnsavedDrafts\("navigation"\),\s*confirm: \(proceed\) => setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation"\), proceed \}\),\s*\}/u);
-    expect(source).toMatch(/onConfirm=\{\(\) => \{\s*setLeaveRequest\(null\);\s*drafts\.discardAll\("navigation"\);\s*leaveRequest\.proceed\(\);/u);
+    // С 2b — о том, что переход оставляет позади: лист поверх экрана экран не покидает (MEDIUM-4).
+    expect(source).toMatch(/guard: \{\s*blocks: \(from, to\) => \{\s*const leaving = leftBehind\(from, to\);\s*return leaving !== null && drafts\.hasUnsavedDrafts\("navigation", leaving\);\s*\},\s*confirm: \(proceed, from, to\) => \{\s*const leaving = leftBehind\(from, to\) \?\? "screen";\s*setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation", leaving\), leaving, proceed \}\);/u);
+    expect(source).toMatch(/onConfirm=\{\(\) => \{\s*setLeaveRequest\(null\);\s*drafts\.discardAll\("navigation", leaveRequest\.leaving\);\s*leaveRequest\.proceed\(\);/u);
     expect(source).toContain("onCancel={() => setLeaveRequest(null)}");
     expect(source).not.toMatch(/onDirtyChange|DraftDirty|const hasUnsavedDraft\b/u);
   });

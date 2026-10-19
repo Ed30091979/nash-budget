@@ -59,10 +59,10 @@ import { ReadOnlyBanner } from "../components/ReadOnlyBanner";
 import { WriteRefusalNotice } from "../components/WriteRefusalNotice";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
-import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
+import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
 import { createRouter, memoryRouterWindow } from "../navigation/router";
-import { parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
+import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
 import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
 import { createEntryController } from "./entry-controller";
@@ -124,9 +124,10 @@ function AppFrame({ className, drafts, messageShown, children }: { className: st
   return <div className={className}><DraftRegistryProvider registry={drafts}>{children}</DraftRegistryProvider><UpdatePrompt drafts={drafts} suppressed={messageShown} /></div>;
 }
 
-/** Вопрос о несохранённом черновике: что потеряется и что сделать, если человек решил уйти. */
+/** Вопрос о несохранённом черновике: что потеряется, что переход оставляет и что сделать, если человек решил уйти. */
 interface LeaveRequest {
   readonly labels: readonly string[];
+  readonly leaving: DraftLayer;
   readonly proceed: () => void;
 }
 
@@ -187,9 +188,17 @@ export default function App() {
   const leaving = useRef<() => void>(() => undefined);
   const router = useMemo(() => createRouter({
     window: typeof window === "undefined" ? memoryRouterWindow() : window,
+    // Лист, открытый поверх экрана, экран не покидает: о его черновике не спрашивают; закрытие
+    // листа спрашивает только о листе (ревью 2b, MEDIUM-4).
     guard: {
-      blocks: () => drafts.hasUnsavedDrafts("navigation"),
-      confirm: (proceed) => setLeaveRequest({ labels: drafts.dirtyLabels("navigation"), proceed }),
+      blocks: (from, to) => {
+        const leaving = leftBehind(from, to);
+        return leaving !== null && drafts.hasUnsavedDrafts("navigation", leaving);
+      },
+      confirm: (proceed, from, to) => {
+        const leaving = leftBehind(from, to) ?? "screen";
+        setLeaveRequest({ labels: drafts.dirtyLabels("navigation", leaving), leaving, proceed });
+      },
     },
     // Лист поверх экрана и смена месяца «Обзора» — тот же экран: прокрутка и «ушли» — только при смене экрана.
     onLeave: (key, next) => {
@@ -689,7 +698,7 @@ export default function App() {
       onCancel={() => setLeaveRequest(null)}
       onConfirm={() => {
         setLeaveRequest(null);
-        drafts.discardAll("navigation");
+        drafts.discardAll("navigation", leaveRequest.leaving);
         leaveRequest.proceed();
       }}
     />

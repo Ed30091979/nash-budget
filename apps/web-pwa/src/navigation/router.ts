@@ -94,12 +94,15 @@ export interface RouterWindow {
   removeEventListener(type: "popstate" | "hashchange", listener: () => void): void;
 }
 
-/** Защита черновика: спрашивается в момент нажатия и в момент системного «Назад». */
+/**
+ * Защита черновика: спрашивается в момент нажатия и в момент системного «Назад» — с тем, откуда
+ * и куда переход: лист поверх экрана экран не покидает (ревью 2b, MEDIUM-4).
+ */
 export interface NavigationGuard {
-  /** Есть ли несохранённое, что переход потеряет. Синхронно — без эффектов и ожиданий. */
-  blocks(): boolean;
+  /** Есть ли несохранённое, что переход с `from` на `to` потеряет. Синхронно — без эффектов и ожиданий. */
+  blocks(from: Route, to: Route): boolean;
   /** Спросить человека; `proceed` вызывается, только если он решил уйти. */
-  confirm(proceed: () => void): void;
+  confirm(proceed: () => void, from: Route, to: Route): void;
 }
 
 export interface RouterOptions {
@@ -311,8 +314,9 @@ export function createRouter(options: RouterOptions): Router {
   const navigate = (target: Route, navigateOptions: NavigateOptions = {}) => {
     if (sameRoute(target, route) && navigateOptions.replace !== true) return;
     const replace = navigateOptions.replace === true;
-    if (options.guard?.blocks()) {
-      options.guard.confirm(() => perform(target, replace));
+    const from = route;
+    if (options.guard?.blocks(from, target)) {
+      options.guard.confirm(() => perform(target, replace), from, target);
       return;
     }
     perform(target, replace);
@@ -327,17 +331,18 @@ export function createRouter(options: RouterOptions): Router {
 
   const onTypedEntry = (parsed: ReturnType<typeof parseRoute>) => {
     const typed = forReload(parsed.route);
+    const from = route;
     const leaving = routeKey(route);
     const pushed = typedEntryWasPushed();
     const asked = () => options.guard?.confirm(() => {
       perform(typed, false);
       if (parsed.notFound) options.onNotFound?.();
-    });
+    }, from, typed);
     if (!pushed) {
       // Чужая запись встала на место нашей: наша возвращается на место, и адрес — та же просьба
       // перейти. Записи впереди и цепочки под ней остаются правдой (ревью 2a, круг 2, LOW 3).
       replaceCurrent(stack);
-      if (options.guard?.blocks()) {
+      if (options.guard?.blocks(from, typed)) {
         asked();
         return;
       }
@@ -346,7 +351,7 @@ export function createRouter(options: RouterOptions): Router {
       return;
     }
     ahead = 0;
-    if (options.guard?.blocks()) {
+    if (options.guard?.blocks(from, typed)) {
       // С черновиком набранный адрес — та же просьба уйти. Новая запись становится правдивой копией
       // той, с которой уходят, и роутер возвращается на шаг назад, на саму эту запись: копия
       // остаётся впереди, а «Назад» с экрана ведёт к его родителю, а не на копию (ревью 2a, круг 2, LOW 2).
@@ -385,13 +390,15 @@ export function createRouter(options: RouterOptions): Router {
       return;
     }
     ahead = Math.max(0, ahead - (landed.length - stack.length));
-    if (options.guard?.blocks()) {
+    const from = route;
+    const to = parseRoute(landed[landed.length - 1] ?? ROOT_KEY).route;
+    if (options.guard?.blocks(from, to)) {
       // Системное «Назад» или «Вперёд» с несохранённым черновиком: адрес возвращается в историю
       // поверх записи, куда пришли, и человек отвечает на тот же вопрос, что и при нажатии на вкладку.
       const restored = [...landed, routeKey(route)];
       pushFrom(restored, landed.length);
       stack = restored;
-      options.guard.confirm(() => whenSettled(() => apply(landed)));
+      options.guard.confirm(() => whenSettled(() => apply(landed)), from, to);
       return;
     }
     commit(landed);

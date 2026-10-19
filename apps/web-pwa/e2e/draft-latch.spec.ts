@@ -232,3 +232,44 @@ test("выписка: добавленная — не спрашивает; сл
   await expect(page.getByRole("heading", { level: 1, name: /^Разобрано:/u })).toBeVisible();
   await asksAbout(page, "Обзор", "выписка, ещё не добавленная в бюджет");
 });
+
+test("«+» поверх «Плана месяца» и «Выписки» — не уход с экрана: его черновик не спрашивается и не теряется", async ({ page }) => {
+  // Ревью 2b, MEDIUM-4: «+» над экраном с черновиком спрашивал «Уйти без сохранения?», а «Не
+  // сохранять» стирал черновик экрана; «Продолжить ввод» не давал открыть лист.
+  await loadDemo(page);
+  await openMonthPlan(page);
+  await page.locator("#commitment-name").fill("Страховка дачи");
+  const plus = page.getByRole("button", { name: "Записать", exact: true });
+  await plus.click();
+  await expect(entrySheet(page)).toBeVisible();
+  await expect(leaveDialog(page)).toHaveCount(0);
+  await closesWithoutQuestion(page);
+  await expect(page.locator("#commitment-name")).toHaveValue("Страховка дачи");
+
+  // Набранное в листе: закрытие спрашивает только о листе, и «Не сохранять» стирает только его.
+  await plus.click();
+  await amountField(page).fill("350");
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
+  await expect(leaveDialog(page)).toContainText("операция, которую вы набирали");
+  await expect(leaveDialog(page)).not.toContainText("крупный платёж в плане");
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(page.locator("#commitment-name")).toHaveValue("Страховка дачи");
+  // Уход с самого экрана по-прежнему спрашивает о его черновике.
+  await asksAbout(page, "Обзор", "крупный платёж в плане");
+
+  // Выписка в предпросмотре — то же.
+  await page.locator("#commitment-name").fill("");
+  await tab(page, "Ещё").click();
+  await page.getByRole("button", { name: /Загрузить выписку банка/u }).click();
+  await page.locator("#statement-file").setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from(sampleStatementText(), "utf8") });
+  const parsed = page.getByRole("heading", { level: 1, name: /^Разобрано:/u });
+  await expect(parsed).toBeVisible();
+  await plus.click();
+  await expect(entrySheet(page)).toBeVisible();
+  await expect(leaveDialog(page)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(parsed).toBeVisible();
+  await asksAbout(page, "Обзор", "выписка, ещё не добавленная в бюджет");
+});
