@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { BudgetWriteRefusal } from "../../write-refusal";
 import { archivedNamesake, deleteRefusal, tagCountWords, tagErrorText, tagsView } from "./tags-model";
-import { TagsScreen } from "./TagsScreen";
+import { QUICK_TAGS, TagsScreen } from "./TagsScreen";
 
 const TRIP = "e2c00000-0000-4000-8000-0000000000c1";
 const REPAIR = "e2c00000-0000-4000-8000-0000000000c2";
@@ -90,8 +90,30 @@ describe("метки: разметка", () => {
       expect(html, label).toContain(`aria-label="${label}"`);
     }
     expect(html).toContain("Архивная метка не предлагается при записи, но остаётся на своих операциях.");
-    // Без меток — подсказка, где их завести.
+    // Без меток — пустое состояние с тем, где и как их завести (подробно — ниже, «пустое состояние»).
     const empty = renderToStaticMarkup(<TagsScreen budget={makePlanningSeed()} write={{ run: vi.fn() }} onBack={vi.fn()} />);
-    expect(empty).toContain("Меток пока нет.");
+    expect(empty).toContain("Меток пока нет</span></h2>");
+    expect(empty).toContain(">Создать метку</button>");
+  });
+});
+
+describe("метки: пустое состояние (дизайн v5, 14)", () => {
+  it("меток нет — иллюстрация, «Меток пока нет», одна строка, «Создать метку» и быстрые метки; поля пока нет", () => {
+    const markup = renderToStaticMarkup(<TagsScreen budget={makePlanningSeed()} write={{ run: vi.fn() }} onBack={vi.fn()} />);
+    expect(markup).toMatch(/<div class="empty-art" aria-hidden="true"><svg [^>]*aria-hidden="true"/u);
+    expect(markup).toContain('<span class="sr-only">Меток пока нет</span></h2>');
+    expect(markup).toContain('<span class="sr-only">Метка собирает траты из разных категорий: например, всё на дачу или на отпуск.</span>');
+    expect(markup).toContain('<button id="tags-create" class="primary-button wide empty-action" type="button">Создать метку</button>');
+    expect(markup).toContain(">Или одним касанием:</p>");
+    for (const label of QUICK_TAGS) expect(markup).toContain(`aria-label="Создать метку «${label}»"`);
+    expect(QUICK_TAGS).toEqual(["отпуск", "дача", "ремонт", "подарки"]);
+    expect(markup).not.toContain('id="tag-new-name"');
+  });
+
+  it("есть хоть одна метка, пусть в архиве, — прежний список и поле новой метки, без пустого состояния", () => {
+    const seed = makePlanningSeed();
+    const markup = renderToStaticMarkup(<TagsScreen budget={{ ...seed, tags: [{ id: DACHA, name: "Дача", active: false }] }} write={{ run: vi.fn() }} onBack={vi.fn()} />);
+    expect(markup).toContain('id="tag-new-name"');
+    expect(markup).not.toContain("Меток пока нет</span></h2>");
   });
 });

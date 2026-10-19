@@ -29,7 +29,7 @@ describe("задержка документа: форма записи не от
     // Экраны-формы — пять; всё остальное, что пишет бюджет, — лист ввода, с чем бы его ни открыли.
     expect(writing.filter((key) => !key.includes("sheet=entry"))).toEqual([
       "#/more/plan-month", "#/more/import",
-      `#/more/accounts/${ACCOUNT}`, "#/more/accounts/new", `#/more/categories/${CATEGORY}`, `#/more/categories/${CATEGORY}?type=income`,
+      `#/more/accounts/${ACCOUNT}`, "#/more/accounts/new", "#/more/accounts/new?type=savings", `#/more/categories/${CATEGORY}`, `#/more/categories/${CATEGORY}?type=income`,
     ]);
     expect(writing.filter((key) => key.includes("sheet=entry"))).toEqual(ALL_ROUTE_FIXTURES.filter((route) => route.sheet === "entry").map(formatRoute));
     // Списки справочников читают — остатки, курсы, числа операций — и открываются; запись из них
@@ -39,6 +39,8 @@ describe("задержка документа: форма записи не от
       "#/more/accounts", "#/more/rates",
       "#/more/categories", "#/more/categories?type=expense", "#/more/categories?type=income",
       "#/more/tags",
+      // Заглушки 2e только читают: на них нечего записывать (R2).
+      "#/more/debts", "#/more/goals", "#/more/recurring",
     ]);
     expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "account", id: ACCOUNT })?.fallback).toEqual({ name: "accounts" });
     expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "category", id: CATEGORY })?.fallback).toEqual({ name: "categories", type: "expense" });

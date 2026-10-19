@@ -3,12 +3,14 @@ import {
   HOUSEHOLD_ID,
   isBlankStoredText,
   isDisplayKey,
+  isPaydayList,
   isStorableLabel,
   isStorableNote,
   isSupportedCurrency,
   isUuid,
   MAX_LOCAL_DATE,
   MAX_MONEY_MINOR,
+  MAX_PAYDAYS,
   MAX_SORT_ORDER,
   MAX_TAGS_PER_TRANSACTION,
   MIN_LOCAL_DATE,
@@ -945,11 +947,21 @@ function parseRecurringRuleFields(value: unknown): RecurringRuleFields {
   };
 }
 
+/**
+ * The household: its base currency and, when the family named them, its paydays (D-039) — one to
+ * {@link MAX_PAYDAYS} distinct days 1…31 in ascending order, the domain's one rule (`isPaydayList`).
+ * Absent stays absent: a household written before paydays existed carries none.
+ */
 function parseHouseholdFields(value: unknown): HouseholdFields {
   const label = "household fields";
   const record = requireRecord(value, label);
-  requireFieldNames(record, ["baseCurrency"], [], label);
-  return { baseCurrency: readCurrency(record, "baseCurrency", "household baseCurrency") };
+  requireFieldNames(record, ["baseCurrency"], ["paydays"], label);
+  const baseCurrency = readCurrency(record, "baseCurrency", "household baseCurrency");
+  if (record.paydays === undefined) return { baseCurrency };
+  if (!isPaydayList(record.paydays)) {
+    fail(`household paydays must list from 1 to ${MAX_PAYDAYS} distinct days 1…31 in ascending order`);
+  }
+  return { baseCurrency, paydays: [...record.paydays] };
 }
 
 function parseWrite(

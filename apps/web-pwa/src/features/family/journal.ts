@@ -103,8 +103,11 @@ function exchangeRateFields(rate: ExchangeRate): Record<string, unknown> {
   };
 }
 
+/** Дни выплат (D-039) необязательны: хозяйство без них уходит в журнал без поля, как прежде. */
 function householdFields(household: Household): Record<string, unknown> {
-  return { baseCurrency: household.baseCurrency };
+  return household.paydays === undefined
+    ? { baseCurrency: household.baseCurrency }
+    : { baseCurrency: household.baseCurrency, paydays: [...household.paydays] };
 }
 
 /** Срок долга необязателен, и отсутствующий остаётся отсутствующим. */

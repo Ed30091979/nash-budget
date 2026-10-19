@@ -105,6 +105,10 @@ const GLYPHS = {
   /* Клавиатура суммы: «−» и «÷» — глифами, как «+» и «стереть», а не текстовыми знаками. */
   minus: <path d="M5 12h14" />,
   divide: <><circle cx="12" cy="6" r="1" /><path d="M5 12h14" /><circle cx="12" cy="18" r="1" /></>,
+  /* «Ещё» → «Планы» (макет v5 10): «Регулярные» — круг повтора, «Долги» — человек, а не стрелки
+     перевода: долг — это кто-то, а перевод остаётся за `arrow-left-right`. */
+  repeat: <><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></>,
+  "user-round": <><circle cx="12" cy="8" r="5" /><path d="M20 21a8 8 0 0 0-16 0" /></>,
 } satisfies Readonly<Record<string, ReactElement>>;
 
 export type IconName = keyof typeof GLYPHS;

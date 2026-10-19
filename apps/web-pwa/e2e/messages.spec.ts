@@ -1,7 +1,7 @@
 /**
  * §12: ни одно сообщение не накрывает цель нажатия — измерено, а не отмечено галочкой.
  *
- * Маршруты: с первого шага онбординга до «Выписки», включая «Операции». Лист ввода стоит поверх
+ * Маршруты: со слайдов первого запуска до «Выписки», включая «Операции». Лист ввода стоит поверх
  * экрана и плашек: в нём каждая цель обязана быть доматываемой внутри листа и не накрытой ничем.
  *
  * Пункт стоял пройденным годами, а проверки под ним не было; дефект при этом был: на маршруте
@@ -203,19 +203,19 @@ async function openFromMore(page: Page, row: RegExp): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
 }
 
-test("плашка сервис-воркера не накрывает ни одной цели — с первого шага онбординга до «Ещё»", async ({ page }) => {
+test("плашка сервис-воркера не накрывает ни одной цели — со слайдов первого запуска до «Ещё»", async ({ page }) => {
   test.setTimeout(480_000);
   await page.goto("/");
   const toast = page.locator(".update-toast");
   // Настоящая плашка настоящего сервис-воркера: первая установка в свежем контексте.
   await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
 
-  /* ── Онбординг, шаг 1: поля, которые плашка накрывала. ── */
+  /* ── Слайд 1: «Пропустить», «Дальше» — первые цели, которые видит новичок. ── */
   for (const scale of FONT_SCALES) {
     await applyFontScale(page, scale);
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expectMessageClearance(page, `онбординг, шаг 1, ${viewport.name} ×${scale}`);
+      await expectMessageClearance(page, `слайд 1, ${viewport.name} ×${scale}`);
     }
   }
   await applyFontScale(page, 1);
@@ -224,32 +224,23 @@ test("плашка сервис-воркера не накрывает ни од
   await page.setViewportSize({ width: 390, height: 844 });
   await helloShot(page, "onboarding-toast-after");
 
-  /* ── Онбординг, шаг 4: самая высокая карточка. ── */
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 2 из 4")).toBeVisible();
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 3 из 4")).toBeVisible();
-  await page.getByLabel("Доход в месяц, ₽").fill("180000");
-  await page.getByLabel("Сумма платежа, ₽").fill("53000");
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 4 из 4")).toBeVisible();
-  for (const [index, limit] of ["30000", "10000", "8000"].entries()) {
-    await page.locator(`#category-${index}-limit`).fill(limit);
-  }
+  /* ── Слайд 3: самый высокий — обещание и две кнопки, «Начать» и «Посмотреть на примере». ── */
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 3 из 3" })).toBeVisible();
   for (const scale of FONT_SCALES) {
     await applyFontScale(page, scale);
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expectMessageClearance(page, `онбординг, шаг 4, ${viewport.name} ×${scale}`);
+      await expectMessageClearance(page, `слайд 3, ${viewport.name} ×${scale}`);
     }
   }
 
   /* ── В приложение — с той же плашкой. ── */
   await applyFontScale(page, 1);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator(".step-progress-step.done").first().click();
-  await expect(page.getByText("Шаг 1 из 4")).toBeVisible();
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await page.getByRole("button", { name: "Посмотреть на примере", exact: true }).click();
   await expect(page.locator(".reach-card")).toBeVisible();
   // Плашка пережила смену маршрута: сообщение, которое никто не закрывал, не пропало само.
   await expect(toast).toContainText(OFFLINE_READY);

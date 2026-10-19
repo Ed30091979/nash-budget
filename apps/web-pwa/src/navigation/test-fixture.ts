@@ -84,6 +84,9 @@ export const ROUTE_FIXTURES = {
     { name: "account-new" },
     { name: "account-new", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
     { name: "account-new", sheet: "entry", edit: OPERATION },
+    // Вопрос первого запуска открывает форму с видом «Накопления» — ключом из перечня домена.
+    { name: "account-new", type: "savings" },
+    { name: "account-new", type: "cash", sheet: "entry", edit: OPERATION },
   ],
   rates: [
     { name: "rates" },
@@ -110,6 +113,21 @@ export const ROUTE_FIXTURES = {
     { name: "tags", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
     { name: "tags", sheet: "entry", edit: OPERATION },
   ],
+  debts: [
+    { name: "debts" },
+    { name: "debts", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "debts", sheet: "entry", edit: OPERATION },
+  ],
+  goals: [
+    { name: "goals" },
+    { name: "goals", sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
+    { name: "goals", sheet: "entry", edit: OPERATION },
+  ],
+  recurring: [
+    { name: "recurring" },
+    { name: "recurring", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "recurring", sheet: "entry", edit: OPERATION },
+  ],
 } as const satisfies { readonly [N in RouteName]: readonly Extract<Route, { readonly name: N }>[] };
 
 export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
@@ -123,12 +141,13 @@ const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:
 /**
  * The whole address language, written out by hand rather than derived from the grammar it checks:
  * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month, the kind of
- * a category list. A record of a directory is a UUID in the path, never its name. No free text fits.
+ * a category list, the kind of a new account. A record of a directory is a UUID in the path, never its name. No free text fits.
  * A new query key or path is a deliberate edit here.
  */
 export const ROUTE_FRAGMENT = new RegExp(
   `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
-    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags))(?:\\?${SHEET})?` +
+    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags|debts|goals|recurring))(?:\\?${SHEET})?` +
+    `|more/accounts/new\\?type=(?:current|cash|savings|reserve)(?:&${SHEET})?` +
     `|more/categories(?:/${UUID})?(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
   "u",
 );

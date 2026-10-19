@@ -57,6 +57,7 @@ import {
   type RateIndex,
 } from "./currency.js";
 import { HOUSEHOLD_ID } from "./identity.js";
+import { isPaydayList, MAX_PAYDAYS } from "./paydays.js";
 import { MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
 import { isBlankStoredText, isStorableLabel, isStorableNote } from "./stored-text.js";
 import {
@@ -314,6 +315,9 @@ function validateHousehold(household: Household): void {
   }
   if (!isSupportedCurrency(household.baseCurrency)) {
     throw new Error(`household baseCurrency has unknown value ${String(household.baseCurrency)}`);
+  }
+  if (household.paydays !== undefined && !isPaydayList(household.paydays)) {
+    throw new Error(`household paydays must list from 1 to ${MAX_PAYDAYS} distinct days 1…31 in ascending order`);
   }
 }
 

@@ -165,7 +165,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-.segmented label:has(input:focus-visible), .composition-options label:has(input:focus-visible),
+.segmented label:has(input:focus-visible),
 .month-checkboxes label:has(input:focus-visible), .file-button:focus-within {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -538,69 +538,17 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .storage-error-state h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
 .storage-error-state p { margin: 12px 0 20px; color: var(--ink-muted); font-weight: 400; }
 
-/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: карточка и плашка
-   сервис-воркера стоят в ней друг под другом и центрируются вместе. Пока высоту экрана держала
-   сама оболочка, плашка оказывалась вне потока карточки и накрывала её поля. */
+/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: слайды и плашка
+   сервис-воркера стоят в ней друг под другом. Пока высоту экрана держала сама оболочка, плашка
+   оказывалась вне потока и накрывала цели первого экрана. Слайды — в блоке R2 в конце файла. */
 .onboarding-route { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100dvh; align-content: center; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--canvas); }
-/* Колонки онбординга объявлены с нулевым минимумом — те же грабли, что у `.field`: у поля ввода
-   есть собственная ширина (`size=20`, при ×2.7 — 440 pt), неявная колонка `auto` растягивалась
-   под неё, и вся карточка при ×2.7 на 320 pt была шире экрана: `width: min(680px, 100%)`
-   считался от колонки, а не от экрана. Найдено измерением сообщений на онбординге. */
-.onboarding-shell { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; }
-/* §1 «ничего не обрезается» — и на первом экране тоже. Правила переноса маршрута (`.route-screen`)
-   на онбординг не распространяются, и при ×2.7 на 320 pt «демонстрационный» в текстовой кнопке
-   был шире экрана на полсотни пунктов: страница получала горизонтальную прокрутку — у новичка,
-   на первом шаге, в режиме, который включают ради читаемости. Найдено измерением сообщений. */
-.onboarding-shell button, .onboarding-shell label, .onboarding-shell strong, .onboarding-shell span, .onboarding-shell legend { overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-card { width: min(680px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.onboarding-heading { display: flex; gap: 12px; align-items: center; }
-.onboarding-heading .brand-mark { flex: none; color: var(--ink); background: var(--surface-sunken); }
-.onboarding-heading h1, .onboarding-heading p { margin: 0; }
-/* Текстовый блок шапки шага — flex-элемент, и без нулевого минимума он не ужимается ниже
-   самого длинного слова: «Повседневные» при ×2.7 на 320 pt — 300 pt, и заголовок выносил всю
-   карточку за экран. Слово переносится по слогам (§1), а не выталкивает край. */
-.onboarding-heading > div { min-width: 0; }
-.onboarding-heading h1 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-kicker { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.step-progress { margin: 20px 0; }
-.step-progress ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 0; margin: 0; list-style: none; }
-.step-progress-step { display: grid; width: 100%; min-height: 48px; gap: 8px; align-content: center; padding: 8px 4px; background: transparent; border: 0; border-radius: var(--radius-control); }
-.step-progress-step:disabled { cursor: default; }
-.step-progress-bar { display: block; height: 8px; background: var(--surface-sunken); }
-.step-progress-step.done .step-progress-bar { background: var(--ink-muted); }
-.step-progress-step.current .step-progress-bar { background: var(--ink); }
-.step-progress-number { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
-.step-progress-step.done .step-progress-number { color: var(--ink); }
-.step-progress-step.current .step-progress-number { color: var(--ink); }
-.onboarding-form { display: grid; gap: 16px; }
-.onboarding-fields { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; padding: 0; margin: 0; border: 0; }
-.onboarding-help { margin: 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
-.composition-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 12px; margin: 0; background: var(--canvas); border: 1px solid var(--border); }
-.composition-options legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.composition-options label { display: flex; min-height: 48px; gap: 8px; align-items: center; justify-content: center; padding: 13px 8px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
-.composition-options label:has(input:checked) { color: var(--ink); background: var(--surface-sunken); border-color: var(--ink); }
-.composition-options .field-error { grid-column: 1 / -1; }
-.onboarding-form .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .field-error { color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.onboarding-form input[aria-invalid="true"] { border-color: var(--red-ink); }
-.onboarding-form input[readonly] { color: var(--ink-muted); background: var(--surface-sunken); }
-.onboarding-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 4px; }
-.onboarding-actions button { min-width: 116px; }
 .primary-button:disabled, .secondary-button:disabled, .text-button:disabled, .quiet-button:disabled { cursor: wait; opacity: .62; }
 /* Кнопка, которая во время записи молчит, а не выключается (`aria-disabled`): выключенная теряет
    фокус, и он падал на <body> (ревью 2c, MEDIUM-3). Выглядит так же, как выключенная. */
 .primary-button[aria-disabled="true"], .secondary-button[aria-disabled="true"], .quiet-button[aria-disabled="true"] { cursor: default; opacity: .62; }
 .primary-button[aria-disabled="true"][aria-busy="true"] { cursor: wait; }
-.demo-option { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.demo-option p strong { color: var(--ink); }
 .text-button { min-height: 48px; padding: 13px 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
-.category-edit-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.category-edit-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); }
-.category-edit-row legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.remove-category { width: fit-content; min-height: 48px; color: var(--red-ink); font-size: var(--size-caption); }
-.onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; }
-#categories:focus-visible, #composition:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 .planning-screen { min-width: 0; }
 .planning-screen > .screen-heading { margin-bottom: 4px; }
@@ -1379,9 +1327,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
   .app-shell > .update-toast, .app-shell > .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
-  .onboarding-card { padding: 32px; }
-  .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
-  .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
   .import-action { bottom: 0; padding-bottom: 16px; }
   /* Справочники: на широком экране «Выше / Ниже» встают в строку справа от записи. */
   .manage-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -1391,7 +1336,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .screen-heading { align-items: flex-start; flex-direction: column; }
   .plan-row { grid-template-columns: 40px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
-  .composition-options { grid-template-columns: 1fr; }
   .planning-screen .section-card > form > fieldset { grid-template-columns: 1fr; padding: 12px; }
   .planning-screen .section-card > form > fieldset > .field-error, .planning-screen #schedule-months { grid-column: 1; }
   .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1525,3 +1469,138 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* ═════════════ R2: первый запуск, вопросы, пустые состояния ═════════════
+   Дизайн v5, DIRECTION §e и §f. Блок пользуется токенами `:root` и не объявляет своих: значения
+   токенов меняет волна R1. Размер `display` (22/28) выведен из ступени заголовка — пока своей
+   ступени у шкалы нет, — поэтому вместе со шкалой растёт и при системном крупном шрифте. */
+
+/* Слайды первого запуска (01, 02, 02b): марка и «Пропустить», иллюстрация, точки, заголовок,
+   строка и одна главная кнопка. Колонка во всю высоту экрана; при крупном шрифте слайд
+   прокручивается, а кнопка стоит в потоке, а не прилипает поверх текста. */
+.intro { display: flex; flex-direction: column; width: min(480px, 100%); min-height: calc(100dvh - 40px); margin: 0 auto; }
+.intro-top { display: flex; min-height: 56px; flex-wrap: wrap; gap: 0 8px; align-items: center; justify-content: space-between; }
+.intro-brand { display: inline-flex; min-width: 0; gap: 8px; align-items: center; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.intro-brand-mark { flex: none; }
+.intro-skip { min-height: 48px; padding: 0 12px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; background: transparent; border: 0; }
+button.intro-skip { border-radius: var(--radius-control); }
+.intro-slide { display: flex; flex: 1; flex-direction: column; min-height: 0; animation: route-fade var(--motion-screen) var(--ease-enter); }
+.intro-art { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: 8px 0; }
+.intro-art svg { width: 100%; max-width: 330px; height: auto; max-height: 42dvh; }
+.intro-dots { display: flex; gap: 8px; justify-content: center; margin: 8px 0 28px; }
+.intro-dots span { display: block; }
+.intro-dots span::before { content: ""; display: block; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--line); }
+.intro-dots span.current::before { width: 24px; background: var(--ink); }
+.intro-slide h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; text-align: center; text-wrap: balance; }
+.intro-text { margin: 10px 0 0; color: var(--ink-muted); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: center; text-wrap: pretty; }
+.intro-actions { display: grid; gap: 8px; margin: 28px 0 8px; }
+.intro-error { margin: 8px 0 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); }
+@media (max-width: 18em) {
+  .intro-skip { margin-left: auto; font-size: var(--size-body); line-height: var(--lh-body); }
+}
+.hyphenated { hyphens: manual; overflow-wrap: normal; }
+.hyphenated .hy-soft { display: none; }
+@media (max-width: 18em) {
+  .hyphenated .hy-plain { display: none; }
+  .hyphenated .hy-soft { display: inline; }
+}
+
+/* Листы-вопросы поверх «Обзора» (03, 03b, 04): лист 24 снизу, вопрос крупно, одна строка
+   пояснения, крестик «Спросить позже». Лист прокручивается целиком, а кнопки ответа прилипают к
+   его низу — у длинного листа чипов «Готово» видно всегда. Ниже 18em варианты встают в колонку. */
+.sheet-backdrop.q-backdrop { padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+.sheet-backdrop.q-backdrop[hidden] { display: none; }
+.sheet.q-sheet { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(94dvh, 820px); padding: 0 16px 16px; overflow-y: auto; overscroll-behavior: contain; color: var(--ink); text-align: left; background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
+.q-grab { display: block; flex: none; margin: 8px auto 0; }
+.q-grab::before { content: ""; display: block; width: 36px; height: 5px; border-radius: var(--radius-pill); background: var(--border); }
+.q-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 12px 0 4px 4px; }
+.q-head h2 { min-width: 0; margin: 0; padding-top: 10px; font-size: var(--size-display, calc(var(--size-title) * 22 / 17)); line-height: var(--lh-display, calc(var(--lh-title) * 28 / 23)); }
+.q-head .q-later { display: grid; flex: none; width: 48px; min-height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; }
+.q-sub { margin: 0 4px 12px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
+.q-body { min-width: 0; }
+.q-group { margin: 4px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.q-chips { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
+.q-chip .chip-face { gap: 6px; padding: 7px 14px 7px 10px; font-size: var(--size-body); line-height: var(--lh-body); }
+.q-chip .chip-face .icon { flex: none; color: var(--ink-muted); }
+.q-chip[aria-pressed="true"] .chip-face { color: var(--ink); background: var(--surface-sunken); border-color: transparent; }
+.q-chip[aria-pressed="true"] .chip-face.tone-mint { background: var(--tone-mint); }
+.q-chip[aria-pressed="true"] .chip-face.tone-lilac { background: var(--tone-lilac); }
+.q-chip[aria-pressed="true"] .chip-face.tone-peach { background: var(--tone-peach); }
+.q-chip[aria-pressed="true"] .chip-face.tone-amber { background: var(--tone-amber); }
+.q-chip[aria-pressed="true"] .chip-face.tone-sage { background: var(--tone-sage); }
+.q-chip[aria-pressed="true"] .chip-face.tone-coral { background: var(--tone-coral); }
+.q-chip[aria-pressed="true"] .tone-mint .icon { color: var(--tone-mint-ink); }
+.q-chip[aria-pressed="true"] .tone-lilac .icon { color: var(--tone-lilac-ink); }
+.q-chip[aria-pressed="true"] .tone-peach .icon { color: var(--tone-peach-ink); }
+.q-chip[aria-pressed="true"] .tone-amber .icon { color: var(--tone-amber-ink); }
+.q-chip[aria-pressed="true"] .tone-sage .icon { color: var(--tone-sage-ink); }
+.q-chip[aria-pressed="true"] .tone-coral .icon { color: var(--tone-coral-ink); }
+.q-chip[aria-pressed="true"] .tone-neutral .icon { color: var(--ink); }
+.q-chip-own .chip-face { background: transparent; border-style: dashed; }
+.q-foot { position: sticky; bottom: -16px; margin: 8px -16px -16px; padding: 12px 16px 16px; background: var(--surface); }
+.q-tall .q-foot { box-shadow: 0 -1px 0 var(--border); }
+.q-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.q-error { margin: 8px 4px 0; }
+.q-minis { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 4px 4px 8px; }
+.q-minis-label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.q-minis ul { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 0; list-style: none; }
+.q-mini { display: inline-flex; min-width: 0; gap: 8px; align-items: center; font-weight: 700; }
+.icon-plate.q-mini-plate { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--on-tile-account); background: var(--tile-account); }
+.q-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0; }
+.q-options button { display: flex; min-width: 0; min-height: 60px; gap: 8px; align-items: center; justify-content: center; padding: 6px 10px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); text-align: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.q-options button[aria-checked="true"] { font-weight: 700; border: 2px solid var(--accent); }
+.q-options button[aria-checked="true"] .icon { flex: none; color: var(--accent); }
+.q-days { margin-top: 12px; }
+.q-day-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 8px; margin: 8px 0; padding: 0; list-style: none; }
+.q-day-grid button { width: 100%; min-height: 48px; padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.q-day-grid button[aria-pressed="true"] { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.q-day-grid button[aria-disabled="true"] { opacity: .5; }
+.q-days-status { margin: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+@media (max-width: 18em) {
+  .q-actions, .q-options { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Подсказка на первую трату (05): кольцо акцента на квадрате плитки и пузырь чернилами под ней.
+   Координаты — переменными, их ставит `CoachMark` по плитке; до первого замера слой невидим. */
+.coach-layer { position: absolute; top: 0; left: 0; z-index: 5; width: 0; height: 0; }
+.coach-layer:not([data-placed]) { visibility: hidden; }
+.coach-ring { position: absolute; top: var(--coach-ring-top, 0); left: var(--coach-ring-left, 0); width: var(--coach-ring-width, 0); height: var(--coach-ring-height, 0); pointer-events: none; }
+.coach-ring::before { content: ""; position: absolute; inset: 0; border: 3px solid var(--accent); border-radius: var(--radius-card); }
+.coach-bubble.card { position: absolute; top: var(--coach-bubble-top, 0); left: var(--coach-bubble-left, 16px); width: min(17.5em, calc(100vw - 32px)); padding: 14px 8px 4px 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); }
+.coach-arrow { position: absolute; top: -8px; left: var(--coach-arrow-left, 24px); width: 18px; height: 18px; background: var(--ink); transform: rotate(45deg); }
+.coach-text { position: relative; margin: 0; padding-right: 8px; color: var(--on-ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
+.coach-bubble .coach-ok { position: relative; margin-left: -8px; padding: 0 8px; color: var(--on-ink); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; }
+.coach-bubble .coach-ok:focus-visible { outline: 3px solid var(--on-ink); outline-offset: 0; }
+
+/* Карточки-подсказки в конце «Обзора» (06b): не больше двух, ряд листается вбок, вторая
+   выглядывает из-за края. При крупном шрифте карточки встают друг под другом. Карточка —
+   опора для текста «для слуха» (`.sr-only` в `Hyphenated`): без неё он выпадал из прокрутки ряда
+   и раздвигал страницу вбок. */
+.hint-cards { min-width: 0; max-width: 100%; margin-top: 16px; }
+.hint-cards ul { display: grid; min-width: 0; max-width: 100%; grid-auto-columns: calc(100% - 40px); grid-auto-flow: column; gap: 8px; margin: 0; padding: 0 0 4px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; }
+.hint-cards ul:has(> li:only-child) { grid-auto-columns: 100%; }
+.hint.card { position: relative; display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: start; padding: 14px 4px 12px 16px; background: var(--surface); box-shadow: var(--shadow-card); scroll-snap-align: start; }
+.hint h3 { display: flex; gap: 8px; align-items: center; margin: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.hint h3 .icon { flex: none; color: var(--ink-muted); }
+.hint p { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.hint .hint-action { margin-top: 10px; }
+.hint .hint-close { width: 48px; padding: 0; margin-top: -10px; color: var(--ink-muted); }
+@media (max-width: 18em) {
+  .hint-cards ul { grid-auto-columns: auto; grid-auto-flow: row; overflow-x: visible; }
+}
+
+/* Пустое состояние (14, 15): иллюстрация или глиф 64, название состояния крупно, одна строка,
+   одна основная кнопка и быстрые шаблоны — у меток и у заглушек «Долгов», «Целей», «Регулярных». */
+.empty-state { display: flex; min-width: 0; flex-direction: column; align-items: center; padding: 24px 12px 0; text-align: center; }
+.empty-art svg { width: 200px; max-width: 100%; height: auto; }
+.icon-plate.empty-glyph { display: grid; width: 64px; height: 64px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
+.empty-state h2 { margin: 20px 0 0; font-size: var(--size-display, calc(var(--size-title) * 22 / 17)); line-height: var(--lh-display, calc(var(--lh-title) * 28 / 23)); }
+.empty-text { max-width: 30em; margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; text-wrap: pretty; }
+.empty-state .empty-action { max-width: 480px; margin-top: 24px; }
+.empty-quick { width: 100%; margin-top: 24px; }
+.empty-quick p { margin: 0 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.empty-quick .chip-row { justify-content: center; margin: 0; padding: 0; list-style: none; }
+.empty-quick .chip-face { gap: 6px; font-size: var(--size-body); line-height: var(--lh-body); }
+.empty-note { margin: 20px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.placeholder-list { margin: 16px 0 0; padding: 0; font-weight: 700; list-style: none; }
+.placeholder-list li + li { margin-top: 4px; }

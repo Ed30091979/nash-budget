@@ -96,7 +96,6 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(declaredTargets.filter(({ px }) => px < minimum)).toEqual([]);
 
     expect(styles).toContain(".segmented label:has(input:focus-visible)");
-    expect(styles).toContain(".composition-options label:has(input:focus-visible)");
     expect(styles).toContain(".month-checkboxes label:has(input:focus-visible)");
     expect(styles).toContain(".file-button:focus-within");
     expect(styles).toContain("outline: 3px solid var(--focus)");
@@ -160,11 +159,11 @@ describe("phase 8 accessibility and responsive contract", () => {
     // Заголовок маршрута: фокус ставится кодом ради объявления смены экрана — кольца там нет.
     expect(outlineOf(rules, 'h1[tabindex="-1"]:focus')).toEqual(["outline: none"]);
     expect(outlineOf(rules, 'h1[tabindex="-1"]:focus-visible')).toEqual(["outline: none"]);
-    // Ни одно правило во всей таблице не возвращает заголовку онбординга рамку.
+    // Ни одно правило во всей таблице не возвращает заголовку слайдов первого запуска рамку.
     expect(
       rules.filter(
         (rule) =>
-          rule.selectors.some((selector) => selector.includes("#onboarding-title")) &&
+          rule.selectors.some((selector) => /intro.*h1|#intro-title/u.test(selector)) &&
           rule.declarations.some((declaration) => declaration.startsWith("outline:")),
       ),
     ).toEqual([]);
@@ -175,9 +174,6 @@ describe("phase 8 accessibility and responsive contract", () => {
       "input:focus-visible",
       "select:focus-visible",
       "a:focus-visible",
-      "#categories:focus-visible",
-      "#composition:focus-visible",
-      ".composition-options label:has(input:focus-visible)",
     ]) {
       expect(outlineOf(rules, selector)).toContain("outline: 3px solid var(--focus)");
     }
@@ -190,14 +186,13 @@ describe("phase 8 accessibility and responsive contract", () => {
     ).toEqual(['h1[tabindex="-1"]:focus', 'h1[tabindex="-1"]:focus-visible']);
   });
 
-  it("держит шаги онбординга нажимаемыми целями с клавиатурным фокусом", () => {
+  it("держит цели слайдов первого запуска нажимаемыми кнопками с клавиатурным фокусом", () => {
     const rules = cssRules(readFileSync(new URL("./styles.css", import.meta.url), "utf8"));
-    const step = rules.find((rule) => rule.selectors.includes(".step-progress-step"));
+    const skip = rules.find((rule) => rule.selectors.includes(".intro-skip"));
 
-    // Кнопка, а не span: кольцо ей достаётся общим правилом button:focus-visible.
-    expect(step?.declarations).toContain("min-height: 48px");
-    expect(outlineOf(rules, ".step-progress-step")).toEqual([]);
-    expect(rules.find((rule) => rule.selectors.includes(".step-progress ol"))?.declarations)
-      .toContain("gap: 8px");
+    // «Пропустить» — кнопка, а не ссылка-подпись: цель 48 и кольцо общим правилом button:focus-visible.
+    expect(skip?.declarations).toContain("min-height: 48px");
+    expect(outlineOf(rules, ".intro-skip")).toEqual([]);
+    expect(rules.find((rule) => rule.selectors.includes(".intro-actions"))?.declarations).toContain("gap: 8px");
   });
 });

@@ -1,291 +1,142 @@
-import { calculateAnnualPlan } from "@family-budget/domain";
-import { categoryPickerView } from "../features/operations/category-picker";
-import { describe, expect, it } from "vitest";
 import {
-  advanceOnboardingStep,
+  baseCurrencyOf,
+  calculateAnnualPlan,
+  calculateBudget,
+  canBeBaseCurrency,
+  categoryNameKey,
+  DEFAULT_CATEGORIES,
+  type BudgetState,
+} from "@family-budget/domain";
+import { describe, expect, it } from "vitest";
+import { prepareBudgetState } from "../backup";
+import { categoryPickerView } from "../features/operations/category-picker";
+import {
+  ARCHIVED_STARTERS,
   buildOnboardingBudgetState,
-  canReturnToOnboardingStep,
   createAsyncOperationLock,
-  createInitialOnboardingDraft,
-  createInitialOnboardingNavigation,
-  MAX_ONBOARDING_PERIOD_START,
-  moveOnboardingStep,
-  normalizeOnboardingLabel,
+  currencyForLocale,
   onboardingFailureMessage,
-  type OnboardingDraft,
-  type OnboardingStep,
-  onboardingStepButtonLabel,
-  onboardingStepState,
-  ONBOARDING_STEP_TITLES,
-  ONBOARDING_STEPS,
-  returnToOnboardingStep,
-  validateCompleteOnboarding,
-  validateOnboardingStep,
+  PRESET_ACCOUNTS,
+  PRESET_EXPENSES,
+  PRESET_INCOME,
 } from "./model";
 
-function validDraft(): OnboardingDraft {
-  return {
-    ...createInitialOnboardingDraft("2026-07-01"),
-    householdLabel: "Наш план",
-    accountLabel: "Основной счёт",
-    monthlyIncome: "180 000",
-    mandatoryName: "Жильё и счета",
-    mandatoryAmount: "53 000",
-    categories: [
-      { key: "1", name: "Продукты", limit: "30 000" },
-      { key: "2", name: "Транспорт", limit: "15 000" },
-      { key: "3", name: "Дом", limit: "8 000" },
-    ],
+function idFactory(): () => string {
+  let next = 0;
+  return () => {
+    next += 1;
+    return `00000000-0000-4000-8000-${String(next).padStart(12, "0")}`;
   };
 }
 
-function idFactory(): () => string {
-  let counter = 1;
-  return () => `00000000-0000-4000-8000-${String(counter++).padStart(12, "0")}`;
+function preset(today = "2026-10-19", currency?: Parameters<typeof buildOnboardingBudgetState>[0]["currency"]): BudgetState {
+  return buildOnboardingBudgetState({ today, makeId: idFactory(), ...(currency === undefined ? {} : { currency }) });
 }
 
-describe("onboarding model", () => {
-  it("создаёт пустой план с точными значениями acceptance-сценария", () => {
-    const state = buildOnboardingBudgetState(validDraft(), idFactory());
-    const plan = calculateAnnualPlan(state, "2026-07", 12);
+const active = (state: BudgetState, type: "expense" | "income") =>
+  state.categories.filter((category) => category.type === type && category.active).map((category) => category.name);
 
-    expect({
-      startDate: state.budgets[0]?.startDate,
-      endDate: state.budgets[0]?.endDate,
-      incomeMinor: state.budgets[0]?.plannedIncomeMinor,
-      mandatoryMinor: state.scheduledExpenses[0]?.amountMinor,
-      everydayMinor: state.budgets[0]?.lines.reduce((sum, line) => sum + line.plannedMinor, 0),
-      transactions: state.transactions.length,
-      goals: state.goals.length,
-      annualCommitments: state.annualCommitments.length,
-      scheduledExpenses: state.scheduledExpenses.length,
-      spendableMinor: plan.currentMonth.spendableAfterPlanMinor,
-    }).toEqual({
-      startDate: "2026-07-01",
-      endDate: "2026-07-31",
-      incomeMinor: 18_000_000,
-      mandatoryMinor: 5_300_000,
-      everydayMinor: 5_300_000,
-      transactions: 0,
-      goals: 0,
-      annualCommitments: 0,
-      scheduledExpenses: 1,
-      spendableMinor: 7_400_000,
-    });
-    expect(state.accounts).toHaveLength(1);
-    expect(state.accounts[0]?.name).toBe("Для семьи · Наш план · Основной счёт");
-    // Полный стартовый набор домена — двадцать три категории — плюс две, названные вручную
-    // («Жильё и счета» и «Дом»); «Продукты» и «Транспорт» из формы попали в готовые, а не в дубли.
-    expect(state.categories).toHaveLength(25);
-    expect(state.categories.filter((item) => item.type === "expense")).toHaveLength(17);
-    expect(state.categories.filter((item) => item.type === "income")).toHaveLength(8);
-    expect(state.categories.map((item) => item.name)).toEqual(expect.arrayContaining([
-      "Кредиты и рассрочки", "Здоровье и аптека", "Зарплата", "Пенсия",
-    ]));
-    expect(state.categories.filter((item) => item.name === "Продукты")).toHaveLength(1);
-    // Лимитов по-прежнему ровно столько, сколько спросили: набор категорий — не набор строк.
-    expect(state.budgets[0]?.lines).toHaveLength(3);
-    expect(new Set([
-      state.activeBudgetId,
-      ...state.accounts.map(({ id }) => id),
-      ...state.categories.map(({ id }) => id),
-      ...state.budgets.flatMap(({ id, lines }) => [id, ...lines.map((line) => line.id)]),
-      ...state.scheduledExpenses.map(({ id }) => id),
-    ]).size).toBe(31);
-  });
-
-  it("готовый план сразу даёт выбор категорий с заголовками групп", () => {
-    const state = buildOnboardingBudgetState(validDraft(), idFactory());
-
-    const expense = categoryPickerView(state, "expense");
-    expect(expense.groups.map((group) => group.title)).toEqual([
-      "Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее",
+describe("набор первого запуска (DIRECTION §e, п. 2)", () => {
+  it("счета «Карта» и «Наличные», доход «Зарплата», двенадцать категорий — и пустой месяц плана", () => {
+    const state = preset();
+    expect(state.accounts.map((account) => [account.name, account.type, account.currency, account.openingBalanceMinor, account.active]))
+      .toEqual([["Карта", "current", "RUB", 0, true], ["Наличные", "cash", "RUB", 0, true]]);
+    expect(PRESET_ACCOUNTS.map((account) => account.name)).toEqual(["Карта", "Наличные"]);
+    expect(active(state, "income")).toEqual([PRESET_INCOME]);
+    expect(active(state, "expense").sort()).toEqual([...PRESET_EXPENSES].sort());
+    expect(PRESET_EXPENSES).toEqual([
+      "Продукты", "Кафе и доставка", "Транспорт", "Дом и хозяйство", "Жильё", "ЖКХ", "Связь и подписки",
+      "Здоровье и аптека", "Одежда и обувь", "Развлечения и хобби", "Подарки и праздники", "Прочее",
     ]);
-    expect(expense.status).toBe("Найдено 17 категорий");
-    expect(categoryPickerView(state, "income").groups.map((group) => group.title)).toEqual(["Доходы"]);
-    // Названное вручную обязательное лежит в своей группе, а не в «Прочем».
-    expect(expense.groups[0]?.options.map((option) => option.name)).toContain("Жильё и счета");
+    // Период — как у прежнего онбординга: текущий месяц, открыт, порог «почти» 80 %.
+    expect(state.budgets).toEqual([{
+      id: state.activeBudgetId, startDate: "2026-10-01", endDate: "2026-10-31", status: "open",
+      plannedIncomeMinor: 0, warningThreshold: 0.8, lines: [],
+    }]);
+    expect([state.transactions, state.goals, state.annualCommitments, state.scheduledExpenses]).toEqual([[], [], [], []]);
+    // Рубль — база по умолчанию: записи хозяйства набор не заводит.
+    expect(state.household).toBeUndefined();
+    expect(baseCurrencyOf(state)).toBe("RUB");
   });
 
-  it("принимает русский десятичный формат и високосный февраль", () => {
-    const draft = {
-      ...validDraft(),
-      periodStart: "2028-02-01",
-      monthlyIncome: "180 000,50",
-      mandatoryAmount: "53 000,25",
-    };
-    const state = buildOnboardingBudgetState(draft, idFactory());
-    expect(state.budgets[0]).toEqual(expect.objectContaining({
-      startDate: "2028-02-01",
-      endDate: "2028-02-29",
-      plannedIncomeMinor: 18_000_050,
-    }));
-    expect(state.scheduledExpenses[0]?.amountMinor).toBe(5_300_025);
+  it("остальные стартовые категории лежат в архиве до выбора — те же строки, без тёзок", () => {
+    const state = preset();
+    expect(state.categories.map((category) => categoryNameKey(category.name))).toEqual(DEFAULT_CATEGORIES.map((template) => categoryNameKey(template.name)));
+    expect(ARCHIVED_STARTERS).toEqual(["Кредиты и рассрочки", "Дети", "Красота и уход"]);
+    const archived = state.categories.filter((category) => !category.active);
+    expect(archived.filter((category) => category.type === "expense").map((category) => category.name)).toEqual(ARCHIVED_STARTERS);
+    expect(archived.filter((category) => category.type === "income")).toHaveLength(7);
   });
 
-  it("отклоняет не первое число, повторы, мало категорий и небезопасные суммы", () => {
-    const invalid = {
-      ...validDraft(),
-      periodStart: "2026-07-17",
-      monthlyIncome: "90071992547410",
-      categories: [
-        { key: "1", name: "Продукты", limit: "30 000" },
-        { key: "2", name: " продукты ", limit: "15 000" },
-      ],
-    };
-    const validation = validateCompleteOnboarding(invalid);
-    expect(validation.valid).toBe(false);
-    expect(validation.errors).toEqual(expect.objectContaining({
-      periodStart: expect.any(String),
-      monthlyIncome: expect.any(String),
-      categories: expect.any(String),
-      "category-1-name": expect.any(String),
-    }));
+  it("план, расход и выбор категорий работают на наборе как прежде: «лимитов нет», ничего не потрачено", () => {
+    const state = preset("2026-07-09");
+    const plan = calculateAnnualPlan(state, "2026-07", 12);
+    expect(plan.currentMonth.flexiblePlanMinor).toBe(0);
+    expect(plan.months).toHaveLength(12);
+    expect(calculateBudget(state)).toMatchObject({ incomeMinor: 0, expensesMinor: 0, capitalMinor: 0 });
+    const picker = categoryPickerView(state, "expense");
+    expect(picker.groups.map((group) => group.title)).toEqual(["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]);
+    expect(picker.status).toBe("Найдено 12 категорий");
+    // Тот же шлюз, что у восстановленной копии.
+    expect(prepareBudgetState(JSON.parse(JSON.stringify(state)) as unknown)).toEqual(state);
   });
 
-  it("сохраняет NFC, а ключи сравнения приводит к NFKC", () => {
-    const draft = {
-      ...validDraft(),
-      composition: "couple" as const,
-      householdLabel: "\u0418\u0306ога и бюджет",
-      categories: [
-        { key: "1", name: "\u0418\u0306ога", limit: "30 000" },
-        { key: "2", name: "Транспорт", limit: "15 000" },
-        { key: "3", name: "Дом", limit: "8 000" },
-      ],
-    };
-    const state = buildOnboardingBudgetState(draft, idFactory());
-    expect(normalizeOnboardingLabel("\u0418\u0306ога")).toBe("Йога");
-    expect(state.accounts[0]?.name).toContain("Для пары · Йога и бюджет");
-    expect(state.categories.map((item) => item.name)).toContain("Йога");
-
-    const duplicate = {
-      ...validDraft(),
-      categories: [
-        { key: "1", name: "\u0418\u0306ога", limit: "30 000" },
-        { key: "2", name: "йога", limit: "15 000" },
-        { key: "3", name: "Дом", limit: "8 000" },
-      ],
-    };
-    expect(validateOnboardingStep(duplicate, 4).errors["category-1-name"]).toMatch(/повтор/iu);
-
-    const compatibilityDuplicate = {
-      ...validDraft(),
-      categories: [
-        { key: "1", name: "ＡRENT", limit: "30 000" },
-        { key: "2", name: "arent", limit: "15 000" },
-        { key: "3", name: "Home", limit: "8 000" },
-      ],
-    };
-    expect(validateOnboardingStep(compatibilityDuplicate, 4).errors["category-1-name"]).toMatch(/повтор/iu);
-
-    const compatibleDisplay = buildOnboardingBudgetState({
-      ...validDraft(),
-      categories: [
-        { key: "1", name: "ＡRENT", limit: "30 000" },
-        { key: "2", name: "Транспорт", limit: "15 000" },
-        { key: "3", name: "Дом", limit: "8 000" },
-      ],
-    }, idFactory());
-    expect(compatibleDisplay.categories.map((item) => item.name)).toContain("ＡRENT");
+  it("каждый идентификатор уникален, а повтор UUID — отказ, а не тихий дубль", () => {
+    const state = preset();
+    const ids = [state.activeBudgetId, ...state.accounts.map(({ id }) => id), ...state.categories.map(({ id }) => id)];
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toHaveLength(1 + 2 + 23);
+    expect(() => buildOnboardingBudgetState({ today: "2026-10-19", makeId: () => "00000000-0000-4000-8000-000000000001" }))
+      .toThrow(/уникальн/u);
   });
 
-  it.each([
-    ["латиница + кириллица", "Aренда"],
-    ["греческий + латиница", "Αlpha"],
-    ["греческий + кириллица", "Αренда"],
-  ])("отклоняет смешанные алфавиты: %s", (_label, name) => {
-    const spoof = { ...validDraft(), householdLabel: name };
-    expect(validateOnboardingStep(spoof, 1).errors.householdLabel).toMatch(/смешивайте/iu);
+  it("валюта не рубль ставится доменом вместе со счетами, пока бюджет пуст", () => {
+    const state = preset("2026-10-19", "KZT");
+    expect(state.household).toEqual({ id: expect.any(String), baseCurrency: "KZT" });
+    expect(state.accounts.every((account) => account.currency === "KZT")).toBe(true);
+    expect(() => preset("2026-10-19", "JPY")).toThrow(/двумя знаками/u);
+  });
+});
+
+describe("валюта набора по языку устройства (§e; D-031)", () => {
+  it("ru → рубль, kk → тенге, be → белорусский рубль — по языку, а не по региону", () => {
+    expect(currencyForLocale("ru")).toBe("RUB");
+    expect(currencyForLocale("ru-RU")).toBe("RUB");
+    expect(currencyForLocale("ru-KZ")).toBe("RUB");
+    expect(currencyForLocale("ru-UA")).toBe("RUB");
+    expect(currencyForLocale("kk")).toBe("KZT");
+    expect(currencyForLocale("kk-KZ")).toBe("KZT");
+    expect(currencyForLocale("be-BY")).toBe("BYN");
   });
 
-  it("разрешает чистую латиницу, кириллицу и греческий как разные подписи", () => {
-    const separateScripts = {
-      ...validDraft(),
-      categories: [
-        { key: "1", name: "Аренда", limit: "30 000" },
-        { key: "2", name: "Rent", limit: "15 000" },
-        { key: "3", name: "Σπίτι", limit: "8 000" },
-      ],
-    };
-    expect(validateOnboardingStep(separateScripts, 4).valid).toBe(true);
+  it("иначе — по региону, а у тега без региона — по вероятному региону языка", () => {
+    expect(currencyForLocale("en-US")).toBe("USD");
+    expect(currencyForLocale("en-GB")).toBe("GBP");
+    expect(currencyForLocale("de-DE")).toBe("EUR");
+    expect(currencyForLocale("de")).toBe("EUR");
+    expect(currencyForLocale("uk")).toBe("UAH");
+    expect(currencyForLocale("hy-AM")).toBe("AMD");
+    expect(currencyForLocale("uz-Latn-UZ")).toBe("UZS");
   });
 
-  it("возвращает только фиксированные user-safe сообщения для async-ошибок", () => {
+  it("базовой бывает только валюта с двумя знаками: иена, вона, донг и крона Исландии — рубль", () => {
+    for (const tag of ["ja-JP", "ko-KR", "vi-VN", "is-IS"]) expect(currencyForLocale(tag), tag).toBe("RUB");
+    for (const tag of ["ru", "kk", "be", "en-US", "de-DE", "uk-UA", "fr-FR", "pl-PL", "tr-TR", "zh-CN"]) {
+      expect(canBeBaseCurrency(currencyForLocale(tag)), tag).toBe(true);
+    }
+  });
+
+  it("запасной вариант — рубль: нет языка, неизвестный регион, испорченный тег", () => {
+    for (const tag of [null, undefined, "", "   ", "xx-ZZ", "es-AR", "not a tag!", "--"]) {
+      expect(currencyForLocale(tag), String(tag)).toBe("RUB");
+    }
+  });
+});
+
+describe("служебное онбординга", () => {
+  it("возвращает только фиксированные слова для неудач — без текста исключения", () => {
     expect(onboardingFailureMessage("save")).toBe("Не удалось сохранить бюджет.");
-    expect(onboardingFailureMessage("demo")).toBe("Не удалось загрузить демонстрационные данные.");
-  });
-
-  it.each([
-    ["ALM U+061C", "\u061c"],
-    ["soft hyphen U+00AD", "\u00ad"],
-    ["CGJ U+034F", "\u034f"],
-    ["MVS U+180E", "\u180e"],
-    ["RLO U+202E", "\u202e"],
-    ["LRI U+2066", "\u2066"],
-    ["zero-width U+200B", "\u200b"],
-    ["LRM U+200E", "\u200e"],
-    ["word joiner U+2060", "\u2060"],
-    ["BOM U+FEFF", "\ufeff"],
-  ])("отклоняет %s", (_label, hidden) => {
-      const validation = validateOnboardingStep({ ...validDraft(), householdLabel: `План${hidden}семьи` }, 1);
-      expect(validation.errors.householdLabel).toMatch(/скрыт/iu);
-  });
-
-  it("отклоняет несуществующий календарный год 0000", () => {
-    const validation = validateOnboardingStep({ ...validDraft(), periodStart: "0000-01-01" }, 2);
-    expect(validation.errors.periodStart).toMatch(/календар/iu);
-  });
-
-  it("ограничивает старт 9997-12-01, чтобы 24-месячный горизонт оставался в четырёхзначном году", () => {
-    expect(MAX_ONBOARDING_PERIOD_START).toBe("9997-12-01");
-    const maximumDraft = { ...validDraft(), periodStart: MAX_ONBOARDING_PERIOD_START };
-    expect(validateOnboardingStep(maximumDraft, 2).valid).toBe(true);
-    const state = buildOnboardingBudgetState(maximumDraft, idFactory());
-    expect(state.budgets[0]?.endDate).toBe("9997-12-31");
-    expect(calculateAnnualPlan(state, "9997-12", 24).months.at(-1)?.month).toBe("9999-11");
-
-    const above = validateOnboardingStep({ ...validDraft(), periodStart: "9998-01-01" }, 2);
-    expect(above.errors.periodStart).toContain(MAX_ONBOARDING_PERIOD_START);
-  });
-
-  it("получает точные minor units из десятичной строки у границы safe integer", () => {
-    const state = buildOnboardingBudgetState({
-      ...validDraft(),
-      monthlyIncome: "90 071 992 547 409,90",
-      mandatoryAmount: "0,01",
-      categories: [
-        { key: "1", name: "Продукты", limit: "0,01" },
-        { key: "2", name: "Транспорт", limit: "0,01" },
-        { key: "3", name: "Дом", limit: "0,01" },
-      ],
-    }, idFactory());
-    expect(state.budgets[0]?.plannedIncomeMinor).toBe(9_007_199_254_740_990);
-    expect(state.scheduledExpenses[0]?.amountMinor).toBe(1);
-    expect(state.budgets[0]?.lines.map(({ plannedMinor }) => plannedMinor)).toEqual([1, 1, 1]);
-    expect(validateOnboardingStep({ ...validDraft(), monthlyIncome: "90071992547409,92" }, 3).errors.monthlyIncome).toMatch(/сумм/iu);
-  });
-
-  it("отклоняет подмену composition через ключ прототипа", () => {
-    const draft = { ...validDraft(), composition: "__proto__" as OnboardingDraft["composition"] };
-    expect(validateOnboardingStep(draft, 1).errors.composition).toMatch(/выберите/iu);
-    expect(() => buildOnboardingBudgetState(draft, idFactory())).toThrow(/заполните/iu);
-  });
-
-  it("проходит 4 шага вперёд/назад, не меняя черновик", () => {
-    const draft = validDraft();
-    const before = JSON.stringify(draft);
-    let step: OnboardingStep = 1;
-    step = moveOnboardingStep(step, "forward");
-    expect(step).toBe(2);
-    step = moveOnboardingStep(step, "forward");
-    expect(step).toBe(3);
-    step = moveOnboardingStep(step, "back");
-    expect(step).toBe(2);
-    step = moveOnboardingStep(step, "forward");
-    step = moveOnboardingStep(step, "forward");
-    expect(step).toBe(4);
-    expect(JSON.stringify(draft)).toBe(before);
+    expect(onboardingFailureMessage("demo")).toBe("Не удалось загрузить пример.");
   });
 
   it("синхронно блокирует вторую async-операцию до завершения первой", async () => {
@@ -304,80 +155,5 @@ describe("onboarding model", () => {
     expect(lock.locked).toBe(false);
     expect(await lock.run(async () => { calls += 1; })).toBe(true);
     expect(calls).toBe(2);
-  });
-
-  it("указывает первое ошибочное поле шага и не принимает пустые подписи", () => {
-    const validation = validateOnboardingStep({ ...validDraft(), householdLabel: " " }, 1);
-    expect(validation.valid).toBe(false);
-    expect(Object.keys(validation.errors)[0]).toBe("householdLabel");
-  });
-
-  it("не строит модель при повторе UUID", () => {
-    expect(() => buildOnboardingBudgetState(validDraft(), () => "00000000-0000-4000-8000-000000000001"))
-      .toThrow(/\u0443\u043d\u0438\u043a\u0430\u043b\u044c\u043d/iu);
-  });
-
-  it("возвращает на любой пройденный шаг, не трогая введённое", () => {
-    const draft = validDraft();
-    const atStepFour = { step: 4 as OnboardingStep, draft };
-
-    const first = returnToOnboardingStep(atStepFour, 1);
-    expect(first.step).toBe(1);
-    // Тот же объект, а не копия: возврат физически не может стереть введённое.
-    expect(first.draft).toBe(draft);
-    expect(returnToOnboardingStep(atStepFour, 2).draft).toBe(draft);
-    expect(returnToOnboardingStep(atStepFour, 3).step).toBe(3);
-  });
-
-  it("не пускает вперёд по индикатору — ни на шаг, ни через шаг", () => {
-    const draft = validDraft();
-    const atStepTwo = { step: 2 as OnboardingStep, draft };
-
-    expect(returnToOnboardingStep(atStepTwo, 3)).toBe(atStepTwo);
-    expect(returnToOnboardingStep(atStepTwo, 4)).toBe(atStepTwo);
-    expect(returnToOnboardingStep(atStepTwo, 2)).toBe(atStepTwo);
-    expect(canReturnToOnboardingStep(1, 2)).toBe(true);
-    for (const [target, current] of [[2, 2], [3, 2], [4, 2], [4, 1]] as const) {
-      expect(canReturnToOnboardingStep(target, current)).toBe(false);
-    }
-  });
-
-  it("ведёт вперёд только через шаг за шагом и упирается в четвёртый", () => {
-    const draft = validDraft();
-    const start = createInitialOnboardingNavigation(draft);
-    expect(start).toEqual({ step: 1, draft });
-
-    const second = advanceOnboardingStep(start);
-    expect(second.step).toBe(2);
-    expect(second.draft).toBe(draft);
-    const last = advanceOnboardingStep(advanceOnboardingStep(second));
-    expect(last.step).toBe(4);
-    expect(advanceOnboardingStep(last)).toBe(last);
-  });
-
-  it("размечает индикатор: пройден, текущий, ещё впереди", () => {
-    expect(ONBOARDING_STEPS).toEqual([1, 2, 3, 4]);
-    expect(ONBOARDING_STEPS.map((step) => onboardingStepState(step, 3)))
-      .toEqual(["done", "done", "current", "upcoming"]);
-    expect(onboardingStepButtonLabel(1, 3)).toBe("Шаг 1: План и счёт. Пройден, можно вернуться");
-    expect(onboardingStepButtonLabel(3, 3)).toBe("Шаг 3: Доход и платежи. Текущий шаг");
-    expect(onboardingStepButtonLabel(4, 3)).toBe("Шаг 4: Повседневные лимиты. Ещё не пройден");
-    // Видимая подпись кнопки — одна цифра; §9 требует, чтобы она осталась внутри произносимой.
-    for (const step of ONBOARDING_STEPS) {
-      expect(onboardingStepButtonLabel(step, 3)).toContain(`${step}`);
-    }
-  });
-
-  it("называет шаги тем, что на них происходит, а не командой", () => {
-    expect(ONBOARDING_STEP_TITLES).toEqual({
-      1: "План и счёт",
-      2: "Период и валюта",
-      3: "Доход и платежи",
-      4: "Повседневные лимиты",
-    });
-    for (const title of Object.values(ONBOARDING_STEP_TITLES)) {
-      expect(title).not.toMatch(/^(?:назовите|выберите|введите|укажите|заполните|давайте)\b/iu);
-      expect(title.endsWith("!")).toBe(false);
-    }
   });
 });

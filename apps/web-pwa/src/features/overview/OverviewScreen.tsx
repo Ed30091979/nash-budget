@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import type { BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
@@ -60,6 +60,12 @@ export interface OverviewScreenProps {
   readonly onReports: () => void;
   /** «Изменить» у ряда (§5.1: ничего только долгим нажатием): экран справочника этого ряда. */
   readonly onEdit: (row: OverviewRow) => void;
+  /**
+   * Места первого запуска (R2, DIRECTION §e): подсказка на первую трату — сразу за плитками
+   * расходов, карточки-подсказки — в конце экрана. Экран их не знает и ничего в них не решает.
+   */
+  readonly coach?: ReactNode;
+  readonly hints?: ReactNode;
 }
 
 /** Ряды плиток «Обзора»: «Доходы и счета» одной полосой и сетка «Расходы», у каждого — своё «Изменить». */
@@ -109,7 +115,7 @@ function useStuck(): [RefObject<HTMLSpanElement | null>, boolean] {
  * `role="status"` — пузырём над навигацией, пока что-то выбрано, и только для диктора, пока нет.
  */
 export function OverviewScreen({
-  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onReports, onEdit,
+  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onReports, onEdit, coach, hints,
 }: OverviewScreenProps) {
   const model = useMemo(() => overviewModel(budget, month, today), [budget, month, today]);
   const line = useMemo(() => reachLineModel(budget, flexiblePlanMinor), [budget, flexiblePlanMinor]);
@@ -235,7 +241,10 @@ export function OverviewScreen({
           })}
           <AddTile key="add" label="Своя категория расходов" caption="Своя" onClick={() => onAddCategory("expense")} />
         </TileGrid>
+        {coach}
       </section>
+
+      {hints}
 
       {/* Пока ничего не выбрано, подсказка — только для диктора: постоянного абзаца над плитками больше
           нет (первую трату подсказывает пузырь онбординга). Выбран счёт или доход — она пузырём над

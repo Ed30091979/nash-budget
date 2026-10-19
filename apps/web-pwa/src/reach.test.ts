@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   PERCENT_STEPS,
   REACH_MARK_PERCENT,
+  budgetPaydays,
   daysBetween,
   daysElapsed,
   localToday,
   nextPayday,
   percentStep,
+  periodClock,
   reach,
   reachWord,
   runsOutOn,
@@ -22,10 +24,35 @@ const TODAY = "2026-07-09";
 const PERIOD_START = "2026-07-01";
 const PERIOD_END = "2026-07-31";
 
-describe("дата следующей выплаты выводится, а не хранится", () => {
+describe("дата следующей выплаты: названная семьёй, а без неё — выведенная из доходов", () => {
+  it("дни, названные семьёй (household.paydays), идут первыми — истории доходов им не нужно", () => {
+    expect(nextPayday([], TODAY, PERIOD_END, [5, 20])).toEqual({ date: "2026-07-20", source: "income", daysAhead: 11 });
+    // Названные дни перекрывают выведенные: семья сказала «10-го и 25-го», а история помнит 20-е.
+    expect(nextPayday(["2026-05-20", "2026-06-20"], TODAY, PERIOD_END, [10, 25]).date).toBe("2026-07-10");
+    // Сегодняшняя выплата позади — насечка на следующей, в следующем месяце.
+    expect(nextPayday([], "2026-07-20", PERIOD_END, [5, 20])).toEqual({ date: "2026-08-05", source: "income", daysAhead: 16 });
+  });
+
+  it("число за концом короткого месяца — его последний день: «15-го и 30-го» в феврале, «31-го» в ноябре", () => {
+    expect(nextPayday([], "2026-02-16", "2026-02-28", [15, 30])).toEqual({ date: "2026-02-28", source: "income", daysAhead: 12 });
+    expect(nextPayday([], "2028-02-16", "2028-02-29", [15, 30]).date).toBe("2028-02-29");
+    expect(nextPayday([], "2026-11-10", "2026-11-30", [31]).date).toBe("2026-11-30");
+  });
+
+  it("без названных дней — прежний вывод: пустой список ничего не меняет", () => {
+    expect(nextPayday(["2026-05-20", "2026-06-20"], TODAY, PERIOD_END, [])).toEqual(nextPayday(["2026-05-20", "2026-06-20"], TODAY, PERIOD_END));
+    expect(nextPayday([], TODAY, PERIOD_END, [])).toEqual({ date: PERIOD_END, source: "month", daysAhead: 22 });
+    expect(budgetPaydays([], ["2026-05-20", "2026-06-20"], TODAY)).toEqual([20]);
+    expect(budgetPaydays([5, 20], ["2026-05-10", "2026-06-10"], TODAY)).toEqual([5, 20]);
+  });
+
+  it("часы периода несут названные дни до линейки", () => {
+    expect(periodClock({ startDate: PERIOD_START, endDate: PERIOD_END }, [], TODAY, [5, 20]).payday.date).toBe("2026-07-20");
+    expect(periodClock({ startDate: PERIOD_START, endDate: PERIOD_END }, [], TODAY).payday.source).toBe("month");
+  });
+
   it("берёт число месяца из дат уже записанных доходов", () => {
-    // Расписаний дохода в домене нет и не будет: это миграция хранилища, смена формата копии и
-    // новая операция журнала. Дата живёт в слое представления — как иконки и тона категорий.
+    // Без названных дней дата живёт в слое представления — как иконки и тона категорий.
     const horizon = nextPayday(["2026-05-20", "2026-06-20"], TODAY, PERIOD_END);
 
     expect(horizon).toEqual({ date: "2026-07-20", source: "income", daysAhead: 11 });

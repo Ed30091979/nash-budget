@@ -4,14 +4,26 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * «Обзор» и лист ввода в прогоне — одни слова на все проверки.
  *
  * Плитка находится по доступному имени — тому, что слышит читающий с экрана: «Продукты: потрачено
- * …», «Основной: остаток …». Лист — модальный диалог с полем суммы; запись — кнопкой, которая
+ * …», «Карта: остаток …». Лист — модальный диалог с полем суммы; запись — кнопкой, которая
  * называет действие и сумму.
  */
+
+/**
+ * Первый запуск (дизайн v5): два «Дальше» по слайдам и «Посмотреть на примере» на третьем — демо.
+ * Слайды стоят, пока на устройстве нет бюджета; страница уже открыта.
+ */
+export async function startDemo(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 3 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Посмотреть на примере", exact: true }).click();
+}
 
 /** Демо загружено и «Обзор» стоит: карточка «Хватает до …» под итогами на месте. */
 export async function loadDemo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await startDemo(page);
   await expect(page.locator(".reach-card")).toBeVisible();
 }
 

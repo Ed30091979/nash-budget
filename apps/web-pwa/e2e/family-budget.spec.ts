@@ -4,7 +4,7 @@ import {
   G002_INITIAL_OPERATION_COUNT,
   makeG002BackupBuffer,
 } from "./canonical-budget";
-import { amountField, entrySheet, leaveDialog, reachAmount, recordExpense, tile } from "./sheet";
+import { amountField, entrySheet, leaveDialog, reachAmount, recordExpense, startDemo, tile } from "./sheet";
 
 const INITIAL_FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const UPDATED_FLEXIBLE_REMAINING = /18\s*000\s*₽/u;
@@ -74,10 +74,8 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
 
   const initialResponse = await page.goto("/");
   expect(initialResponse?.ok()).toBe(true);
-  await expect(
-    page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /^Записать трату/u })).toBeVisible();
+  await startDemo(page);
 
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await page.locator("#backup-file").setInputFiles({

@@ -314,14 +314,14 @@ test("тост «Записано» называет то же число, чт�
   // накопленным. У демо есть доходы прошлых месяцев, и числа расходились.
   await loadDemo(page);
   await tile(page, "Зарплата").click();
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await amountField(page).fill("100");
   const promised = (await entrySheet(page).locator("#entry-effect").innerText()).trim();
-  const balance = /^На счёте «Основной» станет (.+)$/u.exec(promised)?.[1];
+  const balance = /^На счёте «Карта» станет (.+)$/u.exec(promised)?.[1];
   expect(balance, promised).toBeDefined();
   await submitButton(page).click();
   const receipt = toast(page, /Записано: доход 100\s₽/u).locator(".toast-receipt .sr-only");
-  await expect(receipt).toHaveText(`Остаток на счёте «Основной»: ${balance}, больше на 100\u00a0₽`);
+  await expect(receipt).toHaveText(`Остаток на счёте «Карта»: ${balance}, больше на 100\u00a0₽`);
 });
 
 /** Табом до кнопки или поля, чьё доступное имя — `name`; не дальше шестидесяти шагов. */

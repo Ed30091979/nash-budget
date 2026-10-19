@@ -62,6 +62,22 @@ export function tagsNote(budget: BudgetState): string {
   return parts.join(" · ");
 }
 
+/** Подписи строк-заглушек 2e — «Долги», «Цели», «Регулярные»: сколько уже есть в бюджете. */
+export function debtsNote(budget: BudgetState): string {
+  const count = (budget.debts ?? []).length;
+  return count === 0 ? "долгов нет" : plural(count, ["долг", "долга", "долгов"]);
+}
+
+export function goalsNote(budget: BudgetState): string {
+  const count = budget.goals.length;
+  return count === 0 ? "целей пока нет" : plural(count, ["цель", "цели", "целей"]);
+}
+
+export function recurringNote(budget: BudgetState): string {
+  const count = (budget.recurringRules ?? []).length;
+  return count === 0 ? "регулярных пока нет" : plural(count, ["регулярная", "регулярные", "регулярных"]);
+}
+
 /** «3 счёта · 1 в архиве» — подпись строки «Счета». */
 export function accountsNote(budget: BudgetState): string {
   const active = budget.accounts.filter((account) => account.active).length;
@@ -106,6 +122,13 @@ export function MoreScreen(props: {
   categoriesNote: string;
   onTags: () => void;
   tagsNote: string;
+  /** Заглушки до подволны 2e (R2): строки группы «Планы» (макет v5 10). */
+  onDebts: () => void;
+  debtsNote: string;
+  onGoals: () => void;
+  goalsNote: string;
+  onRecurring: () => void;
+  recurringNote: string;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
@@ -124,13 +147,17 @@ export function MoreScreen(props: {
       </ul>
     </section>
 
-    {/* «Планы»: строй месяца одной строкой — то, на чём стоят «Обзор» и план на год, — и дверь туда,
-        где это правят. Регулярные, цели и долги встанут сюда с подволной 2e. */}
+    {/* «Планы» (макет v5 10): «План месяца» — строй месяца одной строкой, дверь туда, где его правят;
+        за ним «Регулярные», «Цели», «Долги» — заглушки до подволны 2e (R2) — в порядке и тонах макета;
+        «План на год» — последним: в макете его нет, а дверь к горизонту нужна. Соседние тона разные. */}
     <section className="list-group" aria-labelledby="more-plan-title">
       <h2 id="more-plan-title" className="list-kicker">Планы</h2>
       <ul className="list-card">
         <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon tone-lilac"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon tone-sage"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>12–24 месяца вперёд: сезонные и годовые расходы</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRecurring}><span className="list-icon tone-sage"><Icon name="repeat" size={24} /></span><span className="list-copy"><strong>Регулярные</strong><small>{props.recurringNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onGoals}><span className="list-icon tone-coral"><Icon name="target" size={24} /></span><span className="list-copy"><strong>Цели</strong><small>{props.goalsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onDebts}><span className="list-icon tone-peach"><Icon name="user-round" size={24} /></span><span className="list-copy"><strong>Долги</strong><small>{props.debtsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon tone-amber"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>12–24 месяца вперёд: сезонные и годовые расходы</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 

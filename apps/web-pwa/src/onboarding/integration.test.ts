@@ -5,9 +5,7 @@ import { prepareBudgetState } from "../backup";
 import { createBudgetRepository } from "../storage-repository";
 import {
   buildOnboardingBudgetState,
-  createInitialOnboardingDraft,
   persistCompletedOnboarding,
-  type OnboardingDraft,
 } from "./model";
 
 const databaseNames = new Set<string>();
@@ -26,17 +24,9 @@ function deleteDatabase(name: string): Promise<void> {
   });
 }
 
-function acceptanceDraft(): OnboardingDraft {
-  return {
-    ...createInitialOnboardingDraft("2026-07-01"),
-    monthlyIncome: "180000",
-    mandatoryAmount: "53000",
-    categories: [
-      { key: "1", name: "Продукты", limit: "30000" },
-      { key: "2", name: "Транспорт", limit: "15000" },
-      { key: "3", name: "Дом", limit: "8000" },
-    ],
-  };
+/** Набор первого запуска 9 июля 2026: тот же месяц, что у канонического набора. */
+function acceptancePreset(currency: "RUB" | "EUR" = "RUB") {
+  return buildOnboardingBudgetState({ today: "2026-07-09", currency });
 }
 
 afterEach(async () => {
@@ -51,9 +41,9 @@ describe("onboarding IndexedDB lifecycle", () => {
     expect(await repository.documentCount()).toBe(0);
   });
 
-  it("записывает готовый план один раз и после reload возвращает те же суммы и счётчики", async () => {
+  it("записывает набор первого запуска один раз и после reload возвращает те же суммы и счётчики", async () => {
     const repository = createBudgetRepository({ databaseName: databaseName("complete") });
-    const built = prepareBudgetState(buildOnboardingBudgetState(acceptanceDraft()));
+    const built = prepareBudgetState(acceptancePreset());
     let published = null as typeof built | null;
     let createCount = 0;
 
@@ -83,19 +73,20 @@ describe("onboarding IndexedDB lifecycle", () => {
       scheduledExpenses: reloaded?.scheduledExpenses.length,
     }).toEqual({
       startDate: "2026-07-01",
-      incomeMinor: 18_000_000,
-      scheduledMinor: 5_300_000,
-      flexibleMinor: 5_300_000,
-      spendableMinor: 7_400_000,
+      incomeMinor: 0,
+      scheduledMinor: 0,
+      flexibleMinor: 0,
+      spendableMinor: 0,
       transactions: 0,
       goals: 0,
       annualCommitments: 0,
-      scheduledExpenses: 1,
+      scheduledExpenses: 0,
     });
+    expect(reloaded?.accounts.map((account) => account.name)).toEqual(["Карта", "Наличные"]);
   });
 
   it("не публикует completed state, если атомарное сохранение завершилось ошибкой", async () => {
-    const state = buildOnboardingBudgetState(acceptanceDraft());
+    const state = acceptancePreset();
     let published = false;
     const failedRepository = { createIfAbsent: async () => { throw new Error("Диск недоступен"); } };
 
@@ -108,14 +99,9 @@ describe("onboarding IndexedDB lifecycle", () => {
     const name = databaseName("race");
     const firstRepository = createBudgetRepository({ databaseName: name });
     const secondRepository = createBudgetRepository({ databaseName: name });
-    const firstCandidate = prepareBudgetState(buildOnboardingBudgetState({
-      ...acceptanceDraft(),
-      householdLabel: "Первая вкладка",
-    }));
-    const secondCandidate = prepareBudgetState(buildOnboardingBudgetState({
-      ...acceptanceDraft(),
-      householdLabel: "Вторая вкладка",
-    }));
+    // Две вкладки создают каждая свой набор: разные идентификаторы и разная валюта.
+    const firstCandidate = prepareBudgetState(acceptancePreset("RUB"));
+    const secondCandidate = prepareBudgetState(acceptancePreset("EUR"));
     let firstPublished = null as typeof firstCandidate | null;
     let secondPublished = null as typeof secondCandidate | null;
 
@@ -138,7 +124,7 @@ describe("onboarding IndexedDB lifecycle", () => {
 
   it("не публикует повреждённого победителя из другой вкладки", async () => {
     const repository = createBudgetRepository({ databaseName: databaseName("corrupt-existing") });
-    const candidate = prepareBudgetState(buildOnboardingBudgetState(acceptanceDraft()));
+    const candidate = prepareBudgetState(acceptancePreset());
     const corrupt = { ...candidate, activeBudgetId: crypto.randomUUID() };
     await repository.save(corrupt);
     let publishCount = 0;

@@ -1,4 +1,4 @@
-import { isUuid, isWithinDateWindow, MAX_LOCAL_DATE, MIN_LOCAL_DATE } from "@family-budget/domain";
+import { ACCOUNT_TYPES, isUuid, isWithinDateWindow, MAX_LOCAL_DATE, MIN_LOCAL_DATE, type AccountType } from "@family-budget/domain";
 
 /**
  * Маршруты приложения и их адреса (план волны 2, §2.1).
@@ -48,6 +48,12 @@ const SHEET_ONLY_KEYS = ["op", "src", "dst", "edit"] as const satisfies readonly
 export const CATEGORY_LIST_TYPES = ["expense", "income"] as const;
 export type CategoryListType = (typeof CATEGORY_LIST_TYPES)[number];
 
+/**
+ * Вид нового счёта, с которым открывается форма: вопрос первого запуска «Есть ещё места, где лежат
+ * деньги?» открывает её с видом «Накопления». Ключ — из перечня домена, имени счёта в адресе нет.
+ */
+export const NEW_ACCOUNT_TYPES: readonly AccountType[] = ACCOUNT_TYPES;
+
 export type Route =
   /** «Обзор»; `month` — месяц плиток, `ГГГГ-ММ`, без него — текущий. */
   | ({ readonly name: "overview"; readonly month?: string } & SheetFields)
@@ -62,7 +68,8 @@ export type Route =
   | ({ readonly name: "accounts" } & SheetFields)
   /** Счёт, открытый для правки; `id` — его UUID, в пути: `#/more/accounts/<id>`. */
   | ({ readonly name: "account"; readonly id: string } & SheetFields)
-  | ({ readonly name: "account-new" } & SheetFields)
+  /** «Новый счёт»; `type` — вид, отмеченный в форме при открытии, без него — «Карта или счёт». */
+  | ({ readonly name: "account-new"; readonly type?: AccountType } & SheetFields)
   | ({ readonly name: "rates" } & SheetFields)
   /** Список категорий; `type` — расходы или доходы, без него — расходы. */
   | ({ readonly name: "categories"; readonly type?: CategoryListType } & SheetFields)
@@ -72,7 +79,11 @@ export type Route =
    * всегда расходы (ревью 2c, MEDIUM-1). Без него — расходы.
    */
   | ({ readonly name: "category"; readonly id: string; readonly type?: CategoryListType } & SheetFields)
-  | ({ readonly name: "tags" } & SheetFields);
+  | ({ readonly name: "tags" } & SheetFields)
+  /** Заглушки до подволны 2e: «Долги», «Цели», «Регулярные» — пустые состояния в «Ещё» → «Учёт». */
+  | ({ readonly name: "debts" } & SheetFields)
+  | ({ readonly name: "goals" } & SheetFields)
+  | ({ readonly name: "recurring" } & SheetFields);
 
 export type RouteName = Route["name"];
 
@@ -83,7 +94,7 @@ export type TabName = (typeof TAB_NAMES)[number];
 export const ROOT_ROUTE: Route = { name: "overview" };
 
 /** Подэкраны «Ещё»: путь `#/more/<name>`. */
-const MORE_CHILDREN = ["plan-month", "plan-year", "family", "import", "accounts", "rates", "categories", "tags"] as const satisfies readonly RouteName[];
+const MORE_CHILDREN = ["plan-month", "plan-year", "family", "import", "accounts", "rates", "categories", "tags", "debts", "goals", "recurring"] as const satisfies readonly RouteName[];
 type MoreChild = (typeof MORE_CHILDREN)[number];
 
 /**
@@ -134,6 +145,9 @@ export function parentRoute(route: Route): Route | null {
     case "rates":
     case "categories":
     case "tags":
+    case "debts":
+    case "goals":
+    case "recurring":
       return { name: "more" };
     case "account":
     case "account-new":
@@ -175,6 +189,9 @@ function pathOf(route: Route): string {
     case "rates":
     case "categories":
     case "tags":
+    case "debts":
+    case "goals":
+    case "recurring":
       return `#/more/${route.name}`;
     case "account-new":
       return "#/more/accounts/new";
@@ -243,11 +260,14 @@ export const QUERY_GRAMMAR = {
   import: SHEET_GRAMMAR,
   accounts: SHEET_GRAMMAR,
   account: SHEET_GRAMMAR,
-  "account-new": SHEET_GRAMMAR,
+  "account-new": { type: { kind: "enum", values: NEW_ACCOUNT_TYPES }, ...SHEET_GRAMMAR },
   rates: SHEET_GRAMMAR,
   categories: { type: { kind: "enum", values: CATEGORY_LIST_TYPES }, ...SHEET_GRAMMAR },
   category: { type: { kind: "enum", values: CATEGORY_LIST_TYPES }, ...SHEET_GRAMMAR },
   tags: SHEET_GRAMMAR,
+  debts: SHEET_GRAMMAR,
+  goals: SHEET_GRAMMAR,
+  recurring: SHEET_GRAMMAR,
 } as const satisfies QueryGrammar;
 
 /**

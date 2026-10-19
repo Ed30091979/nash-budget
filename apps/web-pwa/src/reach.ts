@@ -20,6 +20,8 @@
  * одним числом, и разъехаться им нельзя.
  */
 
+import { nextPaydayAfter } from "@family-budget/domain";
+
 /** Шаг шкалы долей: 5 % — это 5 px на полосе шириной 300. */
 export const PERCENT_STEP = 5;
 
@@ -90,18 +92,22 @@ export function daysElapsed(startDate: string, endDate: string, today: string): 
 /**
  * Дата следующей выплаты.
  *
- * Расписаний дохода в домене нет, и заводить их ради линейки нельзя: это миграция хранилища,
- * смена формата резервной копии и новая операция журнала. Дата выводится в слое представления из
- * дат уже записанных доходных операций — ровно так же, как выводятся иконки и тона категорий.
+ * Первый источник — дни выплат, которые семья назвала сама (`household.paydays`, D-039): ответ на
+ * вопрос «Когда приходит зарплата?» первого запуска или правка позже. Это необязательное поле
+ * хозяйства, и ни одна сумма бюджета его не читает. Число за концом короткого месяца — последний
+ * день месяца (`nextPaydayAfter` домена).
  *
- * Уверенность важнее полноты. Если истории нет или даты нерегулярны, линейка честно говорит про
- * календарный месяц и ни слова про аванс: у нового пользователя истории нет вовсе, и выдумывать
- * ему зарплату двадцатого числа приложение не станет.
+ * Если дней семья не называла, дата выводится в слое представления из дат уже записанных доходных
+ * операций — ровно так же, как выводятся иконки и тона категорий.
+ *
+ * Уверенность важнее полноты. Если дней нет, истории нет или даты нерегулярны, линейка честно
+ * говорит про календарный месяц и ни слова про аванс: выдумывать человеку зарплату двадцатого
+ * числа приложение не станет.
  */
 export interface PaydayHorizon {
   /** Дата, на которой стоит насечка. */
   readonly date: string;
-  /** Откуда она взята: из дат доходов или из календаря. */
+  /** Откуда она взята: день выплаты (названный семьёй или выведенный из доходов) — или календарь. */
   readonly source: "income" | "month";
   /** Целых дней от сегодня до неё; не меньше одного. */
   readonly daysAhead: number;
@@ -174,15 +180,26 @@ export function paydayDays(incomeDates: readonly string[], today: string): reado
 }
 
 /**
- * Выводит дату следующей выплаты из дат доходов, а при неуверенности — из конца месяца.
+ * Дни выплат, которыми живут все экраны: названные семьёй (`household.paydays`), а без них —
+ * выведенные из дат доходов (`paydayDays`). «Обзор», «Год» и строка «План месяца» в «Ещё» читают
+ * один и тот же список.
+ */
+export function budgetPaydays(declared: readonly number[], incomeDates: readonly string[], today: string): readonly number[] {
+  return declared.length > 0 ? declared : paydayDays(incomeDates, today);
+}
+
+/**
+ * Дата следующей выплаты: из дней, названных семьёй, иначе из дат доходов, а при неуверенности —
+ * из конца месяца.
  *
  * `incomeDates` — даты доходных операций в любом порядке; `periodEnd` — последний день периода
- * бюджета, он же запасная насечка.
+ * бюджета, он же запасная насечка; `declared` — `household.paydays`, пустой список — не названы.
  */
 export function nextPayday(
   incomeDates: readonly string[],
   today: string,
   periodEnd: string,
+  declared: readonly number[] = [],
 ): PaydayHorizon {
   const fallback = (): PaydayHorizon => {
     const ahead = daysBetween(today, periodEnd);
@@ -197,6 +214,14 @@ export function nextPayday(
     const edge = daysBetween(today, monthEnd(0)) >= 1 ? monthEnd(0) : monthEnd(1);
     return { date: edge, source: "month", daysAhead: Math.max(1, daysBetween(today, edge)) };
   };
+
+  // Названные дни — расписание по определению: повторяться в истории им не нужно, и число за
+  // концом короткого месяца домен сводит к его последнему дню.
+  if (declared.length > 0) {
+    const date = nextPaydayAfter(declared, today);
+    const ahead = date === null ? Number.NaN : daysBetween(today, date);
+    if (date !== null && Number.isFinite(ahead) && ahead >= 1) return { date, source: "income", daysAhead: ahead };
+  }
 
   const candidates = paydayDays(incomeDates, today)
     .map((day) => nextOccurrence(day, today))
@@ -234,6 +259,7 @@ export function periodClock(
   period: { readonly startDate: string; readonly endDate: string },
   incomeDates: readonly string[],
   today: string,
+  declared: readonly number[] = [],
 ): PeriodClock {
   const position: PeriodPosition = today < period.startDate ? "before" : today > period.endDate ? "after" : "inside";
   return {
@@ -241,7 +267,7 @@ export function periodClock(
     position,
     inPeriod: position === "inside",
     elapsedDays: daysElapsed(period.startDate, period.endDate, today),
-    payday: nextPayday(incomeDates, today, period.endDate),
+    payday: nextPayday(incomeDates, today, period.endDate, declared),
   };
 }
 
