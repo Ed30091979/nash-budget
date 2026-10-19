@@ -11,7 +11,7 @@ import {
   categoryNameOutcome,
   categorySuggestions,
   groupChoicesFor,
-} from "./category-picker";
+} from "../operations/category-picker";
 
 export interface CategorySheetDraft {
   readonly name: string;
