@@ -26,6 +26,8 @@ import {
   type BudgetState,
   type CategoryGroup,
   type CategoryType,
+  type ExchangeRate,
+  type ExchangeRateValue,
   type Transaction,
   type TransactionStatus,
 } from "@family-budget/domain";
@@ -247,13 +249,68 @@ export function missingRateMessage(currency: string, baseCurrency: string, date:
 }
 
 /**
+ * The rate an edit keeps: the one the operation was written at, while the edit leaves its account
+ * and its day as they were — correcting a note must not revalue a purchase at a later rate. `null`
+ * for a new operation, or when the account or the day changed (then the rate of the day applies).
+ */
+function keptRate(current: Transaction | undefined, accountId: string, occurredOn: string, baseCurrency: string): ExchangeRateValue | null {
+  if (
+    current !== undefined
+    && (current.kind === "income" || current.kind === "expense" || current.kind === "refund")
+    && current.accountId === accountId
+    && current.occurredOn === occurredOn
+    && current.rate !== undefined
+    && current.baseCurrency === baseCurrency
+  ) return current.rate;
+  return null;
+}
+
+/**
+ * What a write of `amountMinor` on a foreign account will store, said before the write — the
+ * entry sheet's estimate (review of 2b, MEDIUM-2). The same choice as {@link snapshotFor}: the
+ * operation's own rate while the edit keeps its account and day, otherwise the rate of the day,
+ * otherwise nothing to value it with. `changed` — an edit of a valued operation whose account or
+ * day moved, so the sheet can say why the figure is a new one. Zero or an unvalued sum estimates
+ * to zero rather than to a refusal: the sum is still being typed.
+ */
+export type SnapshotPreview =
+  | { readonly kind: "kept"; readonly baseMinor: number; readonly rate: ExchangeRateValue }
+  | { readonly kind: "day"; readonly baseMinor: number; readonly rate: ExchangeRate; readonly changed: boolean }
+  | { readonly kind: "missing" };
+
+export function snapshotPreview(
+  state: BudgetState,
+  account: Pick<BudgetState["accounts"][number], "id" | "currency">,
+  amountMinor: number,
+  occurredOn: string,
+  current: Transaction | undefined,
+): SnapshotPreview {
+  const baseCurrency = baseCurrencyOf(state);
+  const kept = keptRate(current, account.id, occurredOn, baseCurrency);
+  if (kept !== null) {
+    const snapshot = amountMinor > 0 ? snapshotAt(amountMinor, baseCurrency, kept) : null;
+    // A sum the kept rate cannot value falls through to the rate of the day — as the write does.
+    if (snapshot !== null || amountMinor <= 0) return { kind: "kept", baseMinor: snapshot?.baseAmountMinor ?? 0, rate: kept };
+  }
+  const rates = indexRates(state.exchangeRates ?? []);
+  const rate = rates.find(account.currency, baseCurrency, occurredOn);
+  if (rate === undefined) return { kind: "missing" };
+  const snapshot = amountMinor > 0 ? baseSnapshot(amountMinor, account.currency, baseCurrency, rates, occurredOn) : null;
+  const changed = current !== undefined
+    && (current.kind === "income" || current.kind === "expense" || current.kind === "refund")
+    && current.rate !== undefined
+    && (current.accountId !== account.id || current.occurredOn !== occurredOn);
+  return { kind: "day", baseMinor: snapshot?.baseAmountMinor ?? 0, rate, changed };
+}
+
+/**
  * The base-currency snapshot of an income, an expense or a refund, or nothing on an account in the
  * base currency.
  *
  * A typed base sum is the exact rate «sum for sum» (D-031). Otherwise an edit that keeps the
- * account and the day keeps the rate the operation was written at — correcting a note must not
- * revalue a purchase at a later rate — and everything else takes the rate of its day. Without one
- * the operation is refused in words that say what to do, not written without its figure.
+ * account and the day keeps the rate the operation was written at (`keptRate`), and everything
+ * else takes the rate of its day. Without one the operation is refused in words that say what to
+ * do, not written without its figure.
  */
 function snapshotFor(
   state: BudgetState,
@@ -272,15 +329,9 @@ function snapshotFor(
     if (manual === null) return fail("baseAmount", "Такую пару сумм записать нельзя: проверьте обе.");
     return manual;
   }
-  if (
-    current !== undefined
-    && (current.kind === "income" || current.kind === "expense" || current.kind === "refund")
-    && current.accountId === account.id
-    && current.occurredOn === occurredOn
-    && current.rate !== undefined
-    && current.baseCurrency === baseCurrency
-  ) {
-    const kept = snapshotAt(amountMinor, baseCurrency, current.rate);
+  const keptAt = keptRate(current, account.id, occurredOn, baseCurrency);
+  if (keptAt !== null) {
+    const kept = snapshotAt(amountMinor, baseCurrency, keptAt);
     if (kept !== null) return kept;
   }
   const snapshot = baseSnapshot(amountMinor, account.currency, baseCurrency, indexRates(state.exchangeRates ?? []), occurredOn);

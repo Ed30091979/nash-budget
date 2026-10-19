@@ -174,6 +174,35 @@ describe("лист ввода: другая валюта", () => {
     expect(effectLine(priced, dollarExpense(), TODAY)).toBe("В категории «Продукты» останется 6\u00a0843,75\u00a0₽ из 30\u00a0000\u00a0₽");
   });
 
+  it("правка: оценка — та, что запишется: свой курс операции, пока день и счёт те же; новый день — курс нового дня", () => {
+    // Ревью 2b, MEDIUM-2: $10 по 92,50 (925 ₽), позже добавлен курс 100,00. Лист говорил
+    // «≈ 1 000 ₽ по курсу 100,00», а записывал 925 ₽; без курса — «Курса нет», а запись проходила.
+    const rate = (id: string, date: string, baseMinor: number) => ({ id, currency: "USD", baseCurrency: "RUB", date, rate: { baseMinor, quoteMinor: 100 } });
+    const recorded = writeEntry({ ...state(), exchangeRates: [rate("e1000000-0000-4000-8000-0000000000e1", "2026-07-01", 9_250)] }, { ...dollarExpense(), amount: "10" }, ids());
+    const bought = written(recorded);
+    expect(bought).toMatchObject({ baseAmountMinor: 92_500 });
+    const later: BudgetState = { ...recorded.state, exchangeRates: [...(recorded.state.exchangeRates ?? []), rate("e1000000-0000-4000-8000-0000000000e2", "2026-07-05", 10_000)] };
+    const opening = draftFromTransaction(later, bought);
+    if (opening.kind !== "draft") throw new Error("expense must open as a draft");
+    const edit = { ...opening.draft, note: "сверено" };
+    const value = foreignValue(later, edit);
+    expect(value).toMatchObject({ kind: "kept", baseMinor: 92_500 });
+    expect(foreignValueLine(value)).toBe("≈ 925\u00a0₽ по курсу 92,50, с которым операция записана");
+    expect(written(writeEntry(later, edit, ids()))).toMatchObject({ baseAmountMinor: 92_500 });
+    // Курсы удалили: оценка та же, и запись проходит — лист не говорит «курса нет».
+    const noRates: BudgetState = { ...later, exchangeRates: [] };
+    expect(foreignValue(noRates, edit)).toMatchObject({ kind: "kept", baseMinor: 92_500 });
+    expect(written(writeEntry(noRates, edit, ids()))).toMatchObject({ baseAmountMinor: 92_500 });
+    // Новый день — курс нового дня, и лист называет причину.
+    const moved = { ...edit, occurredOn: "2026-07-06" };
+    const movedValue = foreignValue(later, moved);
+    expect(movedValue).toMatchObject({ kind: "rate", baseMinor: 100_000, changed: true });
+    expect(foreignValueLine(movedValue)).toBe("≈ 1\u00a0000\u00a0₽ по курсу 100,00 от 5\u00a0июля — дата или счёт изменились, курс нового дня");
+    expect(written(writeEntry(later, moved, ids()))).toMatchObject({ baseAmountMinor: 100_000 });
+    // Без курса на новый день — «курса нет», и запись отказывает теми же словами.
+    expect(foreignValue(noRates, moved)).toMatchObject({ kind: "missing" });
+  });
+
   it("сумма в рублях вручную — точный курс «сумма за сумму», курс не нужен", () => {
     const manual = { ...dollarExpense(), baseAmount: "1157" };
     expect(foreignValue(state(), manual)).toEqual({ kind: "manual", baseMinor: 115_700, baseCurrency: "RUB" });

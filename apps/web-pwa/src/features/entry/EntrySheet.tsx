@@ -321,7 +321,7 @@ export function EntrySheet(props: EntrySheetProps) {
               {valueLine !== null ? (
                 <div className="entry-foreign">
                   <p>{valueLine}</p>
-                  {value.kind === "rate" && !manualBase ? <button className="text-button" type="button" onClick={() => setManualBase(true)}>Сумма в {baseCurrency} вручную</button> : null}
+                  {(value.kind === "rate" || value.kind === "kept") && !manualBase ? <button className="text-button" type="button" onClick={() => setManualBase(true)}>Сумма в {baseCurrency} вручную</button> : null}
                 </div>
               ) : null}
               {rating && value.kind === "missing" ? (

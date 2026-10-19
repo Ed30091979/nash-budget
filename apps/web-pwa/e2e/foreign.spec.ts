@@ -7,7 +7,8 @@
  * страницы с системным «Покинуть сайт?». `fixtures.ts` валит прогон на любом системном окне.
  */
 import { expect, test } from "./fixtures";
-import { demoBudget, DOLLARS_NAME, restoreBudget, withDollarAccount } from "./budgets";
+import { addDays } from "@family-budget/domain";
+import { demoBudget, dollarExpenseDay, DOLLARS_NAME, restoreBudget, withDollarAccount, withDollarExpenseAtOldRate } from "./budgets";
 import { amountField, entrySheet, goToOverview, loadDemo, submitButton, tile, toast } from "./sheet";
 
 test("курса нет — «Задать курс» в листе: Enter и кнопка его записывают, оценка встаёт под суммой, расход записывается", async ({ page }) => {
@@ -47,4 +48,35 @@ test("курса нет — «Задать курс» в листе: Enter и к
   await submitButton(page).click();
   await expect(sheet).toHaveCount(0);
   await expect(toast(page, /Записано: расход 10\s\$/u)).toBeVisible();
+});
+
+test("правка операции в долларах оценивает её тем курсом, который запишется, а новый день — курсом нового дня", async ({ page }) => {
+  // Ревью 2b, MEDIUM-2: лист говорил «≈ 1 000 ₽ по курсу 100,00», а записывал 925 ₽ по курсу,
+  // с которым операция была записана.
+  await loadDemo(page);
+  await restoreBudget(page, withDollarExpenseAtOldRate(demoBudget()));
+  await goToOverview(page);
+  const before = await tile(page, "Продукты").getAttribute("aria-label");
+
+  await page.getByRole("button", { name: "Операции", exact: true }).click();
+  const day = dollarExpenseDay();
+  await page.getByRole("button", { name: `Изменить операцию «Расход 10\u00a0$ от ${day}»` }).click();
+  const sheet = entrySheet(page);
+  const estimate = sheet.locator(".entry-foreign");
+  await expect(estimate).toContainText(/^≈ 925\s₽ по курсу 92,50, с которым операция записана/u);
+  await expect(sheet.getByText(/^Курса USD/u)).toHaveCount(0);
+
+  // Другой день (поле даты уже открыто: операция не сегодняшняя) — курс нового дня, и лист
+  // говорит, почему цифра другая.
+  await page.locator("#entry-date").fill(addDays(day, 1));
+  await expect(estimate).toContainText(/^≈ 1\s000\s₽ по курсу 100,00 от .+ — дата или счёт изменились, курс нового дня/u);
+
+  // Тот же день и только комментарий: записано по своему курсу — «Продукты» не сдвинулись.
+  await page.locator("#entry-date").fill(day);
+  await expect(estimate).toContainText(/^≈ 925\s₽/u);
+  await sheet.getByRole("textbox", { name: "Комментарий" }).fill("сверено");
+  await submitButton(page).click();
+  await expect(toast(page, /Изменено: расход 10\s\$/u)).toBeVisible();
+  await goToOverview(page);
+  await expect(tile(page, "Продукты")).toHaveAttribute("aria-label", before ?? "");
 });

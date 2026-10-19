@@ -1,15 +1,12 @@
 import {
   addDays,
   baseCurrencyOf,
-  baseSnapshot,
   calculateBudget,
   calculateHoldings,
   createTag,
   currencyExponent,
   findBudgetForMonth,
-  findRate,
   findTagByName,
-  indexRates,
   isSupportedCurrency,
   MAX_TAGS_PER_TRANSACTION,
   monthOfDate,
@@ -29,6 +26,7 @@ import {
   DEBT_EDIT_REFUSAL,
   editTransaction,
   OperationsValidationError,
+  snapshotPreview,
   type TransactionDraft,
 } from "../operations/model";
 import { kindLabels } from "../operations/transaction-words";
@@ -457,10 +455,15 @@ function effectWords(state: BudgetState, draft: EntryDraft, today: string): stri
     : `На счёте «${account.name}» останется ${formatMoney(after, account.currency)}`;
 }
 
-/** Оценка операции в другой валюте: по курсу дня, вручную или «курса нет». */
+/**
+ * Оценка операции в другой валюте — та, что запишется (`snapshotPreview`, одно правило с записью):
+ * свой курс операции при правке, курс дня, сумма вручную или «курса нет». `changed` у курса дня —
+ * правка сменила дату или счёт, и курс теперь нового дня (ревью 2b, MEDIUM-2).
+ */
 export type ForeignValue =
   | { readonly kind: "base" }
-  | { readonly kind: "rate"; readonly baseMinor: number; readonly rate: ExchangeRate; readonly baseCurrency: CurrencyCode; readonly currency: CurrencyCode }
+  | { readonly kind: "rate"; readonly baseMinor: number; readonly rate: ExchangeRate; readonly baseCurrency: CurrencyCode; readonly currency: CurrencyCode; readonly changed: boolean }
+  | { readonly kind: "kept"; readonly baseMinor: number; readonly rate: RateWordsInput; readonly baseCurrency: CurrencyCode; readonly currency: CurrencyCode }
   | { readonly kind: "manual"; readonly baseMinor: number; readonly baseCurrency: CurrencyCode }
   | { readonly kind: "missing"; readonly currency: CurrencyCode; readonly baseCurrency: CurrencyCode; readonly date: string };
 
@@ -471,12 +474,14 @@ export function foreignValue(state: BudgetState, draft: EntryDraft): ForeignValu
   if (draft.mode === "transfer" || currency === baseCurrency) return { kind: "base" };
   const typed = evaluateAmount(draft.baseAmount, exponentOf(baseCurrency));
   if (typed.kind === "value") return { kind: "manual", baseMinor: typed.minor, baseCurrency };
-  const rates = state.exchangeRates ?? [];
-  const rate = findRate(rates, currency, baseCurrency, draft.occurredOn);
   const minor = draftAmountMinor(state, draft) ?? 0;
-  if (rate === undefined) return { kind: "missing", currency, baseCurrency, date: draft.occurredOn };
-  const snapshot = minor > 0 ? baseSnapshot(minor, currency, baseCurrency, indexRates(rates), draft.occurredOn) : null;
-  return { kind: "rate", baseMinor: snapshot?.baseAmountMinor ?? 0, rate, baseCurrency, currency };
+  const current = draft.editId === null ? undefined : state.transactions.find((item) => item.id === draft.editId);
+  const preview = snapshotPreview(state, { id: draft.accountId, currency }, minor, draft.occurredOn, current);
+  switch (preview.kind) {
+    case "missing": return { kind: "missing", currency, baseCurrency, date: draft.occurredOn };
+    case "kept": return { kind: "kept", baseMinor: preview.baseMinor, rate: { currency, baseCurrency, rate: preview.rate }, baseCurrency, currency };
+    case "day": return { kind: "rate", baseMinor: preview.baseMinor, rate: preview.rate, baseCurrency, currency, changed: preview.changed };
+  }
 }
 
 /** Сумма черновика в базовой валюте — для строки «останется»; `null`, пока оценить нечем. */
@@ -485,13 +490,17 @@ function valueInBase(state: BudgetState, draft: EntryDraft, minor: number): numb
   switch (value.kind) {
     case "base": return minor;
     case "manual":
+    case "kept":
     case "rate": return value.baseMinor;
     case "missing": return null;
   }
 }
 
+/** Курс, который называют словами: чей и сколько, без дня. */
+export type RateWordsInput = Pick<ExchangeRate, "currency" | "baseCurrency" | "rate">;
+
 /** Курс словами: «92,50» за единицу валюты; для слабых — за сотню. */
-export function rateWords(rate: ExchangeRate): string {
+export function rateWords(rate: RateWordsInput): string {
   const quoteExponent = exponentOf(rate.currency);
   const baseExponent = exponentOf(rate.baseCurrency);
   // Сколько базовых единиц за одну единицу валюты: baseMinor / 10^baseExp за quoteMinor / 10^quoteExp.
@@ -506,7 +515,8 @@ export function foreignValueLine(value: ForeignValue): string | null {
   switch (value.kind) {
     case "base": return null;
     case "manual": return `В ${value.baseCurrency}: ${formatMoney(value.baseMinor, value.baseCurrency)} — сумма вписана вручную`;
-    case "rate": return `≈ ${formatMoney(value.baseMinor, value.baseCurrency)} по курсу ${rateWords(value.rate)} от ${formatDay(value.rate.date)}`;
+    case "rate": return `≈ ${formatMoney(value.baseMinor, value.baseCurrency)} по курсу ${rateWords(value.rate)} от ${formatDay(value.rate.date)}${value.changed ? " — дата или счёт изменились, курс нового дня" : ""}`;
+    case "kept": return `≈ ${formatMoney(value.baseMinor, value.baseCurrency)} по курсу ${rateWords(value.rate)}, с которым операция записана`;
     case "missing": return null;
   }
 }
