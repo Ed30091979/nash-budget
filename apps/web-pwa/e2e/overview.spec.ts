@@ -7,10 +7,12 @@
  * за экран ни на 320 pt, ни при ×2.7.
  */
 import type { Locator, Page } from "@playwright/test";
+import type { BudgetState } from "@family-budget/domain";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
+import { demoBudget, restoreBudget } from "./budgets";
 import { applyFontScale } from "./font-scale";
-import { amountField, entrySheet, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
+import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
 
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -182,10 +184,10 @@ test("месяц за краем календаря в адресе — «Зап
  * иначе слово разорвано посередине без знака переноса. Строки находятся по прямоугольникам
  * каждого символа (`Range.getClientRects`), а не по ширине: так видно то, что видит глаз.
  */
-async function wordSplits(page: Page): Promise<readonly string[]> {
-  return page.evaluate(() => {
+async function wordSplits(page: Page, selector = ".overview-screen .tile-name"): Promise<readonly string[]> {
+  return page.evaluate((names) => {
     const splits: string[] = [];
-    for (const name of document.querySelectorAll<HTMLElement>(".overview-screen .tile-name")) {
+    for (const name of document.querySelectorAll<HTMLElement>(names)) {
       const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT);
       const chars: { readonly char: string; readonly top: number | null }[] = [];
       for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
@@ -215,8 +217,26 @@ async function wordSplits(page: Page): Promise<readonly string[]> {
       }
     }
     return splits;
-  });
+  }, selector);
 }
+
+/** Длинные имена, какие семьи и правда заводят: с одной гласной, с приставками, латиницей (ревью 2b, раунд 3). */
+const LONG_NAMES = [
+  "Благотворительность", "Электроэнергия", "Стройматериалы", "Канцтовары", "Сверхъестественный",
+  "Развлечения", "Подписки", "Коммунальные платежи", "Домашние животные", "Путешествия",
+  "Strengths", "Netflix", "Здравоохранение", "Взносы", "Абонементы", "Бытовая химия",
+  "Детский сад", "Автомобиль", "Сантехника", "Всплеск", "Тинькофф", "Мобильная связь",
+];
+
+/** Демо, где первые расходные категории названы `LONG_NAMES`. */
+function withLongNames(state: BudgetState): BudgetState {
+  const expense = state.categories.filter((item) => item.type === "expense" && item.active);
+  const renamed = new Map(expense.slice(0, LONG_NAMES.length).map((item, index) => [item.id, LONG_NAMES[index]!]));
+  return { ...state, categories: state.categories.map((item) => (renamed.has(item.id) ? { ...item, name: renamed.get(item.id)! } : item)) };
+}
+
+/** Ширины и кегли, на которых проверяется перенос: телефоны от 320 до 430 pt, ×1, ×2 и ×2.7. */
+const LINE_BREAK_LAYOUTS = [[320, 1], [390, 1], [430, 1], [320, 2], [390, 2], [430, 2], [320, 2.7], [390, 2.7], [430, 2.7]] as const;
 
 test("на 390 pt имена плиток не рвутся посреди слова: перенос — только по слогам и с дефисом", async ({ page }) => {
   // Ревью 2b, LOW-9: «Продук|ты», «Трансп|орт», «Здоров|ье», «Подработ|ка» — пять колонок по 65 и
@@ -232,6 +252,20 @@ test("на 390 pt имена плиток не рвутся посреди сл�
   // До 400 pt — не больше четырёх колонок расходов: на пяти по 65 имени остаётся 49 pt.
   const columns = await page.locator(".tile-grid-grid").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length);
   expect(columns).toBe(4);
+});
+
+test("длинные имена на «Обзоре» тоже переносятся только с дефисом — и слово с одной гласной", async ({ page }) => {
+  // Ревью 2b, раунд 3, NEW-5а: у «Strengths» правила не находили ни одного места, и на 320, 430 и
+  // при ×2 слово рвалось без знака переноса — «Strengt|hs».
+  await loadDemo(page);
+  await restoreBudget(page, withLongNames(demoBudget()));
+  await goToOverview(page);
+  await expect(tile(page, "Strengths")).toBeVisible();
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await wordSplits(page), `${width} pt ×${scale}`).toEqual([]);
+  }
 });
 
 test("на 320 pt и при ×2.7 ничего не выезжает за экран — ни «Обзор», ни лист поверх него", async ({ page }) => {
