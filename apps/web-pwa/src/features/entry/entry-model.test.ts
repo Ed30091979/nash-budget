@@ -207,6 +207,17 @@ describe("лист ввода: другая валюта", () => {
     expect(foreignValue(noRates, moved)).toMatchObject({ kind: "missing" });
   });
 
+  it("выражение в «Сумма в RUB вручную» и в «Зачислено» — то же число и в оценке, и в записи", () => {
+    // Ревью 2b, LOW-3: «1000+157» оценка принимала, а запись отвергала словами о сумме.
+    const manual = { ...dollarExpense(), baseAmount: "1000+157" };
+    expect(foreignValue(state(), manual)).toEqual({ kind: "manual", baseMinor: 115_700, baseCurrency: "RUB" });
+    expect(written(writeEntry(state(), manual, ids()))).toMatchObject({ baseAmountMinor: 115_700 });
+    const transfer = { ...newEntryDraft(state(), { kind: "transfer", fromAccountId: MAIN, toAccountId: DOLLARS }, TODAY), amount: "5000", toAmount: "50+4,05" };
+    expect(written(writeEntry(state(), transfer, ids()))).toMatchObject({ toAmountMinor: 5_405 });
+    // Неразобранное — по-прежнему отказ словами поля.
+    expect(() => writeEntry(state(), { ...transfer, toAmount: "пятьдесят" }, ids())).toThrow(expect.objectContaining({ field: "toAmount" }));
+  });
+
   it("сумма в рублях вручную — точный курс «сумма за сумму», курс не нужен", () => {
     const manual = { ...dollarExpense(), baseAmount: "1157" };
     expect(foreignValue(state(), manual)).toEqual({ kind: "manual", baseMinor: 115_700, baseCurrency: "RUB" });

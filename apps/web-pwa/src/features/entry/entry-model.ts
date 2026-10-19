@@ -236,8 +236,14 @@ export function draftAmountMinor(state: BudgetState, draft: EntryDraft): number 
   return value.kind === "value" ? value.minor : null;
 }
 
-/** Черновик модели операций — то, что запишет домен. Выражение свёрнуто в число. */
+/**
+ * Черновик модели операций — то, что запишет домен. Выражения свёрнуты в числа — и суммы, и
+ * «Сумма в RUB вручную», и «Зачислено»: оценка в листе считает их тем же разбором, и запись не
+ * вправе отвергнуть то, что лист уже назвал числом (ревью 2b, LOW-3).
+ */
 export function toTransactionDraft(state: BudgetState, draft: EntryDraft, newTagIds: readonly string[] = []): TransactionDraft {
+  const baseAmount = settleAmount(draft.baseAmount, exponentOf(baseCurrencyOf(state)));
+  const toAmount = settleAmount(draft.toAmount, exponentOf(toAccountCurrency(state, draft) ?? baseCurrencyOf(state)));
   const common = {
     status: draft.status,
     occurredOn: draft.occurredOn,
@@ -246,10 +252,10 @@ export function toTransactionDraft(state: BudgetState, draft: EntryDraft, newTag
     tagIds: [...draft.tagIds, ...newTagIds],
   };
   switch (draft.mode) {
-    case "expense": return { ...common, kind: "expense", accountId: draft.accountId, categoryId: draft.categoryId, baseAmount: draft.baseAmount };
-    case "income": return { ...common, kind: "income", accountId: draft.accountId, categoryId: draft.incomeCategoryId, baseAmount: draft.baseAmount };
-    case "refund": return { ...common, kind: "refund", accountId: draft.accountId, originalTransactionId: draft.originalTransactionId, baseAmount: draft.baseAmount };
-    case "transfer": return { ...common, kind: "transfer", fromAccountId: draft.accountId, toAccountId: draft.toAccountId, toAmount: draft.toAmount };
+    case "expense": return { ...common, kind: "expense", accountId: draft.accountId, categoryId: draft.categoryId, baseAmount };
+    case "income": return { ...common, kind: "income", accountId: draft.accountId, categoryId: draft.incomeCategoryId, baseAmount };
+    case "refund": return { ...common, kind: "refund", accountId: draft.accountId, originalTransactionId: draft.originalTransactionId, baseAmount };
+    case "transfer": return { ...common, kind: "transfer", fromAccountId: draft.accountId, toAccountId: draft.toAccountId, toAmount };
   }
 }
 
