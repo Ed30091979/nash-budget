@@ -1,6 +1,7 @@
 import {
   calculateBudget,
   CategoryValidationError,
+  HOUSEHOLD_ID,
   makePlanningSeed,
   moveCategory,
   PLANNING_IDS,
@@ -22,11 +23,13 @@ import {
   categoryFormError,
   categoryLimit,
   categoryPosition,
+  categoryPositionWords,
   categorySave,
   planMonthWord,
   restoreCategory,
 } from "./category-model";
 import { CategoryFormView } from "./CategoryScreen";
+import { currencyName } from "../../components/CurrencySelect";
 import { blankEntryDraft } from "../entry/entry-model";
 import { pickOptions } from "../entry/TargetPicker";
 
@@ -80,6 +83,29 @@ describe("категории: модель", () => {
     expect(pickOptions(budget, blankEntryDraft(budget, "income", "2026-07-20"), "from", {}).map((option) => option.id).filter((id) => id !== "")).toEqual(listed("income"));
     const moved = moveCategory(budget, listed("expense")[1]!, "up");
     expect(overviewModel(moved, "2026-07", "2026-07-20").categories.map((tile) => tile.id)).toEqual(categoriesView(moved, "expense").groups.flatMap((group) => group.cards.map((card) => card.category.id)));
+  });
+
+  it("место словами — в роде записи: категория «2-я из 4», источник дохода «2-й из 3» (ревью 2c, LOW-7)", () => {
+    const budget = state();
+    expect(categoryPositionWords(category(budget, FOOD), 2, 4)).toBe("2-я из 4");
+    expect(categoryPositionWords(category(budget, SALARY), 2, 3)).toBe("2-й из 3");
+  });
+
+  it("отказ суммы лимита называет базовую валюту, а не всегда рубли (ревью 2c, LOW-7)", () => {
+    const budget = state();
+    const food = category(budget, FOOD);
+    const pristine = categoryDraftOf(budget, food);
+    const refusal = (state: BudgetState) => {
+      try {
+        categorySave(food, { ...pristine, limit: "кофе" }, pristine)(state);
+      } catch (error) {
+        return categoryFormError(error).message;
+      }
+      return null;
+    };
+    expect(refusal(budget)).toBe("Введите положительную сумму в рублях, не более двух знаков после запятой.");
+    const euro: BudgetState = { ...budget, household: { id: HOUSEHOLD_ID, baseCurrency: "EUR" }, accounts: budget.accounts.map((account) => ({ ...account, currency: "EUR" })) };
+    expect(refusal(euro)).toBe(`Введите положительную сумму в валюте «${currencyName("EUR")}», не более двух знаков после запятой.`);
   });
 
   it("место в группе — для «Выше / Ниже»; перестановка меняет только двух соседей группы", () => {

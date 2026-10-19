@@ -21,7 +21,9 @@ export interface AccountsScreenProps {
 /** Доступное имя строки: имя, остаток в валюте счёта, вид и что сделает касание. */
 export function accountRowLabel(row: AccountRow): string {
   const balance = row.balanceMinor === null ? "остаток не представим" : formatMoney(row.balanceMinor, row.account.currency);
-  return `${row.account.name}: ${balance}, ${row.meta.toLowerCase()}. Изменить`;
+  // Строчная — только первая буква вида счёта: код валюты пишется и читается прописными («USD»).
+  const meta = row.meta.charAt(0).toLocaleLowerCase("ru-RU") + row.meta.slice(1);
+  return `${row.account.name}: ${balance}, ${meta}. Изменить`;
 }
 
 /**

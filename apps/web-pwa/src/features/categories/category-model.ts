@@ -99,6 +99,11 @@ export function categoryPosition(state: BudgetState, category: Category): { read
   return { position: members.findIndex((item) => item.id === category.id) + 1, count: members.length };
 }
 
+/** «2-я из 4» у категории, «2-й из 3» у источника дохода — в роде того, о чём речь. */
+export function categoryPositionWords(category: Category, position: number, count: number): string {
+  return `${position}-${category.type === "income" ? "й" : "я"} из ${count}`;
+}
+
 /** Форма категории так, как её набирают. */
 export interface CategoryFormDraft {
   readonly name: string;

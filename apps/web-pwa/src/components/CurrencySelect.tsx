@@ -39,6 +39,15 @@ export function currencyName(code: CurrencyCode): string {
   return name.charAt(0).toLocaleUpperCase("ru-RU") + name.slice(1);
 }
 
+/**
+ * Отказ суммы в базовой валюте — с её названием: «в рублях» у рубля, «в валюте «Евро»» у прочих
+ * (склонять названия всех валют не из чего; ревью 2c, LOW-7 — прежде всегда «в рублях»).
+ */
+export function positiveAmountMessage(base: CurrencyCode): string {
+  const where = base === "RUB" ? "в рублях" : `в валюте «${currencyName(base)}»`;
+  return `Введите положительную сумму ${where}, не более двух знаков после запятой.`;
+}
+
 /** «Доллар США — USD»: подпись варианта и строки, где валюта названа целиком. */
 export function currencyLabel(code: CurrencyCode): string {
   const name = currencyName(code);

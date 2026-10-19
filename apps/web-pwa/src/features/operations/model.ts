@@ -32,6 +32,7 @@ import {
   type TransactionStatus,
 } from "@family-budget/domain";
 import { BACKUP_LIMITS } from "../../backup";
+import { positiveAmountMessage } from "../../components/CurrencySelect";
 import { parseMoney } from "../../money";
 import { BudgetWriteRefusal } from "../../write-refusal";
 
@@ -768,11 +769,11 @@ export function archiveCategory(state: BudgetState, id: string, options: Archive
   });
 }
 
-function parseLimitMoney(value: string): number {
+function parseLimitMoney(value: string, state: BudgetState): number {
   try {
     return parseMoney(value);
   } catch {
-    return fail("limit", "Введите положительную сумму в рублях, не более двух знаков после запятой.");
+    return fail("limit", positiveAmountMessage(baseCurrencyOf(state)));
   }
 }
 
@@ -836,7 +837,7 @@ export function createOperationCategory(
   const line: BudgetLine = {
     id: nextId(ids, makeId),
     categoryId: created.category.id,
-    plannedMinor: parseLimitMoney(limit),
+    plannedMinor: parseLimitMoney(limit, created.state),
     active: true,
   };
   return {

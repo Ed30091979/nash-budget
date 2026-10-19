@@ -18,6 +18,7 @@ import { currencySign } from "../rates/RateQuickSheet";
 import {
   archiveCategoryWithLimits,
   categoryArchiveText,
+  categoryPositionWords,
   CATEGORY_NAME_MAX_LENGTH,
   categoryDraftDiffers,
   categoryDraftOf,
@@ -218,7 +219,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
   const { position, count } = categoryPosition(budget, category);
   const move = (direction: ReorderDirection) => sideWrite(
     (state) => moveCategory(state, category.id, direction),
-    `Теперь «${category.name}» — ${direction === "up" ? position - 1 : position + 1}-я из ${count} в группе.`,
+    `Теперь «${category.name}» — ${categoryPositionWords(category, direction === "up" ? position - 1 : position + 1, count)} в группе.`,
   );
   const what = income ? "источник дохода" : "категорию";
 
@@ -245,7 +246,7 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
       {category.active ? (
         <section className="manage-group" aria-labelledby="category-order-title">
           <h2 id="category-order-title" className="list-kicker">Место в группе</h2>
-          <p className="field-hint">{position}-я из {count} — в этом порядке плитки стоят на «Обзоре» и в выборе при записи.</p>
+          <p className="field-hint">{categoryPositionWords(category, position, count)} — в этом порядке плитки стоят на «Обзоре» и в выборе при записи.</p>
           <ReorderControls id={`category-${category.id}`} name={category.name} position={position} count={count} busy={busy} onMove={move} />
         </section>
       ) : null}

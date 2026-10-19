@@ -171,7 +171,9 @@ describe("форма счёта: модель", () => {
     const dollars = list.active[2]!;
     expect(dollars).toMatchObject({ icon: "dollar-sign", tone: "lilac", balanceMinor: 50_000, meta: "Наличные · USD" });
     expect(list.archived[0]).toMatchObject({ meta: "Карта или счёт · вне итога", tone: null, icon: "credit-card" });
-    expect(accountRowLabel(dollars)).toBe("Доллары: 500\u00a0$, наличные · usd. Изменить");
+    // Код валюты — как его пишут и читают: «USD», а не «usd» (ревью 2c, LOW-7).
+    expect(accountRowLabel(dollars)).toBe("Доллары: 500\u00a0$, наличные · USD. Изменить");
+    expect(accountRowLabel(list.archived[0]!)).toMatch(/, карта или счёт · вне итога\. Изменить$/u);
   });
 });
 

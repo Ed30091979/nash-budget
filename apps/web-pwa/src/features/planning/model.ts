@@ -14,6 +14,7 @@ import {
   type ScheduleMode,
   type ScheduledExpense,
 } from "@family-budget/domain";
+import { positiveAmountMessage } from "../../components/CurrencySelect";
 import { parseMoney } from "../../money";
 import { BudgetWriteRefusal } from "../../write-refusal";
 
@@ -105,19 +106,20 @@ function normalizedComparison(value: string): string {
   return value.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
 }
 
-function parsePositiveMoney(value: string, field: string): number {
+/** Сумма плана — в базовой валюте `state`; отказ называет её (`positiveAmountMessage`). */
+function parsePositiveMoney(value: string, field: string, state: BudgetState): number {
   try {
     return parseMoney(value);
   } catch {
-    return fail(field, "Введите положительную сумму в рублях, не более двух знаков после запятой.");
+    return fail(field, positiveAmountMessage(baseCurrencyOf(state)));
   }
 }
 
-function parseReserved(value: string): number {
+function parseReserved(value: string, state: BudgetState): number {
   if (value.length > 24) return fail("reserved", "Сумма превышает максимально допустимое значение.");
   const normalized = value.trim().replace(/\s/g, "").replace(",", ".");
   if (normalized === "" || normalized === "0" || normalized === "0.0" || normalized === "0.00") return 0;
-  return parsePositiveMoney(value, "reserved");
+  return parsePositiveMoney(value, "reserved", state);
 }
 
 function assertLocalDate(value: string): string {
@@ -223,8 +225,8 @@ export function createCommitment(
   if (state.annualCommitments.length >= PLANNING_LIMITS.commitments) fail("commitments", "Достигнут лимит крупных платежей.");
   activeAccount(state, draft.accountId);
   activeExpenseCategory(state, draft.categoryId);
-  const amountMinor = parsePositiveMoney(draft.amount, "amount");
-  const reservedMinor = parseReserved(draft.reserved);
+  const amountMinor = parsePositiveMoney(draft.amount, "amount", state);
+  const reservedMinor = parseReserved(draft.reserved, state);
   if (reservedMinor > amountMinor) fail("reserved", "Уже накоплено не может превышать сумму платежа.");
   if (draft.recurrence !== "annual" && draft.recurrence !== "one_time") fail("recurrence", "Выберите тип повтора.");
   const ids = allDocumentIds(state);
@@ -247,8 +249,8 @@ export function editCommitment(state: BudgetState, id: string, draft: Commitment
   if (!current) fail("id", "Крупный платёж не найден.");
   activeAccount(state, draft.accountId);
   activeExpenseCategory(state, draft.categoryId);
-  const amountMinor = parsePositiveMoney(draft.amount, "amount");
-  const reservedMinor = parseReserved(draft.reserved);
+  const amountMinor = parsePositiveMoney(draft.amount, "amount", state);
+  const reservedMinor = parseReserved(draft.reserved, state);
   if (reservedMinor > amountMinor) fail("reserved", "Уже накоплено не может превышать сумму платежа.");
   if (draft.recurrence !== "annual" && draft.recurrence !== "one_time") fail("recurrence", "Выберите тип повтора.");
   return validateResult({
@@ -301,7 +303,7 @@ export function createSchedule(
     name: normalizeName(draft.name),
     categoryId: draft.categoryId,
     accountId: draft.accountId,
-    amountMinor: parsePositiveMoney(draft.amount, "amount"),
+    amountMinor: parsePositiveMoney(draft.amount, "amount", state),
     dueDay: assertDueDay(draft.dueDay),
     mode: draft.mode,
     months: normalizedMonths(draft.mode, draft.months),
@@ -322,7 +324,7 @@ export function editSchedule(state: BudgetState, id: string, draft: ScheduleDraf
       name: normalizeName(draft.name),
       categoryId: draft.categoryId,
       accountId: draft.accountId,
-      amountMinor: parsePositiveMoney(draft.amount, "amount"),
+      amountMinor: parsePositiveMoney(draft.amount, "amount", state),
       dueDay: assertDueDay(draft.dueDay),
       mode: draft.mode,
       months: normalizedMonths(draft.mode, draft.months),
@@ -369,7 +371,7 @@ export function createFlexibleLine(
   if (!matchingCategory && state.categories.length >= PLANNING_LIMITS.categories) fail("categories", "Достигнут лимит категорий.");
   const ids = allDocumentIds(state);
   const categoryId = matchingCategory?.id ?? nextId(ids, makeId);
-  const line: BudgetLine = { id: nextId(ids, makeId), categoryId, plannedMinor: parsePositiveMoney(draft.amount, "amount"), active: true };
+  const line: BudgetLine = { id: nextId(ids, makeId), categoryId, plannedMinor: parsePositiveMoney(draft.amount, "amount", state), active: true };
   const sortOrder = Math.max(0, ...state.categories.map((item) => item.sortOrder)) + 10;
   if (!Number.isSafeInteger(sortOrder)) fail("categories", "Порядок категорий слишком велик.");
   return validateResult({
@@ -387,7 +389,7 @@ export function editFlexibleLine(state: BudgetState, lineId: string, draft: Flex
   if (!category || category.type !== "expense") fail("categoryId", "Категория лимита не найдена.");
   const name = normalizeName(draft.name);
   uniqueActiveName(state, name, category.id);
-  const amountMinor = parsePositiveMoney(draft.amount, "amount");
+  const amountMinor = parsePositiveMoney(draft.amount, "amount", state);
   return validateResult({
     ...state,
     categories: state.categories.map((item) => item.id === category.id ? { ...item, name } : item),
