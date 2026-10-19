@@ -49,7 +49,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
   // иначе группа сменялась, и число пропадало без слова.
   const [panelDirty, setPanelDirty] = useState(false);
   const [switching, setSwitching] = useState<Adding>(null);
-  const open = (next: Adding) => {
+  const openGroup = (next: Adding) => {
     if (adding !== null && panelDirty) {
       setSwitching(next);
       return;
@@ -124,7 +124,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}
 
       {adding?.where === "top" ? panel("top", adding.currency) : (
-        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => open({ where: "top", currency: firstForeign })}>
+        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => openGroup({ where: "top", currency: firstForeign })}>
           <span className="icon-label"><Icon name="plus" size={20} />Добавить курс</span>
         </button>
       )}
@@ -137,7 +137,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
           card={card}
           adding={adding?.where === card.currency}
           panel={panel(card.currency, card.currency)}
-          onAdd={() => open({ where: card.currency, currency: card.currency })}
+          onAdd={() => openGroup({ where: card.currency, currency: card.currency })}
           onRemove={setRemoving}
         />
       ))}
