@@ -104,4 +104,22 @@ describe("клавиша клавиатуры суммы", () => {
     expect(editAmount("12,50+", "1", null)).toEqual({ text: "12,50+1", caret: 7 });
     expect(editAmount("12,50+3", ",", null)).toEqual({ text: "12,50+3,", caret: 8 });
   });
+
+  it("считает в точности валюты: иена без дробной части, динар — с тремя знаками", () => {
+    expect(evaluateAmount("1500", 0)).toEqual({ kind: "value", minor: 1_500, compound: false });
+    expect(evaluateAmount("1000÷3", 0)).toEqual({ kind: "value", minor: 333, compound: true });
+    expect(evaluateAmount("15,5", 0)).toEqual({ kind: "error", message: "Введите положительную сумму целым числом." });
+    expect(evaluateAmount("1,234+0,001", 3)).toEqual({ kind: "value", minor: 1_235, compound: true });
+    expect(evaluateAmount("1,2345", 3).kind).toBe("error");
+    expect(amountText(1_500, 0)).toBe("1500");
+    expect(amountText(1_235, 3)).toBe("1,235");
+    expect(amountText(1_200, 3)).toBe("1,200");
+    expect(amountText(1_000, 3)).toBe("1");
+    expect(settleAmount("1000÷3", 0)).toBe("333");
+    // Клавиши: у иены запятая ничего не ставит, у динара — третий знак после запятой есть, четвёртого нет.
+    expect(editAmount("15", ",", null, 0)).toEqual({ text: "15", caret: 2 });
+    expect(editAmount("1,23", "4", null, 3)).toEqual({ text: "1,234", caret: 5 });
+    expect(editAmount("1,234", "5", null, 3)).toEqual({ text: "1,234", caret: 5 });
+    expect(editAmount("1,23", "4", null)).toEqual({ text: "1,23", caret: 4 });
+  });
 });
