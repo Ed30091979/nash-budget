@@ -14,6 +14,7 @@ import { Donut } from "./Donut";
 import { MonthBars } from "./MonthBars";
 import {
   emptyTitle,
+  periodAnchor,
   reportModel,
   reportsFieldsForDays,
   reportsFieldsForPeriod,
@@ -72,7 +73,7 @@ export function ReportsScreen({ budget, today, fields, onFields, onFeed, onAdd }
     </div>
     <div className="filter-chips report-periods" role="group" aria-label="Период и счёт">
       <button className="chip" type="button" aria-pressed={period.kind === "month"} onClick={() => onFields(reportsFieldsForPeriod(fields, "month", today))}>
-        <span className="chip-face">{period.kind === "month" ? period.label : monthLabel(monthOfDate(period.from), today)}</span>
+        <span className="chip-face">{period.kind === "month" ? period.label : monthLabel(monthOfDate(periodAnchor(fields, today)), today)}</span>
       </button>
       <button className="chip" type="button" aria-pressed={period.kind === "quarter"} onClick={() => onFields(reportsFieldsForPeriod(fields, "quarter", today))}>
         <span className="chip-face">{period.kind === "quarter" ? period.label : "Квартал"}</span>

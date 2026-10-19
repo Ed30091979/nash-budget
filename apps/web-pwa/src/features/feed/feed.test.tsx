@@ -46,7 +46,11 @@ describe("«Операции» на демо (макет 08)", () => {
     expect(text).toContain("Дал в долг: Саша Карта −5 000 ₽");
     expect(markup).toMatch(/<li class="feed-row pending"><button class="feed-open" type="button" aria-label="Изменить операцию «Доход 110[\u00a0 ]000[\u00a0 ]₽ от 2026-10-20»: Зарплата, Карта, ожидается">/u);
     expect(markup).toContain('class="icon-plate feed-plate tone-');
-    expect(text).toContain(`Показано ${demo.transactions.length} из ${demo.transactions.length}`);
+    // С историей пяти месяцев демо длиннее страницы: первые 50 и «Показать ещё».
+    const all = demo.transactions.length;
+    expect(all).toBeGreaterThan(50);
+    expect(text).toContain(`Показано 50 из ${all}`);
+    expect(text).toContain(`Показать ещё ${Math.min(50, all - 50)}`);
     expect(markup).not.toMatch(/\sstyle=/u);
   });
 
@@ -59,7 +63,9 @@ describe("«Операции» на демо (макет 08)", () => {
     expect(text).toContain("Расходы 22 000 ₽ Доходы 0 ₽");
     expect(text).toMatch(/Найдено 6 из \d+\. Показано 6 из 6/u);
     expect(text).not.toContain("Транспорт");
-    const tag = plain(feed(demo, { tag: DEMO_IDS.tags.dacha }));
+    // «дача» — две покупки октября и три в истории; за октябрь — две.
+    expect(plain(feed(demo, { tag: DEMO_IDS.tags.dacha }))).toMatch(/Найдено 5 из/u);
+    const tag = plain(feed(demo, { tag: DEMO_IDS.tags.dacha, from: "2026-10-01", to: "2026-10-31" }));
     expect(tag).toContain("#дача");
     expect(tag).toMatch(/Найдено 2 из/u);
   });
@@ -68,14 +74,14 @@ describe("«Операции» на демо (макет 08)", () => {
     const demo = buildDemoBudgetState(TODAY);
     const many: Transaction[] = Array.from({ length: 120 }, (_, index) => ({
       id: `9b000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      occurredOn: "2026-09-15", status: "posted", kind: "expense", amountMinor: 10_000, accountId: DEMO_IDS.accounts.card, categoryId: PLANNING_IDS.categories.food,
+      occurredOn: "2026-09-16", status: "posted", kind: "expense", amountMinor: 10_000, accountId: DEMO_IDS.accounts.card, categoryId: PLANNING_IDS.categories.food,
     }));
     const budget = { ...demo, transactions: [...demo.transactions, ...many] };
-    const text = plain(feed(budget, { from: "2026-09-15", to: "2026-09-15" }));
+    const text = plain(feed(budget, { from: "2026-09-16", to: "2026-09-16" }));
     expect(text).toContain("Показать ещё 50");
     expect(text).toContain("Найдено 120 из");
     expect(text).toContain("Показано 50 из 120");
-    expect(text).toContain("15 сентября, вторник Итог дня: −12 000 ₽");
+    expect(text).toContain("16 сентября, среда Итог дня: −12 000 ₽");
   });
 
   it("лист фильтра — модальный диалог: заголовок, крестик, варианты с `aria-pressed` и галочкой у выбранного", () => {

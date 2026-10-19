@@ -1,6 +1,7 @@
 import {
   DEFAULT_CATEGORIES,
   categoryNameKey,
+  convertMinor,
   HOUSEHOLD_ID,
   makePlanningSeed,
   monthIndex,
@@ -148,8 +149,10 @@ const SALARY_MINOR = 11_000_000;
  * Дни выплат демо называет сам (`household.paydays`, D-039), но история остаётся: из неё выводит
  * даты тот, у кого дни не названы, и ось «Года» показывает прошлые выплаты. Трёх прошлых месяцев
  * хватает на любой день календаря: расписанием число становится с двух повторений в разные месяцы.
+ * Пять — столько же, сколько месяцев истории трат (`demoHistory`): «По месяцам» в «Отчётах» —
+ * полгода, и у каждого прошлого месяца есть и доход, и расходы.
  */
-const HISTORY_MONTHS = 3;
+const HISTORY_MONTHS = 5;
 
 /** Выплаты одного месяца: число и сумма. */
 const DEMO_PAYDAYS: readonly (readonly [day: number, amountMinor: number])[] = [
@@ -165,7 +168,7 @@ export const DEMO_IDS = {
     cash: "7c666666-6666-4666-8666-666666666661",
     dollars: "7c666666-6666-4666-8666-666666666662",
   },
-  rates: ["7d777777-7777-4777-8777-777777777771", "7d777777-7777-4777-8777-777777777772", "7d777777-7777-4777-8777-777777777773"],
+  rates: ["7d777777-7777-4777-8777-777777777771", "7d777777-7777-4777-8777-777777777772", "7d777777-7777-4777-8777-777777777773", "7d777777-7777-4777-8777-777777777774"],
   tags: { vacation: "7e888888-8888-4888-8888-888888888881", dacha: "7e888888-8888-4888-8888-888888888882" },
   debt: "7f999999-9999-4999-8999-999999999991",
   rules: { salary: "7faaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", rent: "7faaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2" },
@@ -205,7 +208,10 @@ function demoIncomes(month: string, today: string, salaryCategoryId: string, acc
   return incomes;
 }
 
-/** Курс доллара (макеты v5): 93,10 ₽ с 15-го прошлого месяца, 91,80 ₽ с 1-го и 92,50 ₽ с 15-го. */
+/**
+ * Курс доллара (макеты v5): 93,10 ₽ с 15-го прошлого месяца, 91,80 ₽ с 1-го и 92,50 ₽ с 15-го. Ещё
+ * раньше — 89,60 ₽ на 14-е три месяца назад: курс дня покупки в долларах из истории (`demoHistory`).
+ */
 function demoRates(month: string): readonly ExchangeRate[] {
   const rate = (index: number, date: string, baseMinor: number): ExchangeRate => ({
     id: DEMO_IDS.rates[index]!,
@@ -215,6 +221,7 @@ function demoRates(month: string): readonly ExchangeRate[] {
     rate: { baseMinor, quoteMinor: 100 },
   });
   return [
+    rate(3, `${shiftMonth(month, -HISTORY_USD_BACK)}-${String(HISTORY_USD_DAY).padStart(2, "0")}`, HISTORY_USD_RATE.baseMinor),
     rate(0, `${shiftMonth(month, -1)}-15`, 9_310),
     rate(1, `${month}-01`, 9_180),
     rate(2, `${month}-15`, 9_250),
@@ -266,18 +273,125 @@ function demoScene(month: string, today: string): readonly Transaction[] {
 }
 
 /**
+ * Пять прошлых месяцев трат — история «Отчётов» (макет 09: «По месяцам» 76 · 82 · 74 · 89 · 79 тыс.).
+ *
+ * Генерация детерминированная и считается от сегодняшнего месяца, как сцена: `back` = 1 — прошлый
+ * месяц. Расходы месяца — ровно числа макета: для октября май 76 200, июнь 81 500, июль 74 300,
+ * август 88 900, сентябрь 79 400 ₽. Каждый месяц — аренда 5-го, ЖКХ 10-го, продукты шесть раз,
+ * транспорт три раза, кафе дважды, иногда подарок и хозяйство; последняя покупка продуктов
+ * добирает месяц до его числа. Метки: «отпуск» — три месяца назад (летом для октября), с покупкой в
+ * долларах по курсу её дня; «дача» — два и четыре месяца назад. Все дни — с 2-го по 28-е: такие есть
+ * в любом месяце, и вся история — прошлое при любом сегодняшнем дне. Планов у прошлых месяцев нет:
+ * их «Обзор» показывает траты без лимитов, а «Открыть …» относится только к месяцу плана.
+ */
+const HISTORY_TOTALS_MINOR: readonly number[] = [7_940_000, 8_890_000, 7_430_000, 8_150_000, 7_620_000];
+/** Покупка в долларах: 50 $ три месяца назад, 14-го, по 89,60 ₽ — снимок 4 480 ₽. */
+const HISTORY_USD_BACK = 3;
+const HISTORY_USD_DAY = 14;
+const HISTORY_USD_MINOR = 5_000;
+const HISTORY_USD_RATE = { baseMinor: 8_960, quoteMinor: 100 } as const;
+
+/** Операция истории: месяц назад `back`, порядковый номер в месяце. */
+function historyId(back: number, index: number): string {
+  return `7b555555-5555-4555-8555-7777${back}${String(index).padStart(7, "0")}`;
+}
+
+interface HistoryCategories {
+  readonly cafe: string;
+  readonly gifts: string;
+}
+
+/** Что повторяется по месяцам: [back − 1] — массив на месяц. */
+const HISTORY_UTILITIES: readonly number[] = [580_000, 510_000, 460_000, 490_000, 540_000];
+const HISTORY_TRANSPORT: readonly (readonly [number, number, number])[] = [
+  [60_000, 250_000, 90_000], [90_000, 60_000, 180_000], [120_000, 60_000, 60_000], [250_000, 90_000, 60_000], [60_000, 180_000, 90_000],
+];
+const HISTORY_CAFE: readonly (readonly [number, number])[] = [[120_000, 85_000], [64_000, 150_000], [210_000, 98_000], [76_000, 132_000], [110_000, 90_000]];
+const HISTORY_FOOD: readonly (readonly [number, number, number, number, number])[] = [
+  [420_000, 315_000, 398_000, 362_000, 241_000], [520_000, 415_000, 610_000, 384_000, 455_000], [310_000, 260_000, 295_000, 228_000, 190_000],
+  [380_000, 340_000, 410_000, 295_000, 330_000], [440_000, 365_000, 402_000, 318_000, 260_000],
+];
+const FOOD_DAYS = [2, 7, 12, 17, 23, 28] as const;
+const FOOD_NOTES = ["рынок", undefined, "у дома", undefined, "рынок", undefined] as const;
+
+function demoHistory(month: string, ids: HistoryCategories): readonly Transaction[] {
+  const { card, dollars } = DEMO_IDS.accounts;
+  const { food, transport, housing, utilities, household, leisure } = PLANNING_IDS.categories;
+  const { vacation, dacha } = DEMO_IDS.tags;
+  const operations: Transaction[] = [];
+  for (let back = HISTORY_MONTHS; back >= 1; back -= 1) {
+    const past = shiftMonth(month, -back);
+    const at = (day: number) => `${past}-${String(day).padStart(2, "0")}`;
+    const rows: { day: number; categoryId: string; amountMinor: number; note?: string; tagIds?: readonly string[]; usd?: boolean }[] = [];
+    const i = back - 1;
+    rows.push({ day: PAYDAY_ADVANCE, categoryId: housing, amountMinor: 4_500_000, note: "аренда" });
+    rows.push({ day: 10, categoryId: utilities, amountMinor: HISTORY_UTILITIES[i]! });
+    HISTORY_TRANSPORT[i]!.forEach((amountMinor, trip) => rows.push({
+      day: [4, 15, 26][trip]!, categoryId: transport, amountMinor,
+      ...(trip === 1 ? { note: "такси" } : {}),
+      ...(back === 2 && trip === 2 ? { tagIds: [dacha] } : {}),
+    }));
+    HISTORY_CAFE[i]!.forEach((amountMinor, visit) => rows.push({
+      day: [9, 21][visit]!, categoryId: ids.cafe, amountMinor, note: "кофе с собой",
+      ...(back === HISTORY_USD_BACK && visit === 0 ? { tagIds: [vacation] } : {}),
+    }));
+    if (back === 1) rows.push({ day: 13, categoryId: ids.gifts, amountMinor: 200_000, note: "цветы" });
+    if (back === 4) rows.push({ day: 24, categoryId: ids.gifts, amountMinor: 350_000, note: "день рождения" });
+    if (back === 2) rows.push({ day: 8, categoryId: household, amountMinor: 260_000, note: "рассада", tagIds: [dacha] });
+    if (back === 4) rows.push({ day: 11, categoryId: household, amountMinor: 180_000, tagIds: [dacha] });
+    if (back === HISTORY_USD_BACK) rows.push({ day: HISTORY_USD_DAY, categoryId: leisure, amountMinor: HISTORY_USD_MINOR, note: "экскурсия", tagIds: [vacation], usd: true });
+    const fixed = HISTORY_FOOD[i]!;
+    fixed.forEach((amountMinor, purchase) => rows.push({ day: FOOD_DAYS[purchase]!, categoryId: food, amountMinor, ...(FOOD_NOTES[purchase] === undefined ? {} : { note: FOOD_NOTES[purchase] }) }));
+    const spent = rows.reduce((sum, row) => sum + (row.usd ? convertMinor(row.amountMinor, HISTORY_USD_RATE) : row.amountMinor), 0);
+    const last = HISTORY_TOTALS_MINOR[i]! - spent;
+    // Последняя покупка добирает месяц до числа макета — и обязана остаться правдоподобной покупкой.
+    if (last < 100_000 || last > 1_000_000) throw new Error(`История демо: последняя покупка продуктов ${back} мес. назад — ${last}.`);
+    rows.push({ day: FOOD_DAYS[5], categoryId: food, amountMinor: last });
+    rows
+      .sort((left, right) => left.day - right.day)
+      .forEach((row, index) => operations.push({
+        id: historyId(back, index),
+        occurredOn: at(row.day),
+        status: "posted",
+        kind: "expense",
+        amountMinor: row.amountMinor,
+        accountId: row.usd ? dollars : card,
+        categoryId: row.categoryId,
+        ...(row.note === undefined ? {} : { note: row.note }),
+        ...(row.tagIds === undefined ? {} : { tagIds: row.tagIds }),
+        ...(row.usd ? { baseAmountMinor: convertMinor(row.amountMinor, HISTORY_USD_RATE), baseCurrency: "RUB", rate: { ...HISTORY_USD_RATE } } : {}),
+      }));
+  }
+  return operations;
+}
+
+/**
+ * Остатки на начало, при которых «На счетах» на 19-е — те же 554 000 ₽ макетов, сколько бы истории ни
+ * лежало до сцены. Карта: 5 000 ₽ сцены (ровно ушедшие в долг Саше) плюс всё, что история потратила с
+ * карты, минус выплаты месяцев старше трёх — прежнее демо помнило доходы трёх месяцев. Доллары: ровно
+ * то, что история потратила в долларах, — к сцене на счёте снова ноль, и покупка 1 200 $ даёт 1 200 $.
+ */
+function demoOpenings(month: string, history: readonly Transaction[], incomes: readonly Transaction[]): { readonly card: number; readonly dollars: number } {
+  const { card, dollars } = DEMO_IDS.accounts;
+  const spentFrom = (accountId: string) => history.reduce((sum, item) => sum + (item.kind === "expense" && item.accountId === accountId ? item.amountMinor : 0), 0);
+  const olderThanScene = monthStartDate(shiftMonth(month, -3));
+  const olderIncome = incomes.reduce((sum, item) => sum + (item.occurredOn < olderThanScene ? item.amountMinor : 0), 0);
+  return { card: 500_000 + spentFrom(card) - olderIncome, dollars: spentFrom(dollars) };
+}
+
+/**
  * Счета макетов v5 при той же сумме «На счетах» 554 000 ₽ (на 19-е число): карта 418 000, наличные
  * 10 000, резерв платежей 15 000 и доллары 1 200 $ — 111 000 ₽ по курсу 92,50. Карта — прежний
  * «Основной» с тем же идентификатором: на него ссылаются доходы, платежи плана и операции сцены.
- * Остаток на начало у карты — 5 000 ₽: ровно столько ушло в долг Саше, и «На счетах» сходится.
+ * Остатки на начало у карты и долларов — от истории (`demoOpenings`), и «На счетах» сходится.
  */
-function demoAccounts(accounts: readonly Account[]): readonly Account[] {
+function demoAccounts(accounts: readonly Account[], openings: { readonly card: number; readonly dollars: number }): readonly Account[] {
   return [
     ...accounts.map((account) => account.id === DEMO_IDS.accounts.card
-      ? { ...account, name: "Карта", openingBalanceMinor: 500_000, sortOrder: 10 }
+      ? { ...account, name: "Карта", openingBalanceMinor: openings.card, sortOrder: 10 }
       : { ...account, sortOrder: 30 }),
     { id: DEMO_IDS.accounts.cash, name: "Наличные", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true, sortOrder: 20 },
-    { id: DEMO_IDS.accounts.dollars, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 0, active: true, sortOrder: 40 },
+    { id: DEMO_IDS.accounts.dollars, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: openings.dollars, active: true, sortOrder: 40 },
   ];
 }
 
@@ -289,7 +403,7 @@ function demoGoals(goals: readonly Goal[]): readonly Goal[] {
   return goals.map((goal) => ({ ...goal, name: "Отпуск", targetMinor: 15_000_000, openingContributedMinor: 4_500_000 }));
 }
 
-/** Метки: «дача» — на двух покупках 18-го, «отпуск» — пока без операций. */
+/** Метки: «дача» — на двух покупках 18-го и в истории, «отпуск» — в истории (три месяца назад). */
 const DEMO_TAGS: readonly Tag[] = [
   { id: DEMO_IDS.tags.vacation, name: "отпуск", active: true },
   { id: DEMO_IDS.tags.dacha, name: "дача", active: true },
@@ -361,17 +475,21 @@ export function buildDemoBudgetState(today: string = localToday(new Date())): Bu
     monthIndex(month, "сегодняшний месяц") - monthIndex(CANONICAL_DEMO_MONTH),
   );
 
-  const transactions: readonly Transaction[] = [
-    ...demoIncomes(month, today, salary.id, DEMO_IDS.accounts.card),
-    ...demoScene(month, today),
-  ];
+  const named = (name: string) => {
+    const found = categories.find((category) => categoryNameKey(category.name) === categoryNameKey(name));
+    if (found === undefined) throw new Error(`В стартовом наборе нет категории «${name}».`);
+    return found.id;
+  };
+  const incomes = demoIncomes(month, today, salary.id, DEMO_IDS.accounts.card);
+  const history = demoHistory(month, { cafe: named("Кафе и доставка"), gifts: named("Подарки и праздники") });
+  const transactions: readonly Transaction[] = [...incomes, ...history, ...demoScene(month, today)];
   const recurringRules = demoRules(month, salary.id);
   return {
     ...scene,
     // Дни выплат названы (D-039): «хватает до 20-го» видно в любой день месяца, и с первого числа.
     household: { id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [PAYDAY_ADVANCE, PAYDAY_SALARY] },
     categories: activeIncomeSources(scene.categories, transactions, recurringRules),
-    accounts: demoAccounts(scene.accounts),
+    accounts: demoAccounts(scene.accounts, demoOpenings(month, history, incomes)),
     goals: demoGoals(scene.goals),
     tags: DEMO_TAGS,
     exchangeRates: demoRates(month),

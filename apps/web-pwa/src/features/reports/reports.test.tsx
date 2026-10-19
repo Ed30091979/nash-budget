@@ -57,7 +57,10 @@ describe("«Отчёты»: период", () => {
   it("чипы меняют вид периода с той же опорой; сегодняшняя опора в адрес не пишется", () => {
     expect(reportsFieldsForPeriod({}, "quarter", TODAY)).toEqual({ period: "quarter" });
     expect(reportsFieldsForPeriod({}, "year", TODAY)).toEqual({ period: "year" });
-    expect(reportsFieldsForPeriod({ period: "year" }, "month", TODAY)).toEqual({ period: "month", from: "2026-01-01" });
+    // Из года, в котором сегодня, «месяц» — сегодняшний, а не январь; из прошлого года — его январь.
+    expect(reportsFieldsForPeriod({ period: "year" }, "month", TODAY)).toEqual({});
+    expect(reportsFieldsForPeriod({ period: "year", from: "2025-01-01" }, "month", TODAY)).toEqual({ period: "month", from: "2025-01-01" });
+    expect(reportsFieldsForPeriod({ period: "year" }, "quarter", TODAY)).toEqual({ period: "quarter" });
     expect(reportsFieldsForPeriod({ period: "month", from: "2026-09-01", view: "income" }, "quarter", TODAY)).toEqual({ view: "income", period: "quarter", from: "2026-07-01" });
     expect(reportsFieldsForPeriod({ period: "quarter", acc: "x" }, "month", TODAY)).toEqual({ acc: "x" });
     expect(reportsFieldsForDays({ view: "tags" }, "2026-10-01", "2026-10-07")).toEqual({ view: "tags", period: "custom", from: "2026-10-01", to: "2026-10-07" });
@@ -125,9 +128,10 @@ describe("«Отчёты»: кольцо — шесть секторов и «О
     const card = seed.accounts[0]!.id;
     const categories = seed.categories.filter((item) => item.type === "expense").slice(0, 8);
     const spends: Transaction[] = categories.map((category, index) => ({
-      id: `85555555-5555-4555-8555-5555555557${String(index).padStart(2, "0")}`, occurredOn: "2026-09-10", status: "posted", kind: "expense", amountMinor: (index + 1) * 100_000, accountId: card, categoryId: category.id,
+      id: `85555555-5555-4555-8555-5555555557${String(index).padStart(2, "0")}`, occurredOn: "2026-03-10", status: "posted", kind: "expense", amountMinor: (index + 1) * 100_000, accountId: card, categoryId: category.id,
     }));
-    const model = reportModel({ ...seed, transactions: [...seed.transactions, ...spends] }, { period: "month", from: "2026-09-01" }, TODAY);
+    // Март — до истории демо: в нём только эти восемь покупок.
+    const model = reportModel({ ...seed, transactions: [...seed.transactions, ...spends] }, { period: "month", from: "2026-03-01" }, TODAY);
     expect(model.segments).toHaveLength(DONUT_TOP + 1);
     const rest = model.segments.at(-1)!;
     expect(rest).toMatchObject({ name: "Остальное", rest: true, feed: null, tone: null, amountMinor: 300_000 });
@@ -162,7 +166,8 @@ describe("«Отчёты» на демо: октябрь 2026, доступно�
     const text = plain(markup);
     expect(markup).toContain("<h1>Отчёты</h1>");
     expect(text).toContain("Больше всего ушло на категорию «Жильё»");
-    expect(text).toContain("71 000 ₽ за октябрь; в сентябре расходов не было");
+    // История демо (макет 09): сентябрь — 79 400 ₽, октябрь на 8 400 ₽ меньше.
+    expect(text).toContain("71 000 ₽ за октябрь — на 8 400 ₽ меньше, чем в сентябре");
     // Кольцо — role="img" с выводом и долями; легенда — кнопки с суммой и долей.
     expect(nbsp(markup)).toContain('<div class="donut" role="img" aria-label="Расходы за октябрь, 71 000 ₽: Жильё 63 %, Продукты 31 %, Транспорт 6 %">');
     expect(nbsp(markup)).toContain('aria-label="Жильё: 45 000 ₽, 63 %. Показать операции"');
@@ -173,7 +178,9 @@ describe("«Отчёты» на демо: октябрь 2026, доступно�
     expect(markup).toMatch(/<th scope="col">Категория<\/th><th scope="col">Сумма<\/th><th scope="col">Доля<\/th>/u);
     expect(text).toContain("Всего 71 000 ₽");
     // «По месяцам» — картинка с суммами словами, октябрь — акцентом и в таблице.
-    expect(nbsp(markup)).toMatch(/<div class="month-bars" role="img" aria-label="Расходы по месяцам: май 0 ₽, июнь 0 ₽, июль 0 ₽, август 0 ₽, сентябрь 0 ₽, октябрь 71 000 ₽">/u);
+    expect(nbsp(markup)).toContain('<div class="month-bars" role="img" aria-label="Расходы по месяцам: май 76 200 ₽, июнь 81 500 ₽, июль 74 300 ₽, август 88 900 ₽, сентябрь 79 400 ₽, октябрь 71 000 ₽">');
+    // Подписи столбцов — коротко, как в макете: 76 · 82 · 74 · 89 · 79 · 71 тыс.
+    expect([...markup.matchAll(/<span class="month-bar-value">([^<]+)<\/span>/gu)].map((match) => nbsp(match[1]!))).toEqual(["76 тыс.", "82 тыс.", "74 тыс.", "89 тыс.", "79 тыс.", "71 тыс."]);
     expect(markup).toContain('<div class="month-bar current" aria-hidden="true">');
     expect(text).toContain("Расходы за полгода, октябрь — пока неполный");
     expect(text).toContain("октябрь (идёт) 71 000 ₽");
@@ -190,9 +197,10 @@ describe("«Отчёты» на демо: октябрь 2026, доступно�
 
   it("пустой период говорит словами и ведёт к записи, кольца и нулей не рисует", () => {
     const demo = buildDemoBudgetState(TODAY);
-    const markup = screen(demo, { period: "month", from: "2026-09-01" });
+    // Март — до истории демо.
+    const markup = screen(demo, { period: "month", from: "2026-03-01" });
     const text = plain(markup);
-    expect(text).toContain("В сентябре расходов нет");
+    expect(text).toContain("В марте расходов нет");
     expect(text).toContain("Запишите трату — появится кольцо.");
     expect(markup).toMatch(/<button[^>]*class="primary-button[^"]*"[^>]*>Записать расход<\/button>/u);
     expect(markup).not.toContain('class="donut"');

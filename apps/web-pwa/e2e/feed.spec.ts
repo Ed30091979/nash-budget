@@ -50,9 +50,9 @@ test("поиск «2400»: сумма в любом виде находит за
     expect(await historyState(page), query).not.toMatch(/2400|2 400|search|query/u);
   }
   await expect(page.getByRole("status").filter({ hasText: /^Найдено 1 из \d+\. Показано 1 из 1$/u })).toBeVisible();
-  // «#дача» — по метке; очистка возвращает всё.
+  // «#дача» — по метке: две покупки этого месяца и три из истории демо; очистка возвращает всё.
   await search(page).fill("#дача");
-  await expect(rows(page)).toHaveCount(2);
+  await expect(rows(page)).toHaveCount(5);
   await page.getByRole("button", { name: "Очистить поиск" }).click();
   await expect(rows(page)).toHaveCount(all);
   // Ничего не нашлось — своими словами и с выходом.
@@ -112,7 +112,7 @@ test("фильтр по категории — в адресе: правка п�
   await expect(chip).toBeFocused();
   await expect(chip).toHaveAttribute("data-set", "true");
   expect(await hash(page)).toMatch(/^#\/operations\?cat=[0-9a-f-]{36}$/u);
-  // Поиск и фильтр вместе: «#дача» в «Продуктах» — одна покупка 18-го.
+  // Поиск и фильтр вместе: «#дача» в «Продуктах» — одна покупка 18-го (в истории «дача» — не продукты).
   await expect(rows(page)).toHaveCount(1);
   await expect(search(page)).toHaveValue("#дача");
   const filtered = await hash(page);
@@ -129,7 +129,8 @@ test("фильтр по категории — в адресе: правка п�
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeVisible();
   expect(await hash(page)).toBe(filtered);
   await expect(search(page)).toHaveValue("");
-  await expect(rows(page)).toHaveCount(6);
+  // «Продукты» за всё время: шесть покупок этого месяца и по шесть — в каждом из пяти прошлых.
+  await expect(rows(page)).toHaveCount(36);
   // Сменить фильтр — тот же экран: запись истории заменяется, «Назад» ведёт на «Обзор».
   await feed(page).getByRole("button", { name: "Весь период", exact: true }).click();
   await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: /^Этот месяц/u }).click();

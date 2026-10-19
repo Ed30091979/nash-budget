@@ -1,6 +1,12 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateMonthlySeries,
+  calculatePeriodBreakdown,
+  carryBudgetForward,
+  convertMinor,
+  monthAfterPeriod,
+  shiftMonth,
   calculateDebts,
   calculateHoldings,
   calculateTagExpenses,
@@ -18,7 +24,7 @@ import { describe, expect, it } from "vitest";
 import { prepareBudgetState } from "../backup";
 import { categoryVisual } from "../category-visual";
 import { paydayDays, periodClock } from "../reach";
-import { reachLineModel } from "../features/overview/overview-model";
+import { overviewModel, reachLineModel } from "../features/overview/overview-model";
 import { buildDemoBudgetState, CANONICAL_DEMO_MONTH, DEMO_IDS } from "./demo";
 
 /** Дни, на которых демо проверяется: разный отступ от канонического июля и разное число месяца. */
@@ -171,7 +177,8 @@ describe("демонстрационный бюджет", () => {
     expect(balance(DEMO_IDS.accounts.dollars)).toBe(120_000);
     // 1 200 $ по 92,50 — 111 000 ₽, и итог «На счетах» тот же, что в прежнем демо: 554 000 ₽.
     expect(holdings.totalInBaseMinor).toBe(55_400_000);
-    expect(demo.exchangeRates?.map((rate) => [rate.date, rate.rate.baseMinor])).toEqual([["2026-09-15", 9_310], ["2026-10-01", 9_180], ["2026-10-15", 9_250]]);
+    // Курсы макетов и ещё один — дня покупки в долларах из истории (три месяца назад, 14-го).
+    expect(demo.exchangeRates?.map((rate) => [rate.date, rate.rate.baseMinor])).toEqual([["2026-07-14", 8_960], ["2026-09-15", 9_310], ["2026-10-01", 9_180], ["2026-10-15", 9_250]]);
     // Расходы октября 71 000 = Жильё 45 000 + Продукты 22 000 + Транспорт 4 000, по дням макета.
     const totals = calculateBudget(demo);
     expect(totals.expensesMinor).toBe(7_100_000);
@@ -183,7 +190,7 @@ describe("демонстрационный бюджет", () => {
     const salary20 = demo.transactions.find((item) => item.kind === "income" && item.occurredOn === "2026-10-20");
     expect(salary20?.status).toBe("pending");
     expect(demo.transactions.filter((item) => item.status === "posted").every((item) => item.occurredOn <= today)).toBe(true);
-    // Метки: «дача» на двух операциях 18-го, «отпуск» пока пустая.
+    // Метки в месяце плана: «дача» на двух операциях 18-го, «отпуск» — только в истории.
     expect(demo.tags?.map((tag) => tag.name)).toEqual(["отпуск", "дача"]);
     const byTag = calculateTagExpenses(demo).byTag;
     expect(byTag[DEMO_IDS.tags.dacha]).toMatchObject({ expenseMinor: 590_000, transactionCount: 2 });
@@ -245,5 +252,101 @@ describe("демонстрационный бюджет", () => {
       // Дважды подряд — одно и то же состояние: демо попадает в журнал семьи и в резервную копию.
       expect(buildDemoBudgetState(today)).toEqual(demo);
     }
+  });
+});
+
+describe("демо: пять прошлых месяцев трат — история «Отчётов» (макет 09)", () => {
+  /** Дни проверки: начало, середина, 19-е макетов, конец месяца — и другие месяцы и годы сцены. */
+  const MONTH_DAYS = ["2026-10-01", "2026-10-15", "2026-10-19", "2026-10-28", "2026-10-31", "2027-02-28", "2031-01-15"];
+
+  it("на 19 октября «По месяцам» — 76 200 · 81 500 · 74 300 · 88 900 · 79 400 · 71 000 ₽, доход прошлых месяцев — 180 000", () => {
+    const demo = buildDemoBudgetState("2026-10-19");
+    const months = ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"];
+    const series = calculateMonthlySeries(demo, months);
+    expect(series.months.map((row) => row.expenseMinor)).toEqual([7_620_000, 8_150_000, 7_430_000, 8_890_000, 7_940_000, 7_100_000]);
+    expect(series.months.slice(0, 5).map((row) => row.incomeMinor)).toEqual([18_000_000, 18_000_000, 18_000_000, 18_000_000, 18_000_000]);
+    // До истории — пусто: апрель ни трат, ни доходов не знает.
+    expect(calculateMonthlySeries(demo, ["2026-04"]).months[0]).toMatchObject({ expenseMinor: 0, incomeMinor: 0 });
+    // Сентябрь против октября — то сравнение, что видно в «Отчётах»: на 8 400 ₽ меньше.
+    expect(series.months[4]!.expenseMinor - series.months[5]!.expenseMinor).toBe(840_000);
+  });
+
+  it("в любой день месяца и в любом месяце сцены: прошлые месяцы — от 70 до 90 тыс., разные; текущий — 71 000; будущего записанного нет", () => {
+    for (const today of MONTH_DAYS) {
+      const demo = buildDemoBudgetState(today);
+      const month = monthOfDate(today);
+      const past = [5, 4, 3, 2, 1].map((back) => shiftMonth(month, -back));
+      const series = calculateMonthlySeries(demo, [...past, month]).months;
+      const values = series.slice(0, 5).map((row) => row.expenseMinor);
+      for (const value of values) {
+        expect(value, today).toBeGreaterThanOrEqual(7_000_000);
+        expect(value, today).toBeLessThanOrEqual(9_000_000);
+      }
+      expect(new Set(values).size, today).toBe(5);
+      expect(series[5]!.expenseMinor, today).toBe(7_100_000);
+      expect(demo.transactions.filter((item) => item.occurredOn > today).every((item) => item.status === "pending"), today).toBe(true);
+      // Каждый прошлый месяц — продукты, транспорт, кафе, аренда и ЖКХ по разным дням.
+      const breakdown = calculatePeriodBreakdown(demo, { from: `${past[4]}-01`, to: `${past[4]}-28` });
+      expect(breakdown.expense.categories.length, today).toBeGreaterThanOrEqual(5);
+      expect(new Set(demo.transactions.filter((item) => monthOfDate(item.occurredOn) === past[0] && item.kind === "expense").map((item) => item.occurredOn)).size, today).toBeGreaterThanOrEqual(8);
+    }
+  });
+
+  it("«На счетах» на 19-е — те же 554 000 ₽ и та же карта: история сходится в остатках на начало", () => {
+    for (const today of ["2026-10-19", "2027-02-19", "2031-01-19"]) {
+      const demo = buildDemoBudgetState(today);
+      const holdings = calculateHoldings(demo, today);
+      expect(holdings.totalInBaseMinor, today).toBe(55_400_000);
+      expect(holdings.accountBalancesMinor[DEMO_IDS.accounts.card], today).toBe(41_800_000);
+      expect(holdings.accountBalancesMinor[DEMO_IDS.accounts.dollars], today).toBe(120_000);
+      // Ни один счёт ни в один день истории не уходит в минус.
+      const month = monthOfDate(today);
+      for (let back = 5; back >= 0; back -= 1) {
+        for (const day of ["01", "09", "16", "27"]) {
+          const at = `${shiftMonth(month, -back)}-${day}`;
+          if (at > today) continue;
+          const balances = calculateHoldings(demo, at).accountBalancesMinor;
+          for (const [id, value] of Object.entries(balances)) expect(value ?? 0, `${at} ${id}`).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it("метки и доллары в истории: «отпуск» три месяца назад, с покупкой в долларах по курсу её дня; «дача» — два и четыре месяца назад", () => {
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    const tagged = (tag: string, month: string) => calculatePeriodBreakdown(demo, { from: `${month}-01`, to: `${month}-28` }).tags.find((row) => row.tagId === tag)!;
+    expect(tagged(DEMO_IDS.tags.vacation, "2026-07").transactionCount).toBe(2);
+    expect(tagged(DEMO_IDS.tags.dacha, "2026-08").transactionCount).toBe(2);
+    expect(tagged(DEMO_IDS.tags.dacha, "2026-06").transactionCount).toBe(1);
+    const usd = demo.transactions.filter((item) => item.kind === "expense" && item.accountId === DEMO_IDS.accounts.dollars);
+    expect(usd).toHaveLength(1);
+    const [purchase] = usd;
+    if (purchase?.kind !== "expense") throw new Error("покупка в долларах ожидалась");
+    expect(purchase).toMatchObject({ occurredOn: "2026-07-14", amountMinor: 5_000, baseAmountMinor: 448_000, baseCurrency: "RUB" });
+    const rate = demo.exchangeRates!.find((item) => item.date === purchase.occurredOn)!;
+    expect(purchase.rate).toEqual(rate.rate);
+    expect(purchase.baseAmountMinor).toBe(convertMinor(purchase.amountMinor, rate.rate));
+  });
+
+  it("прошлые месяцы — без плана: «Обзор» показывает их траты без лимитов, а «Открыть …» — только про месяц плана", () => {
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    expect(demo.budgets).toHaveLength(1);
+    for (const [month, spent] of [["2026-09", 7_940_000], ["2026-07", 7_430_000], ["2026-04", 0]] as const) {
+      const model = overviewModel(demo, month, today);
+      expect(model.spentMinor, month).toBe(spent);
+      expect(model.limitsMinor, month).toBeNull();
+      expect(model.categories.every((tile) => tile.status === "none"), month).toBe(true);
+    }
+    // Месяц плана кончился: «Открыть ноябрь» переносит план, а история его чисел не трогает.
+    const budget = activeBudgetOf(demo);
+    expect(periodClock(budget, [], today).position).toBe("inside");
+    expect(periodClock(budget, [], "2026-11-03").position).toBe("after");
+    expect(monthAfterPeriod(budget, "2026-11-03")).toBe("2026-11");
+    const opened = carryBudgetForward(demo, "2026-11").state;
+    const november = calculateBudget(opened);
+    expect(november.expensesMinor).toBe(0);
+    expect(activeBudgetOf(opened).startDate).toBe("2026-11-01");
   });
 });

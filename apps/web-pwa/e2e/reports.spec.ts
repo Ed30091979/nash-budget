@@ -33,7 +33,9 @@ test("«Расходы» с «Обзора» — в «Отчёты» с тем �
   await expect(heading(page)).toBeFocused();
   expect(await hash(page)).toBe("#/reports");
   await expect(page.getByRole("heading", { level: 2, name: "Больше всего ушло на категорию «Жильё»" })).toBeVisible();
-  await expect(page.locator(".report-compare")).toContainText(/^71\s000\s₽ за [а-я]+/u);
+  // История демо: прошлый месяц — 79 400 ₽, «По месяцам» — 76 · 82 · 74 · 89 · 79 · 71 тыс.
+  await expect(page.locator(".report-compare")).toContainText(/^71\s000\s₽ за [а-я]+ — на 8\s400\s₽ меньше, чем в [а-я]+$/u);
+  await expect(page.locator(".month-bar-value")).toHaveText([/^76\sтыс\.$/u, /^82\sтыс\.$/u, /^74\sтыс\.$/u, /^89\sтыс\.$/u, /^79\sтыс\.$/u, /^71\sтыс\.$/u]);
   await expect(page.getByRole("img", { name: /^Расходы за [а-я]+, 71\s000\s₽: Жильё 63\s%, Продукты 31\s%, Транспорт 6\s%$/u })).toBeVisible();
   await expect(page.getByRole("img", { name: /^Расходы по месяцам: .+ 71\s000\s₽$/u })).toBeVisible();
   // «Все категории и таблица» — настоящая таблица с подписью и итогом.
@@ -46,13 +48,21 @@ test("«Расходы» с «Обзора» — в «Отчёты» с тем �
   await expect(page.getByRole("table", { name: "Расходы по месяцам" })).toBeVisible();
 });
 
-test("строка легенды — «Операции» с категорией и периодом; «Назад» — «Отчёты» с тем же кварталом", async ({ page }) => {
+test("строка легенды — «Операции» с категорией и периодом; «Назад» — «Отчёты» с тем же периодом", async ({ page }) => {
   await loadDemo(page);
   await tab(page, "Отчёты").click();
   await expect(heading(page)).toBeVisible();
-  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Квартал", exact: true }).click();
-  expect(await hash(page)).toBe("#/reports?period=quarter");
-  await expect(page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /квартал$/u })).toHaveAttribute("aria-pressed", "true");
+  // Год: опора — сегодня, адрес её не пишет; строка легенды — поверх «Отчётов» за год.
+  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Год", exact: true }).click();
+  expect(await hash(page)).toBe("#/reports?period=year");
+  await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
+  expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-01-01&to=\d{4}-12-31&cat=[0-9a-f-]{36}$/u);
+  await page.goBack();
+  expect(await hash(page)).toBe("#/reports?period=year");
+  // Месяц — без ключей, как у вкладки; его легенда — числа октября макета.
+  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /^[А-Я][а-я]+$/u }).first().click();
+  expect(await hash(page)).toBe("#/reports");
   await page.getByRole("button", { name: /^Продукты: 22\s000\s₽, 31\s%\. Показать операции$/u }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
   expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&cat=[0-9a-f-]{36}$/u);
@@ -62,15 +72,18 @@ test("строка легенды — «Операции» с категорие
   await expect(feed.locator(".feed-sum")).toContainText(/Расходы 22\s000\s₽/u);
   await page.goBack();
   await expect(heading(page)).toBeVisible();
+  expect(await hash(page)).toBe("#/reports");
+  // Квартал и вкладки — тот же экран: «Доходы» и «Метки» заменяют запись, «Назад» — на «Обзор».
+  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Квартал", exact: true }).click();
   expect(await hash(page)).toBe("#/reports?period=quarter");
-  // Вкладки — тот же экран: «Доходы» и «Метки» заменяют запись, «Назад» — на «Обзор».
+  await expect(page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /квартал$/u })).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Доходы" }).click();
   expect(await hash(page)).toBe("#/reports?view=income&period=quarter");
   await expect(page.getByRole("heading", { level: 2, name: "Больше всего пришло из источника «Зарплата»" })).toBeVisible();
   await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Метки" }).click();
-  await expect(page.getByRole("heading", { level: 2, name: "Больше всего потрачено с меткой «дача»" })).toBeVisible();
-  await page.getByRole("button", { name: /^#дача: 5\s900\s₽/u }).click();
-  await expect(page.getByRole("region", { name: "Операции" }).locator(".feed-row")).toHaveCount(2);
+  await expect(page.getByRole("heading", { level: 2, name: /^Больше всего потрачено с меткой «.+»$/u })).toBeVisible();
+  await page.getByRole("button", { name: /^#дача: / }).click();
+  await expect(page.getByRole("region", { name: "Операции" }).getByRole("button", { name: "#дача", exact: true })).toHaveAttribute("data-set", "true");
   expect(await hash(page)).toMatch(/&tag=[0-9a-f-]{36}$/u);
   await page.goBack();
   expect(await hash(page)).toBe("#/reports?view=tags&period=quarter");
@@ -78,17 +91,26 @@ test("строка легенды — «Операции» с категорие
   await expect(page.locator(".reach-card")).toBeVisible();
 });
 
-test("свой период и пустой месяц: «В … расходов нет» с дорогой к записи", async ({ page }) => {
+test("прошлый месяц из листа периода, свой период и пустой период: «За … расходов нет» с дорогой к записи", async ({ page }) => {
   await loadDemo(page);
   await tab(page, "Отчёты").click();
-  await page.getByRole("button", { name: "Свой период" }).click();
+  // Чип своего периода называет выбранные дни, когда они выбраны: находим его по листу, который он открывает.
+  const customChip = page.getByRole("group", { name: "Период и счёт" }).locator('button[aria-haspopup="dialog"]').first();
+  await customChip.click();
   const sheet = page.getByRole("dialog", { name: "Период" });
   await sheet.getByRole("button", { name: /^Прошлый месяц/u }).click();
   expect(await hash(page)).toMatch(/^#\/reports\?period=month&from=\d{4}-\d{2}-01$/u);
-  await expect(page.getByRole("heading", { level: 2, name: /^В [а-я]+ расходов нет$/u })).toBeVisible();
+  // Прошлый месяц демо — 79 400 ₽ истории, сравнение — с позапрошлым (88 900 ₽).
+  await expect(page.locator(".report-compare")).toContainText(/^79\s400\s₽ за [а-я]+(?: \d{4})? — на 9\s500\s₽ меньше, чем в [а-я]+/u);
+  // Период до истории демо — пустой: словами и с дорогой к записи.
+  await customChip.click();
+  await sheet.getByLabel("С", { exact: true }).fill("2020-01-10");
+  await sheet.getByLabel("По", { exact: true }).fill("2020-01-20");
+  await sheet.getByRole("button", { name: "Показать" }).click();
+  await expect(page.getByRole("heading", { level: 2, name: /^За 10.20\sянваря\s2020 расходов нет$/u })).toBeVisible();
   await expect(page.getByRole("button", { name: "Записать расход" })).toBeVisible();
   // Дни своего периода — проверка у поля: последний раньше первого — словами.
-  await page.getByRole("button", { name: "Свой период" }).click();
+  await customChip.click();
   await sheet.getByLabel("С", { exact: true }).fill("2026-10-20");
   await sheet.getByLabel("По", { exact: true }).fill("2026-10-10");
   await sheet.getByRole("button", { name: "Показать" }).click();
@@ -96,6 +118,31 @@ test("свой период и пустой месяц: «В … расходо�
   await sheet.getByLabel("По", { exact: true }).fill("2026-10-31");
   await sheet.getByRole("button", { name: "Показать" }).click();
   expect(await hash(page)).toBe("#/reports?period=custom&from=2026-10-20&to=2026-10-31");
+});
+
+test("прошлый месяц на «Обзоре»: траты истории без лимитов и без «Открыть …»; «Расходы» ведут в «Отчёты» того месяца", async ({ page }) => {
+  await loadDemo(page);
+  const expenses = page.locator(".totals-strip").getByRole("button", { name: /^Расходы/u });
+  await expect(expenses).toContainText(/71\s000\s₽/u);
+  await page.getByRole("button", { name: /^Предыдущий месяц: /u }).click();
+  expect(await hash(page)).toMatch(/^#\/\?month=\d{4}-\d{2}$/u);
+  // Прошлый месяц демо — 79 400 ₽ истории; плана у него нет, открывать нечего.
+  await expect(expenses).toContainText(/79\s400\s₽/u);
+  await expect(page.getByRole("button", { name: /^Открыть /u })).toHaveCount(0);
+  await expenses.click();
+  await expect(heading(page)).toBeFocused();
+  expect(await hash(page)).toMatch(/^#\/reports\?period=month&from=\d{4}-\d{2}-01$/u);
+  await expect(page.locator(".report-compare")).toContainText(/^79\s400\s₽ за /u);
+  // «Отчёты» — вкладка: «Назад» с неё — на «Обзор» сегодняшнего месяца (DESIGN §9).
+  await page.goBack();
+  await expect(expenses).toContainText(/71\s000\s₽/u);
+  // История по месяцам: 79 400, 88 900 и 74 300 ₽.
+  await page.getByRole("button", { name: /^Предыдущий месяц: /u }).click();
+  await expect(expenses).toContainText(/79\s400\s₽/u);
+  await page.getByRole("button", { name: /^Предыдущий месяц: /u }).click();
+  await expect(expenses).toContainText(/88\s900\s₽/u);
+  await page.getByRole("button", { name: /^Предыдущий месяц: /u }).click();
+  await expect(expenses).toContainText(/74\s300\s₽/u);
 });
 
 test("на 320 pt и при ×2.7 «Отчёты» не выезжают за экран, цели — не меньше 48", async ({ page }) => {

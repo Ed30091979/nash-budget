@@ -174,12 +174,22 @@ export function reportsFieldsWith(fields: ReportsFields, patch: { readonly view?
 }
 
 /**
- * Другой вид периода — с той же опорой: из сентября «Квартал» ведёт в III квартал, «Год» — в его
- * год. Опора, в которой сегодня, в адрес не пишется: «Отчёты» без ключей — это сегодняшний месяц.
+ * День, от которого считается другой вид периода: сегодня, если он внутри показанного периода, иначе
+ * первый день периода. Из года «Октябрь» — сегодняшний месяц, а не январь; из сентября прошлого года
+ * «Квартал» — его III квартал.
+ */
+export function periodAnchor(fields: ReportsFields, today: string): string {
+  const current = resolveReportPeriod(fields, today);
+  return current.ongoing ? today : current.from;
+}
+
+/**
+ * Другой вид периода — с той же опорой (`periodAnchor`): из сентября «Квартал» ведёт в III квартал,
+ * «Год» — в его год. Опора, в которой сегодня, в адрес не пишется: «Отчёты» без ключей — это
+ * сегодняшний месяц.
  */
 export function reportsFieldsForPeriod(fields: ReportsFields, kind: Exclude<ReportPeriod, "custom">, today: string): ReportsFields {
-  const current = resolveReportPeriod(fields, today);
-  const anchor = current.from;
+  const anchor = periodAnchor(fields, today);
   let from: string;
   let ongoing: boolean;
   switch (kind) {
