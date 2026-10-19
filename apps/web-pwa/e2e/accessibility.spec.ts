@@ -28,7 +28,7 @@ async function loadDemo(page: Page) {
     page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 }
 
 /** Лист ввода поверх «Обзора»: цели не меньше норматива, каждая доматывается и ничем не накрыта. */
@@ -247,7 +247,7 @@ test("keyboard navigation exposes the skip link and route focus without stealing
 }) => {
   await loadDemo(page);
   await page.reload();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 
   await page.keyboard.press("Tab");
   await expect(page.locator(".skip-link")).toBeFocused();
@@ -504,7 +504,7 @@ for (const scale of FONT_SCALES) {
     await loadDemo(page);
     await page.reload();
     await applyFontScale(page, scale);
-    await expect(page.locator(".reach-line")).toBeVisible();
+    await expect(page.locator(".reach-card")).toBeVisible();
 
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       const layout = viewport.width >= 760 ? "wide" : "phone";

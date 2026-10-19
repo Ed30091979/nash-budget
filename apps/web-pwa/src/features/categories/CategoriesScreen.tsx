@@ -87,18 +87,16 @@ export function CategoriesScreen({ budget, type, write, onBack, onType, onOpen, 
                 <Tile
                   key={card.category.id}
                   variant={income ? "income" : "expense"}
-                  tone={income ? undefined : card.visual.tone}
+                  icon={card.visual.icon}
+                  tone={card.visual.tone}
+                  badge="edit"
                   label={categoryCardLabel(card, currency, month)}
                   onClick={() => onOpen(card.category.id)}
                   tileKey={`manage-category:${card.category.id}`}
                 >
-                  <span className="tile-top">
-                    <span className="tile-glyph" aria-hidden="true"><Icon name={card.visual.icon} size={20} /></span>
-                    <span className="tile-edit" aria-hidden="true"><Icon name="pencil" size={20} /></span>
-                  </span>
                   <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(card.category.name)}</bdi></span>
                   {income ? null : (
-                    <span className="tile-sum tile-limit" aria-hidden="true">{card.limitMinor === null ? <small>без лимита</small> : <Money value={card.limitMinor} />}</span>
+                    <span className="tile-limit" aria-hidden="true">{card.limitMinor === null ? "без лимита" : <>лимит <Money value={card.limitMinor} /></>}</span>
                   )}
                 </Tile>
               ))}

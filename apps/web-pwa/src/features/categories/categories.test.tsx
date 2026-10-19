@@ -325,6 +325,6 @@ describe("форма категории: разметка", () => {
     const markup = view(FOOD, { draft, error: { field: "limit", message: "Введите положительную сумму в рублях, не более двух знаков после запятой." } });
     expect(markup).toMatch(/<input id="category-limit"[^>]*aria-invalid="true" aria-describedby="category-limit-hint category-limit-error"/u);
     expect(markup).toContain('id="category-limit-error" role="alert"');
-    expect(markup).toMatch(/class="tile tile-expense tone-coral manage-preview" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
+    expect(markup).toMatch(/class="tile tile-expense manage-preview" aria-hidden="true"><span class="tile-square tone-coral" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
   });
 });

@@ -2,8 +2,9 @@ import { useEffect, useRef } from "react";
 import { categoriesInListOrder, type BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
-import { accountIcon, categoryVisual } from "../../category-visual";
+import { accountIcon, categoryVisual, type CategoryTone } from "../../category-visual";
 import { AddTile } from "../../components/tiles/AddTile";
+import { TileSquare } from "../../components/tiles/Tile";
 import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import { UNCATEGORIZED_INCOME_NAME } from "../overview/overview-model";
@@ -38,6 +39,13 @@ export function pickOptions(budget: BudgetState, draft: EntryDraft, side: Endpoi
     case "transfer": return side === "from" ? accounts(draft.toAccountId) : accounts(draft.accountId);
     case "refund": return side === "to" ? accounts("") : [];
   }
+}
+
+/** Заливка квадрата плитки выбора по классу варианта: графит счёта или тон категории. */
+function squareTone(tone: string): CategoryTone | "account" {
+  if (tone === "tile-account") return "account";
+  const key = tone.replace(/^tone-/u, "");
+  return (["mint", "lilac", "peach", "amber", "sage", "coral", "neutral"] as const).find((item) => item === key) ?? "neutral";
 }
 
 /**
@@ -109,22 +117,22 @@ export function TargetPicker({ budget, draft, side, balances, onPick, onBack, on
             <li key={option.id === "" ? "none" : option.id}>
               <button
                 ref={index === 0 ? first : undefined}
-                className={`tile pick-option ${option.tone}${option.id === current ? " picked" : ""}`}
+                className={`tile pick-option${option.id === current ? " picked" : ""}`}
                 type="button"
                 aria-label={pickOptionLabel(option)}
                 aria-pressed={option.id === current}
                 onClick={() => onPick(option.id)}
               >
-                <span className="tile-top"><span className="tile-glyph" aria-hidden="true"><Icon name={option.icon} size={20} /></span></span>
+                {/* Та же плитка, что на «Обзоре»: квадрат тона или графит счёта, имя под ним. */}
+                <TileSquare icon={option.icon} tone={squareTone(option.tone)} picked={option.id === current} />
                 {/* Ревью 2b, раунд 3, NEW-2: имя в выборе — с теми же мягкими переносами, что и на «Обзоре». */}
                 <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(option.name)}</bdi></span>
                 {option.balance ? <span className="tile-sum" aria-hidden="true"><Money value={option.balance.minor} currency={option.balance.currency} /></span> : null}
-                {option.id === current ? <span className="tile-check" aria-hidden="true"><Icon name="check" size={20} /></span> : null}
               </button>
             </li>
           ))}
           {creatable !== null && onCreate !== undefined ? (
-            <li key="add"><AddTile label={creatable === "expense" ? "Своя категория расходов" : "Свой источник дохода"} onClick={onCreate} /></li>
+            <li key="add"><AddTile label={creatable === "expense" ? "Своя категория расходов" : "Свой источник дохода"} caption={creatable === "expense" ? "Своя" : "Свой"} onClick={onCreate} /></li>
           ) : null}
         </ul>
       )}

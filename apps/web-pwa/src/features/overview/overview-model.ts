@@ -47,6 +47,8 @@ export interface IncomeTile {
   readonly id: string | null;
   readonly name: string;
   readonly icon: IconName;
+  /** Тон категории дохода: своего цвета у дохода нет (дизайн 5.0, §g), «Без категории» — нейтральный. */
+  readonly tone: CategoryTone;
   readonly amountMinor: number;
   /**
    * Источник в архиве, но с доходом этого месяца: плитка-итог, которую не нажимают, — новый доход
@@ -202,16 +204,20 @@ export function overviewModel(state: BudgetState, month: string, today: string):
   ];
   const incomes: IncomeTile[] = incomeCategories
     .filter((category) => category.active || (incomeByCategory.get(category.id) ?? 0) !== 0)
-    .map((category) => ({
-      id: category.id,
-      name: category.name,
-      icon: categoryVisual(category).icon,
-      amountMinor: incomeByCategory.get(category.id) ?? 0,
-      archived: !category.active,
-    }));
+    .map((category) => {
+      const visual = categoryVisual(category);
+      return {
+        id: category.id,
+        name: category.name,
+        icon: visual.icon,
+        tone: visual.tone,
+        amountMinor: incomeByCategory.get(category.id) ?? 0,
+        archived: !category.active,
+      };
+    });
   // Доход без категории — законное состояние (D-026): у него своя плитка, когда он есть.
   if ((incomeByCategory.get(null) ?? 0) !== 0) {
-    incomes.push({ id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", amountMinor: incomeByCategory.get(null) ?? 0, archived: false });
+    incomes.push({ id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", tone: "neutral", amountMinor: incomeByCategory.get(null) ?? 0, archived: false });
   }
 
   const asOf = asOfFor(month, today);
@@ -258,17 +264,20 @@ export function currentMonth(today: string): string {
 }
 
 /**
- * Строка «Можно на повседневные … · хватает до …» — наше отличие (решение по умолчанию, §6): та же
- * величина, что у прежнего героя «Сегодня», — лимиты повседневных категорий месяца плана минус
- * потраченное по ним, — и та же линейка до выплаты, сказанная словами. Месяц плана — активный
- * бюджет, а не месяц, на который смотрит «Обзор»: стрелки листают плитки, а не план.
+ * «Можно тратить» и карточка «Хватает до …» — наше отличие (дизайн 5.0, §d): та же величина, что у
+ * прежнего героя «Сегодня», — лимиты повседневных категорий месяца плана минус потраченное по ним,
+ * — и та же линейка до выплаты. Число стоит третьим итогом шапки, а карточка под ним объясняет его:
+ * «лимиты: 26 000 из 53 000 ₽». Месяц плана — активный бюджет, а не месяц, на который смотрит
+ * «Обзор»: стрелки листают плитки, а не план.
  */
 export interface ReachLineModel {
   /** Месяц плана, `ГГГГ-ММ`. */
   readonly planMonth: string;
-  /** Остаток повседневных лимитов месяца плана. */
+  /** Остаток повседневных лимитов месяца плана — «Можно тратить». */
   readonly safeToSpendMinor: number;
-  /** Потрачено по ним — для темпа в день. */
+  /** Повседневные лимиты месяца плана — «из M» в карточке. */
+  readonly limitsMinor: number;
+  /** Потрачено по ним — для темпа в день и «лимиты: N из M». */
   readonly flexibleSpentMinor: number;
   /** Есть ли у месяца плана хоть один повседневный лимит: без них «можно» не из чего считать. */
   readonly hasLimits: boolean;
@@ -283,6 +292,7 @@ export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): R
   return {
     planMonth: budget === undefined ? "" : monthOfDate(budget.startDate),
     safeToSpendMinor: flexiblePlanMinor - flexibleSpentMinor,
+    limitsMinor: flexiblePlanMinor,
     flexibleSpentMinor,
     hasLimits: limited.length > 0,
   };

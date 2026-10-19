@@ -53,6 +53,7 @@ function renderOverview(state: BudgetState, today: string) {
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
       onPlan={() => undefined}
+      onReports={() => undefined}
       onEdit={() => undefined}
     />,
   );
@@ -60,9 +61,9 @@ function renderOverview(state: BudgetState, today: string) {
   return { markup, text: textOf(markup), heroText: textOf(hero), heroActions: heroActions(hero), opened };
 }
 
-/** Строка «Можно на повседневные» — то, что на «Обзоре» стоит на месте прежнего героя. */
+/** Карточка «Хватает до …» под итогами — то, что на «Обзоре» стоит на месте прежнего героя. */
 function heroOf(markup: string): string {
-  const start = markup.indexOf('<section class="card reach-line');
+  const start = markup.indexOf('<section class="card reach-card');
   return markup.slice(start, markup.indexOf("</section>", start));
 }
 
@@ -88,7 +89,7 @@ describe("выход из закрытого месяца", () => {
     const { text, heroText, heroActions: actions } = renderOverview(makePlanningSeed(), "2026-07-09");
 
     expect(text).not.toContain("Открыть");
-    expect(heroText).toContain("Можно на повседневные");
+    expect(heroText).toMatch(/^(?:Хватает до |Повседневные лимиты исчерпаны)/u);
     expect(actions).toEqual([]);
   });
 
@@ -100,9 +101,9 @@ describe("выход из закрытого месяца", () => {
     // Заголовок называет месяц плиток и молчит про день: месяц идёт, сообщать нечего.
     expect(text).toContain("Сентябрь 2026");
     expect(text).not.toMatch(/сентябрь\s*·/iu);
-    expect(heroText).toContain("Можно на повседневные");
+    expect(heroText).toMatch(/^(?:Хватает до |Повседневные лимиты исчерпаны)/u);
     expect(text).not.toContain("закрыт");
-    expect(markup).toMatch(/class="card reach-line (?:reaches|short|out)"/u);
+    expect(markup).toMatch(/class="card reach-card (?:reaches|short|out)"/u);
   });
 
   it("ведёт себя одинаково при отсутствии в два дня и в девять месяцев", () => {

@@ -96,7 +96,7 @@ test("правка операции: открытая и нетронутая �
   await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
   await closesWithoutQuestion(page);
   await leavesWithoutQuestion(page, "Обзор", /.+/u);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 
   await tab(page, "Операции").click();
   await page.locator('button[aria-label^="Изменить операцию «Расход"]').first().click();
@@ -223,7 +223,7 @@ test("выписка: добавленная — не спрашивает; сл
   // снова несохранённый.
   const other = await page.context().newPage();
   await other.goto("/");
-  await expect(other.locator(".reach-line")).toBeVisible();
+  await expect(other.locator(".reach-card")).toBeVisible();
   await recordExpense(other, { category: "Продукты", amount: "10" });
   await expect(toast(other, /Записано: расход 10\s₽/u)).toBeVisible();
   await other.close();

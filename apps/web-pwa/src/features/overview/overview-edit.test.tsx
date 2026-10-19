@@ -22,29 +22,32 @@ function render(): string {
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
       onPlan={vi.fn()}
+      onReports={vi.fn()}
       onEdit={vi.fn()}
     />,
   );
 }
 
-describe("«Обзор»: «Изменить» у каждого ряда (план волны 2, §5.1)", () => {
-  it("у кикеров «Доходы», «Счета», «Расходы» — кнопка «Изменить», и её доступное имя называет ряд", () => {
+describe("«Обзор»: «Изменить» у каждого ряда (план волны 2, §5.1; дизайн 5.0)", () => {
+  it("у кикеров «Доходы и счета» и «Расходы» — карандаш, и его доступное имя называет ряд", () => {
     const markup = render();
-    for (const [title, row] of [["Доходы", "incomes"], ["Счета", "accounts"], ["Расходы", "expenses"]] as const) {
-      expect(markup).toMatch(new RegExp(`<div class="row-head"><h2 id="overview-${row === "incomes" ? "incomes" : row === "accounts" ? "accounts" : "expenses"}" class="row-kicker">${title}</h2><button class="quiet-button row-edit" type="button" aria-label="${ROW_EDIT_LABELS[row]}">`, "u"));
+    for (const [title, row] of [["Доходы и счета", "accounts"], ["Расходы", "expenses"]] as const) {
+      expect(markup).toMatch(new RegExp(`<div class="row-head"><h2 id="overview-${row}" class="row-kicker">${title}</h2><button class="icon-button row-edit" type="button" aria-label="${ROW_EDIT_LABELS[row]}"><svg[^>]*aria-hidden="true"`, "u"));
     }
-    // Видимое слово — часть доступного имени (WCAG 2.5.3).
-    for (const label of Object.values(ROW_EDIT_LABELS)) expect(label.startsWith("Изменить")).toBe(true);
-    expect(markup.match(/>Изменить<\/span><\/button>/gu)).toHaveLength(3);
+    // Глиф — не единственный носитель смысла: имя словами начинается с «Изменить» и называет ряд.
+    for (const label of Object.values(ROW_EDIT_LABELS)) expect(label).toMatch(/^Изменить \S/u);
+    expect(markup.match(/class="icon-button row-edit"/gu)).toHaveLength(2);
+    expect(markup).toContain('href="#glyph-pencil"');
   });
 
-  it("итоги — одна колонка: «Всего на счетах», затем блок «Потрачено» с «по лимитам» под ним", () => {
+  it("итоги — три кнопки «На счетах · Расходы · Можно тратить» в ряд и закреплены вместе с месяцем", () => {
     const markup = render();
-    expect(markup).toMatch(/<dl class="overview-totals"><div class="overview-balance"><dt>Всего на счетах<\/dt>[^]*?<\/div><div class="overview-spent"><dt>Потрачено<\/dt><dd>[^]*?<\/dd><dd class="overview-limits">по лимитам /u);
+    const strip = /<div class="totals-strip" role="group" aria-label="Итоги">([\s\S]*?)<\/div>/u.exec(markup)?.[1] ?? "";
+    const labels = [...strip.matchAll(/<button class="total[^"]*" type="button"><span class="total-label">([^<]+)<\/span>/gu)].map((match) => match[1]);
+    expect(labels).toEqual(["На счетах", "Расходы", "Можно тратить"]);
+    expect(markup).toMatch(/<header class="overview-head"><div class="month-switch">[\s\S]*?<\/div><div class="totals-strip"/u);
     const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
-    // Правой колонки, падавшей строкой по центру, больше нет: блок «Потрачено» — под итогом, по левому краю.
-    expect(styles).not.toContain(".overview-totals > div:last-child { text-align: right; }");
-    expect(styles).toMatch(/\.overview-totals \{ display: grid;/u);
-    expect(styles).toMatch(/\.overview-spent \{[^}]*border-top: 1px solid var\(--border\)/u);
+    expect(styles).toMatch(/\.totals-strip \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/u);
+    expect(styles).toMatch(/\.overview-head \{ position: sticky; top: var\(--header-space\);/u);
   });
 });

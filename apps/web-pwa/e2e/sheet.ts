@@ -8,16 +8,16 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * называет действие и сумму.
  */
 
-/** Демо загружено и «Обзор» стоит: строка «Можно на повседневные» на месте. */
+/** Демо загружено и «Обзор» стоит: карточка «Хватает до …» под итогами на месте. */
 export async function loadDemo(page: Page): Promise<void> {
   await page.goto("/");
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 }
 
-/** Число «Можно на повседневные» — одно на строку (`overview-ui.test.tsx` держит это). */
+/** Число «Можно тратить» — третий итог шапки, одно на экран (`overview-ui.test.tsx` держит это). */
 export function reachAmount(page: Page): Locator {
-  return page.locator(".reach-line strong");
+  return page.locator(".total-can-spend .total-value");
 }
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");

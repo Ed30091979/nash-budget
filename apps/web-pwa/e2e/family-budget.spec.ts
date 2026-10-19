@@ -38,7 +38,7 @@ async function expectBudgetSnapshot(
   operationCount: number,
 ) {
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
-  // Строка «Можно на повседневные» называет остаток месяца плана независимо от того, идёт этот
+  // Итог «Можно тратить» называет остаток месяца плана независимо от того, идёт этот
   // месяц сейчас или уже закрыт.
   await expect(reachAmount(page)).toHaveText(remaining);
 

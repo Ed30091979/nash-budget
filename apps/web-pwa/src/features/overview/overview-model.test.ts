@@ -98,9 +98,9 @@ describe("данные «Обзора» за месяц", () => {
     };
     const model = overviewModel(withSalary, "2026-07", "2026-07-20");
     expect(model.incomes).toEqual([
-      { id: SALARY, name: "Зарплата", icon: "banknote", amountMinor: 3_000_000, archived: false },
+      { id: SALARY, name: "Зарплата", icon: "banknote", tone: "sage", amountMinor: 3_000_000, archived: false },
       // G-002 записал зарплату без категории: она стоит своей плиткой, а не теряется.
-      { id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", amountMinor: 18_000_000, archived: false },
+      { id: null, name: UNCATEGORIZED_INCOME_NAME, icon: "banknote", tone: "neutral", amountMinor: 18_000_000, archived: false },
     ]);
     // В месяце без такого дохода плитки «Без категории» нет.
     expect(overviewModel(withSalary, "2026-09", "2026-09-01").incomes.map((tile) => tile.id)).toEqual([SALARY]);

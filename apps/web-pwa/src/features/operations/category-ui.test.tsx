@@ -63,6 +63,7 @@ function overviewMarkup(state: BudgetState = fullCatalogue()): string {
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
       onPlan={vi.fn()}
+      onReports={vi.fn()}
       onEdit={vi.fn()}
     />,
   );
@@ -101,7 +102,7 @@ describe("выбор категории: плитки «Обзора» и выб
     const markup = overviewMarkup();
     const grid = markup.slice(markup.indexOf('class="tile-grid tile-grid-grid"'), markup.indexOf("</ul>", markup.indexOf('class="tile-grid tile-grid-grid"')));
     const items = grid.split("<li").slice(1);
-    expect(items.at(-1)).toContain('aria-label="Добавить категорию расходов"');
+    expect(items.at(-1)).toContain('aria-label="Своя категория расходов"');
     const state = fullCatalogue();
     const picker = renderToStaticMarkup(<TargetPicker budget={state} draft={blankEntryDraft(state, "expense", TODAY)} side="to" balances={{}} onPick={vi.fn()} onBack={vi.fn()} onCreate={vi.fn()} />);
     const tiles = picker.split("<li").slice(1);

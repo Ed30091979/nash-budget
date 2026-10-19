@@ -93,8 +93,9 @@ test("категория: имя, иконка, цвет и лимит — од�
   await goToOverview(page);
   const cafe = tile(page, "Кафе");
   await expect(cafe).toHaveAccessibleName(/^Кафе: потрачено 700\s₽ из 5\s000\s₽/u);
-  await expect(cafe).toHaveClass(/tone-lilac/u);
-  await expect(cafe.locator("use")).toHaveAttribute("href", "#glyph-wine");
+  // Тон и глиф — у квадрата плитки (5.0): квадрат окрашен тоном, глиф стоит прямо на нём.
+  await expect(cafe.locator(".tile-square")).toHaveClass(/tone-lilac/u);
+  await expect(cafe.locator(".tile-square > svg use")).toHaveAttribute("href", "#glyph-wine");
 
   // Архив: вопрос приложения, затем плитки на «Обзоре» нет, а операция — на месте.
   await page.getByRole("button", { name: "Изменить категории расходов" }).click();

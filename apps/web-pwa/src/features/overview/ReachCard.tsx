@@ -4,7 +4,7 @@ import { formatDay, monthGenitive, monthName, monthNominative } from "../../date
 import { reach, runsOutOn, type PaydayHorizon, type PeriodClock, type ReachState } from "../../reach";
 import type { ReachLineModel } from "./overview-model";
 
-/** «до 20 октября», когда дата выведена из доходов, и «до конца октября», когда выводить не из чего. */
+/** «20 октября», когда дата выведена из доходов, и «конца октября», когда выводить не из чего. */
 function paydayLabel(payday: PaydayHorizon): string {
   return payday.source === "income" ? formatDay(payday.date) : `конца ${monthGenitive(payday.date)}`;
 }
@@ -16,37 +16,40 @@ const REACH_ICONS: Readonly<Record<ReachState, IconName>> = {
   out: "circle-alert",
 };
 
-export interface ReachLineProps {
+export interface ReachCardProps {
   readonly line: ReachLineModel;
   readonly clock: PeriodClock;
   /** Месяц, который предлагается открыть, когда месяц плана кончился. */
   readonly monthToOpen: string | null;
   readonly openingMonth: boolean;
   readonly onOpenMonth: (month: string) => void;
-  /** Строка ведёт в «План месяца». */
+  /** Карточка ведёт в «План месяца». */
   readonly onPlan: () => void;
 }
 
 /**
- * «Можно на повседневные 27 000 ₽ · хватает до 20 октября» — наше отличие (решение по умолчанию,
- * §6): та же величина и та же линейка до выплаты, что у прежнего героя «Сегодня», одной строкой.
- * Голос о нехватке — факт и путь (DESIGN §6): «хватает до 12 октября, а до 20-го не дотягивает ·
- * чтобы дотянуть — 400 ₽ в день». Закрытый месяц плана называется закрытым, и выход из него —
- * «Открыть октябрь» — стоит здесь же, со словами о том, что при этом произойдёт.
+ * «Хватает до 20 октября» — наше отличие (DESIGN 5.0 §6, макеты v5 §d): карточка под итогами
+ * объясняет «Можно тратить». Заголовок — на сколько дней вперёд дотягивают повседневные лимиты,
+ * подпись — «лимиты: 26 000 из 53 000 ₽», полоса — дни до выплаты с насечкой на 75 %.
+ *
+ * Голос о нехватке — факт и путь (DESIGN §6): «Хватает до 12 октября», а под ним «до 20 октября не
+ * дотянет · чтобы дотянуть — 400 ₽ в день». Закрытый месяц плана назван закрытым, и выход из него —
+ * «Открыть октябрь» — стоит здесь же, со словами о том, что при этом произойдёт. Без лимитов
+ * карточка — пустое состояние с дорогой в план, а не «0 ₽ · исчерпаны».
  */
-export function ReachLine({ line, clock, monthToOpen, openingMonth, onOpenMonth, onPlan }: ReachLineProps) {
+export function ReachCard({ line, clock, monthToOpen, openingMonth, onOpenMonth, onPlan }: ReachCardProps) {
   const { today, payday, elapsedDays } = clock;
   const until = paydayLabel(payday);
   const planMonthOf = line.planMonth === "" ? "" : monthGenitive(`${line.planMonth}-15`);
   if (!clock.inPeriod) {
     const closed = clock.position === "after";
     return (
-      <section className="card reach-line closed" aria-label="Повседневные лимиты месяца плана">
+      <section className="card reach-card closed" aria-label="Повседневные лимиты месяца плана">
         <button className="reach-open" type="button" onClick={onPlan}>
-          <span className="reach-mark" aria-hidden="true"><Icon name="calendar-clock" size={24} /></span>
+          <span className="reach-plate" aria-hidden="true"><Icon name="calendar-clock" size={24} /></span>
           <span className="reach-copy">
-            <span>{line.planMonth === "" ? "Месяц плана" : monthNominative(line.planMonth)} {closed ? "закрыт" : "ещё не начался"}: осталось от повседневных лимитов {planMonthOf}</span>
-            <strong><Money value={line.safeToSpendMinor} /></strong>
+            <span className="reach-title">{line.planMonth === "" ? "Месяц плана" : monthNominative(line.planMonth)} {closed ? "закрыт" : "ещё не начался"}: осталось от повседневных лимитов {planMonthOf}</span>
+            <span className="reach-caption"><Money value={line.safeToSpendMinor} /></span>
           </span>
           <Icon name="chevron-right" size={24} className="row-chevron" />
         </button>
@@ -63,11 +66,11 @@ export function ReachLine({ line, clock, monthToOpen, openingMonth, onOpenMonth,
     // Пустое состояние (§6 исследования, пункт 29): назвать, объяснить, дать дорогу. «Можно 0 ₽ ·
     // лимиты исчерпаны» было бы неправдой: исчерпывать нечего, лимитов просто нет.
     return (
-      <section className="card reach-line empty" aria-label="Повседневные лимиты">
+      <section className="card reach-card empty" aria-label="Повседневные лимиты">
         <div className="empty-state">
           <span className="empty-state-mark"><Icon name="target" size={32} /></span>
           <h3>Лимитов на этот месяц нет</h3>
-          <p>Лимит — сумма на месяц по одной статье: продукты, транспорт, развлечения. С ним здесь видно, сколько ещё можно потратить и хватит ли до выплаты.</p>
+          <p>С лимитами здесь видно, сколько ещё можно потратить и хватит ли до выплаты.</p>
           <button className="primary-button" type="button" onClick={onPlan}>Задать лимиты в плане</button>
         </div>
       </section>
@@ -76,21 +79,26 @@ export function ReachLine({ line, clock, monthToOpen, openingMonth, onOpenMonth,
   const reachLine = reach({ remainingMinor: line.safeToSpendMinor, spentMinor: line.flexibleSpentMinor, elapsedDays, daysAhead: payday.daysAhead });
   const needPerDay = payday.daysAhead > 0 ? Math.round(Math.max(0, line.safeToSpendMinor) / payday.daysAhead / 100) * 100 : 0;
   const runsOut = runsOutOn(today, reachLine.daysCovered);
-  const voice = reachLine.state === "out"
-    ? <>повседневные лимиты исчерпаны · до {until} ещё {payday.daysAhead} дн.</>
+  const title = reachLine.state === "out"
+    ? "Повседневные лимиты исчерпаны"
+    : `Хватает до ${reachLine.state === "short" ? formatDay(runsOut ?? payday.date) : until}`;
+  const caption = reachLine.state === "out"
+    ? <>до {until} ещё {payday.daysAhead} дн.</>
     : reachLine.state === "short"
-      ? <>хватает до {formatDay(runsOut ?? payday.date)}, а до {until} не дотягивает · чтобы дотянуть — <Money value={needPerDay} /> в день</>
-      : <>хватает до {until}</>;
+      ? <>до {until} не дотянет · чтобы дотянуть — <Money value={needPerDay} /> в день</>
+      : <>лимиты: <Money value={line.flexibleSpentMinor} bare /> из <Money value={line.limitsMinor} /></>;
   return (
-    <section className={`card reach-line ${reachLine.state}`} aria-label="Можно на повседневные">
+    <section className={`card reach-card ${reachLine.state}`} aria-label="Хватает ли до выплаты">
       <button className="reach-open" type="button" onClick={onPlan}>
-        <span className="reach-mark" aria-hidden="true"><Icon name={REACH_ICONS[reachLine.state]} size={24} /></span>
+        <span className="reach-plate" aria-hidden="true"><Icon name={REACH_ICONS[reachLine.state]} size={24} /></span>
         <span className="reach-copy">
-          <span>Можно на повседневные</span>
-          <strong><Money value={line.safeToSpendMinor} /></strong>
-          <span className="reach-voice">{voice}</span>
+          <span className="reach-title">{title}</span>
+          <span className="reach-caption">{caption}</span>
         </span>
         <Icon name="chevron-right" size={24} className="row-chevron" />
+        {/* Полоса — дни до выплаты, а не доля лимита: слева сегодня, насечка — день выплаты. Состояние
+            уже сказано словами и глифом; полоса для глаза, точные числа — в заголовке и подписи. */}
+        <span className={`limit-bar reach-bar${reachLine.state === "reaches" ? "" : ` ${reachLine.state}`}`} data-spent={reachLine.fill} aria-hidden="true" />
       </button>
     </section>
   );

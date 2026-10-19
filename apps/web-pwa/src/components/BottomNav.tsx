@@ -1,5 +1,6 @@
 import type { Ref } from "react";
 import { Icon, type IconName } from "./Icon";
+import { softHyphenate } from "../hyphenation";
 import type { Route, TabName } from "../navigation/routes";
 
 /**
@@ -52,8 +53,10 @@ export function BottomNav({ route, onTab, onAdd, navRef }: BottomNavProps) {
   const adding = route.sheet === "entry" && route.op === undefined && route.edit === undefined;
   const active = adding ? null : activeTab(route);
   const tab = ({ tab: name, label, icon }: (typeof TABS)[number]) => (
-    <button key={name} className={`nav-button${active === name ? " active" : ""}`} type="button" onClick={() => onTab(name)} aria-current={active === name ? "page" : undefined}>
-      <span className="nav-icon"><Icon name={icon} size={24} /></span><span>{label}</span>
+    // Подпись при крупном шрифте переносится по слогам («Опе-ра-ции»), а не рвётся посередине: мягкие
+    // переносы — только для глаза, имя кнопки — целое слово без U+00AD (тот же договор, что у плиток).
+    <button key={name} className={`nav-button${active === name ? " active" : ""}`} type="button" onClick={() => onTab(name)} aria-current={active === name ? "page" : undefined} aria-label={label}>
+      <span className="nav-icon"><Icon name={icon} size={24} /></span><span aria-hidden="true">{softHyphenate(label)}</span>
     </button>
   );
   return (

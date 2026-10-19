@@ -37,7 +37,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await expect.poll(() => focusedTag(page)).toBe("H1");
 
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Вкладка на вкладку заменяет запись: «Назад» с любой вкладки — на «Обзор», а не по кругу вкладок.
@@ -46,7 +46,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await tab(page, "Ещё").click();
   await expect(page.getByRole("button", { name: /^План месяца/u })).toBeVisible();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Кнопка «назад» экрана тоже ведёт к родителю и не оставляет в истории дубля.
@@ -55,7 +55,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await page.getByRole("button", { name: "Назад: Ещё" }).click();
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("лист «+» кладётся поверх вкладки, и «Назад» возвращает на неё", async ({ page }) => {
@@ -106,7 +106,7 @@ test("несохранённый черновик «Назад» не теряе
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
   await expect(entrySheet(page)).toHaveCount(0);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 });
 
@@ -130,12 +130,12 @@ test("адрес, набранный руками поверх черновик�
   await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 
   // Перезагрузка открывает то, что было на экране, а не лист.
   await page.reload();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect(amount).toHaveCount(0);
   expect(await hash(page)).toBe("#/");
 });
@@ -157,7 +157,7 @@ test("адрес, набранный поверх черновика, → «На
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
   await expect(entrySheet(page)).toHaveCount(0);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 });
 
@@ -172,13 +172,13 @@ test("адрес, поставленный на место текущей зап
   await page.getByRole("button", { name: /^План на год/u }).click();
   await expect(page.getByRole("heading", { name: /Плана хватает/u })).toBeVisible();
   await tab(page, "Обзор").click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(page.url()).not.toContain("about:blank");
   expect(await hash(page)).toBe("#/");
   // «Назад» с корня — прочь из приложения, а не на чужую запись внутри него.
   await tab(page, "Отчёты").click();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("ссылка на подэкран достраивает историю родителями, мусор в адресе — «Запись не найдена»", async ({ page }) => {
@@ -190,11 +190,11 @@ test("ссылка на подэкран достраивает историю �
   await back(page);
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 
   await page.goto("/#/bogus/route");
   await expect(page.locator(".message-toast")).toContainText("Запись не найдена");
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Перезагрузка оставляет на том же месте: адрес — это маршрут.
@@ -203,7 +203,7 @@ test("ссылка на подэкран достраивает историю �
   await page.reload();
   await expect(page.getByRole("heading", { name: "Отчёты" })).toBeVisible();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("операция с идентификатором в верхнем регистре открывается по адресу и правится", async ({ page }) => {

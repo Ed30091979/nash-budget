@@ -12,7 +12,7 @@ import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { demoBudget, restoreBudget } from "./budgets";
 import { applyFontScale } from "./font-scale";
-import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
+import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, recordExpense, tile, toast } from "./sheet";
 
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -332,7 +332,7 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
     await applyFontScale(page, scale);
     await page.setViewportSize({ width, height });
     const overview = await page.evaluate((minimum) => {
-      const tiles = [...document.querySelectorAll<HTMLElement>(".overview-screen .tile, .overview-screen .add-tile, .month-switch > button, .reach-line > button")];
+      const tiles = [...document.querySelectorAll<HTMLElement>(".overview-screen .tile, .overview-screen .add-tile, .month-switch > button, .totals-strip > button, .reach-card > button, .row-edit")];
       return {
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
@@ -367,7 +367,7 @@ test("месяц плана закрыт — «Открыть …» залито
     await page.setViewportSize(viewport);
     await page.reload();
     await goToOverview(page);
-    const open = page.locator(".reach-line.closed").getByRole("button", { name: /^Открыть / });
+    const open = page.locator(".reach-card.closed").getByRole("button", { name: /^Открыть / });
     await expect(open).toBeVisible();
     const box = await open.boundingBox();
     const label = await open.locator(".icon-label").boundingBox();
@@ -379,4 +379,94 @@ test("месяц плана закрыт — «Открыть …» залито
     const fill = await open.evaluate((element) => getComputedStyle(element).backgroundColor);
     expect(fill, `${viewport.width}px: заливка`).not.toBe("rgba(0, 0, 0, 0)");
   }
+});
+
+/** Текст итога «На счетах» / «Расходы» / «Можно тратить» без неразрывных пробелов. */
+async function totalText(page: Page, label: string): Promise<string> {
+  const total = page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") });
+  return (await total.innerText()).replace(/[  \s]+/gu, " ").trim();
+}
+
+test("три итога на демо — 554 000 · 71 000 · 27 000; каждый ведёт туда, где число раскладывается", async ({ page }) => {
+  // Дизайн 5.0, §d: «На счетах» — к счетам, «Расходы» — к отчётам (тот же расход, ревью 2b,
+  // MEDIUM-8), «Можно тратить» — к плану месяца. Лимиты — в карточке: «лимиты: 26 000 из 53 000 ₽».
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await totalText(page, "На счетах")).toBe("На счетах 554 000 ₽");
+  expect(await totalText(page, "Расходы")).toBe("Расходы 71 000 ₽");
+  expect(await totalText(page, "Можно тратить")).toBe("Можно тратить 27 000 ₽");
+  const card = page.locator(".reach-card");
+  await expect(card).toHaveClass(/reaches/u);
+  await expect(card.locator(".reach-title")).toHaveText(/^Хватает до \d+\s\S+$/u);
+  await expect(card.locator(".reach-caption")).toHaveText(/^лимиты: 26\s000 из 53\s000\s₽$/u);
+  for (const [label, address, heading] of [["На счетах", "#/more/accounts", "Счета"], ["Расходы", "#/reports", "Отчёты"], ["Можно тратить", "#/more/plan-month", "План месяца"]] as const) {
+    await goToOverview(page);
+    await page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") }).click();
+    expect(await hash(page), label).toBe(address);
+    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeFocused();
+  }
+});
+
+test("месяц и итоги закреплены при прокрутке; при крупном шрифте — в потоке", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const head = page.locator(".overview-head");
+  await expect(head).not.toHaveAttribute("data-stuck", "true");
+  await page.evaluate(() => window.scrollTo(0, 600));
+  await expect(head).toHaveAttribute("data-stuck", "true");
+  const pinned = await head.boundingBox();
+  expect(pinned?.y ?? -1, "шапка «Обзора» у верхнего края").toBeGreaterThanOrEqual(-0.5);
+  expect(pinned?.y ?? 99, "шапка «Обзора» у верхнего края").toBeLessThanOrEqual(1);
+  await expect(page.locator(".totals-strip")).toBeInViewport();
+  await expect(page.getByRole("heading", { level: 1 })).toBeInViewport();
+  // Плитку под закреплёнными итогами можно нажать: она доматывается из-под них.
+  await tile(page, "Прочее").click();
+  await expect(entrySheet(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+  // ×2.7: закреплённые итоги заняли бы полэкрана — шапка уезжает вместе с содержимым.
+  await applyFontScale(page, 2.7);
+  await page.evaluate(() => window.scrollTo(0, 900));
+  const flowing = await head.boundingBox();
+  expect(flowing?.y ?? 0, "при ×2.7 шапка в потоке").toBeLessThan(-100);
+  await applyFontScale(page, 1);
+});
+
+test("карточка «Хватает до …»: лимиты исчерпаны — словами и кругом; без лимитов — пустое состояние, а итог не выдумывает «0 ₽»", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Перерасход повседневных лимитов: факт и срок до выплаты, без «хватает».
+  await recordExpense(page, { category: "Развлечения и хобби", amount: "40000" });
+  const card = page.locator(".reach-card");
+  await expect(card).toHaveClass(/\bout\b/u);
+  await expect(card.locator(".reach-title")).toHaveText("Повседневные лимиты исчерпаны");
+  await expect(card.locator(".reach-plate use")).toHaveAttribute("href", "#glyph-circle-alert");
+  expect(await totalText(page, "Можно тратить")).toMatch(/^Можно тратить −13 000 ₽$/u);
+  // Месяц без лимитов: карточка называет состояние и ведёт в план; «Можно тратить» — «лимитов нет».
+  const withoutLimits = demoBudget();
+  await restoreBudget(page, {
+    ...withoutLimits,
+    budgets: withoutLimits.budgets.map((budget) => ({ ...budget, lines: [] })),
+  });
+  await goToOverview(page);
+  await expect(page.locator(".reach-card.empty")).toContainText("Лимитов на этот месяц нет");
+  expect(await totalText(page, "Можно тратить")).toBe("Можно тратить лимитов нет");
+  const plan = page.locator(".reach-card.empty").getByRole("button", { name: "Задать лимиты в плане" });
+  // Основная кнопка — акцент с белым, а не чернильная плита (дизайн 5.0, §g).
+  expect(await plan.evaluate((element) => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color])).toEqual(["rgb(196, 66, 26)", "rgb(255, 255, 255)"]);
+  await plan.click();
+  expect(await hash(page)).toBe("#/more/plan-month");
+});
+
+test("подписи итогов, кикеров, карточки и вкладок не рвутся посреди слова на 320 pt и при ×2.7", async ({ page }) => {
+  test.setTimeout(120_000);
+  await loadDemo(page);
+  for (const [width, scale] of [[320, 1], [390, 1], [320, 2.7], [390, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await wordSplits(page, ".total-label, .row-kicker, .reach-title, .reach-caption, .nav-button > span[aria-hidden]"), `${width} pt ×${scale}`).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${width} pt ×${scale}: без горизонтальной прокрутки`).toBe(true);
+  }
+  await applyFontScale(page, 1);
 });

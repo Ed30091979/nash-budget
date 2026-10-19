@@ -101,7 +101,7 @@ test("тост ждёт и под любым вопросом приложени
   await record("130");
   const again = toast(page, /^Записано: расход 130\s₽/u);
   await expect(again).toBeVisible();
-  await page.locator(".overview-screen").getByRole("button", { name: "Добавить категорию расходов" }).click();
+  await page.locator(".overview-screen").getByRole("button", { name: "Своя категория расходов" }).click();
   const own = page.getByRole("dialog", { name: "Своя категория" });
   await expect(own).toBeVisible();
   await page.mouse.move(1, 1);

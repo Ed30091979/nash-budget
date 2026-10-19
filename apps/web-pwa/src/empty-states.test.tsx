@@ -66,8 +66,8 @@ describe("пустые состояния", () => {
   });
 
   it("на «Обзоре» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
-    // Прежде это говорило табло конвертов «Записать»; с 2b строка «Можно на повседневные» —
-    // и без лимитов она не врёт «0 ₽ · исчерпаны», а называет состояние и ведёт в план.
+    // Прежде это говорило табло конвертов «Записать»; с 5.0 — карточка «Хватает до …» под итогами:
+    // без лимитов она не врёт «0 ₽ · исчерпаны», а называет состояние и ведёт в план.
     const budget = budgetWithoutLimits();
     const plan = calculateAnnualPlan(budget, "2026-07", 24);
     const markup = renderToStaticMarkup(
@@ -85,14 +85,16 @@ describe("пустые состояния", () => {
         onOpenSheet={vi.fn()}
         onAddCategory={vi.fn()}
         onPlan={vi.fn()}
+        onReports={vi.fn()}
         onEdit={vi.fn()}
       />,
     );
 
-    assertThreeRules(markup.slice(markup.indexOf('class="card reach-line empty"')), "лимиты");
+    assertThreeRules(markup.slice(markup.indexOf('class="card reach-card empty"')), "лимиты");
     expect(markup).toContain("Лимитов на этот месяц нет");
     expect(markup).toContain("Задать лимиты в плане");
-    expect(markup).not.toContain("Можно на повседневные");
+    // И итог «Можно тратить» не выдумывает числа: лимитов нет — так и сказано.
+    expect(markup).toContain('<span class="total-label">Можно тратить</span><span class="total-value"><span class="total-none">лимитов нет</span></span>');
   });
 
   it("демо остаётся вторым выходом там, где ему место, — на первом экране онбординга", () => {
@@ -109,7 +111,7 @@ describe("пустые состояния", () => {
     // состояния живут там, куда переехали сами списки.
     for (const [file, action] of [
       ["./features/operations/HistoryScreen.tsx", "Записать первую операцию"],
-      ["./features/overview/ReachLine.tsx", "Задать лимиты в плане"],
+      ["./features/overview/ReachCard.tsx", "Задать лимиты в плане"],
     ] as const) {
       const source = readFileSync(new URL(file, import.meta.url), "utf8");
       expect(source, `${file} по-прежнему рисует пустой список без слов`).toContain("empty-state");

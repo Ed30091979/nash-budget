@@ -56,13 +56,18 @@ export interface MoneyProps {
    * разойдётся как «128» и «450», а «12» и «8450» не получится никогда.
    */
   readonly breakDigits?: boolean;
+  /**
+   * Число без знака валюты — только первым в паре «N из M ₽», где знак стоит у второго числа одной
+   * величины («лимиты: 26 000 из 53 000 ₽»). Одиночную сумму так набирать нельзя (§7.7).
+   */
+  readonly bare?: boolean;
   readonly className?: string;
 }
 
 /** Пробелы, которыми `Intl` отбивает разряды: обычный неразрывный и узкий неразрывный. */
 const GROUP_SEPARATOR = /[    ]/u;
 
-export function Money({ value, currency, sign, breakDigits, className }: MoneyProps) {
+export function Money({ value, currency, sign, breakDigits, bare, className }: MoneyProps) {
   const base = useBaseCurrency();
   const parts = moneyParts(value, currency ?? base);
   const separator = parts.value.match(GROUP_SEPARATOR)?.[0] ?? "";
@@ -77,7 +82,7 @@ export function Money({ value, currency, sign, breakDigits, className }: MoneyPr
         // остаётся ровно тем, что вернул бы `formatMoney`.
         <span key={index}>{index > 0 ? <><wbr />{separator}</> : null}{group}</span>
       ))}
-      <span className="money-currency">{parts.currency}</span>
+      {bare ? null : <span className="money-currency">{parts.currency}</span>}
     </span>
   );
 }

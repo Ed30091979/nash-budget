@@ -75,6 +75,7 @@ function overview(budget: BudgetState): string {
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
       onPlan={vi.fn()}
+      onReports={vi.fn()}
       onEdit={vi.fn()}
     />,
   );

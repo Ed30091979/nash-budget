@@ -250,7 +250,7 @@ test("плашка сервис-воркера не накрывает ни од
   await page.locator(".step-progress-step.done").first().click();
   await expect(page.getByText("Шаг 1 из 4")).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   // Плашка пережила смену маршрута: сообщение, которое никто не закрывал, не пропало само.
   await expect(toast).toContainText(OFFLINE_READY);
 

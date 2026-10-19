@@ -56,16 +56,12 @@
   --tone-coral: #f8e1e4;
   --tone-coral-ink: #9b2c3f;
   --tone-neutral: #e9e4da;            /* «Прочее» и всё без тона: отличается от утопленных плашек */
-  --icon-plate: #ffffffb3;            /* подложка глифа на тоне: белый 70 % */
-  --tile-track: rgb(23 20 16 / 8%);   /* трек полосы лимита на плитке */
 
   /* §3 Счёт — графитовый квадрат: на нём только белый и его приглушение; красного на нём нет
      (2.25:1) — отрицательный остаток набирается со знаком U+2212 и глифом. */
   --tile-account: #22252a;
   --on-tile-account: #ffffff;         /* 15.37:1 */
   --on-tile-account-muted: #d5d8de;   /* 10.77:1 */
-  --tile-income: #e9e7fb;
-  --income-ink: #3f3fb0;              /* 6.78:1 на плитке дохода */
 
   /* §4 Типографика. Ступеней пять, начертаний два — 400 и 700, третьего нет.
      Заголовок один на все уровни: восемь ступеней кегля — это восемь уровней, которые читателю
@@ -82,8 +78,12 @@
   --lh-caption: 19px;
   --size-label: 11px;     /* капс-метка: эйбрау, кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ», пилюля резерва */
   --lh-label: 14px;
-  --size-tile: 12px;      /* подпись плитки: имя до двух строк */
+  --size-tile: 12px;      /* имя под квадратом плитки, начертание 400 */
   --lh-tile: 15px;
+  --size-tile-amount: 13px; /* сумма плитки, начертание 700 */
+  --lh-tile-amount: 17px;
+  --size-display: 22px;   /* вопрос листа, пустое состояние, цифра клавиши суммы */
+  --lh-display: 28px;
   /* Оси вариативного SF. Ширина 92 % отыгрывает ~15 % на длинной сумме, но она бонус, а не
      несущая: поведение осей на Android и Windows не проверено, и герой обязан помещаться и при
      обычной ширине. `font-optical-sizing` не пишем — Chromium его игнорирует, ось задаётся прямо. */
@@ -488,7 +488,7 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 56px repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
    «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
-.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 400; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 400; text-align: center; overflow-wrap: anywhere; hyphens: manual; background: transparent; border: 0; border-radius: var(--radius-control); }
 /* «+» — действие, а не вкладка: коралловый акцент, белый глиф (5.07:1),
    радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
 .nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
@@ -932,130 +932,131 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-/* §8 «Обзор» (план волны 2, §1.1): месяц, итоги, строка «Можно на повседневные» и три ряда плиток.
-   Плитки плоские — их отделяет тон, а не тень (§5); карточка — только строка «Можно…». */
-.overview-screen { display: grid; min-width: 0; gap: 20px; }
-.overview-head { display: grid; min-width: 0; gap: 8px; }
-.month-switch { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }
+/* ── Дизайн 5.0, R1: «Обзор» (§8, макеты v5 06). ──
+   Месяц со стрелками и три итога «На счетах · Расходы · Можно тратить» закреплены при прокрутке;
+   под ними карточка «Хватает до …», одна полоса «Доходы и счета» и сетка «Расходы» в 4 колонки.
+   Плитки плоские — их отделяет тон квадрата, а не тень (§5); карточка — только «Хватает до …». */
+.overview-screen { display: grid; min-width: 0; gap: 12px; }
+.overview-sentinel { display: block; height: 0; }
+/* Шапка «Обзора» липнет под измеренную шапку приложения и стоит на холсте во всю ширину экрана.
+   Линия под ней появляется, когда под неё поехали плитки (`data-stuck`). */
+.overview-head { position: sticky; top: var(--header-space); z-index: 15; display: grid; min-width: 0; gap: 0; margin: -12px -16px 0; padding: 0 16px 6px; background: var(--canvas); }
+.overview-head[data-stuck] { box-shadow: 0 1px 0 var(--border); }
+.month-switch { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; align-items: center; margin: 0 -12px; }
 .month-switch h1 { margin: 0; text-align: center; }
 .month-switch > button { display: grid; width: 48px; height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
-/* Итоги шапки — одна колонка по левому краю: «Всего на счетах» крупно, под ним за тонкой линией —
-   вторичный блок «Потрачено N», а под ним «по лимитам N из M». Прежде «Потрачено» стоял правой
-   колонкой и, не уместившись рядом с итогом, падал строкой ниже по центру — оторванным от всего.
-   Одна колонка держит и 320 pt, и ×2.7: строки переносятся, а не съезжают (2c, п. 7). */
-.overview-totals { display: grid; min-width: 0; gap: 8px; margin: 0; }
-.overview-totals > div { min-width: 0; }
-.overview-totals dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.overview-totals dd { margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
-.overview-totals .overview-total { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; }
-.overview-spent { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--border); }
-.overview-spent > dt { color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); }
-/* «по лимитам N из M» — своей строкой под «Потрачено»: чернила приглушения на холсте — 6.47:1 (§3). */
-.overview-totals .overview-limits { flex-basis: 100%; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+/* Три итога в ряд, каждый — кнопка к экрану, где число раскладывается. Подпись над суммой, между
+   итогами — тонкая линия `--border` (направляющая, а не граница элемента). */
+.totals-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0 -4px; }
+.totals-strip > button.total { position: relative; display: flex; min-width: 0; min-height: 52px; flex-direction: column; align-items: center; justify-content: flex-end; padding: 2px 4px 4px; color: var(--ink); text-align: center; background: transparent; border: 0; border-radius: var(--radius-control); }
+.totals-strip > button.total + button.total::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 1px; content: ""; background: var(--border); }
+.total-label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); overflow-wrap: break-word; hyphens: auto; }
+.total-value { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
+.total-none { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.overview-notes { display: grid; gap: 4px; }
 .overview-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .overview-note .icon { color: var(--amber-ink); }
-.pick-hint { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.tile-section { min-width: 0; }
-/* §4 Кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ» — капс-метка, одно из трёх мест, где капс есть. */
-.row-kicker { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-/* Кикер ряда и «Изменить» справа (§5.1: у каждого ряда — «Изменить», ничего только долгим нажатием).
-   Цель 48 при тихой кнопке; поле справа отдано кольцу фокуса. */
-.row-head { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.row-head > .row-kicker { margin: 0; }
-.row-head > .row-edit { min-height: 48px; padding: 0 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); }
 
-/* §6 Строка «Можно на повседневные» — карточка-переход в «План месяца»: глиф состояния, число, голос. */
+/* Карточка «Хватает до …» — переход в «План месяца»: подложка с глифом состояния, заголовок,
+   подпись, шеврон; под ними во всю ширину — полоса дней до выплаты с насечкой на 75 %. */
 .card { border-radius: var(--radius-card); }
-.reach-line { display: grid; gap: 12px; padding: 4px 16px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-card); }
-.reach-line.closed { padding-bottom: 16px; }
-.reach-line.empty { padding: 16px; }
-.reach-line > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.reach-line > button.reach-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 8px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
-.reach-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
-.reach-line.short .reach-mark { color: var(--amber-ink); }
-.reach-line.out .reach-mark { color: var(--red-ink); }
-.reach-copy { min-width: 0; }
-.reach-copy > span, .reach-copy > strong { display: block; }
-.reach-copy > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.reach-copy > strong { color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
-.reach-copy > .reach-voice { color: var(--ink); }
-.reach-line.out .reach-voice { color: var(--red-ink); }
+.reach-card { display: grid; gap: 12px; padding: 0 8px 0 12px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-card); }
+.reach-card.closed { padding-bottom: 16px; }
+.reach-card.empty { padding: 12px 16px 16px; }
+.reach-card.empty .empty-state { padding: 4px 0 0; }
+.reach-card > p { margin: 0 4px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.reach-card > button.reach-open { display: grid; grid-template-columns: 36px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 12px 0 14px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+.reach-plate { display: grid; width: 36px; height: 36px; place-items: center; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-plate); }
+.reach-card.short .reach-plate { color: var(--amber-ink); background: var(--amber-soft); }
+.reach-card.out .reach-plate { color: var(--red-ink); background: var(--red-soft); }
+.reach-copy { display: grid; min-width: 0; }
+.reach-title { font-weight: 700; }
+.reach-caption { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.reach-card.out .reach-caption { color: var(--red-ink); }
+/* Полоса тоньше прежней линейки героя: 6 pt со стойками насечки по 5 сверху и снизу. */
+.reach-card .reach-bar { --bar-height: 6px; --post-height: 5px; grid-column: 1 / -1; margin: 0 4px 0 0; }
 
-/* §6 Плитки. Сетка — `repeat(auto-fill, minmax(max(4.5em, 64px), 1fr))` в кегле подписи плитки: на
-   320 pt четыре колонки по 66, при ×2.7 колонок меньше. Ряд доходов прокручивается внутри себя;
-   поле вокруг ряда оставляет место кольцу фокуса, которое иначе срезала бы прокрутка. */
-.tile-grid { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: var(--size-tile); line-height: var(--lh-tile); }
-.tile-grid > li { display: flex; min-width: 0; }
+.pick-hint { margin: 0; }
+/* Выбран счёт или доход: подсказка — чернильным пузырём над навигацией (§3: пузырь подсказки —
+   чернила). Она в конце потока, поэтому, появившись, не сдвигает плитки под пальцем. */
+.pick-hint:not(.visually-hidden) { position: sticky; bottom: calc(var(--nav-space) + 8px); z-index: 16; padding: 10px 14px; color: var(--on-ink); font-size: var(--size-caption); line-height: var(--lh-caption); background: var(--ink); box-shadow: var(--shadow-sheet); }
+.tile-section { min-width: 0; }
+/* §4 Кикеры рядов «ДОХОДЫ И СЧЕТА / РАСХОДЫ» — капс-метка. Справа — карандаш 48 к справочнику ряда. */
+.row-kicker { margin: 0; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.row-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 48px; margin: 0 -12px 4px 4px; }
+
+/* §6 Плитка 5.0: квадрат 52 (радиус плитки) с глифом 24, под ним имя 12/15, сумма 13/17 700,
+   «из лимита» 11/14 и полоса на треке холста. Нажимается вся колонка — не меньше 48×48. Сетка —
+   `repeat(auto-fill, minmax(max(4.5em, 64px), 1fr))` в кегле подписи: на 320 pt четыре колонки по 66,
+   при крупном шрифте колонок меньше. */
+.tile-grid { display: grid; gap: 12px 8px; margin: 0; padding: 0; list-style: none; font-size: var(--size-tile); line-height: var(--lh-tile); }
+.tile-grid > li { display: flex; min-width: 0; justify-content: center; }
 .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px), 1fr)); }
 /* До 400 pt — не больше четырёх колонок: на пяти по 65 имени оставалось 49 pt (ревью 2b, LOW-9).
    Четверть ширины — нижняя граница колонки; при крупном шрифте 4.5em больше, и колонок меньше. */
 @media (max-width: 400px) {
   .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px, calc((100% - 24px) / 4)), 1fr)); }
 }
-.tile-grid-accounts { grid-template-columns: repeat(auto-fill, minmax(max(8.5em, 104px), 1fr)); }
-.tile-grid-row { display: flex; min-width: 0; margin: -8px; padding: 8px; overflow-x: auto; overscroll-behavior-x: contain; }
-.tile-grid-row > li { flex: none; width: max(104px, 8.5em); }
-.tile-grid-row > li:last-child { width: max(64px, 5.3em); }
-.tile { position: relative; display: flex; width: 100%; min-width: 0; min-height: 92px; flex-direction: column; gap: 4px; justify-content: space-between; padding: 8px; color: var(--ink); font-size: var(--size-tile); line-height: var(--lh-tile); font-weight: 400; text-align: left; border: 0; border-radius: var(--radius-tile); }
-.tile-top { display: flex; gap: 4px; align-items: flex-start; justify-content: space-between; }
-.tile-glyph { display: grid; width: 32px; height: 32px; flex: none; place-items: center; color: var(--ink); background: var(--icon-plate); border-radius: var(--radius-plate); }
-.tile.tone-mint .tile-glyph { color: var(--tone-mint-ink); }
-.tile.tone-lilac .tile-glyph { color: var(--tone-lilac-ink); }
-.tile.tone-peach .tile-glyph { color: var(--tone-peach-ink); }
-.tile.tone-amber .tile-glyph { color: var(--tone-amber-ink); }
-.tile.tone-sage .tile-glyph { color: var(--tone-sage-ink); }
-.tile.tone-coral .tile-glyph { color: var(--tone-coral-ink); }
-/* Имя — до двух строк с переносом по слогам; полное — в доступном имени плитки и в листе (§6). */
-/* Перенос — по мягким переносам, которые ставит `hyphenation.ts`, и рисуется дефисом; словарь
-   браузера не нужен. `overflow-wrap: anywhere` — последнее средство для слова без гласных или
-   слога шире плитки: ни одно имя стартового набора до него не доходит (e2e `overview.spec.ts`). */
-.tile-name { display: -webkit-box; overflow: hidden; font-weight: 700; overflow-wrap: anywhere; hyphens: manual; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.tile-sum { font-weight: 700; overflow-wrap: normal; }
-.tile-sum small { color: var(--ink-muted); font-size: inherit; font-weight: 400; }
-.tile-note { color: var(--on-tile-account-muted); font-size: inherit; }
-.tile-state { display: grid; flex: none; place-items: center; }
-.tile-state.near { color: var(--amber-ink); }
-.tile-state.over { color: var(--red-ink); }
-/* Полоса потрачено/лимит — прямая (§5: полоса — поверхность). Трек — чернила 8 % поверх тона, заливка —
-   глиф тона, янтарь у «почти», красный у «перелимит»; лимит читается подписью «3 500 / 3 000». */
-.tile-bar { --bar-ink: var(--ink); --fill: 0%; display: block; height: 4px; margin-top: 2px; background-image: linear-gradient(to right, var(--bar-ink) 0 var(--fill), var(--tile-track) var(--fill)); }
-.tile.tone-mint .tile-bar { --bar-ink: var(--tone-mint-ink); }
-.tile.tone-lilac .tile-bar { --bar-ink: var(--tone-lilac-ink); }
-.tile.tone-peach .tile-bar { --bar-ink: var(--tone-peach-ink); }
-.tile.tone-amber .tile-bar { --bar-ink: var(--tone-amber-ink); }
-.tile.tone-sage .tile-bar { --bar-ink: var(--tone-sage-ink); }
-.tile.tone-coral .tile-bar { --bar-ink: var(--tone-coral-ink); }
-.tile .tile-bar.near { --bar-ink: var(--amber-ink); }
-.tile .tile-bar.over { --bar-ink: var(--red-ink); }
+/* Полоса «Доходы и счета» листается вбок внутри себя, а не страница, и выходит в поля экрана:
+   пятая плитка выглядывает из-за края. Поле сверху и снизу оставляет место кольцу фокуса. */
+.tile-row { display: flex; min-width: 0; align-items: stretch; margin: -8px -16px 0; padding: 8px 16px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.tile-row > .tile-grid { display: flex; flex: none; gap: 8px; }
+.tile-row > .tile-grid > li { flex: none; width: max(76px, 6.3em); }
+.tile-row-divider { flex: none; width: 1px; margin: 8px 8px 26px; background: var(--border); }
+.tile { position: relative; display: flex; width: 100%; min-width: 0; min-height: 48px; flex-direction: column; align-items: center; gap: 0; padding: 4px 0 6px; color: var(--ink); font-size: var(--size-tile); line-height: var(--lh-tile); font-weight: 400; text-align: center; background: transparent; border: 0; border-radius: var(--radius-tile); }
+.tile-square { position: relative; display: grid; width: var(--tile-square); height: var(--tile-square); flex: none; place-items: center; border-radius: var(--radius-tile); }
+.tile-square.account { color: var(--on-tile-account); background: var(--tile-account); }
+.tile-square.add { color: var(--ink-muted); background: transparent; border: 1px dashed var(--line); }
+/* Глиф на тоне — собственные чернила тона (5.05–6.50:1, §3). */
+.tile-square.tone-mint, .list-icon.tone-mint, .endpoint-plate.tone-mint { color: var(--tone-mint-ink); }
+.tile-square.tone-lilac, .list-icon.tone-lilac, .endpoint-plate.tone-lilac { color: var(--tone-lilac-ink); }
+.tile-square.tone-peach, .list-icon.tone-peach, .endpoint-plate.tone-peach { color: var(--tone-peach-ink); }
+.tile-square.tone-amber, .list-icon.tone-amber, .endpoint-plate.tone-amber { color: var(--tone-amber-ink); }
+.tile-square.tone-sage, .list-icon.tone-sage, .endpoint-plate.tone-sage { color: var(--tone-sage-ink); }
+.tile-square.tone-coral, .list-icon.tone-coral, .endpoint-plate.tone-coral { color: var(--tone-coral-ink); }
+/* Имя — под квадратом, переносится по мягким переносам, которые ставит `hyphenation.ts`, и рисуется
+   дефисом; не обрезается — на 320 pt длинное имя занимает три строки. `overflow-wrap: anywhere` —
+   последнее средство для слова без гласных: ни одно имя стартового набора до него не доходит. */
+.tile-name { display: block; max-width: 100%; margin-top: 6px; padding: 0 2px; overflow-wrap: anywhere; hyphens: manual; }
+.tile-sum { margin-top: 2px; font-size: var(--size-tile-amount); line-height: var(--lh-tile-amount); font-weight: 700; overflow-wrap: normal; }
+.tile-sum.quiet { color: var(--ink-muted); }
+.tile-limit { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); overflow-wrap: normal; }
+.tile-note { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); }
+/* Знак в углу квадрата: треугольник — почти лимит, круг — перелимит или отрицательный остаток,
+   карандаш — плитка справочника. Пилюля состояния на холсте, отбитая кольцом холста от квадрата. */
+.tile-badge { position: absolute; top: -6px; right: -6px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-pill); box-shadow: 0 0 0 2px var(--canvas); }
+.tile-badge.near { color: var(--amber-ink); background: var(--amber-soft); }
+.tile-badge.over, .tile-badge.negative { color: var(--red-ink); background: var(--red-soft); }
+.tile-badge svg, .tile-square .tile-check svg { width: 14px; height: 14px; }
+/* Полоса потрачено/лимит — прямая (§5: полоса — поверхность), под квадратом на треке холста.
+   Заливка — чернила (13.71:1 к треку), янтарь у «почти» (4.43:1), красный у «перелимит» (5.11:1);
+   лимит читается подписью «из 30 000 ₽». */
+.tile-bar { --bar-ink: var(--ink); --fill: 0%; display: block; width: var(--tile-square); height: 4px; margin-top: 5px; background-image: linear-gradient(to right, var(--bar-ink) 0 var(--fill), var(--track) var(--fill)); }
+.tile-bar.near { --bar-ink: var(--amber-ink); }
+.tile-bar.over { --bar-ink: var(--red-ink); }
 .tile-bar[data-fill="0"] { --fill: 0%; } .tile-bar[data-fill="5"] { --fill: 5%; } .tile-bar[data-fill="10"] { --fill: 10%; } .tile-bar[data-fill="15"] { --fill: 15%; } .tile-bar[data-fill="20"] { --fill: 20%; } .tile-bar[data-fill="25"] { --fill: 25%; } .tile-bar[data-fill="30"] { --fill: 30%; } .tile-bar[data-fill="35"] { --fill: 35%; } .tile-bar[data-fill="40"] { --fill: 40%; } .tile-bar[data-fill="45"] { --fill: 45%; } .tile-bar[data-fill="50"] { --fill: 50%; } .tile-bar[data-fill="55"] { --fill: 55%; } .tile-bar[data-fill="60"] { --fill: 60%; } .tile-bar[data-fill="65"] { --fill: 65%; } .tile-bar[data-fill="70"] { --fill: 70%; } .tile-bar[data-fill="75"] { --fill: 75%; } .tile-bar[data-fill="80"] { --fill: 80%; } .tile-bar[data-fill="85"] { --fill: 85%; } .tile-bar[data-fill="90"] { --fill: 90%; } .tile-bar[data-fill="95"] { --fill: 95%; } .tile-bar[data-fill="100"] { --fill: 100%; }
-/* Тёмная плитка счёта: на ней только белый и его приглушение (§3). */
-.tile-account { min-height: 76px; color: var(--on-tile-account); background: var(--tile-account); --money-currency-ink: var(--on-tile-account-muted); }
-.tile-account .tile-glyph { color: var(--on-tile-account-muted); background: transparent; }
-/* Тон счёта (D-036) — подложка глифа на тёмной плитке: заливка тона, глиф его чернилами (§3). */
-.tile-account .tile-glyph.tone-mint { color: var(--tone-mint-ink); background: var(--tone-mint); }
-.tile-account .tile-glyph.tone-lilac { color: var(--tone-lilac-ink); background: var(--tone-lilac); }
-.tile-account .tile-glyph.tone-peach { color: var(--tone-peach-ink); background: var(--tone-peach); }
-.tile-account .tile-glyph.tone-amber { color: var(--tone-amber-ink); background: var(--tone-amber); }
-.tile-account .tile-glyph.tone-sage { color: var(--tone-sage-ink); background: var(--tone-sage); }
-.tile-account .tile-glyph.tone-coral { color: var(--tone-coral-ink); background: var(--tone-coral); }
-.tile-account .tile-glyph.tone-neutral { color: var(--ink); background: var(--surface-sunken); }
-.tile-account .tile-name { color: var(--on-tile-account-muted); font-weight: 400; }
-.tile-account .tile-sum { color: var(--on-tile-account); }
-.tile-account .tile-state { color: var(--on-tile-account); }
-/* Плитка источника дохода — 64 × 104, сиреневая, имя — чернилами дохода. */
-.tile-income { min-height: 64px; background: var(--tile-income); }
-.tile-income .tile-label { display: flex; min-width: 0; gap: 4px; align-items: center; color: var(--income-ink); font-weight: 700; }
-.tile-income .tile-label .icon { flex: none; }
-/* Источник в архиве — итог, а не кнопка: подпись «в архиве» чернилами дохода на его фоне (§3). */
-.tile-static .tile-archived { color: var(--income-ink); font-size: inherit; }
-/* Выбор — кольцо акцента внутри плитки и галочка; цвет — не единственный знак: ещё `aria-pressed`. */
-.tile.picked { box-shadow: inset 0 0 0 3px var(--accent); }
-.tile .tile-check { position: absolute; top: 4px; right: 4px; display: grid; width: 24px; height: 24px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); }
-.tile .tile-check svg { width: 16px; height: 16px; }
+/* Выбор — кольцо акцента вокруг квадрата (4.58:1 к холсту, 3.03–4.27 к заливке рядом) и галочка
+   на его углу; цвет — не единственный знак: ещё `aria-pressed`. */
+.tile.picked .tile-square { box-shadow: 0 0 0 3px var(--accent); }
+.tile-square .tile-check { position: absolute; top: -6px; right: -6px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); box-shadow: 0 0 0 2px var(--canvas); }
 .tile[draggable="true"] { cursor: grab; }
-/* «+» — пунктир `--line`: 3.30:1 на холсте. */
-.add-tile { display: grid; width: 100%; min-height: 92px; padding: 0; place-items: center; color: var(--ink-muted); background: transparent; border: 1px dashed var(--line); border-radius: var(--radius-tile); }
-.tile-grid-row .add-tile { min-height: 64px; }
+/* «+» — та же колонка: пунктирный квадрат и короткая подпись. */
+.add-tile { display: flex; width: 100%; min-width: 0; min-height: 48px; flex-direction: column; align-items: center; padding: 4px 0 6px; color: var(--ink-muted); font-size: var(--size-tile); line-height: var(--lh-tile); text-align: center; background: transparent; border: 0; border-radius: var(--radius-tile); }
+.add-tile .tile-name { color: var(--ink); }
+/* Итоги при крупном шрифте — строками «подпись — сумма», а шапка «Обзора» в поток: прилипшая, она
+   при ×2.7 заняла бы полэкрана. */
+@media (max-width: 18em), (max-height: 34em) {
+  .overview-head { position: static; }
+}
+@media (max-width: 18em) {
+  /* Карточка «Хватает до …» при крупном шрифте: глиф над словами, шеврон уходит — «октября» в
+     колонке рядом с подложкой и шевроном не помещалось и рвалось посередине. */
+  .reach-card > button.reach-open { grid-template-columns: minmax(0, 1fr); }
+  .reach-card > button.reach-open > .row-chevron { display: none; }
+  .totals-strip { grid-template-columns: minmax(0, 1fr); margin: 0; }
+  .totals-strip > button.total { flex-direction: row; flex-wrap: wrap; gap: 0 8px; align-items: baseline; justify-content: space-between; min-height: 48px; text-align: left; }
+  .totals-strip > button.total + button.total::before { top: 0; right: 0; bottom: auto; width: auto; height: 1px; }
+}
 
 /* §6 Лист ввода суммы — поверх экрана, с которого его открыли. Висит над краем экрана на 8 pt
    со всех сторон: скругление листа — роль, и у края оно тоже видно. */
@@ -1098,7 +1099,6 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .target-picker { display: grid; gap: 12px; }
 .target-picker-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .target-picker-head h3 { margin: 0; }
-.tile.pick-option { min-height: 76px; }
 .rate-quick { display: grid; gap: 12px; padding: 16px; background: var(--surface-sunken); }
 .rate-quick h3 { margin: 0; }
 .rate-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1192,7 +1192,6 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
 .base-currency-form { display: grid; gap: 12px; }
 /* «Категории и доходы»: та же плитка, что на «Обзоре», — с лимитом месяца плана вместо трат и
    карандашом в углу: касание открывает категорию для правки. Над формой — плитка-образец. */
-.tile-edit { display: grid; flex: none; place-items: center; color: var(--ink-muted); }
 .manage-preview { width: max(104px, 8.5em); justify-self: start; }
 .manage-row .row-open:only-child { grid-column: 1 / -1; }
 /* «Метки»: строка — знак «#», имя и число операций; под ней «Изменить», «В архив», «Удалить».
@@ -1431,6 +1430,14 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
    доезжают, как к любой другой карточке, и ничего под ней нет. */
 @media (max-width: 18em), (max-height: 20em) {
   .app-shell > .update-toast, .app-shell > .message-toast { position: static; }
+}
+
+/* При крупном шрифте пять мест в одну строку дают вкладке 56 pt — меньше слога «Опе-» в кегле ×2.7,
+   и подпись рвалась по букве. Панель встаёт в три колонки: «Обзор · Операции · +» и «Отчёты · Ещё» —
+   в том же порядке, что и для диктора; подписи переносятся по слогам, цели остаются 48 с зазором 8.
+   Правило стоит после короткого экрана: при ×2.7 любой телефон ниже 38em, и колонки там — его. */
+@media (max-width: 18em) {
+  .bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

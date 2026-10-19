@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type RefObject } from "react";
 import type { BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
@@ -13,7 +13,8 @@ import type { PeriodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
 import { overviewModel, reachLineModel, UNCATEGORIZED_INCOME_NAME } from "./overview-model";
 import { isDragSource, isPicked, pick, pickHintParts, PICK_IDLE, type HintPart, type PickEvent, type PickState, type PickTile, type SheetRequest } from "./pick-model";
-import { ReachLine } from "./ReachLine";
+import { ReachCard } from "./ReachCard";
+import { TotalsStrip } from "./TotalsStrip";
 
 /** Перетаскивание — только при точном указателе (§9): на касаниях оно мешало бы прокрутке. */
 const FINE_POINTER = "(pointer: fine)";
@@ -53,46 +54,69 @@ export interface OverviewScreenProps {
   /** Касание плиток решило, что записать: лист ввода открывает оболочка. */
   readonly onOpenSheet: (request: SheetRequest) => void;
   readonly onAddCategory: (type: "expense" | "income") => void;
+  /** «Можно тратить» и карточка «Хватает до…» ведут в «План месяца». */
   readonly onPlan: () => void;
+  /** «Расходы» ведут в «Отчёты»: там тот же расход разложен по категориям. */
+  readonly onReports: () => void;
   /** «Изменить» у ряда (§5.1: ничего только долгим нажатием): экран справочника этого ряда. */
   readonly onEdit: (row: OverviewRow) => void;
 }
 
-/** Ряды плиток «Обзора», у каждого — своё «Изменить». */
-export type OverviewRow = "incomes" | "accounts" | "expenses";
+/** Ряды плиток «Обзора»: «Доходы и счета» одной полосой и сетка «Расходы», у каждого — своё «Изменить». */
+export type OverviewRow = "accounts" | "expenses";
 
-/** Доступное имя «Изменить» ряда: видимое слово и что именно правится (WCAG 2.5.3). */
+/** Доступное имя «Изменить» ряда: глиф карандаша и что именно правится. */
 export const ROW_EDIT_LABELS: Readonly<Record<OverviewRow, string>> = {
-  incomes: "Изменить источники дохода",
   accounts: "Изменить счета",
   expenses: "Изменить категории расходов",
 };
 
-/** Кикер ряда с «Изменить» справа: путь к справочнику ряда виден, а не спрятан в долгом нажатии. */
+/** Кикер ряда и карандаш справа: путь к справочнику ряда виден, а не спрятан в долгом нажатии. */
 function RowHead({ id, title, row, onEdit }: { readonly id: string; readonly title: string; readonly row: OverviewRow; readonly onEdit: (row: OverviewRow) => void }) {
   return (
     <div className="row-head">
       <h2 id={id} className="row-kicker">{title}</h2>
-      <button className="quiet-button row-edit" type="button" aria-label={ROW_EDIT_LABELS[row]} onClick={() => onEdit(row)}>
-        <span className="icon-label"><Icon name="pencil" size={20} />Изменить</span>
+      <button className="icon-button row-edit" type="button" aria-label={ROW_EDIT_LABELS[row]} onClick={() => onEdit(row)}>
+        <Icon name="pencil" size={24} />
       </button>
     </div>
   );
 }
 
 /**
- * «Обзор» (план волны 2, §1.1): месяц, «Всего на счетах», «Потрачено N» (по лимитам — «N из M»), строка «Можно на
- * повседневные» и три ряда плиток — доходы, счета, расходы. Касание — основной путь; выбор и его
- * следующий шаг решает автомат `pick-model.ts`, а подсказка говорит их словами в `role="status"`.
+ * Месяц и итоги закреплены при прокрутке (макеты v5, 06b). Тень-линия появляется, когда под ними
+ * поехало содержимое: метка над шапкой ушла из виду. Без `IntersectionObserver` (сервер, старые
+ * движки) линии просто нет.
+ */
+function useStuck(): [RefObject<HTMLSpanElement | null>, boolean] {
+  const sentinel = useRef<HTMLSpanElement>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const node = sentinel.current;
+    if (node === null || typeof IntersectionObserver === "undefined") return undefined;
+    const observer = new IntersectionObserver(([entry]) => setStuck(entry !== undefined && !entry.isIntersecting));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return [sentinel, stuck];
+}
+
+/**
+ * «Обзор» (DESIGN 5.0 §8, макеты v5 06): месяц со стрелками и три итога «На счетах · Расходы · Можно
+ * тратить» — закреплены; карточка «Хватает до …»; одна полоса «Доходы и счета» (доходы — тоном своей
+ * категории, за разделителем — графитовые счета); сетка «Расходы» в 4 колонки. Касание — основной
+ * путь; выбор и его следующий шаг решает автомат `pick-model.ts`, а подсказка говорит их словами в
+ * `role="status"` — пузырём над навигацией, пока что-то выбрано, и только для диктора, пока нет.
  */
 export function OverviewScreen({
-  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onEdit,
+  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onReports, onEdit,
 }: OverviewScreenProps) {
   const model = useMemo(() => overviewModel(budget, month, today), [budget, month, today]);
   const line = useMemo(() => reachLineModel(budget, flexiblePlanMinor), [budget, flexiblePlanMinor]);
   const [picked, setPicked] = useState<PickState>(PICK_IDLE);
   const fine = useFinePointer();
   const dragged = useRef<PickTile | null>(null);
+  const [sentinel, stuck] = useStuck();
   const context = { defaultAccountId: model.defaultAccountId };
 
   const dispatch = (event: PickEvent) => {
@@ -137,36 +161,35 @@ export function OverviewScreen({
   };
 
   const monthWord = monthName(month);
-  const spentLimited = model.limitsMinor !== null;
   return (
     <div className="overview-screen" onKeyDown={onKeyDown}>
-      <header className="overview-head">
+      <span ref={sentinel} className="overview-sentinel" aria-hidden="true" />
+      <header className="overview-head" data-stuck={stuck ? "true" : undefined}>
         <MonthSwitch month={month} onMonth={(next) => { setPicked(PICK_IDLE); onMonth(next); }} />
-        <dl className="overview-totals">
-          <div className="overview-balance">
-            <dt>Всего на счетах</dt>
-            <dd className="overview-total"><Money value={model.totalInBaseMinor} breakDigits /></dd>
-            {/* Архивный счёт плитки не имеет, а в итоге остаётся (правило 9 контракта): итог
-                называет эту часть, чтобы сходиться с плитками (ревью 2c, LOW-5). */}
-            {model.archivedInTotalMinor === null ? null : <dd className="overview-limits">в том числе в архиве <Money value={model.archivedInTotalMinor} /></dd>}
-          </div>
-          {/* «Потрачено» — весь расход месяца, тот же, что в «Отчётах»; расход по лимитам против их
-              суммы — другое число, и у него своя подпись (ревью 2b, MEDIUM-8). */}
-          <div className="overview-spent">
-            <dt>Потрачено</dt>
-            <dd><Money value={model.spentMinor} /></dd>
-            {spentLimited ? <dd className="overview-limits">по лимитам <Money value={model.spentWithLimitMinor} /> из <Money value={model.limitsMinor ?? 0} /></dd> : null}
-          </div>
-        </dl>
-        {model.unvaluedAccounts.length > 0 ? (
-          <p className="overview-note">
-            <Icon name="triangle-alert" size={20} />
-            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>»{tile.archived ? " (в архиве)" : ""} — нет курса {tile.currency}</span>)}.</span>
-          </p>
-        ) : null}
+        <TotalsStrip
+          totalMinor={model.totalInBaseMinor}
+          spentMinor={model.spentMinor}
+          canSpendMinor={line.hasLimits ? line.safeToSpendMinor : null}
+          onAccounts={() => onEdit("accounts")}
+          onReports={onReports}
+          onPlan={onPlan}
+        />
       </header>
+      {/* Архивный счёт плитки не имеет, а в итоге остаётся (правило 9 контракта): итог называет эту
+          часть, чтобы сходиться с плитками (ревью 2c, LOW-5). Счёт без курса назван, а не выброшен. */}
+      {model.archivedInTotalMinor === null && model.unvaluedAccounts.length === 0 ? null : (
+        <div className="overview-notes">
+          {model.archivedInTotalMinor === null ? null : <p className="overview-note">На счетах — в том числе в архиве <Money value={model.archivedInTotalMinor} /></p>}
+          {model.unvaluedAccounts.length > 0 ? (
+            <p className="overview-note warning">
+              <Icon name="triangle-alert" size={20} />
+              <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>»{tile.archived ? " (в архиве)" : ""} — нет курса {tile.currency}</span>)}.</span>
+            </p>
+          ) : null}
+        </div>
+      )}
 
-      <ReachLine line={line} clock={clock} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={onOpenMonth} onPlan={onPlan} />
+      <ReachCard line={line} clock={clock} monthToOpen={monthToOpen} openingMonth={openingMonth} onOpenMonth={onOpenMonth} onPlan={onPlan} />
 
       {/* §6 Семейная новость: первое открытие после того, как второй участник что-то записал. */}
       {familyNews.length > 0 ? <div className="family-news" role="status">
@@ -177,30 +200,30 @@ export function OverviewScreen({
         </div>
       </div> : null}
 
-      <p className="pick-hint" role="status"><PickHintText parts={hint} /></p>
-
-      <section className="tile-section" aria-labelledby="overview-incomes">
-        <RowHead id="overview-incomes" title="Доходы" row="incomes" onEdit={onEdit} />
-        <TileGrid label="Источники дохода" layout="row">
-          {model.incomes.map((tile) => {
-            if (tile.archived) return <ArchivedIncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} />;
-            const key: PickTile = { kind: "income", id: tile.id };
-            return <IncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
-          })}
-          <AddTile key="add" label="Добавить источник дохода" onClick={() => onAddCategory("income")} />
-        </TileGrid>
-      </section>
-
       <section className="tile-section" aria-labelledby="overview-accounts">
-        <RowHead id="overview-accounts" title="Счета" row="accounts" onEdit={onEdit} />
-        {model.accounts.length > 0 ? (
-          <TileGrid label="Счета" layout="accounts">
-            {model.accounts.map((tile) => {
-              const key: PickTile = { kind: "account", id: tile.id };
-              return <AccountTile key={tile.id} tile={tile} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
+        <RowHead id="overview-accounts" title="Доходы и счета" row="accounts" onEdit={onEdit} />
+        {/* Одна полоса, листается вбок внутри себя: сначала доходы — тоном своей категории, — за
+            разделителем графитовые счета. Пятая плитка выглядывает из-за края: дальше есть ещё. */}
+        <div className="tile-row">
+          <TileGrid label="Источники дохода" layout="row">
+            {model.incomes.map((tile) => {
+              if (tile.archived) return <ArchivedIncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} />;
+              const key: PickTile = { kind: "income", id: tile.id };
+              return <IncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
             })}
+            <AddTile key="add" label="Добавить источник дохода" caption="Доход" onClick={() => onAddCategory("income")} />
           </TileGrid>
-        ) : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — заведите счёт кнопкой «Изменить» над этим рядом.</p>}
+          {model.accounts.length > 0 ? <>
+            <span className="tile-row-divider" aria-hidden="true" />
+            <TileGrid label="Счета" layout="accounts">
+              {model.accounts.map((tile) => {
+                const key: PickTile = { kind: "account", id: tile.id };
+                return <AccountTile key={tile.id} tile={tile} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
+              })}
+            </TileGrid>
+          </> : null}
+        </div>
+        {model.accounts.length > 0 ? null : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — заведите счёт карандашом над этим рядом.</p>}
       </section>
 
       <section className="tile-section" aria-labelledby="overview-expenses">
@@ -210,9 +233,14 @@ export function OverviewScreen({
             const key: PickTile = { kind: "category", id: tile.id };
             return <CategoryTile key={tile.id} tile={tile} onPick={tap(key)} drag={dragFor(key)} />;
           })}
-          <AddTile key="add" label="Добавить категорию расходов" onClick={() => onAddCategory("expense")} />
+          <AddTile key="add" label="Своя категория расходов" caption="Своя" onClick={() => onAddCategory("expense")} />
         </TileGrid>
       </section>
+
+      {/* Пока ничего не выбрано, подсказка — только для диктора: постоянного абзаца над плитками больше
+          нет (первую трату подсказывает пузырь онбординга). Выбран счёт или доход — она пузырём над
+          навигацией говорит, что будет дальше; в конце потока она не сдвигает плитки под пальцем. */}
+      <p className={picked.selected === null ? "pick-hint visually-hidden" : "pick-hint"} role="status"><PickHintText parts={hint} /></p>
     </div>
   );
 }
