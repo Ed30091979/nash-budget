@@ -12,7 +12,14 @@ import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { PlanningScreen } from "../features/planning";
-import { MoreScreen, monthNote } from "../features/more/MoreScreen";
+import { accountsNote, categoriesNote, MoreScreen, monthNote, tagsNote } from "../features/more/MoreScreen";
+import { TagsScreen } from "../features/tags/TagsScreen";
+import { CategoriesScreen } from "../features/categories/CategoriesScreen";
+import { CategoryScreen } from "../features/categories/CategoryScreen";
+import { AccountScreen } from "../features/accounts/AccountScreen";
+import { AccountsScreen } from "../features/accounts/AccountsScreen";
+import { RatesScreen } from "../features/rates/RatesScreen";
+import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
 import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
 import type { Route } from "../navigation/routes";
@@ -44,6 +51,8 @@ export interface AppRouteContext {
   readonly navigate: (route: Route) => void;
   /** Кнопка «назад» экрана: к родителю маршрута. */
   readonly back: () => void;
+  /** Тот же экран в другом виде (список расходов или доходов): запись истории заменяется, а не копится. */
+  readonly replace: (route: Route) => void;
   /** Лист ввода поверх экрана, на котором стоишь: с плиток, с «+», из «Операций» (`sheet-address.ts`). */
   readonly openSheet: (opening: SheetOpening) => void;
   readonly openEdit: (transaction: Transaction) => void;
@@ -102,6 +111,7 @@ function OverviewRoute({ app, month }: { readonly app: AppRouteContext; readonly
       onOpenSheet={(request) => openSheet(sheetOpeningOf(request))}
       onAddCategory={setAdding}
       onPlan={() => navigate({ name: "plan-month" })}
+      onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: row === "incomes" ? "income" : "expense" })}
     />
     {adding !== null ? (
       <AddCategorySheet
@@ -166,6 +176,14 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             onPlanMonth={() => navigate({ name: "plan-month" })}
             onPlanYear={() => navigate({ name: "plan-year" })}
             onImportStatement={() => navigate({ name: "import" })}
+            onAccounts={() => navigate({ name: "accounts" })}
+            accountsNote={accountsNote(budget)}
+            onCategories={() => navigate({ name: "categories", type: "expense" })}
+            categoriesNote={categoriesNote(budget)}
+            onTags={() => navigate({ name: "tags" })}
+            tagsNote={tagsNote(budget)}
+            onRates={() => navigate({ name: "rates" })}
+            ratesNote={ratesNote(budget, app.today)}
             familyNote={family.membership === null
               ? "Без входа приложение работает как сейчас"
               : `${plural(Math.max(1, family.members.length), ["участник", "участника", "участников"])} · приглашение, отпечатки ключей`}
@@ -176,5 +194,44 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
+          {/* Справочники «Учёта» (подволна 2c). Запись — по UUID из адреса; имени в адресе нет. */}
+          {route.name === "accounts" ? <AccountsScreen budget={budget} today={app.today} write={write} onBack={back} onOpen={(id) => navigate({ name: "account", id })} onCreate={() => navigate({ name: "account-new" })} /> : null}
+          {route.name === "categories" ? (
+            <CategoriesScreen
+              budget={budget}
+              type={route.type ?? "expense"}
+              write={write}
+              onBack={back}
+              // Вид списка — тот же экран: смена вида заменяет запись истории, а не копит их.
+              onType={(type) => app.replace({ name: "categories", type })}
+              onOpen={(id) => navigate({ name: "category", id, type: route.type ?? "expense" })}
+              onMessage={setMessage}
+            />
+          ) : null}
+          {route.name === "category" ? (
+            <CategoryScreen
+              key={route.id}
+              budget={budget}
+              categoryId={route.id}
+              write={write}
+              // К своему списку — родителю маршрута: вид списка записан в адресе категории, и
+              // запись истории под формой — этот список (ревью 2c, MEDIUM-1).
+              onBack={back}
+              onDone={(message) => { setMessage(message); back(); }}
+            />
+          ) : null}
+          {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}
+          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
+          {route.name === "account" || route.name === "account-new" ? (
+            <AccountScreen
+              key={route.name === "account" ? route.id : "new"}
+              budget={budget}
+              today={app.today}
+              accountId={route.name === "account" ? route.id : null}
+              write={write}
+              onBack={back}
+              onDone={(message) => { setMessage(message); back(); }}
+            />
+          ) : null}
   </>;
 }

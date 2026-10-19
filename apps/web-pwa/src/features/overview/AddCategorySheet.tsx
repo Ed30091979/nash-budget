@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { BudgetState, CategoryType } from "@family-budget/domain";
-import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "../operations/CategorySheet";
+import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "../categories/CategorySheet";
 import { createOperationsSubmissionGate } from "../operations/form-state";
 import { createOperationCategory, restoreCategory, toOperationsErrorView } from "../operations/model";
 

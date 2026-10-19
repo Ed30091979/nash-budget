@@ -62,7 +62,7 @@ import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
 import { createRouter, memoryRouterWindow } from "../navigation/router";
-import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
+import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, sameRoute, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
 import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
 import { blankEntryDraft, carriedDraft, draftSummary, EDIT_VANISHED_TEXT, type EntryDraft } from "../features/entry/entry-model";
@@ -399,8 +399,17 @@ export default function App() {
     const current = budgetRef.current;
     if (current === null) return;
     // Идентификатор в адресе пишется строчными, а в бюджете может храниться в любом регистре.
-    const resolved = resolveRoute(router.current(), { transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)) });
-    if (!resolved.notFound) return;
+    const resolved = resolveRoute(router.current(), {
+      transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)),
+      account: (id) => current.accounts.some((item) => sameRecordId(item.id, id)),
+      category: (id) => current.categories.find((item) => sameRecordId(item.id, id))?.type ?? null,
+    });
+    if (!resolved.notFound) {
+      // Маршрут найден, но назван неточно (старая ссылка на источник дохода без вида списка):
+      // адрес становится точным, и «назад» ведёт к своему списку. Сказать тут нечего.
+      if (!sameRoute(resolved.route, router.current())) router.redirect(resolved.route);
+      return;
+    }
     router.redirect(resolved.route);
     setMessage(ROUTE_NOT_FOUND_MESSAGE);
   }, [currentRouteKey, budgetReady, router]);
@@ -664,6 +673,7 @@ export default function App() {
   };
   shellNavigate.current = navigate;
   const back = () => router.back();
+  const replace = (destination: Route) => router.navigate(destination, { replace: true });
   /**
    * Лист ввода поверх экрана, на котором стоишь: с плиток — вид и плитки, с «+» — ничего, из
    * «Операций» — операция. В адрес — только эти закрытые ключи (SECURITY §7.3).
@@ -748,7 +758,7 @@ export default function App() {
   };
   const routeContext: AppRouteContext = {
     budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, openSheet, openEdit, write, budgetRef,
+    openingMonth, openMonth, familyNewsText, navigate, back, replace, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,

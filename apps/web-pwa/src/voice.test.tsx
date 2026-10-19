@@ -51,6 +51,7 @@ function renderOverview(state: BudgetState): string {
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
       onPlan={() => undefined}
+      onEdit={() => undefined}
     />,
   );
 }

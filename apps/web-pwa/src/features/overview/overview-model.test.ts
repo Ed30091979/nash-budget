@@ -1,5 +1,6 @@
 import {
   calculateAnnualPlan,
+  categoriesInListOrder,
   makePlanningSeed,
   PLANNING_IDS,
   SEED_IDS,
@@ -40,8 +41,9 @@ describe("данные «Обзора» за месяц", () => {
     expect(housing).toMatchObject({ spentMinor: 4_500_000, limitMinor: null, status: "none", fill: 0 });
     const food = model.categories.find((tile) => tile.id === PLANNING_IDS.categories.food)!;
     expect(food).toMatchObject({ spentMinor: 2_200_000, limitMinor: 3_000_000, status: "normal", fill: 75 });
-    // Плитки — активные категории расходов по порядку списка.
-    expect(model.categories.map((tile) => tile.name)).toEqual(g002().categories.filter((item) => item.type === "expense").map((item) => item.name));
+    // Плитки — активные категории расходов в порядке списка категорий: группа за группой.
+    expect(model.categories.map((tile) => tile.name)).toEqual(categoriesInListOrder(g002().categories, "expense").map((item) => item.name));
+    expect(model.categories).toHaveLength(g002().categories.filter((item) => item.type === "expense" && item.active).length);
   });
 
   it("порог «почти лимит» — `warningThreshold` бюджета; ровно лимит — тоже «почти», сверх — «перелимит»", () => {
@@ -136,6 +138,31 @@ describe("данные «Обзора» за месяц", () => {
     const excluded = overviewModel(outside, "2026-07", "2026-07-13");
     expect(excluded.totalInBaseMinor).toBe(roublesOnly);
     expect(excluded.accounts.find((tile) => tile.id === DOLLARS)).toMatchObject({ includeInTotal: false, inTotal: false, unvalued: false });
+  });
+
+  it("архивный счёт — в итоге, как велит контракт (правило 9), и итог говорит, сколько в нём архива; архивный без курса назван", () => {
+    // Ревью 2c, LOW-5: архивный счёт уходил с «Обзора», но его остаток молча оставался во «Всего на
+    // счетах», а архивный счёт без курса не назывался в «В итог не вошли».
+    const state = g002();
+    const OLD_CARD = "a1000000-0000-4000-8000-0000000000d2";
+    const withArchive: BudgetState = {
+      ...state,
+      accounts: [
+        ...state.accounts,
+        { id: OLD_CARD, name: "Старая карта", type: "cash", currency: "RUB", openingBalanceMinor: 1_500_000, active: false },
+        { id: DOLLARS, name: "Доллары", type: "cash", currency: "USD", openingBalanceMinor: 74_400, active: false },
+      ],
+    };
+    const roublesOnly = overviewModel(state, "2026-07", "2026-07-13").totalInBaseMinor;
+    const model = overviewModel(withArchive, "2026-07", "2026-07-13");
+    expect(model.totalInBaseMinor).toBe(roublesOnly + 1_500_000);
+    expect(model.archivedInTotalMinor).toBe(1_500_000);
+    expect(model.accounts.map((tile) => tile.id)).not.toContain(OLD_CARD);
+    expect(model.unvaluedAccounts).toEqual([{ id: DOLLARS, name: "Доллары", currency: "USD", archived: true }]);
+    // Архив вне итога — не в итоге и не в словах о нём; без архива — слов нет.
+    const outside: BudgetState = { ...withArchive, accounts: withArchive.accounts.map((item) => (item.active ? item : { ...item, includeInTotal: false })) };
+    expect(overviewModel(outside, "2026-07", "2026-07-13")).toMatchObject({ totalInBaseMinor: roublesOnly, archivedInTotalMinor: null, unvaluedAccounts: [] });
+    expect(overviewModel(state, "2026-07", "2026-07-13").archivedInTotalMinor).toBeNull();
   });
 
   it("остатки прошлого месяца — на его последний день, текущего — на сегодня", () => {

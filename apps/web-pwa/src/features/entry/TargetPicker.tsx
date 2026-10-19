@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { BudgetState } from "@family-budget/domain";
+import { categoriesInListOrder, type BudgetState } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { accountIcon, categoryVisual } from "../../category-visual";
@@ -26,8 +26,8 @@ export function pickOptions(budget: BudgetState, draft: EntryDraft, side: Endpoi
       const minor = balances[account.id];
       return { id: account.id, name: account.name, tone: "tile-account", icon: accountIcon(account), ...(minor === null || minor === undefined ? {} : { balance: { minor, currency: account.currency } }) };
     });
-  const categories = (type: "expense" | "income"): PickOption[] => budget.categories
-    .filter((category) => category.active && category.type === type)
+  // Категории — в порядке списка, как плитки «Обзора» и экран категорий (ревью 2c, LOW-6).
+  const categories = (type: "expense" | "income"): PickOption[] => categoriesInListOrder(budget.categories, type)
     .map((category) => {
       const visual = categoryVisual(category);
       return { id: category.id, name: category.name, tone: `tone-${visual.tone}`, icon: visual.icon };

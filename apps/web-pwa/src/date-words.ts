@@ -25,6 +25,23 @@ export function formatDay(value: string): string {
   return Number.isNaN(date.getTime()) ? value : dateLong.format(date).replace(/ /gu, "\u00a0");
 }
 
+const dateWithYear = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" });
+
+/** «15 октября 2026» — дата с годом, одной величиной: история курсов уходит в прошлые годы. */
+export function formatDayYear(value: string): string {
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? value : dateWithYear.format(date).replace(/\s*г\.$/u, "").replace(/ /gu, "\u00a0");
+}
+
+/**
+ * «15 октября 2026» строкой экрана: день с месяцем неразрывны, а год вправе уйти на следующую
+ * строку. При крупном шрифте на узком экране дата целиком в строку не помещается, и неразрывная
+ * дата рвалась посреди года; число рвать нельзя (§7). В подписях и вопросах — `formatDayYear`.
+ */
+export function formatDayYearLine(value: string): string {
+  return formatDayYear(value).replace(/\u00a0(?=\d{4}$)/u, " ");
+}
+
 /** «июля» — месяц в родительном падеже, отрезанный от «31 июля»: склонять руками нечего. */
 export function monthGenitive(value: string): string {
   const date = new Date(`${value}T12:00:00`);

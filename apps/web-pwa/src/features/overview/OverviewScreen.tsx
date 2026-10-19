@@ -54,6 +54,30 @@ export interface OverviewScreenProps {
   readonly onOpenSheet: (request: SheetRequest) => void;
   readonly onAddCategory: (type: "expense" | "income") => void;
   readonly onPlan: () => void;
+  /** «Изменить» у ряда (§5.1: ничего только долгим нажатием): экран справочника этого ряда. */
+  readonly onEdit: (row: OverviewRow) => void;
+}
+
+/** Ряды плиток «Обзора», у каждого — своё «Изменить». */
+export type OverviewRow = "incomes" | "accounts" | "expenses";
+
+/** Доступное имя «Изменить» ряда: видимое слово и что именно правится (WCAG 2.5.3). */
+export const ROW_EDIT_LABELS: Readonly<Record<OverviewRow, string>> = {
+  incomes: "Изменить источники дохода",
+  accounts: "Изменить счета",
+  expenses: "Изменить категории расходов",
+};
+
+/** Кикер ряда с «Изменить» справа: путь к справочнику ряда виден, а не спрятан в долгом нажатии. */
+function RowHead({ id, title, row, onEdit }: { readonly id: string; readonly title: string; readonly row: OverviewRow; readonly onEdit: (row: OverviewRow) => void }) {
+  return (
+    <div className="row-head">
+      <h2 id={id} className="row-kicker">{title}</h2>
+      <button className="quiet-button row-edit" type="button" aria-label={ROW_EDIT_LABELS[row]} onClick={() => onEdit(row)}>
+        <span className="icon-label"><Icon name="pencil" size={20} />Изменить</span>
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -62,7 +86,7 @@ export interface OverviewScreenProps {
  * следующий шаг решает автомат `pick-model.ts`, а подсказка говорит их словами в `role="status"`.
  */
 export function OverviewScreen({
-  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan,
+  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onEdit,
 }: OverviewScreenProps) {
   const model = useMemo(() => overviewModel(budget, month, today), [budget, month, today]);
   const line = useMemo(() => reachLineModel(budget, flexiblePlanMinor), [budget, flexiblePlanMinor]);
@@ -119,13 +143,16 @@ export function OverviewScreen({
       <header className="overview-head">
         <MonthSwitch month={month} onMonth={(next) => { setPicked(PICK_IDLE); onMonth(next); }} />
         <dl className="overview-totals">
-          <div>
+          <div className="overview-balance">
             <dt>Всего на счетах</dt>
             <dd className="overview-total"><Money value={model.totalInBaseMinor} breakDigits /></dd>
+            {/* Архивный счёт плитки не имеет, а в итоге остаётся (правило 9 контракта): итог
+                называет эту часть, чтобы сходиться с плитками (ревью 2c, LOW-5). */}
+            {model.archivedInTotalMinor === null ? null : <dd className="overview-limits">в том числе в архиве <Money value={model.archivedInTotalMinor} /></dd>}
           </div>
           {/* «Потрачено» — весь расход месяца, тот же, что в «Отчётах»; расход по лимитам против их
               суммы — другое число, и у него своя подпись (ревью 2b, MEDIUM-8). */}
-          <div>
+          <div className="overview-spent">
             <dt>Потрачено</dt>
             <dd><Money value={model.spentMinor} /></dd>
             {spentLimited ? <dd className="overview-limits">по лимитам <Money value={model.spentWithLimitMinor} /> из <Money value={model.limitsMinor ?? 0} /></dd> : null}
@@ -134,7 +161,7 @@ export function OverviewScreen({
         {model.unvaluedAccounts.length > 0 ? (
           <p className="overview-note">
             <Icon name="triangle-alert" size={20} />
-            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>» — нет курса {tile.currency}</span>)}.</span>
+            <span>В итог не вошли: {model.unvaluedAccounts.map((tile, index) => <span key={tile.id}>{index > 0 ? "; " : ""}«<bdi dir="auto">{tile.name}</bdi>»{tile.archived ? " (в архиве)" : ""} — нет курса {tile.currency}</span>)}.</span>
           </p>
         ) : null}
       </header>
@@ -153,7 +180,7 @@ export function OverviewScreen({
       <p className="pick-hint" role="status"><PickHintText parts={hint} /></p>
 
       <section className="tile-section" aria-labelledby="overview-incomes">
-        <h2 id="overview-incomes" className="row-kicker">Доходы</h2>
+        <RowHead id="overview-incomes" title="Доходы" row="incomes" onEdit={onEdit} />
         <TileGrid label="Источники дохода" layout="row">
           {model.incomes.map((tile) => {
             if (tile.archived) return <ArchivedIncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} />;
@@ -165,7 +192,7 @@ export function OverviewScreen({
       </section>
 
       <section className="tile-section" aria-labelledby="overview-accounts">
-        <h2 id="overview-accounts" className="row-kicker">Счета</h2>
+        <RowHead id="overview-accounts" title="Счета" row="accounts" onEdit={onEdit} />
         {model.accounts.length > 0 ? (
           <TileGrid label="Счета" layout="accounts">
             {model.accounts.map((tile) => {
@@ -173,11 +200,11 @@ export function OverviewScreen({
               return <AccountTile key={tile.id} tile={tile} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
             })}
           </TileGrid>
-        ) : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — счета заводятся в разделе «Ещё».</p>}
+        ) : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — заведите счёт кнопкой «Изменить» над этим рядом.</p>}
       </section>
 
       <section className="tile-section" aria-labelledby="overview-expenses">
-        <h2 id="overview-expenses" className="row-kicker">Расходы</h2>
+        <RowHead id="overview-expenses" title="Расходы" row="expenses" onEdit={onEdit} />
         <TileGrid label="Категории расходов" layout="grid">
           {model.categories.map((tile) => {
             const key: PickTile = { kind: "category", id: tile.id };

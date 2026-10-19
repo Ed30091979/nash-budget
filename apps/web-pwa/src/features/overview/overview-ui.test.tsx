@@ -37,6 +37,7 @@ function propsFor(budget: BudgetState, overrides: Partial<OverviewScreenProps> =
     onOpenSheet: vi.fn(),
     onAddCategory: vi.fn(),
     onPlan: vi.fn(),
+    onEdit: vi.fn(),
     ...overrides,
   };
 }
@@ -161,6 +162,22 @@ describe("«Обзор»: «Потрачено» — весь расход ме�
 });
 
 describe("«Обзор»: имена, набранные семьёй, — изолированно от соседнего текста", () => {
+  it("итог называет архив: «в том числе в архиве», архивный счёт без курса — в «В итог не вошли» с пометкой", () => {
+    const seed = state();
+    const budget: BudgetState = {
+      ...seed,
+      accounts: [
+        ...seed.accounts,
+        { id: "a2000000-0000-4000-8000-0000000000d2", name: "Старая карта", type: "cash", currency: "RUB", openingBalanceMinor: 1_500_000, active: false },
+        { id: "a2000000-0000-4000-8000-0000000000d3", name: "Евро в коробке", type: "cash", currency: "EUR", openingBalanceMinor: 10_000, active: false },
+      ],
+    };
+    const text = plain(render({}, budget));
+    expect(text).toContain("в том числе в архиве 15 000 ₽");
+    expect(text).toContain("В итог не вошли: «Евро в коробке» (в архиве) — нет курса EUR.");
+    expect(plain(render())).not.toContain("в архиве");
+  });
+
   it("имя на плитке, в подсказке и в «В итог не вошли» — в `<bdi dir=\"auto\">`", () => {
     // Ревью 2b, LOW-4: имя справа налево или с цифрами в конце перемешивалось с рамкой фразы.
     const base = state();

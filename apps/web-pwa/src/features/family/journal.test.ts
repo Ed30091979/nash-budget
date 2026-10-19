@@ -8,12 +8,21 @@
  * об этом на экране пользователя было бы поздно.
  */
 import {
+  addExchangeRate,
   calculateBudget,
+  calculateHoldings,
+  createAccount,
   HOUSEHOLD_ID,
   makePlanningSeed,
   makeSeedBudget,
   materializeRecurring,
+  moveAccount,
+  moveCategory,
+  renameTag,
   SEED_IDS,
+  setBaseCurrency,
+  updateAccount,
+  updateCategory,
   type BudgetState,
   type RecurringRule,
 } from "@family-budget/domain";
@@ -454,5 +463,88 @@ describe("регулярные операции как операции журн
       name: "Доставка воды", template: { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main },
       frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true,
     });
+  });
+});
+
+describe("правка справочников как операции журнала (подволна 2c)", () => {
+  const DOLLARS = "0000000a-0000-4000-8000-0000000000c1";
+  const RATE = "0000000a-0000-4000-8000-0000000000c2";
+  const TAG = "0000000a-0000-4000-8000-0000000000c3";
+
+  /** Применить к журналу изменение от `before` к `after` и вернуть собранное состояние. */
+  function roundTrip(log: Operation[], before: BudgetState, after: BudgetState): { readonly log: Operation[]; readonly state: BudgetState } {
+    const next = [...log, ...stamp(after, before, log.length)];
+    const snapshot = applyJournal(next);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    return { log: next, state: snapshot.state };
+  }
+
+  it("счёт в долларах заводится, правится целиком и очищается — журнал собирает ровно его", () => {
+    const seed = makeSeedBudget();
+    let log = stamp(seed);
+    const created = createAccount(seed, { name: "Доллары", type: "cash", currency: "USD", openingBalanceMinor: 50_000 }, () => DOLLARS).state;
+    const rated = addExchangeRate(created, { currency: "USD", date: "2026-07-01", rate: { baseMinor: 9_250, quoteMinor: 100 } }, () => RATE).state;
+    ({ log } = roundTrip(log, seed, rated));
+
+    // Правка — один update той же записи: имя, вид, иконка, тон, «вне итога», начальный остаток.
+    const edited = updateAccount(rated, DOLLARS, { name: "Наличные доллары", type: "savings", icon: "banknote", color: "sage", includeInTotal: false, openingBalanceMinor: 60_000 });
+    const drafts = budgetJournalDrafts(rated, edited, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action, draft.targetId])).toEqual([["account", "update", DOLLARS]]);
+    const arrived = roundTrip(log, rated, edited);
+    log = arrived.log;
+    expect(arrived.state.accounts.find((item) => item.id === DOLLARS)).toEqual(edited.accounts.find((item) => item.id === DOLLARS));
+    expect(calculateHoldings(arrived.state, "2026-07-31")).toEqual(calculateHoldings(edited, "2026-07-31"));
+
+    // Снятые иконка и тон и «снова в итоге» — отсутствие поля, а не пустое значение, и после дороги тоже.
+    const cleared = updateAccount(edited, DOLLARS, { icon: null, color: null, includeInTotal: true });
+    const back = roundTrip(log, edited, cleared);
+    const account = back.state.accounts.find((item) => item.id === DOLLARS)!;
+    expect(account).toEqual(cleared.accounts.find((item) => item.id === DOLLARS));
+    for (const field of ["icon", "color", "includeInTotal"]) expect(Object.hasOwn(account, field), field).toBe(false);
+  });
+
+  it("перестановка счетов — update ровно двух записей, а не всего списка", () => {
+    const seed = makeSeedBudget();
+    const spread = moveAccount(seed, SEED_IDS.accounts.savings, "up");
+    const log = roundTrip(stamp(seed), seed, spread).log;
+    const swapped = moveAccount(spread, SEED_IDS.accounts.savings, "down");
+    const drafts = budgetJournalDrafts(spread, swapped, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action])).toEqual([["account", "update"], ["account", "update"]]);
+    const arrived = roundTrip(log, spread, swapped).state;
+    for (const account of swapped.accounts) expect(arrived.accounts.find((item) => item.id === account.id)).toEqual(account);
+  });
+
+  it("категория: новое имя, иконка, тон и место в группе доезжают как update, суммы не двигаются", () => {
+    const seed = makeSeedBudget();
+    const log = stamp(seed);
+    const edited = moveCategory(updateCategory(seed, SEED_IDS.categories.food, { name: "Еда", icon: "shopping-basket", color: "lilac" }), SEED_IDS.categories.food, "up");
+    const drafts = budgetJournalDrafts(seed, edited, MEMBER);
+    expect(drafts.every((draft) => draft.entity === "category" && draft.action === "update")).toBe(true);
+    const arrived = roundTrip(log, seed, edited).state;
+    for (const category of edited.categories) expect(arrived.categories.find((item) => item.id === category.id)).toEqual(category);
+    expect(calculateBudget(arrived)).toEqual(calculateBudget(edited));
+  });
+
+  it("переименование метки — update одной метки, операции с ней не пишутся", () => {
+    const seed = makeSeedBudget();
+    const tagged: BudgetState = {
+      ...seed,
+      tags: [{ id: TAG, name: "Дача", active: true }],
+      transactions: seed.transactions.map((entry) => (entry.id === SEED_IDS.transactions.food ? { ...entry, tagIds: [TAG] } : entry)),
+    };
+    const log = stamp(tagged);
+    const renamed = renameTag(tagged, TAG, "Огород");
+    expect(budgetJournalDrafts(tagged, renamed, MEMBER).map((draft) => [draft.entity, draft.action, draft.targetId])).toEqual([["tag", "update", TAG]]);
+    expect(roundTrip(log, tagged, renamed).state.tags).toEqual(renamed.tags);
+  });
+
+  it("базовая валюта пустого бюджета — запись хозяйства и счета в новой валюте", () => {
+    const seed = makeSeedBudget();
+    const empty: BudgetState = { ...seed, transactions: [], goals: [], budgets: seed.budgets.map((budget) => ({ ...budget, lines: [], plannedIncomeMinor: 0 })) };
+    const log = stamp(empty);
+    const euros = setBaseCurrency(empty, "EUR");
+    const arrived = roundTrip(log, empty, euros).state;
+    expect(arrived.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "EUR" });
+    expect(arrived.accounts.every((account) => account.currency === "EUR")).toBe(true);
   });
 });

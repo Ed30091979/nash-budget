@@ -3,6 +3,7 @@ import {
   baseCurrencyOf,
   calculateBudget,
   calculateHoldings,
+  categoriesInListOrder,
   findBudgetForMonth,
   monthEndDate,
   monthOfDate,
@@ -11,7 +12,7 @@ import {
   type BudgetState,
   type CurrencyCode,
 } from "@family-budget/domain";
-import { accountIcon, categoryVisual, type CategoryVisual } from "../../category-visual";
+import { accountIcon, accountTone, categoryVisual, type CategoryTone, type CategoryVisual } from "../../category-visual";
 import type { IconName } from "../../components/Icon";
 import { percentStep } from "../../reach";
 
@@ -59,6 +60,8 @@ export interface AccountTile {
   readonly name: string;
   readonly currency: CurrencyCode;
   readonly icon: IconName;
+  /** Тон, выбранный семьёй (D-036): им окрашена подложка глифа; `null` — плитка тёмная целиком. */
+  readonly tone: CategoryTone | null;
   /** Остаток на конец показанного дня в валюте счёта; `null` — не представим. */
   readonly balanceMinor: number | null;
   /** Счёт оценён в базовой валюте и входит в итог. */
@@ -68,6 +71,14 @@ export interface AccountTile {
   readonly includeInTotal: boolean;
 }
 
+/** Счёт, который итог должен был учесть, но не смог оценить. */
+export interface UnvaluedAccount {
+  readonly id: string;
+  readonly name: string;
+  readonly currency: CurrencyCode;
+  readonly archived: boolean;
+}
+
 export interface OverviewModel {
   readonly month: string;
   readonly baseCurrency: CurrencyCode;
@@ -75,8 +86,15 @@ export interface OverviewModel {
   readonly asOf: string;
   /** «Всего на счетах» — `calculateHoldings(...).totalInBaseMinor` (решение по умолчанию, §6). */
   readonly totalInBaseMinor: number;
-  /** Счета, которые итог не смог оценить: нет курса или сумма не представима. */
-  readonly unvaluedAccounts: readonly AccountTile[];
+  /**
+   * Сколько во «Всего на счетах» — счетов в архиве. Архивный счёт плитки не имеет, а в итоге
+   * остаётся (контракт, правило 9: итог — по счетам с `includeInTotal !== false`; домен: «архив
+   * ничего не тратит»), и экран называет эту часть, чтобы итог сходился с плитками. `null` — архив
+   * в итоге ничего не держит.
+   */
+  readonly archivedInTotalMinor: number | null;
+  /** Счета, которые итог не смог оценить: нет курса или сумма не представима, — и архивные тоже. */
+  readonly unvaluedAccounts: readonly UnvaluedAccount[];
   /** «по лимитам N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
   readonly spentWithLimitMinor: number;
   readonly limitsMinor: number | null;
@@ -120,6 +138,16 @@ function inMonth(date: string, month: string): boolean {
   return monthOfDate(date) === month;
 }
 
+/** Архивные счета в итоге: их оценённые остатки в базовой; `null` — ни одного или все по нулям. */
+function archivedInTotal(state: BudgetState, inBase: Readonly<Record<string, number | null>>): number | null {
+  const parts = state.accounts
+    .filter((account) => !account.active && account.includeInTotal !== false)
+    .map((account) => inBase[account.id] ?? null)
+    .filter((value): value is number => value !== null);
+  const sum = parts.reduce((total, value) => total + value, 0);
+  return parts.length === 0 || sum === 0 || !Number.isSafeInteger(sum) ? null : sum;
+}
+
 /** Последний день месяца или сегодня — что раньше: остатки прошлого месяца — на его конец. */
 function asOfFor(month: string, today: string): string {
   const end = monthEndDate(month);
@@ -146,7 +174,9 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     }
   }
 
-  const categories: CategoryTile[] = bySortOrder(state.categories.filter((category) => category.type === "expense" && category.active))
+  // Порядок плиток — тот же, что на экране категорий и в выборе при записи: группа за группой
+  // (`categoriesInListOrder`, ревью 2c, LOW-6).
+  const categories: CategoryTile[] = categoriesInListOrder(state.categories, "expense")
     .map((category) => {
       const metric = metrics?.categoryMetrics[category.id];
       const spentMinor = metric?.actualMinor ?? spentByCategory.get(category.id) ?? 0;
@@ -165,7 +195,11 @@ export function overviewModel(state: BudgetState, month: string, today: string):
   const limited = categories.filter((tile) => tile.limitMinor !== null);
   const spentMinor = metrics?.expensesMinor ?? [...spentByCategory.values()].reduce((sum, value) => sum + value, 0);
 
-  const incomeCategories = bySortOrder(state.categories.filter((category) => category.type === "income"));
+  // Активные источники — в порядке списка; архивный с доходом месяца — после них.
+  const incomeCategories = [
+    ...categoriesInListOrder(state.categories, "income"),
+    ...bySortOrder(state.categories.filter((category) => category.type === "income" && !category.active)),
+  ];
   const incomes: IncomeTile[] = incomeCategories
     .filter((category) => category.active || (incomeByCategory.get(category.id) ?? 0) !== 0)
     .map((category) => ({
@@ -188,6 +222,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     name: account.name,
     currency: account.currency,
     icon: accountIcon(account),
+    tone: accountTone(account),
     balanceMinor: holdings.accountBalancesMinor[account.id] ?? null,
     includeInTotal: account.includeInTotal !== false,
     inTotal: account.includeInTotal !== false && !unvalued.has(account.id),
@@ -199,7 +234,9 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     baseCurrency,
     asOf,
     totalInBaseMinor: holdings.totalInBaseMinor,
-    unvaluedAccounts: accounts.filter((tile) => tile.unvalued),
+    archivedInTotalMinor: archivedInTotal(state, holdings.accountBalancesInBaseMinor),
+    unvaluedAccounts: bySortOrder(state.accounts.filter((account) => account.includeInTotal !== false && unvalued.has(account.id)))
+      .map((account) => ({ id: account.id, name: account.name, currency: account.currency, archived: !account.active })),
     spentWithLimitMinor: limited.reduce((sum, tile) => sum + tile.spentMinor, 0),
     limitsMinor: limited.length === 0 ? null : limited.reduce((sum, tile) => sum + (tile.limitMinor ?? 0), 0),
     spentMinor,

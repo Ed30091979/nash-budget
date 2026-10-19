@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
-import { calculateAnnualPlan, type BudgetState } from "@family-budget/domain";
+import { calculateAnnualPlan, categoriesInListOrder, type BudgetState } from "@family-budget/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import { designTargetGap, designTouchTargetMinimum } from "./design-contract";
 import { editFlexibleLine } from "./features/planning";
@@ -9,6 +9,7 @@ import { makeCanonicalPlanningState, makePlanningTestState, TEST_IDS } from "./f
 import { createBudgetRepository } from "./storage-repository";
 import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./app/budget-store";
 import { readAppSource } from "./app/shell-source";
+import { activeTab } from "./components/BottomNav";
 
 const databaseNames = new Set<string>();
 
@@ -103,7 +104,8 @@ describe("planning app integration", () => {
     expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     // На подэкранах плана подсвечена вкладка «Ещё»: план живёт под ней.
-    expect(source).toMatch(/case "plan-month":\s*case "plan-year":\s*case "family":\s*case "import":\s*return "more";/u);
+    // С 2c под «Ещё» живут и справочники, поэтому проверяется поведение, а не порядок строк `case`.
+    for (const name of ["plan-month", "plan-year", "family", "import"] as const) expect(activeTab({ name }), name).toBe("more");
     // Повседневные лимиты «Обзора» — только активные строки плана активных категорий.
     const overviewModel = readFileSync(new URL("./features/overview/overview-model.ts", import.meta.url), "utf8");
     expect(overviewModel).toContain("budget?.lines.filter((line) => line.active !== false)");
@@ -111,8 +113,10 @@ describe("planning app integration", () => {
     // Выключенная строка плана на «Год» не попадает — ни крупная, ни регулярная.
     expect(source).toMatch(/annualCommitments\s*\.filter\(\(item\) => item\.active\)/u);
     expect(source).toMatch(/scheduledExpenses\s*\.filter\(\(item\) => item\.active\)/u);
-    // Плитки расходов «Обзора» — только активные расходные категории: архивная плитки не получает.
-    expect(overviewModel).toContain('state.categories.filter((category) => category.type === "expense" && category.active)');
+    // Плитки расходов «Обзора» — только активные расходные категории: архивная плитки не получает
+    // (`categoriesInListOrder` берёт только активные — в порядке списка категорий, ревью 2c, LOW-6).
+    expect(overviewModel).toContain('categoriesInListOrder(state.categories, "expense")');
+    expect(categoriesInListOrder([{ id: "c", name: "Архив", type: "expense", group: "other", active: false, sortOrder: 1 }], "expense")).toEqual([]);
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);

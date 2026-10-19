@@ -85,6 +85,7 @@ describe("пустые состояния", () => {
         onOpenSheet={vi.fn()}
         onAddCategory={vi.fn()}
         onPlan={vi.fn()}
+        onEdit={vi.fn()}
       />,
     );
 

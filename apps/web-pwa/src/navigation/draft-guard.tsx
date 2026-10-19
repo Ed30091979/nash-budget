@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 /**
  * Реестр несохранённых черновиков (план волны 2, §2.4).
@@ -164,6 +164,27 @@ export function useDraftGuard(entry: DraftEntry): void {
   useEffect(() => {
     registry?.refresh();
   });
+}
+
+/**
+ * Черновик формы целиком: регистрация в реестре и защёлка «записывается» (`createDraftSaving`).
+ * `dirty` — отличие от снимка при открытии формы, а не от бюджета, который может прийти с другого
+ * устройства посреди набора. Отправленная форма перестаёт быть грязной до первого `await`; неудача
+ * возвращает её грязной с тем же содержимым; удача держит защёлку, пока сброшенная или закрытая
+ * форма не нарисована. Так устроены формы справочников (подволна 2c).
+ */
+export function useFormDraft(entry: { readonly label: string; readonly dirty: boolean; readonly discard: () => void; readonly layer?: DraftLayer }): DraftSaving {
+  const [saving] = useState(createDraftSaving);
+  useLayoutEffect(() => {
+    saving.settle(entry.dirty);
+  });
+  useDraftGuard({
+    label: entry.label,
+    isDirty: () => entry.dirty && !saving.saving,
+    discard: entry.discard,
+    ...(entry.layer === undefined ? {} : { layer: entry.layer }),
+  });
+  return saving;
 }
 
 /** Есть ли несохранённое для ухода со страницы — с перерисовкой, когда ответ меняется. */

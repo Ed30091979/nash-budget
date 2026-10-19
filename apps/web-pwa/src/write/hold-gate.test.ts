@@ -1,7 +1,7 @@
 import type { DocumentHold } from "@family-budget/sync-client";
 import { describe, expect, it } from "vitest";
 import { readAppSource } from "../app/shell-source";
-import { ALL_ROUTE_FIXTURES } from "../navigation/test-fixture";
+import { ACCOUNT, ALL_ROUTE_FIXTURES, CATEGORY } from "../navigation/test-fixture";
 import { formatRoute, parentRoute, type Route } from "../navigation/routes";
 import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 import { createHoldGate, HOLD_DETAILS_LABEL, opensWriteForm, writeFormRefusal, type WriteFormRefusal } from "./hold-gate";
@@ -24,14 +24,24 @@ function expected(hold: DocumentHold | null, route: Route): WriteFormRefusal | n
 }
 
 describe("задержка документа: форма записи не открывается (ревью 2a, п. 6; круг 2, LOW 4)", () => {
-  it("форма записи — лист ввода поверх любого экрана («+», плитки, правка), «План месяца» и «Выписка»", () => {
+  it("форма записи — лист ввода поверх любого экрана («+», плитки, правка), «План месяца», «Выписка», счёт и категория", () => {
     const writing = ALL_ROUTE_FIXTURES.filter(opensWriteForm).map(formatRoute);
-    // Экраны-формы — два; всё остальное, что пишет бюджет, — лист ввода, с чем бы его ни открыли.
-    expect(writing.filter((key) => !key.includes("sheet=entry"))).toEqual(["#/more/plan-month", "#/more/import"]);
+    // Экраны-формы — пять; всё остальное, что пишет бюджет, — лист ввода, с чем бы его ни открыли.
+    expect(writing.filter((key) => !key.includes("sheet=entry"))).toEqual([
+      "#/more/plan-month", "#/more/import",
+      `#/more/accounts/${ACCOUNT}`, "#/more/accounts/new", `#/more/categories/${CATEGORY}`, `#/more/categories/${CATEGORY}?type=income`,
+    ]);
     expect(writing.filter((key) => key.includes("sheet=entry"))).toEqual(ALL_ROUTE_FIXTURES.filter((route) => route.sheet === "entry").map(formatRoute));
+    // Списки справочников читают — остатки, курсы, числа операций — и открываются; запись из них
+    // отказывает там, где её начали.
     expect(ALL_ROUTE_FIXTURES.filter((route) => !opensWriteForm(route)).map(formatRoute)).toEqual([
       "#/", "#/?month=2026-08", "#/operations", "#/reports", "#/more", "#/more/plan-year", "#/more/family",
+      "#/more/accounts", "#/more/rates",
+      "#/more/categories", "#/more/categories?type=expense", "#/more/categories?type=income",
+      "#/more/tags",
     ]);
+    expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "account", id: ACCOUNT })?.fallback).toEqual({ name: "accounts" });
+    expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "category", id: CATEGORY })?.fallback).toEqual({ name: "categories", type: "expense" });
     // Лист записи закрывается на экран под ним: туда и уходит отказ.
     expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "reports", sheet: "entry" })?.fallback).toEqual({ name: "reports" });
     expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "overview", month: "2026-08", sheet: "entry", op: "expense" })?.fallback).toEqual({ name: "overview", month: "2026-08" });

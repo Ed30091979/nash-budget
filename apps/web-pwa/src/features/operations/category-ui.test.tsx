@@ -8,7 +8,7 @@ import { pickOptions, TargetPicker } from "../entry/TargetPicker";
 import { OverviewScreen } from "../overview/OverviewScreen";
 import { periodClock } from "../../reach";
 import { ENTRY_CATEGORY_DESCRIPTION } from "../overview/AddCategorySheet";
-import { CategorySheet, type CategorySheetDraft } from "./CategorySheet";
+import { CategorySheet, type CategorySheetDraft } from "../categories/CategorySheet";
 
 const sheetSource = readFileSync(new URL("../entry/EntrySheet.tsx", import.meta.url), "utf8");
 
@@ -63,6 +63,7 @@ function overviewMarkup(state: BudgetState = fullCatalogue()): string {
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
       onPlan={vi.fn()}
+      onEdit={vi.fn()}
     />,
   );
 }

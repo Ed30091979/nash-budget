@@ -8,6 +8,7 @@ import {
   editCommitment,
   editFlexibleLine,
   editSchedule,
+  planAccounts,
   planningError,
   PlanningValidationError,
   reactivateFlexibleLine,
@@ -74,6 +75,22 @@ describe("planning CRUD", () => {
     const restoredAfterExplicitEdit = reactivateFlexibleLine(editedWhileArchived, lineId);
     expect(restoredAfterExplicitEdit.budgets[0]?.lines).toHaveLength(3);
     expect(restoredAfterExplicitEdit.budgets[0]?.lines.find((item) => item.id === lineId)).toMatchObject({ id: lineId, plannedMinor: 1_300_000, active: true });
+  });
+
+  it("a limit's name is unique among expense categories only: an income source of the same name does not block it", () => {
+    // Ревью 2c, LOW-2: лимит «Продуктов» не сохранялся, пока был источник дохода «Продукты» — имя
+    // сравнивалось с категориями обоих видов, а домен различает их по виду.
+    const original = makePlanningTestState();
+    const food = original.categories.find((item) => item.id === TEST_IDS.categories.food)!;
+    const state = { ...original, categories: [...original.categories, { id: "70000000-0000-4000-8000-000000000001", name: food.name, type: "income" as const, group: "income" as const, active: true, sortOrder: 900 }] };
+    const line = state.budgets[0]!.lines.find((item) => item.categoryId === food.id)!;
+    const edited = editFlexibleLine(state, line.id, { name: food.name, amount: "40000" });
+    expect(edited.budgets[0]?.lines.find((item) => item.id === line.id)?.plannedMinor).toBe(4_000_000);
+    const restored = reactivateFlexibleLine(archiveFlexibleLine(state, line.id), line.id);
+    expect(restored.budgets[0]?.lines.find((item) => item.id === line.id)?.active).toBe(true);
+    // Тёзка среди расходов по-прежнему отказ.
+    const children = state.budgets[0]!.lines.find((item) => item.categoryId === TEST_IDS.categories.children)!;
+    expect(() => editFlexibleLine(state, children.id, { name: food.name, amount: "100" })).toThrow("Активная категория с таким названием уже существует.");
   });
 
   it("archives the shared Children flexible line without affecting camp or seasonal schedules", () => {
@@ -183,5 +200,42 @@ describe("planning date window", () => {
     expect(() => createCommitment(makePlanningTestState(), dto("2200-01-01"), deterministicIds())).toThrow(
       expect.objectContaining({ field: "dueDate", message: "Выберите дату с 1900 по 2199 год." }),
     );
+  });
+});
+
+describe("счёт платежа — только в базовой валюте (D-032)", () => {
+  const DOLLARS = "90000000-0000-4000-8000-0000000000d1";
+  const withDollars = () => {
+    const state = makePlanningTestState();
+    return { ...state, accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "cash" as const, currency: "USD", openingBalanceMinor: 0, active: true }] };
+  };
+
+  it("план предлагает только активные счета в базовой валюте", () => {
+    const state = withDollars();
+    expect(planAccounts(state).map((account) => account.id)).toEqual([TEST_IDS.account]);
+    expect(planAccounts({ ...state, accounts: state.accounts.map((account) => ({ ...account, active: false })) })).toEqual([]);
+  });
+
+  it("крупный платёж и расписание на долларовом счёте — отказ словами поля, а не ошибкой домена", () => {
+    const state = withDollars();
+    const commitment = {
+      name: "Страхование", categoryId: TEST_IDS.categories.transport, accountId: DOLLARS,
+      dueDate: "2027-01-15", amount: "720", reserved: "0", recurrence: "annual" as const,
+    };
+    const refusal = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return error instanceof PlanningValidationError ? `${error.field}: ${error.message}` : "не тот отказ";
+      }
+      return "не отказал";
+    };
+    const words = "accountId: Платежи плана ведутся в базовой валюте RUB: выберите счёт в ней.";
+    expect(refusal(() => createCommitment(state, commitment, deterministicIds()))).toBe(words);
+    expect(refusal(() => createSchedule(state, {
+      name: "Кружок", categoryId: TEST_IDS.categories.children, accountId: DOLLARS, amount: "50", dueDay: "5", mode: "monthly", months: [],
+    }, deterministicIds()))).toBe(words);
+    // На рублёвом счёте тот же платёж записывается.
+    expect(createCommitment(state, { ...commitment, accountId: TEST_IDS.account }, deterministicIds()).annualCommitments).toHaveLength(1);
   });
 });

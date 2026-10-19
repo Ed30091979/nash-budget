@@ -69,6 +69,47 @@ export const ROUTE_FIXTURES = {
     { name: "import", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
     { name: "import", sheet: "entry", edit: OPERATION },
   ],
+  // Справочники «Учёта» (2c): идентификатор записи — в пути, вид списка категорий — в запросе.
+  accounts: [
+    { name: "accounts" },
+    { name: "accounts", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "accounts", sheet: "entry", edit: OPERATION },
+  ],
+  account: [
+    { name: "account", id: ACCOUNT },
+    { name: "account", id: RESERVE, sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
+    { name: "account", id: ACCOUNT, sheet: "entry", edit: OPERATION },
+  ],
+  "account-new": [
+    { name: "account-new" },
+    { name: "account-new", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "account-new", sheet: "entry", edit: OPERATION },
+  ],
+  rates: [
+    { name: "rates" },
+    { name: "rates", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "rates", sheet: "entry", edit: OPERATION },
+  ],
+  categories: [
+    { name: "categories" },
+    { name: "categories", type: "expense" },
+    { name: "categories", type: "income" },
+    { name: "categories", type: "income", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "categories", type: "expense", sheet: "entry", edit: OPERATION },
+  ],
+  category: [
+    { name: "category", id: CATEGORY },
+    { name: "category", id: CATEGORY, sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "category", id: CATEGORY, sheet: "entry", edit: OPERATION },
+    { name: "category", id: CATEGORY, type: "income" },
+    { name: "category", id: CATEGORY, type: "expense", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "category", id: CATEGORY, type: "income", sheet: "entry", edit: OPERATION },
+  ],
+  tags: [
+    { name: "tags" },
+    { name: "tags", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "tags", sheet: "entry", edit: OPERATION },
+  ],
 } as const satisfies { readonly [N in RouteName]: readonly Extract<Route, { readonly name: N }>[] };
 
 export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
@@ -81,12 +122,14 @@ const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:
 
 /**
  * The whole address language, written out by hand rather than derived from the grammar it checks:
- * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month. No free
- * text fits. A new query key is a deliberate edit here.
+ * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month, the kind of
+ * a category list. A record of a directory is a UUID in the path, never its name. No free text fits.
+ * A new query key or path is a deliberate edit here.
  */
 export const ROUTE_FRAGMENT = new RegExp(
   `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
-    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import))(?:\\?${SHEET})?)$`,
+    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import|accounts(?:/(?:new|${UUID}))?|rates|tags))(?:\\?${SHEET})?` +
+    `|more/categories(?:/${UUID})?(?:\\?(?:type=(?:expense|income)(?:&${SHEET})?|${SHEET}))?)$`,
   "u",
 );
 
@@ -97,6 +140,8 @@ export const ROUTE_FRAGMENT = new RegExp(
 export class FakeBrowser implements RouterWindow {
   entries: { state: unknown; hash: string }[];
   index = 0;
+  /** Traversals `go` has started whose `popstate` has not arrived yet. */
+  pendingTraversals = 0;
   readonly history: RouterWindow["history"] & { scrollRestoration: ScrollRestoration };
   readonly location: RouterWindow["location"];
   private readonly listeners = new Set<() => void>();
@@ -117,7 +162,8 @@ export class FakeBrowser implements RouterWindow {
     const go = (delta: number) => {
       const target = this.index + delta;
       if (target < 0 || target >= this.entries.length) return;
-      setTimeout(() => { this.index = target; this.fire(); }, 0);
+      this.pendingTraversals += 1;
+      setTimeout(() => { this.pendingTraversals -= 1; this.index = target; this.fire(); }, 0);
     };
     const all = () => this.entries;
     this.history = {
@@ -190,6 +236,16 @@ export function started(hash = "", state: unknown = null, extra: Partial<Omit<Ro
 export const go = async (router: ReturnType<typeof createRouter>, route: Route, replace = false) => {
   router.navigate(route, { replace });
   await settle();
+};
+
+/**
+ * Navigate and wait exactly as long as the history takes: until every traversal the router started
+ * has arrived as `popstate` (the router reacts to each arrival synchronously, starting the next one
+ * if any). A push needs no wait at all, so a long sweep costs its traversals, not 5 ms a step.
+ */
+export const goSettled = async (router: ReturnType<typeof createRouter>, frame: FakeBrowser, route: Route) => {
+  router.navigate(route);
+  while (frame.pendingTraversals > 0) await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 };
 
 /** A key the router may write: a canonical route address in the address language, nothing else. */

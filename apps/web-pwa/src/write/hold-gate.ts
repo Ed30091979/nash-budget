@@ -12,10 +12,13 @@ import { WRITE_REFUSAL_TEXT } from "../write-refusal";
 
 /**
  * The routes whose screen is a form that writes the budget: the entry sheet over any screen (a new
- * operation from «+» or a tile, or an edit from «Операции»), the month plan and the statement.
+ * operation from «+» or a tile, or an edit from «Операции»), the month plan, the statement, and the
+ * forms of an account and of a category (2c). The lists of accounts, rates, categories and tags are
+ * read first — balances, rates, counts — and open; a write from them is refused where it is made.
  */
 export function opensWriteForm(route: Route): boolean {
-  return route.sheet === "entry" || route.name === "plan-month" || route.name === "import";
+  return route.sheet === "entry" || route.name === "plan-month" || route.name === "import"
+    || route.name === "account" || route.name === "account-new" || route.name === "category";
 }
 
 export interface WriteFormRefusal {

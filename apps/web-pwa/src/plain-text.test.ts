@@ -54,11 +54,16 @@ describe("мягкие переносы не уходят из приложен�
 
   it("поля имён и комментария снимают мягкие переносы — каждое", () => {
     // Имя категории, метки, обязательства, платежа, лимита, семьи, счёта и категорий первого запуска;
-    // комментарий операции; поиск по операциям.
+    // комментарий операции; поиск по операциям; справочники 2c — счёт, категория, новая метка и
+    // переименование метки.
     const fields: readonly (readonly [string, string])[] = [
       ["features/entry/NoteField.tsx", 'id="entry-note"'],
       ["features/entry/TagChips.tsx", 'id="entry-new-tag"'],
-      ["features/operations/CategorySheet.tsx", 'id="category-sheet-name"'],
+      ["features/categories/CategorySheet.tsx", 'id="category-sheet-name"'],
+      ["features/categories/CategoryScreen.tsx", 'id="category-name"'],
+      ["features/accounts/AccountScreen.tsx", 'id="account-name"'],
+      ["features/tags/TagsScreen.tsx", 'id="tag-new-name"'],
+      ["features/tags/TagsScreen.tsx", "id={renameId(tag.id)}"],
       ["features/operations/HistoryScreen.tsx", 'id="operation-history-search"'],
       ["features/planning/PlanningScreen.tsx", 'id="commitment-name"'],
       ["features/planning/PlanningScreen.tsx", 'id="schedule-name"'],

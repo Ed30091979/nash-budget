@@ -118,17 +118,26 @@ export interface ExchangeRateDraft {
 
 export interface ExchangeRateCreation {
   readonly state: BudgetState;
+  /** The rate as it now stands: a new record, or the day's record corrected. */
   readonly rate: ExchangeRate;
+  /** The record of the same currency and day this one corrected, as it was; `null` for a new day. */
+  readonly replaced: ExchangeRate | null;
 }
 
 /**
  * Records a rate of `currency` against the household's base currency from `date` on.
  *
  * Refuses a currency the model does not know, the base currency itself, a date outside the window
- * the journal carries, a rate part outside one to a trillion, and a rate past
- * `COLLECTION_LIMITS.exchangeRates`. A second rate for the same currency and day is not a
- * duplicate: two devices may each record one offline, and `findRate` chooses between them the same
- * way on every device. Nothing else in the state moves — no operation is revalued.
+ * the journal carries, a rate part outside one to a trillion, and a new rate past
+ * `COLLECTION_LIMITS.exchangeRates`.
+ *
+ * A currency has one rate per day. A rate for a currency and day that already have one corrects
+ * that record in place — the same identifier, the new value — so the correction is the rate of the
+ * day at once (review of 2c, HIGH-1: added beside the first, it lost the tie to the larger
+ * identifier half of the time and was «recorded» but not used). Records of one day that arrived
+ * from two devices offline are folded into the one `findRate` chooses, and the others go. Their
+ * tie-break stays for exactly that case: until someone corrects the day, every device still
+ * chooses the same record. Nothing else in the state moves — no operation is revalued.
  */
 export function addExchangeRate(
   state: BudgetState,
@@ -149,6 +158,20 @@ export function addExchangeRate(
     fail("invalid_rate", "rate", "Курс — положительное число, не больше триллиона в каждой части.");
   }
   const rates = state.exchangeRates ?? [];
+  const sameDay = rates.filter((rate) => rate.currency === draft.currency && rate.baseCurrency === baseCurrency && rate.date === draft.date);
+  if (sameDay.length > 0) {
+    // The record `findRate` chooses on a tie: the larger identifier.
+    const chosen = sameDay.reduce((best, rate) => (rate.id > best.id ? rate : best));
+    const corrected: ExchangeRate = { ...chosen, rate: { baseMinor: draft.rate.baseMinor, quoteMinor: draft.rate.quoteMinor } };
+    const folded = new Set(sameDay.filter((rate) => rate !== chosen).map((rate) => rate.id));
+    const unchanged = folded.size === 0 && chosen.rate.baseMinor === corrected.rate.baseMinor && chosen.rate.quoteMinor === corrected.rate.quoteMinor;
+    if (unchanged) return { state, rate: chosen, replaced: chosen };
+    return {
+      state: { ...state, exchangeRates: rates.filter((rate) => !folded.has(rate.id)).map((rate) => (rate === chosen ? corrected : rate)) },
+      rate: corrected,
+      replaced: chosen,
+    };
+  }
   if (rates.length >= COLLECTION_LIMITS.exchangeRates) {
     fail("limit_reached", "rate", `Курсов уже ${COLLECTION_LIMITS.exchangeRates} — это предел. Удалите старые курсы.`);
   }
@@ -163,7 +186,7 @@ export function addExchangeRate(
     date: draft.date,
     rate: { baseMinor: draft.rate.baseMinor, quoteMinor: draft.rate.quoteMinor },
   };
-  return { state: { ...state, exchangeRates: [...rates, rate] }, rate };
+  return { state: { ...state, exchangeRates: [...rates, rate] }, rate, replaced: null };
 }
 
 /**

@@ -266,6 +266,17 @@ describe("operation integrity and validation", () => {
     expect(calculateOperationsMetrics(state)).toEqual(exactMetrics);
   });
 
+  it("a limit in a closed month blocks the operation form's archive, but not the categories screen's", () => {
+    const source = makeG000State();
+    const closed = { ...source, budgets: source.budgets.map((budget) => ({ ...budget, status: "closed" as const })) };
+    expect(closed.budgets.some((budget) => budget.lines.some((line) => line.categoryId === ids.categories.products && line.active !== false))).toBe(true);
+    expect(() => archiveCategory(closed, ids.categories.products)).toThrow("Сначала отключите активные лимиты");
+    const archived = archiveCategory(closed, ids.categories.products, { closedMonthsKeepLimits: true });
+    expect(archived.categories.find((item) => item.id === ids.categories.products)?.active).toBe(false);
+    expect(archived.budgets).toEqual(closed.budgets);
+    expect(() => archiveCategory(source, ids.categories.products, { closedMonthsKeepLimits: true })).toThrow("Сначала отключите активные лимиты");
+  });
+
   it("blocks active schedules and commitments, then archives without deleting history", () => {
     const source = makeG000State();
     const inactiveLine = {
