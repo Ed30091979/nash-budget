@@ -1,5 +1,6 @@
 import {
   calculateAnnualPlan,
+  categoriesInListOrder,
   makePlanningSeed,
   PLANNING_IDS,
   SEED_IDS,
@@ -40,8 +41,9 @@ describe("данные «Обзора» за месяц", () => {
     expect(housing).toMatchObject({ spentMinor: 4_500_000, limitMinor: null, status: "none", fill: 0 });
     const food = model.categories.find((tile) => tile.id === PLANNING_IDS.categories.food)!;
     expect(food).toMatchObject({ spentMinor: 2_200_000, limitMinor: 3_000_000, status: "normal", fill: 75 });
-    // Плитки — активные категории расходов по порядку списка.
-    expect(model.categories.map((tile) => tile.name)).toEqual(g002().categories.filter((item) => item.type === "expense").map((item) => item.name));
+    // Плитки — активные категории расходов в порядке списка категорий: группа за группой.
+    expect(model.categories.map((tile) => tile.name)).toEqual(categoriesInListOrder(g002().categories, "expense").map((item) => item.name));
+    expect(model.categories).toHaveLength(g002().categories.filter((item) => item.type === "expense" && item.active).length);
   });
 
   it("порог «почти лимит» — `warningThreshold` бюджета; ровно лимит — тоже «почти», сверх — «перелимит»", () => {

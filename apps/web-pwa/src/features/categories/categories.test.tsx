@@ -27,6 +27,8 @@ import {
   restoreCategory,
 } from "./category-model";
 import { CategoryFormView } from "./CategoryScreen";
+import { blankEntryDraft } from "../entry/entry-model";
+import { pickOptions } from "../entry/TargetPicker";
 
 const FOOD = PLANNING_IDS.categories.food;
 const LEISURE = PLANNING_IDS.categories.leisure;
@@ -64,6 +66,20 @@ describe("категории: модель", () => {
     expect(income.groups.map((group) => [group.title, group.cards.map((card) => card.category.name)])).toEqual([["Доходы", ["Зарплата"]]]);
     expect(income.groups[0]?.cards[0]?.limitMinor).toBeNull();
     expect(planMonthWord(budget)).toBe("июль");
+  });
+
+  it("порядок плиток один: «Обзор» и выбор при записи — как список категорий, группа за группой (подсказка «Место в группе» — правда)", () => {
+    // Ревью 2c, LOW-6: «Обзор» ставил плитки по общему `sortOrder`, выбор при записи — по порядку
+    // документа, а экран категорий — по группам; подсказка обещала один порядок для всех.
+    const seed = state();
+    // Перемешанный документ: общий `sortOrder` и порядок записей расходятся с порядком групп.
+    const budget: BudgetState = { ...seed, categories: [...seed.categories].reverse().map((item, index) => ({ ...item, sortOrder: (index * 37) % 101 })) };
+    const listed = (type: "expense" | "income") => categoriesView(budget, type).groups.flatMap((group) => group.cards.map((card) => card.category.id));
+    expect(overviewModel(budget, "2026-07", "2026-07-20").categories.map((tile) => tile.id)).toEqual(listed("expense"));
+    expect(pickOptions(budget, blankEntryDraft(budget, "expense", "2026-07-20"), "to", {}).map((option) => option.id)).toEqual(listed("expense"));
+    expect(pickOptions(budget, blankEntryDraft(budget, "income", "2026-07-20"), "from", {}).map((option) => option.id).filter((id) => id !== "")).toEqual(listed("income"));
+    const moved = moveCategory(budget, listed("expense")[1]!, "up");
+    expect(overviewModel(moved, "2026-07", "2026-07-20").categories.map((tile) => tile.id)).toEqual(categoriesView(moved, "expense").groups.flatMap((group) => group.cards.map((card) => card.category.id)));
   });
 
   it("место в группе — для «Выше / Ниже»; перестановка меняет только двух соседей группы", () => {

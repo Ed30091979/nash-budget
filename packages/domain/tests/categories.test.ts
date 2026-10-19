@@ -16,6 +16,7 @@ import {
   isCategoryGroup,
   makeDefaultCategories,
   categoriesInGroupOrder,
+  categoriesInListOrder,
   makeSeedBudget,
   MAX_SORT_ORDER,
   moveCategory,
@@ -518,6 +519,15 @@ describe("moveCategory", () => {
     expect(moveCategory(state, everyday.at(-1)!, "down")).toBe(state);
     // Other groups keep their order.
     expect(categoriesInGroupOrder(moved.categories, "expense", "personal")).toEqual(categoriesInGroupOrder(state.categories, "expense", "personal"));
+  });
+
+  it("list order is group after group, each in its own order; archived categories are not in it", () => {
+    const state = catalogue();
+    const expected = CATEGORY_GROUPS.filter((group) => group.type === "expense").flatMap((group) => categoriesInGroupOrder(state.categories, "expense", group.key));
+    expect(categoriesInListOrder(state.categories, "expense")).toEqual(expected);
+    expect(categoriesInListOrder(state.categories, "income")).toEqual(categoriesInGroupOrder(state.categories, "income", "income"));
+    const archived = { ...state, categories: state.categories.map((item, index) => (index === 0 ? { ...item, active: false } : item)) };
+    expect(categoriesInListOrder(archived.categories, state.categories[0]!.type).map((item) => item.id)).not.toContain(state.categories[0]!.id);
   });
 
   it("spreads tied positions in their order before swapping, within the shared bound", () => {

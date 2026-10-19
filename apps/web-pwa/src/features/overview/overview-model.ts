@@ -3,6 +3,7 @@ import {
   baseCurrencyOf,
   calculateBudget,
   calculateHoldings,
+  categoriesInListOrder,
   findBudgetForMonth,
   monthEndDate,
   monthOfDate,
@@ -173,7 +174,9 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     }
   }
 
-  const categories: CategoryTile[] = bySortOrder(state.categories.filter((category) => category.type === "expense" && category.active))
+  // Порядок плиток — тот же, что на экране категорий и в выборе при записи: группа за группой
+  // (`categoriesInListOrder`, ревью 2c, LOW-6).
+  const categories: CategoryTile[] = categoriesInListOrder(state.categories, "expense")
     .map((category) => {
       const metric = metrics?.categoryMetrics[category.id];
       const spentMinor = metric?.actualMinor ?? spentByCategory.get(category.id) ?? 0;
@@ -192,7 +195,11 @@ export function overviewModel(state: BudgetState, month: string, today: string):
   const limited = categories.filter((tile) => tile.limitMinor !== null);
   const spentMinor = metrics?.expensesMinor ?? [...spentByCategory.values()].reduce((sum, value) => sum + value, 0);
 
-  const incomeCategories = bySortOrder(state.categories.filter((category) => category.type === "income"));
+  // Активные источники — в порядке списка; архивный с доходом месяца — после них.
+  const incomeCategories = [
+    ...categoriesInListOrder(state.categories, "income"),
+    ...bySortOrder(state.categories.filter((category) => category.type === "income" && !category.active)),
+  ];
   const incomes: IncomeTile[] = incomeCategories
     .filter((category) => category.active || (incomeByCategory.get(category.id) ?? 0) !== 0)
     .map((category) => ({

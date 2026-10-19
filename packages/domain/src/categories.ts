@@ -462,6 +462,16 @@ export function categoriesInGroupOrder(
 }
 
 /**
+ * Active categories of one type in the order every list shows them: group after group in
+ * {@link CATEGORY_GROUPS} order, and inside a group as {@link categoriesInGroupOrder} puts them. The
+ * tiles of «Обзор», the entry picker and the categories screen read one order, so «Выше / Ниже»
+ * moves a tile everywhere at once.
+ */
+export function categoriesInListOrder(categories: readonly Category[], type: CategoryType): readonly Category[] {
+  return CATEGORY_GROUPS.filter((group) => group.type === type).flatMap((group) => categoriesInGroupOrder(categories, type, group.key));
+}
+
+/**
  * Moves an active category one place up or down inside its group. Two positions swap and only those
  * two categories change, for the reason `moveAccount` gives: every update is a whole entity in the
  * journal. Tied positions in the group are first spread apart in their current order. At either end,

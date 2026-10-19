@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
-import { calculateAnnualPlan, type BudgetState } from "@family-budget/domain";
+import { calculateAnnualPlan, categoriesInListOrder, type BudgetState } from "@family-budget/domain";
 import { afterEach, describe, expect, it } from "vitest";
 import { designTargetGap, designTouchTargetMinimum } from "./design-contract";
 import { editFlexibleLine } from "./features/planning";
@@ -113,8 +113,10 @@ describe("planning app integration", () => {
     // Выключенная строка плана на «Год» не попадает — ни крупная, ни регулярная.
     expect(source).toMatch(/annualCommitments\s*\.filter\(\(item\) => item\.active\)/u);
     expect(source).toMatch(/scheduledExpenses\s*\.filter\(\(item\) => item\.active\)/u);
-    // Плитки расходов «Обзора» — только активные расходные категории: архивная плитки не получает.
-    expect(overviewModel).toContain('state.categories.filter((category) => category.type === "expense" && category.active)');
+    // Плитки расходов «Обзора» — только активные расходные категории: архивная плитки не получает
+    // (`categoriesInListOrder` берёт только активные — в порядке списка категорий, ревью 2c, LOW-6).
+    expect(overviewModel).toContain('categoriesInListOrder(state.categories, "expense")');
+    expect(categoriesInListOrder([{ id: "c", name: "Архив", type: "expense", group: "other", active: false, sortOrder: 1 }], "expense")).toEqual([]);
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);

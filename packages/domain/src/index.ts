@@ -27,6 +27,7 @@ export {
   CATEGORY_NAME_MAX_LENGTH,
   CATEGORY_SUGGESTIONS,
   categoriesInGroupOrder,
+  categoriesInListOrder,
   categoryGroupDefinition,
   categoryNameKey,
   CategoryValidationError,
