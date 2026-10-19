@@ -120,12 +120,12 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
 describe("пары контраста §3", () => {
   const pairs = tableRows("Пары контраста");
 
-  it("таблица на месте и называет пары всех новых ролей 4.0", () => {
+  it("таблица на месте и называет пары всех ролей 5.0", () => {
     expect(pairs.length).toBeGreaterThan(30);
     const named = pairs.map((row) => `${row.foreground} ${row.background}`).join("\n");
     for (const token of [
-      "--accent", "--positive-ink", "--tile-account", "--on-tile-account", "--on-tile-account-muted",
-      "--tile-income", "--income-ink", "--tone-*-ink", "--icon-plate", "--tile-track", "--chart-*",
+      "--accent", "--on-accent", "--positive-ink", "--tile-account", "--on-tile-account", "--on-tile-account-muted",
+      "--tone-*-ink", "--track", "--line", "--focus",
     ]) {
       expect(named, `§3 не называет ни одной пары с ${token}`).toContain(`\`${token}\``);
     }
@@ -171,10 +171,10 @@ describe("роли цвета §3", () => {
   });
 
   it("оставляет марке её hex: значок, заставки и Android читают их из :root", () => {
-    expect(COLORS.get("--canvas")).toEqual([0xf0, 0xec, 0xe3, 1]);
+    expect(COLORS.get("--canvas")).toEqual([0xf6, 0xf3, 0xee, 1]);
     expect(COLORS.get("--ink")).toEqual([0x17, 0x14, 0x10, 1]);
     expect(COLORS.get("--ink-muted")).toEqual([0x5d, 0x57, 0x4c, 1]);
-    expect(COLORS.get("--border")).toEqual([0xdd, 0xd6, 0xc8, 1]);
+    expect(COLORS.get("--border")).toEqual([0xe6, 0xe0, 0xd5, 1]);
     expect(COLORS.get("--orange")).toEqual([0xb8, 0x47, 0x1a, 1]);
   });
 

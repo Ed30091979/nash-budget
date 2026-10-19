@@ -1,5 +1,5 @@
-/* Дизайн-система «Наш бюджет» 4.0 (DESIGN.md). Бумажная палитра 3.0 — тёплый холст, чернила, белые
-   карточки — плюс пастельные тона сущностей, плитки и один акцент действия и выбора (§0, §3). */
+/* Дизайн-система «Наш бюджет» 5.0 (DESIGN.md). Бумажная палитра — светлый холст, чернила, белые
+   карточки, пастельные тона сущностей — и один коралловый акцент главного действия (§0, §3). */
 :root {
   color-scheme: light;
   color: var(--ink);
@@ -16,30 +16,33 @@
   -webkit-text-size-adjust: 100%;
 
   /* §3 Роли цвета. Пары контраста измерены (`palette-contrast.test.ts` пересчитывает таблицу §3),
-     не меняйте их поодиночке. Тон метит сущность, янтарь и красный — сигнал, акцент — действие и
-     выбор. Всё остальное — бумага и чернила. */
-  --canvas: #f0ece3;         /* тёплый холст под карточками */
-  --surface: #ffffff;        /* карточка, поле, нижняя навигация */
-  --surface-sunken: #e6e1d6; /* трек полосы, вложенная плашка, нейтральный чип */
-  --ink: #171410;            /* чернила: 18.36:1 на белом, 15.57:1 на холсте, 14.08:1 на треке */
-  --ink-muted: #5d574c;      /* подпись: 7.16:1 на белом, 6.07:1 на холсте, 5.49:1 на треке */
-  --border: #ddd6c8;         /* разделитель: линия между строками, а не граница элемента */
-  --line: #8d8577;           /* граница того, что нажимают и заполняют: 3.65:1 на белом, 3.10:1 на холсте */
-  --amber-soft: #fbf0d5;     /* «не дотянет» */
-  --amber-ink: #8a5a00;      /* 5.23:1 на `--amber-soft`, 5.93:1 на белом, 4.55:1 к треку */
+     не меняйте их поодиночке. Тон метит сущность, янтарь и красный — сигнал, акцент — главное
+     действие и выбор. Всё остальное — бумага и чернила. */
+  --canvas: #f6f3ee;         /* светлый холст под карточками; он же фон заставок и theme-color */
+  --surface: #ffffff;        /* карточка, поле, лист, нижняя навигация */
+  --surface-sunken: #eee9e1; /* поиск, сегмент, клавиша суммы, вложенная плашка */
+  --ink: #171410;            /* чернила: 18.36:1 на белом, 16.59:1 на холсте */
+  --ink-muted: #5d574c;      /* подпись: 7.16:1 на белом, 6.47:1 на холсте, 5.92:1 на утопленной плашке */
+  --border: #e6e0d5;         /* разделитель: линия между строками, а не граница элемента */
+  --line: #8d8577;           /* граница того, что нажимают и заполняют: 3.65:1 на белом, 3.30:1 на холсте */
+  --track: #e4ded3;          /* трек полосы лимита и линейки: заливка чернилами — 13.71:1 */
+  --amber-soft: #fbf0d5;     /* «почти лимит», «не дотянет» */
+  --amber-ink: #8a5a00;      /* 5.23:1 на `--amber-soft`, 5.36:1 на холсте, 4.43:1 к треку */
   --red-soft: #fbe9e3;       /* «перелимит», ошибка, разрушающее действие */
-  --red-ink: #a3341f;        /* 5.82:1 на `--red-soft`, 6.84:1 на белом, 5.25:1 к треку */
+  --red-ink: #a3341f;        /* 5.82:1 на `--red-soft`, 6.18:1 на холсте, 5.11:1 к треку */
   --orange: #b8471a;         /* только марка: значок, заставки, Android. В интерфейсе не используется */
-  --accent: #d9481f;         /* действие и выбор: «+», кольцо выбора, точка вкладки. Не для мелкого текста: 4.29:1 */
-  --positive-ink: #1f6b48;   /* доход в строке, всегда со знаком «+»: 6.45:1 на белом, 5.47:1 на холсте */
-  --focus: #0b57d0;          /* кольцо фокуса: 6.39:1 на белом, 5.42:1 на холсте */
+  --accent: #c4421a;         /* главное действие и выбор: «+», «Записать», кольцо выбора, точка вкладки */
+  --on-accent: #ffffff;      /* текст и глиф на акценте: 5.07:1 — белый текст основной кнопки */
+  --positive-ink: #1f6b48;   /* доход в строке, всегда со знаком «+»: 6.45:1 на белом, 5.83:1 на холсте */
+  --focus: #0b57d0;          /* кольцо фокуса: 6.39:1 на белом, 5.77:1 на холсте */
   --on-ink: #ffffff;         /* текст и глиф на чернильной плоскости: 18.36:1 */
   --scrim: rgb(23 20 16 / 55%);
 
-  /* §3 Тона сущностей. Пастельная заливка плитки и строки; подпись на ней — `--ink` (14.76–15.44:1),
-     глиф — `--tone-*-ink` на подложке `--icon-plate` (5.88–7.50:1). Тон метит сущность, а не
-     величину: пары измерены и меняются только вместе. Ключи прежние — `color` категории хранится
-     в синхронизируемых данных. */
+  /* §3 Тона сущностей. Пастельная заливка квадрата плитки, подложки строки и чипа; глиф на ней —
+     её собственные чернила `--tone-*-ink` (5.05–6.50:1), подпись рядом — `--ink`. Тон метит
+     сущность, а не величину: пары измерены и меняются только вместе. Ключи прежние — `color`
+     категории хранится в синхронизируемых данных. Доход своего цвета не имеет: его плитка
+     окрашена тоном своей категории. */
   --tone-mint: #ddefe5;
   --tone-mint-ink: #1f6b48;
   --tone-lilac: #ece6f7;
@@ -52,25 +55,17 @@
   --tone-sage-ink: #46613a;
   --tone-coral: #f8e1e4;
   --tone-coral-ink: #9b2c3f;
+  --tone-neutral: #e9e4da;            /* «Прочее» и всё без тона: отличается от утопленных плашек */
   --icon-plate: #ffffffb3;            /* подложка глифа на тоне: белый 70 % */
   --tile-track: rgb(23 20 16 / 8%);   /* трек полосы лимита на плитке */
 
-  /* §3 Плитки счёта и дохода. Счёт — тёмная плитка: на ней только белый и его приглушение; красного
-     текста на ней нет (2.25:1) — отрицательный остаток набирается белым с U+2212 и глифом. */
+  /* §3 Счёт — графитовый квадрат: на нём только белый и его приглушение; красного на нём нет
+     (2.25:1) — отрицательный остаток набирается со знаком U+2212 и глифом. */
   --tile-account: #22252a;
   --on-tile-account: #ffffff;         /* 15.37:1 */
   --on-tile-account-muted: #d5d8de;   /* 10.77:1 */
   --tile-income: #e9e7fb;
   --income-ink: #3f3fb0;              /* 6.78:1 на плитке дохода */
-
-  /* §3 Серии графиков: каждая ≥ 3:1 на белом; седьмая — «Остальное» и прочие месяцы. */
-  --chart-1: #1f6b48;
-  --chart-2: #8a5a00;
-  --chart-3: #5b3f9e;
-  --chart-4: #d9481f;
-  --chart-5: #9b2c3f;
-  --chart-6: #2f6f9f;
-  --chart-7: #8d8577;
 
   /* §4 Типографика. Ступеней пять, начертаний два — 400 и 700, третьего нет.
      Заголовок один на все уровни: восемь ступеней кегля — это восемь уровней, которые читателю
@@ -293,8 +288,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* §6 Семейная новость: чужие записи с прошлого раза. Плашка в потоке под героем, той же
    анатомии, что обещание приватности на импорте: глиф 40 на белом, две строки текста.
    Поверхность прямая; цвета нет — новость сообщает, а не поздравляет (§3: цвет появляется,
-   когда есть что сказать, а здесь сказано словами). Контраст: `--ink` на плашке 14.08:1,
-   `--ink-muted` на ней 5.49:1. */
+   когда есть что сказать, а здесь сказано словами). Контраст: `--ink` на плашке 15.19:1,
+   `--ink-muted` на ней 5.92:1. */
 .family-news { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 24px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
 .family-news-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }
 .family-news > div { min-width: 0; }
@@ -351,11 +346,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Разрыв не зависит ни от того, ни от другого: стойки стоят вне полосы, а гнездо между ними —
    цвета карточки. Скругления у полосы нет: полоса — поверхность, а поверхности прямые (§5).
 
-   Цвет заливки: чернила — деньги дотягивают до выплаты (14.08:1 к треку), янтарь — не дотягивают
-   (4.55:1), красный обрубок в нуле — конверт исчерпан (5.25:1). Все три выше 3:1, которых §9
+   Цвет заливки: чернила — деньги дотягивают до выплаты (13.71:1 к треку), янтарь — не дотягивают
+   (4.43:1), красный обрубок в нуле — конверт исчерпан (5.11:1). Все три выше 3:1, которых §9
    требует от нетекстовой графики, и ни одно состояние не остаётся одному только цвету: его
    говорят слово в чипе, положение заливки относительно насечки и объявление полосы. */
-.limit-bar { --limit-ink: var(--ink); --fill: var(--limit-fill, 0%); --bar-height: 10px; --post-height: 6px; display: block; width: 100%; height: calc(var(--bar-height) + var(--post-height) * 2); margin: 2px 0; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 3px), var(--surface) calc(var(--reach-mark) - 3px) calc(var(--reach-mark) + 3px), transparent calc(var(--reach-mark) + 3px)), linear-gradient(to right, var(--limit-ink) 0 var(--fill), var(--surface-sunken) var(--fill)); background-size: 100% var(--post-height), 100% var(--post-height), 100% var(--bar-height), 100% var(--bar-height); background-position: 0 0, 0 100%, 0 var(--post-height), 0 var(--post-height); }
+.limit-bar { --limit-ink: var(--ink); --fill: var(--limit-fill, 0%); --bar-height: 10px; --post-height: 6px; display: block; width: 100%; height: calc(var(--bar-height) + var(--post-height) * 2); margin: 2px 0; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 3px), var(--surface) calc(var(--reach-mark) - 3px) calc(var(--reach-mark) + 3px), transparent calc(var(--reach-mark) + 3px)), linear-gradient(to right, var(--limit-ink) 0 var(--fill), var(--track) var(--fill)); background-size: 100% var(--post-height), 100% var(--post-height), 100% var(--bar-height), 100% var(--bar-height); background-position: 0 0, 0 100%, 0 var(--post-height), 0 var(--post-height); }
 /* Полоса героя толще: это главная линейка экрана, а не строка списка. */
 .limit-bar.short { --limit-ink: var(--amber-ink); }
 
@@ -418,7 +413,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .segmented label:has(input:checked) { color: var(--ink); background: var(--surface); box-shadow: var(--shadow-pill); }
 .primary-button, .secondary-button { display: inline-grid; min-height: 48px; padding: 13px 24px; place-items: center; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; border-radius: var(--radius-control); }
 .back-button, .icon-label { display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
-.primary-button { color: var(--on-ink); background: var(--ink); border: 1px solid var(--ink); }
+/* §6 Основная кнопка — акцент с белым (5.07:1): один цвет у главного действия на всех экранах.
+   Чернилами заливаются только выбранный чип, пузырь подсказки и тост — чёрных плит больше нет. */
+.primary-button { color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); }
 .secondary-button { color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
 .wide { width: 100%; }
 
@@ -463,9 +460,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
    «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
 .nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
-/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (4.29:1 — графика, порог 3:1),
+/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (5.07:1),
    радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
-.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-ink); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
+.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
 .nav-fab svg { width: 24px; height: 24px; }
 /* При обычном кегле подпись вкладки — одна строка: на 320 pt «Операции» шире своей колонки на
    пару пунктов, перенос по слогам поднимал панель на 8 pt, и при открытой клавиатуре суммы под
@@ -476,8 +473,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 }
 .nav-icon { position: relative; display: grid; place-items: center; height: 24px; }
 .nav-icon svg { width: 24px; height: 24px; }
-/* Активная вкладка — это текст, а не графика, и порог у него 4.5:1, а не 3:1: подпись набрана
-   чернилами (18.36:1), а «вы здесь» говорит точка акцента под глифом — графика, 4.29:1 на белом.
+/* Активная вкладка — это текст, а не графика: подпись набрана чернилами (18.36:1), а «вы здесь»
+   говорит точка акцента под глифом — графика, 5.07:1 на белом.
    Акцент мелким текстом не бывает (§3), а оранжевый марки в интерфейсе больше не живёт. */
 .nav-button.active { color: var(--ink); background: transparent; }
 .nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--accent); border-radius: 50%; }
@@ -800,7 +797,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dialog-actions button { min-height: 48px; padding: 13px 20px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
 .dialog-actions .danger-button { color: var(--red-ink); background: var(--red-soft); border-color: var(--red-soft); border-radius: var(--radius-control); }
 /* `.dialog-actions button` перебивает `.primary-button` по специфичности — как и `.danger-button` выше. */
-.dialog-actions .primary-button { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.dialog-actions .primary-button { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 /* Вопрос перед вступлением в семью несёт с собой и выход: копию можно сделать не уходя с него. */
 .dialog-aside { padding: 16px; margin: 16px 0; background: var(--surface-sunken); }
 .dialog-aside > p { margin: 0 0 12px; }
@@ -905,7 +902,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tone-amber { background: var(--tone-amber); }
 .tone-sage { background: var(--tone-sage); }
 .tone-coral { background: var(--tone-coral); }
-.tone-neutral { color: var(--ink); background: var(--surface-sunken); }
+.tone-neutral { color: var(--ink); background: var(--tone-neutral); }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -927,7 +924,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .overview-totals .overview-total { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; }
 .overview-spent { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--border); }
 .overview-spent > dt { color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); }
-/* «по лимитам N из M» — своей строкой под «Потрачено»: чернила приглушения на холсте — 6.07:1 (§3). */
+/* «по лимитам N из M» — своей строкой под «Потрачено»: чернила приглушения на холсте — 6.47:1 (§3). */
 .overview-totals .overview-limits { flex-basis: 100%; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .overview-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .overview-note .icon { color: var(--amber-ink); }
@@ -1027,10 +1024,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tile-static .tile-archived { color: var(--income-ink); font-size: inherit; }
 /* Выбор — кольцо акцента внутри плитки и галочка; цвет — не единственный знак: ещё `aria-pressed`. */
 .tile.picked { box-shadow: inset 0 0 0 3px var(--accent); }
-.tile .tile-check { position: absolute; top: 4px; right: 4px; display: grid; width: 24px; height: 24px; place-items: center; color: var(--on-ink); background: var(--accent); border-radius: var(--radius-pill); }
+.tile .tile-check { position: absolute; top: 4px; right: 4px; display: grid; width: 24px; height: 24px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); }
 .tile .tile-check svg { width: 16px; height: 16px; }
 .tile[draggable="true"] { cursor: grab; }
-/* «+» — пунктир `--line`: 3.10:1 на холсте. */
+/* «+» — пунктир `--line`: 3.30:1 на холсте. */
 .add-tile { display: grid; width: 100%; min-height: 92px; padding: 0; place-items: center; color: var(--ink-muted); background: transparent; border: 1px dashed var(--line); border-radius: var(--radius-tile); }
 .tile-grid-row .add-tile { min-height: 64px; }
 
@@ -1094,7 +1091,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .toast-receipt-value { --odometer-line: var(--lh-title); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 
 /* §6 Выбор иконки и тона (подволна 2c): радиогруппа плиток 48 × 48 со словом под образцом. Выбор —
-   кольцо акцента (4.29:1 на белом), галочка и полужирное слово; образец тона на белом почти не виден
+   кольцо акцента (5.07:1 на белом), галочка и полужирное слово; образец тона на белом почти не виден
    краем (1.19–1.24:1, §3 «Запреты») и опознаётся словом. Подложка глифа — роль `--radius-plate`. */
 .picker { display: grid; min-width: 0; gap: 8px; margin: 0; padding: 0; border: 0; }
 .picker > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -1107,7 +1104,7 @@ label.picker-option:has(input:focus-visible) { outline: 3px solid var(--focus); 
 .picker-option .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
 .picker-option:has(input:checked) .icon-plate { box-shadow: 0 0 0 3px var(--accent); }
 .picker-option:has(input:checked) .picker-word { font-weight: 700; }
-label.picker-option .picker-check { position: absolute; top: 0; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-ink); background: var(--accent); border-radius: var(--radius-pill); }
+label.picker-option .picker-check { position: absolute; top: 0; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); }
 label.picker-option .picker-check svg { width: 14px; height: 14px; }
 /* Глиф на подложке тона — его собственные чернила (5.05–6.50:1, §3). */
 .icon-plate.tone-mint { color: var(--tone-mint-ink); }

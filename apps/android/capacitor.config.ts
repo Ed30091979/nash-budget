@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
     // Фон WebView до первого кадра страницы — ровно `--canvas` из apps/web-pwa/src/styles.css.
     // Тёмный `#100904` остался от оформления 1.0.0 и давал шов «почти чёрное → бумага» между
     // заставкой и приложением. Совпадение с таблицей стилей сверяет scripts/brand-palette.mjs.
-    backgroundColor: "#F0ECE3",
+    backgroundColor: "#F6F3EE",
     allowMixedContent: false,
     webContentsDebuggingEnabled: false,
     loggingBehavior: "none",

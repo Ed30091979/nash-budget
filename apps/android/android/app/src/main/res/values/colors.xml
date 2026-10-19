@@ -7,7 +7,7 @@
 -->
 <resources>
     <!-- `- -canvas`: тёплый холст под карточками. -->
-    <color name="canvas">#F0ECE3</color>
+    <color name="canvas">#F6F3EE</color>
     <!-- `- -ink`: чернила. -->
     <color name="ink">#171410</color>
     <!-- `- -orange`: единственная цветная роль приложения. -->

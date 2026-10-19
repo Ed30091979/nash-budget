@@ -14,7 +14,7 @@
     </clipPath>
   </defs>
   <g clip-path="url(#shape)">
-    <rect width="512" height="512" fill="#F0ECE3"/>
+    <rect width="512" height="512" fill="#F6F3EE"/>
     <rect x="96" y="213" width="213" height="86" fill="#171410"/>
     <rect x="352" y="213" width="64" height="86" fill="#171410"/>
     <rect x="320" y="107" width="21" height="298" fill="#B8471A"/>
