@@ -439,3 +439,165 @@ describe("budget status boundaries", () => {
     }
   });
 });
+
+describe("правка операции не теряет того, чего форма не знает", () => {
+  const MEMBER = "99000000-0000-4000-8000-0000000000b1";
+  const TAG_HOME = "99000000-0000-4000-8000-0000000000c1";
+  const TAG_HOLIDAY = "99000000-0000-4000-8000-0000000000c2";
+
+  /** G-000 с участником и двумя метками; расход на продукты помечен всем сразу. */
+  function labelledState() {
+    const state = makeG000State();
+    return {
+      ...state,
+      members: [{ id: MEMBER, name: "Аня", role: "owner" as const, active: true }],
+      tags: [
+        { id: TAG_HOME, name: "Дом", active: true },
+        { id: TAG_HOLIDAY, name: "Отпуск", active: false },
+      ],
+      transactions: state.transactions.map((transaction) => (
+        transaction.id === ids.transactions.products
+          ? { ...transaction, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] }
+          : transaction
+      )),
+    };
+  }
+
+  it("сохраняет участника, заметку и метки, когда правится сумма", () => {
+    const state = labelledState();
+    const before = state.transactions.find((item) => item.id === ids.transactions.products)!;
+    const edited = editTransaction(state, ids.transactions.products, {
+      kind: "expense",
+      status: "posted",
+      occurredOn: before.occurredOn,
+      amount: "31000",
+      accountId: ids.accounts.main,
+      categoryId: ids.categories.products,
+    });
+    const after = edited.transactions.find((item) => item.id === ids.transactions.products)!;
+
+    expect(after).toMatchObject({ amountMinor: 3_100_000, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
+    expect(after).toEqual({ ...before, amountMinor: 3_100_000 });
+  });
+
+  it("сохраняет их и при смене вида операции, а у непомеченной ничего не появляется", () => {
+    const state = labelledState();
+    const edited = editTransaction(state, ids.transactions.products, {
+      kind: "transfer",
+      status: "posted",
+      occurredOn: "2026-07-05",
+      amount: "100",
+      fromAccountId: ids.accounts.main,
+      toAccountId: ids.accounts.savings,
+    });
+    expect(edited.transactions.find((item) => item.id === ids.transactions.products))
+      .toMatchObject({ kind: "transfer", memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
+
+    const income = state.transactions.find((item) => item.id === ids.transactions.income)!;
+    const plain = editTransaction(state, ids.transactions.income, {
+      kind: "income", categoryId: "", status: "posted", occurredOn: income.occurredOn, amount: "1", accountId: ids.accounts.main,
+    }).transactions.find((item) => item.id === ids.transactions.income)!;
+    for (const field of ["memberId", "note", "tagIds", "recurringRuleId"]) {
+      expect(Object.hasOwn(plain, field), field).toBe(false);
+    }
+  });
+
+  it("не выдумывает меток новой операции и считает метку занятым идентификатором", () => {
+    const state = labelledState();
+    const created = createTransaction(state, {
+      kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    }, fixedOperationId);
+    const added = created.transactions.at(-1)!;
+    expect(Object.hasOwn(added, "tagIds")).toBe(false);
+    expect(Object.hasOwn(added, "memberId")).toBe(false);
+    expect(() => createTransaction(state, {
+      kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "1", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    }, () => TAG_HOME)).toThrow("уникальный");
+  });
+});
+
+describe("operation date window", () => {
+  it("takes a date the family journal carries and refuses one past it, naming the field", () => {
+    const state = makeG000State();
+    const draft = (occurredOn: string): TransactionDraft => ({ ...transferDraft("100"), occurredOn });
+    expect(() => createTransaction(state, draft("2199-12-31"), fixedOperationId)).not.toThrow();
+    expect(() => createTransaction(state, draft("1900-01-01"), fixedOperationId)).not.toThrow();
+    for (const occurredOn of ["2200-01-01", "1899-12-31", "9999-12-31"]) {
+      expect(() => createTransaction(state, draft(occurredOn), fixedOperationId)).toThrow(
+        expect.objectContaining({ field: "occurredOn", message: "Выберите дату с 1900 по 2199 год." }),
+      );
+    }
+  });
+});
+
+describe("operations in another currency", () => {
+  const DOLLARS = "8c000000-0000-4000-8000-0000000000a2";
+  const DOLLAR_EXPENSE = "8d000000-0000-4000-8000-000000000003";
+
+  /** G-000 with a dollar account and one purchase on it, as a backup or another device brings them. */
+  function withDollars() {
+    const state = makeG000State();
+    return {
+      ...state,
+      accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "savings" as const, currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [...state.transactions, {
+        id: DOLLAR_EXPENSE, occurredOn: "2026-07-10", status: "posted" as const, kind: "expense" as const, amountMinor: 4_000,
+        accountId: DOLLARS, categoryId: ids.categories.products,
+        baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+      }],
+    };
+  }
+
+  it("refuses to record on a dollar account with words, not a damaged document", () => {
+    const state = withDollars();
+    const expense: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "10", accountId: DOLLARS, categoryId: ids.categories.products };
+    expect(() => createTransaction(state, expense, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "accountId", message: "Операции по счёту в другой валюте эта форма пока не записывает." }),
+    );
+    expect(() => createTransaction(state, { ...transferDraft("100"), toAccountId: DOLLARS }, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "toAccountId", message: "Перевод между счетами в разных валютах эта форма пока не записывает." }),
+    );
+    // A rouble operation beside it records as before.
+    expect(() => createTransaction(state, transferDraft("100"), fixedOperationId)).not.toThrow();
+  });
+
+  it("refuses to edit an operation in another currency rather than lose its rouble value", () => {
+    const state = withDollars();
+    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-10", amount: "50", accountId: ids.accounts.main, categoryId: ids.categories.products };
+    expect(() => editTransaction(state, DOLLAR_EXPENSE, draft)).toThrow(
+      expect.objectContaining({ field: "kind", message: "Операцию в другой валюте эта форма пока не изменяет." }),
+    );
+    expect(state.transactions.find((item) => item.id === DOLLAR_EXPENSE)).toMatchObject({ baseAmountMinor: 360_000 });
+  });
+});
+
+describe("operations on a debt", () => {
+  const DEBT = "8f100000-0000-4000-8000-0000000000d1";
+  const LENT = "8d100000-0000-4000-8000-000000000007";
+
+  function withLending() {
+    const state = makeG000State();
+    return {
+      ...state,
+      debts: [{ id: DEBT, counterparty: "Петя", direction: "owed_to_me" as const, currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...state.transactions, { id: LENT, kind: "debt_out" as const, status: "posted" as const, occurredOn: "2026-07-09", amountMinor: 500_000, accountId: ids.accounts.main, debtId: DEBT }],
+    };
+  }
+
+  it("refuses to edit a debt movement the form cannot show, and keeps it whole", () => {
+    const state = withLending();
+    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "5000", accountId: ids.accounts.main, categoryId: ids.categories.products };
+    expect(() => editTransaction(state, LENT, draft)).toThrow(
+      expect.objectContaining({ field: "kind", message: "Операцию по долгу эта форма пока не изменяет." }),
+    );
+  });
+
+  it("deletes a debt movement like any other operation, and records beside it as before", () => {
+    const state = withLending();
+    expect(deleteTransaction(state, LENT).transactions.map((item) => item.id)).not.toContain(LENT);
+    expect(() => createTransaction(state, transferDraft("100"), fixedOperationId)).not.toThrow();
+    expect(calculateOperationsMetrics(state).accountBalancesMinor[ids.accounts.main]).toBe(
+      calculateOperationsMetrics(makeG000State()).accountBalancesMinor[ids.accounts.main]! - 500_000,
+    );
+  });
+});

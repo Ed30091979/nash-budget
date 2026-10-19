@@ -9,7 +9,7 @@
     "app": { "const": "family-budget" },
     "appVersion": { "type": "string", "minLength": 1, "maxLength": 50 },
     "formatVersion": { "const": 2 },
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "enum": [1, 2] },
     "createdAt": { "type": "string", "format": "date-time", "maxLength": 30 },
     "integrity": {
       "type": "object",

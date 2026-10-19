@@ -138,13 +138,46 @@ describe("опрос семьи и видимость вкладки", () => {
 });
 
 describe("исход круга синхронизации не пропадает", () => {
-  const engine = (behaviour: () => Promise<{ readonly pull: { readonly applied: number } }>) => ({
+  const engine = (
+    behaviour: () => Promise<{ readonly pull: { readonly applied: number; readonly settled?: boolean } }>,
+    settles = false,
+  ) => ({
+    settleDocument: async () => settles,
     sync: behaviour,
   });
 
   it("удавшийся круг отдаёт «ok» и число применённых операций", async () => {
     await expect(runSyncRound(engine(async () => ({ pull: { applied: 3 } })))).resolves.toEqual({
       applied: 3,
+      settled: false,
+      outcome: "ok",
+    });
+  });
+
+  it("снятая без новых операций задержка — тоже новость для экрана", async () => {
+    // Второе ревью, LOW-4: сборка, которая открывает состояние, переписывает документ, хотя
+    // `applied` — ноль, и круг обязан это передать, иначе экран остался бы на вчерашнем бюджете.
+    await expect(runSyncRound(engine(async () => ({ pull: { applied: 0, settled: true } })))).resolves.toEqual({
+      applied: 0,
+      settled: true,
+      outcome: "ok",
+    });
+  });
+
+  it("задержка, снятая до сети, — новость для экрана, даже если круг упал на сети", async () => {
+    // Третье ревью, S5: сборка, обновлённая офлайн, снимает задержку на диске, а круг падал на
+    // отправке и отвечал `settled: false` — экран оставался на задержанном бюджете.
+    await expect(
+      runSyncRound(
+        engine(async () => {
+          throw new SyncClientError("transport_failed", "the sync server could not be reached");
+        }, true),
+      ),
+    ).resolves.toEqual({ applied: 0, settled: true, outcome: "unreachable" });
+    // Settled by the round's own step, the engine's sync answering «no» changes nothing.
+    await expect(runSyncRound(engine(async () => ({ pull: { applied: 0, settled: false } }), true))).resolves.toEqual({
+      applied: 0,
+      settled: true,
       outcome: "ok",
     });
   });
@@ -156,7 +189,7 @@ describe("исход круга синхронизации не пропадае
           throw new SyncClientError("transport_failed", "the sync server could not be reached");
         }),
       ),
-    ).resolves.toEqual({ applied: 0, outcome: "unreachable" });
+    ).resolves.toEqual({ applied: 0, settled: false, outcome: "unreachable" });
   });
 
   it("умерший вход и отозванное устройство — «refused»: само это не пройдёт", async () => {
@@ -167,7 +200,7 @@ describe("исход круга синхронизации не пропадае
             throw new SyncServerError(401, code);
           }),
         ),
-      ).resolves.toEqual({ applied: 0, outcome: "refused" });
+      ).resolves.toEqual({ applied: 0, settled: false, outcome: "refused" });
     }
   });
 
@@ -178,7 +211,7 @@ describe("исход круга синхронизации не пропадае
           throw new Error("что угодно");
         }),
       ),
-    ).resolves.toEqual({ applied: 0, outcome: "refused" });
+    ).resolves.toEqual({ applied: 0, settled: false, outcome: "refused" });
   });
 });
 

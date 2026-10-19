@@ -1,8 +1,13 @@
 import {
+  baseCurrencyOf,
   calculateBudget,
   categoryNameKey,
   createCategory,
   CategoryValidationError,
+  documentIds,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MIN_LOCAL_DATE,
   type BudgetLine,
   type BudgetMetrics,
   type BudgetState,
@@ -13,6 +18,7 @@ import {
 } from "@family-budget/domain";
 import { BACKUP_LIMITS } from "../../backup";
 import { parseMoney } from "../../money";
+import { BudgetWriteRefusal } from "../../write-refusal";
 
 export const OPERATIONS_LIMITS = {
   accounts: BACKUP_LIMITS.accounts,
@@ -99,44 +105,36 @@ function assertIdentifier(id: string, field = "id"): string {
   return id;
 }
 
+/**
+ * Every identifier of the document, through the domain's one census (`documentIds`), so that a
+ * collection added to the model — participants, tags — is counted here the day it is added rather
+ * than the day somebody remembers this copy. A new operation must not take an identifier any
+ * entity of any kind already holds: a backup refuses such a file.
+ */
 function allDocumentIds(state: BudgetState): Set<string> {
   const ids = new Set<string>();
-  const accept = (id: string): void => {
+  for (const id of documentIds(state)) {
     assertIdentifier(id, "document");
     if (ids.has(id)) fail("document", "Документ содержит повторяющийся идентификатор.");
     ids.add(id);
-  };
-  state.accounts.forEach((item) => accept(item.id));
-  state.categories.forEach((item) => accept(item.id));
-  state.budgets.forEach((item) => {
-    accept(item.id);
-    item.lines.forEach((line) => accept(line.id));
-  });
-  state.goals.forEach((item) => accept(item.id));
-  state.annualCommitments.forEach((item) => accept(item.id));
-  state.scheduledExpenses.forEach((item) => accept(item.id));
-  state.transactions.forEach((item) => accept(item.id));
+  }
   return ids;
 }
 
-function validateLimits(state: BudgetState): void {
-  if (state.accounts.length > OPERATIONS_LIMITS.accounts) fail("document", "Слишком много счетов.");
-  if (state.categories.length > OPERATIONS_LIMITS.categories) fail("document", "Слишком много категорий.");
-  if (state.budgets.length > OPERATIONS_LIMITS.budgets) fail("document", "Слишком много бюджетных периодов.");
-  if (state.goals.length > OPERATIONS_LIMITS.goals) fail("document", "Слишком много целей.");
-  if (state.annualCommitments.length > OPERATIONS_LIMITS.commitments) fail("document", "Слишком много крупных платежей.");
-  if (state.scheduledExpenses.length > OPERATIONS_LIMITS.schedules) fail("document", "Слишком много регулярных платежей.");
-  if (state.transactions.length > OPERATIONS_LIMITS.transactions) fail("document", "Слишком много операций.");
-  if (state.budgets.some((budget) => budget.lines.length > OPERATIONS_LIMITS.linesPerBudget)) {
-    fail("document", "Слишком много бюджетных лимитов в одном периоде.");
-  }
-  const lines = state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
-  if (lines > OPERATIONS_LIMITS.totalBudgetLines) fail("document", "Слишком много бюджетных лимитов.");
+function totalBudgetLines(state: BudgetState): number {
+  return state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
 }
 
+/**
+ * Проверка всего документа после правки — без пределов числа записей. Они ограничивают только рост:
+ * новую запись вида, которого уже столько, сколько позволено, или больше, форма не создаёт (каждая
+ * функция `create…` проверяет свой вид). Документ, в котором записей больше предела, — обычное
+ * следствие того, что несколько устройств семьи добавляли записи офлайн, — правится и чистится как
+ * любой другой: отказ здесь запрещал бы удалить лишнее и тем самым навсегда держал бы семью за
+ * пределом, а не в нём.
+ */
 function validateState(state: BudgetState): BudgetMetrics {
   try {
-    validateLimits(state);
     allDocumentIds(state);
     validateRefundRelations(state);
     return calculateBudget(state);
@@ -161,6 +159,11 @@ function assertLocalDate(value: string): string {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     return fail("occurredOn", "Выберите существующую календарную дату.");
   }
+  // Окно календаря, которое переносит журнал семьи: дату за его пределами запись приняла бы, а
+  // синхронизация потом отвергла бы на каждом устройстве. Старые документы читаются как раньше.
+  if (!isWithinDateWindow(value)) {
+    return fail("occurredOn", `Выберите дату с ${MIN_LOCAL_DATE.slice(0, 4)} по ${MAX_LOCAL_DATE.slice(0, 4)} год.`);
+  }
   return value;
 }
 
@@ -182,10 +185,27 @@ function accountFor(
   id: string,
   field: string,
   allowedArchivedId?: string,
-): void {
+): BudgetState["accounts"][number] {
   assertIdentifier(id, field);
   const account = state.accounts.find((item) => item.id === id);
-  if (!account || (!account.active && id !== allowedArchivedId)) fail(field, "Выберите активный счёт.");
+  if (!account || (!account.active && id !== allowedArchivedId)) return fail(field, "Выберите активный счёт.");
+  return account;
+}
+
+/**
+ * Эта форма записывает суммы в базовой валюте семьи и ничего больше: суммы в другой валюте, курса и
+ * суммы зачисления у неё нет. Счёт в другой валюте приходит из копии или от другого устройства, и
+ * операцию по нему форма отвергает понятными словами, а не повреждённым документом.
+ */
+const FOREIGN_ACCOUNT_MESSAGE = "Операции по счёту в другой валюте эта форма пока не записывает.";
+const FOREIGN_TRANSFER_MESSAGE = "Перевод между счетами в разных валютах эта форма пока не записывает.";
+
+function assertBaseCurrencyAccount(state: BudgetState, account: BudgetState["accounts"][number], field: string): void {
+  if (account.currency !== baseCurrencyOf(state)) fail(field, FOREIGN_ACCOUNT_MESSAGE);
+}
+
+function assertOneCurrency(from: BudgetState["accounts"][number], to: BudgetState["accounts"][number]): void {
+  if (from.currency !== to.currency) fail("toAccountId", FOREIGN_TRANSFER_MESSAGE);
 }
 
 function expenseCategoryFor(
@@ -232,10 +252,40 @@ function goalFor(state: BudgetState, id: string, allowedHistoricalId?: string) {
 }
 
 function accountIds(transaction: Transaction): readonly string[] {
-  if (transaction.kind === "income" || transaction.kind === "expense" || transaction.kind === "refund") {
-    return [transaction.accountId];
+  switch (transaction.kind) {
+    case "income":
+    case "expense":
+    case "refund":
+    case "debt_out":
+    case "debt_in":
+      return [transaction.accountId];
+    case "transfer":
+    case "goal_contribution":
+      return [transaction.fromAccountId, transaction.toAccountId];
   }
-  return [transaction.fromAccountId, transaction.toAccountId];
+}
+
+type CarriedLabels = Pick<Transaction, "memberId" | "note" | "tagIds" | "recurringRuleId">;
+
+/**
+ * What an edit keeps from the operation it edits because the form never shows it.
+ *
+ * The form rebuilds an operation from its own fields, and a field it does not have was simply
+ * lost: every edit took off the participant the operation was credited to — the split by
+ * participant then counted it as unattributed, against D-021 and against the journal, whose codec
+ * carries the participant on the operation for exactly this reason. A note, tags and the recurring
+ * rule an operation came from would have gone the same way the first time anybody corrected an
+ * amount. They are labels: no figure reads them, so carrying them over cannot move a kopeck, and
+ * dropping them is a loss nobody asked for. Absent stays absent.
+ */
+function carriedLabels(current: Transaction | undefined): CarriedLabels {
+  if (current === undefined) return {};
+  return {
+    ...(current.memberId === undefined ? {} : { memberId: current.memberId }),
+    ...(current.note === undefined ? {} : { note: current.note }),
+    ...(current.tagIds === undefined ? {} : { tagIds: current.tagIds }),
+    ...(current.recurringRuleId === undefined ? {} : { recurringRuleId: current.recurringRuleId }),
+  };
 }
 
 function makeTransaction(
@@ -248,10 +298,11 @@ function makeTransaction(
   const status = assertStatus(draft.status);
   const amountMinor = parsePositiveMoney(draft.amount);
   const oldAccounts = current?.kind === draft.kind ? accountIds(current) : [];
+  const labels = carriedLabels(current);
 
   switch (draft.kind) {
     case "income": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       const oldCategoryId = current?.kind === "income" ? current.categoryId : undefined;
       const categoryId = incomeCategoryFor(state, draft.categoryId, oldCategoryId);
       // Отсутствующая категория остаётся отсутствующей: `categoryId: undefined` — это не то же
@@ -264,16 +315,17 @@ function makeTransaction(
         amountMinor,
         accountId: draft.accountId,
         ...(categoryId === undefined ? {} : { categoryId }),
+        ...labels,
       };
     }
     case "expense": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       const oldCategoryId = current?.kind === "expense" ? current.categoryId : undefined;
       expenseCategoryFor(state, draft.categoryId, oldCategoryId);
-      return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId };
+      return { id, kind: "expense", occurredOn, status, amountMinor, accountId: draft.accountId, categoryId: draft.categoryId, ...labels };
     }
     case "refund": {
-      accountFor(state, draft.accountId, "accountId", oldAccounts[0]);
+      assertBaseCurrencyAccount(state, accountFor(state, draft.accountId, "accountId", oldAccounts[0]), "accountId");
       assertIdentifier(draft.originalTransactionId, "originalTransactionId");
       const original = state.transactions.find((item) => item.id === draft.originalTransactionId);
       if (!original || original.kind !== "expense" || original.status !== "posted") {
@@ -291,17 +343,21 @@ function makeTransaction(
         accountId: draft.accountId,
         categoryId: original.categoryId,
         originalTransactionId: original.id,
+        ...labels,
       };
     }
-    case "transfer":
-      accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
-      accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
+    case "transfer": {
+      const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
+      const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
-      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId };
+      assertOneCurrency(from, to);
+      return { id, kind: "transfer", occurredOn, status, amountMinor, fromAccountId: draft.fromAccountId, toAccountId: draft.toAccountId, ...labels };
+    }
     case "goal_contribution": {
-      accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
-      accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
+      const from = accountFor(state, draft.fromAccountId, "fromAccountId", oldAccounts[0]);
+      const to = accountFor(state, draft.toAccountId, "toAccountId", oldAccounts[1]);
       if (draft.fromAccountId === draft.toAccountId) fail("toAccountId", "Выберите другой счёт назначения.");
+      assertOneCurrency(from, to);
       const oldGoalId = current?.kind === "goal_contribution" ? current.goalId : undefined;
       const goal = goalFor(state, draft.goalId, oldGoalId);
       if (goal.linkedAccountId !== draft.toAccountId) {
@@ -316,6 +372,7 @@ function makeTransaction(
         fromAccountId: draft.fromAccountId,
         toAccountId: draft.toAccountId,
         goalId: draft.goalId,
+        ...labels,
       };
     }
     default:
@@ -410,11 +467,27 @@ export function deleteTransactions(state: BudgetState, ids: readonly string[]): 
   return validateResult({ ...state, transactions: state.transactions.filter((item) => !removing.has(item.id)) });
 }
 
+/**
+ * Операция, которую эта форма не умеет показать целиком, — правке ею не подлежит (план, §3.4): форма
+ * пересобрала бы операцию из своих полей и потеряла бы то, чего у неё нет, — сумму в базовой
+ * валюте, курс, сумму зачисления. До волны интерфейса такую операцию правят только там, где её
+ * записали.
+ */
+function assertEditableByForm(state: BudgetState, current: Transaction): void {
+  // Долга у формы нет вовсе: ни выбора долга, ни суммы в его валюте.
+  if (current.kind === "debt_out" || current.kind === "debt_in") {
+    fail("kind", "Операцию по долгу эта форма пока не изменяет.");
+  }
+  const foreign = (accountId: string) => state.accounts.find((item) => item.id === accountId)?.currency !== baseCurrencyOf(state);
+  if (accountIds(current).some(foreign)) fail("kind", "Операцию в другой валюте эта форма пока не изменяет.");
+}
+
 export function editTransaction(state: BudgetState, id: string, draft: TransactionDraft): BudgetState {
   validateState(state);
   assertIdentifier(id);
   const current = state.transactions.find((item) => item.id === id);
   if (!current) fail("id", "Операция не найдена.");
+  assertEditableByForm(state, current);
   const dependentRefunds = state.transactions.filter(
     (item) => item.kind === "refund" && item.originalTransactionId === id,
   );
@@ -542,6 +615,9 @@ export function createOperationCategory(
   if (budget.lines.length >= OPERATIONS_LIMITS.linesPerBudget) {
     fail("limit", "Достигнут лимит бюджетных лимитов в периоде.");
   }
+  if (totalBudgetLines(created.state) >= OPERATIONS_LIMITS.totalBudgetLines) {
+    fail("limit", "Достигнут лимит бюджетных лимитов.");
+  }
   const line: BudgetLine = {
     id: nextId(ids, makeId),
     categoryId: created.category.id,
@@ -592,6 +668,9 @@ export function toOperationsErrorView(error: unknown): OperationsErrorView {
   if (error instanceof OperationsValidationError) {
     return { field: error.field, message: error.message };
   }
+  // Записи недоступны, пока документ семьи задержан или не пришёл: это не сбой, и человек должен
+  // знать, почему и когда записи откроются.
+  if (error instanceof BudgetWriteRefusal) return { field: "form", message: error.userMessage };
   return { field: "form", message: "Не удалось сохранить операцию." };
 }
 

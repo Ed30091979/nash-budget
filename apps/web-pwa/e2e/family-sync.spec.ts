@@ -11,7 +11,8 @@
  * «Можно на повседневные расходы» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
  * дно горизонта `13 191 ₽` в сентябре 2026.
  */
-import { expect, test, type Locator, type Page, type APIRequestContext } from "@playwright/test";
+import type { Locator, Page, APIRequestContext } from "@playwright/test";
+import { expect, test, watchDialogs } from "./fixtures";
 
 import {
   G002_INITIAL_OPERATION_COUNT,
@@ -119,6 +120,9 @@ async function recordExpense(
   await page.getByLabel("Сумма, ₽").fill(options.amount);
   await page.getByRole("button", { name: new RegExp(`^${options.category}:`, "u") }).click();
   await page.getByRole("button", { name: new RegExp(`^Записать .* в «${options.category}»$`, "u") }).click();
+  // Записано — когда квитанция это сказала, а не когда кнопку нажали: следующий шаг теста не
+  // должен застать запись в полёте.
+  await expect(page.getByRole("status").filter({ hasText: /Записано: расход/u })).toBeVisible();
 }
 
 /** Тревоги главного потока — без тех, что бюджет ставит сам (перерасход категории). */
@@ -134,12 +138,22 @@ async function openFamilyScreen(page: Page): Promise<void> {
   await page.getByRole("button", { name: /Семья и синхронизация/u }).click();
 }
 
+/**
+ * Ждёт, пока на экране появится `expected`, — а если раньше него появится тревога семьи, падает с
+ * её текстом: «вход не удался» из `role=alert` вместо безымянного таймаута ожидания.
+ */
+async function expectOrAlert(page: Page, expected: Locator, step: string): Promise<void> {
+  const alert = page.locator(".family-error[role=alert]");
+  await expect(expected.or(alert).first()).toBeVisible({ timeout: 20_000 });
+  if (await alert.count()) throw new Error(`${step}: ${(await alert.first().innerText()).trim()}`);
+}
+
 async function signIn(page: Page, baseURL: string, email: string): Promise<void> {
   await openFamilyScreen(page);
   await expect(page.getByRole("heading", { name: "Вход по адресу почты" })).toBeVisible();
   await page.getByLabel("Адрес почты").fill(email);
   await page.getByRole("button", { name: "Выслать код" }).click();
-  await expect(page.getByLabel("Код из письма")).toBeVisible();
+  await expectOrAlert(page, page.getByLabel("Код из письма"), "Код не выслан");
 
   // Код приходит из вывода сервера — того самого, который в проде уходил бы письмом.
   await expect
@@ -149,7 +163,16 @@ async function signIn(page: Page, baseURL: string, email: string): Promise<void>
   expect(code).toMatch(/^\d{6}$/u);
   await page.getByLabel("Код из письма").fill(code!);
   await page.getByRole("button", { name: "Войти", exact: true }).click();
+  // Вошли — значит, экран предлагает создать семью или вступить в неё.
+  await expectOrAlert(page, page.getByRole("heading", { name: /^(Создать семью|Вступить по коду)$/u }).first(), "Вход не удался");
 }
+
+// Сервер семьи — общий для всех тестов файла. Тест, упавший с выключенным сервером, не должен
+// уронить следующие: после каждого он поднимается снова (no-op, если уже работает).
+test.afterEach(async ({ request, baseURL }) => {
+  if (!baseURL) return;
+  expect(await setSyncServer(request, baseURL, "start")).toBe(true);
+});
 
 /** Индикатор шапки раздела «Ещё»: единственное место, где состояние синхронизации видно в потоке. */
 function syncIndicator(page: Page): Locator {
@@ -273,30 +296,21 @@ test("при недоступном сервере приложение оста
 });
 
 /**
- * Двухклиентский сценарий приёмки — и дефект сборки, который его сейчас не пускает.
+ * Двухклиентский сценарий приёмки: приглашение, вступление, запись офлайн с двух устройств и
+ * схождение до копейки.
  *
- * Тест помечен `test.fail()` не потому, что сценарий необязателен, а потому, что он падает по
- * причине вне области этой фазы и падать обязан, пока причина не устранена. Причина, полученная
- * в этом самом прогоне из события `securitypolicyviolation` страницы:
- *
- *   `script-src | wasm-eval | /assets/index-*.js`
- *   `CompileError: WebAssembly.instantiate(): ... 'unsafe-eval' is not an allowed source of
- *    script in the following Content Security Policy directive: "script-src 'self'"`
- *
- * Приглашение разворачивается через Argon2id, Argon2id — это `hash-wasm`, а `hash-wasm` — это
- * WebAssembly. Политика сборки (`vite.config.ts`, `META_CSP`; `index.html`; `public/_headers`;
- * `security-headers.json`) не разрешает `'wasm-unsafe-eval'`, поэтому `sealInvite` бросает
- * *до* первого запроса к серверу, и экран говорит «Не удалось выполнить действие». Ни один
- * модульный тест этого не видит: в Node политики нет.
- *
- * Когда политика будет исправлена, тест начнёт проходить и прогон станет красным на этой самой
- * строке — это и есть сигнал снять пометку.
+ * Прежде он был помечен `test.fail()`: политика сборки не разрешала `'wasm-unsafe-eval'`, а
+ * приглашение разворачивается через Argon2id (`hash-wasm`, WebAssembly). Политика исправлена,
+ * пометка снята, и тест обязан проходить. Оба браузерных контекста созданы тестом сам, поэтому
+ * системные окна в них ловятся явно (`watchDialogs`), как и в странице по умолчанию.
  */
-test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL }) => {
+test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL, nativeDialogs }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
 
   const annaContext = await browser.newContext();
   const borisContext = await browser.newContext();
+  watchDialogs(annaContext, nativeDialogs);
+  watchDialogs(borisContext, nativeDialogs);
   try {
     const anna = await annaContext.newPage();
     const boris = await borisContext.newPage();
@@ -310,7 +324,7 @@ test("два клиента одной семьи сходятся до копе
     await expect(anna.getByRole("heading", { name: "Участники" })).toBeVisible({ timeout: 20_000 });
     await expectSyncIndicator(anna, /синхронизировано$/u);
 
-    // Владелец выпускает код приглашения. Здесь прогон и останавливается: см. комментарий выше.
+    // Владелец выпускает код приглашения.
     await openFamilyScreen(anna);
     await anna.getByRole("button", { name: /Выпустить код/u }).click();
     const invite = anna.locator(".invite-code code");
@@ -329,6 +343,10 @@ test("два клиента одной семьи сходятся до копе
     await boris.getByRole("button", { name: "Вступить", exact: true }).click();
     await boris.getByRole("button", { name: /Вступить/u }).last().click();
     await expect(boris.getByRole("heading", { name: "Участники" })).toBeVisible({ timeout: 30_000 });
+    // Журнал семьи пришёл и лёг в документ: до того на месте бюджета стоит экран «Бюджет семьи ещё
+    // не пришёл», а записи недоступны (демонстрационный бюджет Бориса — не бюджет семьи, хоть и
+    // показывает те же числа). Шапка со знаком «синхронизировано» есть только у документа семьи.
+    await expect(syncIndicator(boris)).toHaveAttribute("aria-label", /синхронизировано$/u, { timeout: 45_000 });
     await boris.getByRole("button", { name: "Сегодня", exact: true }).click();
     await expect(flexibleRemaining(boris)).toHaveText(FLEXIBLE_REMAINING);
 

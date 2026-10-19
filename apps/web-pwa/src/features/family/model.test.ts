@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 
 import { makeSeedBudget, type BudgetState, type Transaction } from "@family-budget/domain";
 import {
+  DOCUMENT_HOLD_REASONS,
   SyncClientError,
   SyncServerError,
   type SyncStatusReport,
   type SyncStop,
 } from "@family-budget/sync-client";
-import type { JournalIntegrity } from "@family-budget/sync-protocol";
+import { WITHHOLDING_REASONS, type JournalIntegrity } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -19,6 +20,10 @@ import {
   SYNC_ROUND_OUTCOMES,
   UNATTRIBUTED_AUTHOR,
   classifySyncFailure,
+  documentHoldNotice,
+  familyDocumentNotice,
+  holdWriteRefusal,
+  showsFamilyHoldScreen,
   filterTransactionsByMember,
   formatInviteCode,
   formatInviteExpiry,
@@ -44,6 +49,8 @@ function report(overrides: Partial<SyncStatusReport> = {}): SyncStatusReport {
     queued: 0,
     epoch: { keyEpoch: 1, keyDigest: "a".repeat(64), live: true },
     stop: null,
+    hold: null,
+    familyDocument: true,
     ...overrides,
   };
 }
@@ -176,6 +183,69 @@ describe("тревога «ключ семьи не совпадает»", () =>
   });
 });
 
+describe("состояние журнала, которое приложение не открыло", () => {
+  it("говорит, что случилось и что делать, и молчит, когда документ показывает журнал", () => {
+    expect(documentHoldNotice(null)).toBeNull();
+    const kept = documentHoldNotice({ reason: "rejected_by_app", document: "kept" })!;
+    expect(kept.title).toBe("Новые записи семьи не открываются в этой версии");
+    // Second review: the held device is read-only, and the words say so instead of promising that
+    // its writes travel.
+    expect(kept.body).toContain("записи на этом устройстве временно недоступны");
+    expect(kept.body).not.toContain("уходят семье");
+    expect(kept.body).toContain("Обновите приложение");
+    expect(kept.body).toContain("Ничего не потеряно");
+    const empty = documentHoldNotice({ reason: "rejected_by_app", document: "empty" })!;
+    expect(empty.title).toBe("Бюджет семьи не открывается в этой версии");
+    expect(empty.body).toContain("Обновите приложение");
+    expect(empty.body).toContain("записи недоступны");
+    // Every reason the engine can record has words, for both kinds of document.
+    for (const reason of DOCUMENT_HOLD_REASONS) {
+      for (const document of ["kept", "empty"] as const) {
+        expect(documentHoldNotice({ reason, document })?.title.length, `${reason} ${document}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("журнал без показуемого бюджета называет себя сам и говорит, как из него выйти", () => {
+    // Третье ревью: неготовый журнал на документе семьи — задержка со своими словами.
+    const kept = documentHoldNotice({ reason: "journal_not_ready", document: "kept" })!;
+    expect(kept.title).toBe("Бюджет семьи пришёл не целиком");
+    expect(kept.body).toContain("записи на этом устройстве временно недоступны");
+    expect(kept.body).toContain("откроет новый месяц");
+    expect(holdWriteRefusal({ reason: "journal_not_ready", document: "kept" })).toBe("notReady");
+    expect(holdWriteRefusal({ reason: "rejected_by_app", document: "kept" })).toBe("held");
+  });
+
+  it("экран ожидания стоит на месте бюджета ровно тогда, когда в семье нет документа семьи", () => {
+    // Второе ревью, LOW-5: в семье без документа — экран ожидания, а не онбординг.
+    expect(showsFamilyHoldScreen(true, false, null)).toBe(true);
+    expect(showsFamilyHoldScreen(true, false, report({ familyDocument: true }))).toBe(true);
+    // MEDIUM-3 (b): прежний бюджет вступившего устройства не показывается как семейный.
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: false }))).toBe(true);
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: false, hold: { reason: "rejected_by_app", document: "empty" } }))).toBe(true);
+    // Документ семьи — бюджет; задержка над ним — плашка, а не этот экран.
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: true }))).toBe(false);
+    expect(showsFamilyHoldScreen(true, true, report({ familyDocument: true, hold: { reason: "rejected_by_app", document: "kept" } }))).toBe(false);
+    // Пока отчёта нет, бюджет показан как был; без семьи — обычное приложение и онбординг.
+    expect(showsFamilyHoldScreen(true, true, null)).toBe(false);
+    expect(showsFamilyHoldScreen(false, false, null)).toBe(false);
+    expect(showsFamilyHoldScreen(false, true, report({ familyDocument: false }))).toBe(false);
+  });
+
+  it("экран вместо бюджета не выдаёт прежний бюджет устройства за семейный", () => {
+    // Без задержки бюджет семьи просто ещё не пришёл; с задержкой — не открывается этой версией.
+    const pending = familyDocumentNotice(null);
+    expect(pending.title).toBe("Бюджет семьи ещё не пришёл");
+    expect(pending.body).toContain("записи на этом устройстве недоступны");
+    for (const reason of DOCUMENT_HOLD_REASONS) {
+      // Whatever the hold says the document is, this screen stands in for a budget that is not the
+      // family's, so it always speaks of the family's budget as not shown.
+      expect(familyDocumentNotice({ reason, document: "kept" })).toEqual(documentHoldNotice({ reason, document: "empty" }));
+      expect(familyDocumentNotice({ reason, document: "empty" })).toEqual(documentHoldNotice({ reason, document: "empty" }));
+    }
+  });
+});
+
 describe("перечень удержанных сущностей", () => {
   const integrity = (): JournalIntegrity => ({
     ready: true,
@@ -202,6 +272,53 @@ describe("перечень удержанных сущностей", () => {
     });
     expect(rows[1]?.entityLabel).toBe("Строка бюджета");
     expect(withheldHeadline(rows)).toBe("Записей семьи не показано в бюджете: 2");
+  });
+
+  it("называет удержанную метку меткой", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "tag", id: "55555555-5555-4555-8555-555555555555", reason: "identifier_claimed_twice" }],
+    });
+    expect(rows[0]).toMatchObject({ entity: "tag", entityLabel: "Метка" });
+  });
+
+  it("называет удержанный курс, хозяйство и расхождение валют своими словами", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [
+        { entity: "exchangeRate", id: "55555555-5555-4555-8555-555555555556", reason: "identifier_claimed_twice" },
+        { entity: "household", id: "55555555-5555-4555-8555-555555555557", reason: "identifier_claimed_twice" },
+        { entity: "transaction", id: "55555555-5555-4555-8555-555555555558", reason: "currency_mismatch" },
+      ],
+    });
+    expect(rows.map((row) => row.entityLabel)).toEqual(["Курс валюты", "Хозяйство", "Операция"]);
+    expect(rows[2]?.reasonLabel).toBe("валюта записи не сходится с валютой счёта или семьи");
+  });
+
+  it("называет снимок, не равный сумме по курсу, своими словами", () => {
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "transaction", id: "55555555-5555-4555-8555-555555555559", reason: "snapshot_mismatch" }],
+    });
+    expect(rows[0]).toMatchObject({ entityLabel: "Операция", reasonLabel: "сумма в базовой валюте не сходится с суммой операции по её курсу" });
+  });
+
+  it("называет запись с идентификатором не того вида своими словами — и у каждой причины есть слова", () => {
+    // Второе ревью волны 1: журнал удерживает сущность под идентификатором, который не UUID.
+    const rows = withheldRows({
+      ready: true,
+      problems: [],
+      withheld: [{ entity: "account", id: "account-1", reason: "invalid_id" }],
+    });
+    expect(rows[0]).toMatchObject({ entityLabel: "Счёт", reasonLabel: "идентификатор записи не того вида, что пишет приложение" });
+    // Закрытый перечень причин целиком: новая причина без слов не пройдёт мимо этой проверки.
+    for (const reason of WITHHOLDING_REASONS) {
+      const [row] = withheldRows({ ready: true, problems: [], withheld: [{ entity: "transaction", id: "x", reason }] });
+      expect(row?.reasonLabel.length, reason).toBeGreaterThan(0);
+    }
   });
 
   it("молчит только когда удерживать нечего", () => {

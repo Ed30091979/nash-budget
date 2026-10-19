@@ -63,4 +63,19 @@ describe("human-readable CSV export", () => {
     expect(csv).toContain("'\u2069@4");
     expect(csv).toContain("'\u061c=5");
   });
+
+  it("защищает формулы после любого пробела-разделителя \\p{Zs}", () => {
+    // Every space separator of Unicode outside the ASCII space: a spreadsheet may skip any of them.
+    const spaces = ["\u00a0", "\u1680", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009", "\u200a", "\u202f", "\u205f", "\u3000"];
+    for (const space of spaces) {
+      for (const start of ["=", "+", "-", "@"]) {
+        const field = `${space}${space}${start}HYPERLINK("x")`;
+        const csv = serializeHumanReadableCsv(["value"], [[field]]);
+        expect(csv, `U+${space.codePointAt(0)!.toString(16)} ${start}`).toContain(`'${space}${space}${start}`);
+      }
+    }
+    // A space before ordinary text changes nothing.
+    const plain = serializeHumanReadableCsv(["value"], [["\u00a0Пятёрочка"], ["\u3000100"]]);
+    expect(plain).toContain("\r\n\u00a0Пятёрочка\r\n\u3000100\r\n");
+  });
 });

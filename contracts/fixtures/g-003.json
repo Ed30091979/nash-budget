@@ -1,0 +1,475 @@
+{
+  "schemaVersion": "1.0.0",
+  "fixtureId": "G-003",
+  "title": "Две валюты, долги, метки и регулярная операция за август",
+  "asOf": "2026-08-31",
+  "materializeThrough": "2026-08-31",
+  "currencies": [
+    {
+      "code": "RUB",
+      "exponent": 2
+    },
+    {
+      "code": "USD",
+      "exponent": 2
+    }
+  ],
+  "state": {
+    "activeBudgetId": "84444444-4444-4444-8444-444444444441",
+    "household": {
+      "id": "cab5a071-8b9d-8336-819b-8e56e68973ea",
+      "baseCurrency": "RUB"
+    },
+    "tags": [
+      {
+        "id": "8a000000-0000-4000-8000-0000000000a1",
+        "name": "Отпуск",
+        "active": true
+      },
+      {
+        "id": "8a000000-0000-4000-8000-0000000000a2",
+        "name": "Дом",
+        "active": true
+      },
+      {
+        "id": "8a000000-0000-4000-8000-0000000000a3",
+        "name": "Старое",
+        "active": false
+      }
+    ],
+    "exchangeRates": [
+      {
+        "id": "8e000000-0000-4000-8000-000000000001",
+        "currency": "USD",
+        "baseCurrency": "RUB",
+        "date": "2026-07-31",
+        "rate": {
+          "baseMinor": 9000,
+          "quoteMinor": 100
+        }
+      },
+      {
+        "id": "8e000000-0000-4000-8000-000000000002",
+        "currency": "USD",
+        "baseCurrency": "RUB",
+        "date": "2026-08-15",
+        "rate": {
+          "baseMinor": 9250,
+          "quoteMinor": 100
+        }
+      }
+    ],
+    "debts": [
+      {
+        "id": "8f000000-0000-4000-8000-0000000000d1",
+        "counterparty": "Петя",
+        "direction": "owed_to_me",
+        "currency": "RUB",
+        "openingMinor": 0,
+        "active": true
+      },
+      {
+        "id": "8f000000-0000-4000-8000-0000000000d2",
+        "counterparty": "Сергей",
+        "direction": "i_owe",
+        "currency": "USD",
+        "openingMinor": 0,
+        "dueDate": "2026-12-31",
+        "active": true
+      }
+    ],
+    "recurringRules": [
+      {
+        "id": "8b000000-0000-4000-8000-000000000001",
+        "name": "Доставка воды",
+        "template": {
+          "kind": "expense",
+          "amountMinor": 150000,
+          "accountId": "82222222-2222-4222-8222-222222222221",
+          "categoryId": "83333333-3333-4333-8333-333333333331",
+          "note": "Доставка воды",
+          "tagIds": [
+            "8a000000-0000-4000-8000-0000000000a2"
+          ]
+        },
+        "frequency": "weekly",
+        "interval": 2,
+        "startDate": "2026-08-04",
+        "active": true
+      }
+    ],
+    "accounts": [
+      {
+        "id": "82222222-2222-4222-8222-222222222221",
+        "name": "Карта",
+        "type": "current",
+        "currency": "RUB",
+        "openingBalanceMinor": 5000000,
+        "active": true
+      },
+      {
+        "id": "82222222-2222-4222-8222-222222222222",
+        "name": "Доллары",
+        "type": "savings",
+        "currency": "USD",
+        "openingBalanceMinor": 50000,
+        "active": true,
+        "sortOrder": 20,
+        "icon": "banknote",
+        "color": "sage"
+      },
+      {
+        "id": "82222222-2222-4222-8222-222222222223",
+        "name": "Копилка",
+        "type": "savings",
+        "currency": "RUB",
+        "openingBalanceMinor": 2000000,
+        "active": true,
+        "includeInTotal": false
+      }
+    ],
+    "categories": [
+      {
+        "id": "83333333-3333-4333-8333-333333333331",
+        "name": "Продукты",
+        "type": "expense",
+        "group": "everyday",
+        "active": true,
+        "sortOrder": 10,
+        "icon": "shopping-basket",
+        "color": "mint"
+      },
+      {
+        "id": "83333333-3333-4333-8333-333333333332",
+        "name": "Путешествия",
+        "type": "expense",
+        "group": "personal",
+        "active": true,
+        "sortOrder": 20
+      },
+      {
+        "id": "83333333-3333-4333-8333-333333333333",
+        "name": "Зарплата",
+        "type": "income",
+        "group": "income",
+        "active": true,
+        "sortOrder": 30
+      }
+    ],
+    "budgets": [
+      {
+        "id": "84444444-4444-4444-8444-444444444441",
+        "startDate": "2026-08-01",
+        "endDate": "2026-08-31",
+        "status": "open",
+        "plannedIncomeMinor": 15000000,
+        "warningThreshold": 0.8,
+        "lines": [
+          {
+            "id": "84444444-4444-4444-8444-444444444451",
+            "categoryId": "83333333-3333-4333-8333-333333333331",
+            "plannedMinor": 3000000
+          },
+          {
+            "id": "84444444-4444-4444-8444-444444444452",
+            "categoryId": "83333333-3333-4333-8333-333333333332",
+            "plannedMinor": 600000
+          }
+        ]
+      }
+    ],
+    "goals": [
+      {
+        "id": "86666666-6666-4666-8666-666666666661",
+        "name": "Отпуск",
+        "linkedAccountId": "82222222-2222-4222-8222-222222222223",
+        "targetMinor": 30000000,
+        "openingContributedMinor": 0,
+        "plannedContributionMinor": 0,
+        "status": "active",
+        "deadline": "2027-06-01",
+        "icon": "plane"
+      }
+    ],
+    "annualCommitments": [],
+    "scheduledExpenses": [],
+    "transactions": [
+      {
+        "id": "85555555-5555-4555-8555-555555555501",
+        "occurredOn": "2026-08-01",
+        "status": "posted",
+        "kind": "income",
+        "amountMinor": 12000000,
+        "accountId": "82222222-2222-4222-8222-222222222221",
+        "categoryId": "83333333-3333-4333-8333-333333333333",
+        "note": "Аванс за август",
+        "tagIds": [
+          "8a000000-0000-4000-8000-0000000000a3"
+        ]
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555502",
+        "occurredOn": "2026-08-03",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 1250000,
+        "accountId": "82222222-2222-4222-8222-222222222221",
+        "categoryId": "83333333-3333-4333-8333-333333333331",
+        "note": "Пятёрочка у дома",
+        "tagIds": [
+          "8a000000-0000-4000-8000-0000000000a2"
+        ]
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555503",
+        "occurredOn": "2026-08-10",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 4000,
+        "accountId": "82222222-2222-4222-8222-222222222222",
+        "categoryId": "83333333-3333-4333-8333-333333333332",
+        "tagIds": [
+          "8a000000-0000-4000-8000-0000000000a1"
+        ],
+        "baseAmountMinor": 360000,
+        "baseCurrency": "RUB",
+        "rate": {
+          "baseMinor": 9000,
+          "quoteMinor": 100
+        }
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555504",
+        "occurredOn": "2026-08-12",
+        "status": "posted",
+        "kind": "refund",
+        "amountMinor": 1000,
+        "accountId": "82222222-2222-4222-8222-222222222222",
+        "categoryId": "83333333-3333-4333-8333-333333333332",
+        "originalTransactionId": "85555555-5555-4555-8555-555555555503",
+        "tagIds": [
+          "8a000000-0000-4000-8000-0000000000a1"
+        ],
+        "baseAmountMinor": 90000,
+        "baseCurrency": "RUB",
+        "rate": {
+          "baseMinor": 9000,
+          "quoteMinor": 100
+        }
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555505",
+        "occurredOn": "2026-08-20",
+        "status": "posted",
+        "kind": "expense",
+        "amountMinor": 2555,
+        "accountId": "82222222-2222-4222-8222-222222222222",
+        "categoryId": "83333333-3333-4333-8333-333333333332",
+        "tagIds": [
+          "8a000000-0000-4000-8000-0000000000a1"
+        ],
+        "baseAmountMinor": 236338,
+        "baseCurrency": "RUB",
+        "rate": {
+          "baseMinor": 9250,
+          "quoteMinor": 100
+        }
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555506",
+        "occurredOn": "2026-08-05",
+        "status": "posted",
+        "kind": "transfer",
+        "amountMinor": 1800000,
+        "fromAccountId": "82222222-2222-4222-8222-222222222221",
+        "toAccountId": "82222222-2222-4222-8222-222222222222",
+        "toAmountMinor": 20000
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555507",
+        "occurredOn": "2026-08-07",
+        "status": "posted",
+        "kind": "debt_out",
+        "amountMinor": 500000,
+        "accountId": "82222222-2222-4222-8222-222222222221",
+        "debtId": "8f000000-0000-4000-8000-0000000000d1"
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555508",
+        "occurredOn": "2026-08-25",
+        "status": "posted",
+        "kind": "debt_in",
+        "amountMinor": 200000,
+        "accountId": "82222222-2222-4222-8222-222222222221",
+        "debtId": "8f000000-0000-4000-8000-0000000000d1"
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555509",
+        "occurredOn": "2026-08-08",
+        "status": "posted",
+        "kind": "debt_in",
+        "amountMinor": 10000,
+        "accountId": "82222222-2222-4222-8222-222222222222",
+        "debtId": "8f000000-0000-4000-8000-0000000000d2"
+      },
+      {
+        "id": "85555555-5555-4555-8555-555555555510",
+        "occurredOn": "2026-08-28",
+        "status": "posted",
+        "kind": "debt_out",
+        "amountMinor": 462500,
+        "accountId": "82222222-2222-4222-8222-222222222221",
+        "debtId": "8f000000-0000-4000-8000-0000000000d2",
+        "debtAmountMinor": 5000
+      }
+    ]
+  },
+  "expected": {
+    "materialization": {
+      "occurrences": [
+        {
+          "id": "f20a372a-f29b-8225-bf72-d219da902bb3",
+          "recurringRuleId": "8b000000-0000-4000-8000-000000000001",
+          "occurredOn": "2026-08-04"
+        },
+        {
+          "id": "87870f46-b4ee-8a06-9b82-ffc65c7efd06",
+          "recurringRuleId": "8b000000-0000-4000-8000-000000000001",
+          "occurredOn": "2026-08-18"
+        }
+      ],
+      "materializedThrough": [
+        {
+          "recurringRuleId": "8b000000-0000-4000-8000-000000000001",
+          "date": "2026-08-31"
+        }
+      ],
+      "skipped": [],
+      "createdOnRepeat": 0
+    },
+    "budget": {
+      "budgetId": "84444444-4444-4444-8444-444444444441",
+      "incomeMinor": 12000000,
+      "grossExpensesMinor": 2146338,
+      "refundsMinor": 90000,
+      "expensesMinor": 2056338,
+      "plannedExpenseMinor": 3600000,
+      "executionBasisPoints": 5712,
+      "capitalMinor": 14887500,
+      "accountBalances": [
+        {
+          "accountId": "82222222-2222-4222-8222-222222222221",
+          "balanceMinor": 12887500
+        },
+        {
+          "accountId": "82222222-2222-4222-8222-222222222222",
+          "balanceMinor": 74445
+        },
+        {
+          "accountId": "82222222-2222-4222-8222-222222222223",
+          "balanceMinor": 2000000
+        }
+      ],
+      "categories": [
+        {
+          "categoryId": "83333333-3333-4333-8333-333333333331",
+          "availableMinor": 3000000,
+          "expenseMinor": 1550000,
+          "refundMinor": 0,
+          "actualMinor": 1550000,
+          "remainingMinor": 1450000,
+          "usageBasisPoints": 5167,
+          "status": "normal"
+        },
+        {
+          "categoryId": "83333333-3333-4333-8333-333333333332",
+          "availableMinor": 600000,
+          "expenseMinor": 596338,
+          "refundMinor": 90000,
+          "actualMinor": 506338,
+          "remainingMinor": 93662,
+          "usageBasisPoints": 8439,
+          "status": "near_limit"
+        }
+      ],
+      "goalContributions": [
+        {
+          "goalId": "86666666-6666-4666-8666-666666666661",
+          "contributedMinor": 0
+        }
+      ]
+    },
+    "debts": {
+      "debts": [
+        {
+          "debtId": "8f000000-0000-4000-8000-0000000000d1",
+          "outMinor": 500000,
+          "inMinor": 200000,
+          "balanceMinor": 300000,
+          "balanceInBaseMinor": 300000,
+          "overdue": false
+        },
+        {
+          "debtId": "8f000000-0000-4000-8000-0000000000d2",
+          "outMinor": 5000,
+          "inMinor": 10000,
+          "balanceMinor": 5000,
+          "balanceInBaseMinor": 462500,
+          "overdue": false
+        }
+      ],
+      "receivableInBaseMinor": 300000,
+      "payableInBaseMinor": 462500,
+      "netInBaseMinor": -162500,
+      "unvaluedDebtIds": []
+    },
+    "holdings": {
+      "accounts": [
+        {
+          "accountId": "82222222-2222-4222-8222-222222222221",
+          "balanceMinor": 12887500,
+          "balanceInBaseMinor": 12887500
+        },
+        {
+          "accountId": "82222222-2222-4222-8222-222222222222",
+          "balanceMinor": 74445,
+          "balanceInBaseMinor": 6886163
+        },
+        {
+          "accountId": "82222222-2222-4222-8222-222222222223",
+          "balanceMinor": 2000000,
+          "balanceInBaseMinor": 2000000
+        }
+      ],
+      "totalInBaseMinor": 19773663,
+      "unvaluedAccountIds": [],
+      "netWorthInBaseMinor": 19611163
+    },
+    "tags": [
+      {
+        "tagId": "8a000000-0000-4000-8000-0000000000a1",
+        "incomeMinor": 0,
+        "expenseMinor": 596338,
+        "refundMinor": 90000,
+        "actualMinor": 506338,
+        "transactionCount": 3
+      },
+      {
+        "tagId": "8a000000-0000-4000-8000-0000000000a2",
+        "incomeMinor": 0,
+        "expenseMinor": 1550000,
+        "refundMinor": 0,
+        "actualMinor": 1550000,
+        "transactionCount": 3
+      },
+      {
+        "tagId": "8a000000-0000-4000-8000-0000000000a3",
+        "incomeMinor": 12000000,
+        "expenseMinor": 0,
+        "refundMinor": 0,
+        "actualMinor": 0,
+        "transactionCount": 1
+      }
+    ]
+  }
+}

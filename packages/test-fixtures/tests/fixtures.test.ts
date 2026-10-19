@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { G000, G001, G002, parseCanonicalFixture, toDomainBudgetState } from "../src/index.js";
+import { G000, G001, G002, G003, parseCanonicalFixture, toDomainBudgetState } from "../src/index.js";
 
 describe("canonical fixtures", () => {
   it("validates and adapts G-000, G-001, and G-002 from the canonical JSON files", () => {
@@ -192,5 +192,77 @@ describe("canonical fixtures", () => {
     const badRole = structuredClone(G002) as unknown as { state: { members: { role: string }[] } };
     badRole.state.members[0]!.role = "editor";
     expect(() => parseCanonicalFixture(badRole)).toThrow(/schema validation/i);
+  });
+});
+
+describe("the G-003 ledger fixture", () => {
+  type Mutable = { state: Record<string, unknown[]> & { transactions: Record<string, unknown>[] }; currencies: { code: string }[] };
+  const copy = (): Mutable => structuredClone(G003) as unknown as Mutable;
+  const transaction = (fixture: Mutable, index: number): Record<string, unknown> => fixture.state.transactions[index]!;
+
+  it("validates against its own schema and adapts to a domain state as it is", () => {
+    expect(G003.fixtureId).toBe("G-003");
+    expect(G003.schemaVersion).toBe("1.0.0");
+    const state = toDomainBudgetState(G003);
+    expect(state).toEqual(G003.state);
+    expect(state).not.toBe(G003.state);
+    expect(state.transactions).toHaveLength(10);
+    expect(state.transactions.map((item) => item.kind)).toEqual([
+      "income", "expense", "expense", "refund", "expense", "transfer", "debt_out", "debt_in", "debt_in", "debt_out",
+    ]);
+    expect(state.recurringRules).toHaveLength(1);
+    expect(G003.currencies).toEqual([{ code: "RUB", exponent: 2 }, { code: "USD", exponent: 2 }]);
+  });
+
+  it("refuses half a snapshot, a snapshot on a transfer and a field of no kind at the schema", () => {
+    const half = copy();
+    delete transaction(half, 2).rate;
+    expect(() => parseCanonicalFixture(half)).toThrow(/schema validation/i);
+
+    const onTransfer = copy();
+    Object.assign(transaction(onTransfer, 5), { baseAmountMinor: 1, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 } });
+    expect(() => parseCanonicalFixture(onTransfer)).toThrow(/schema validation/i);
+
+    const stray = copy();
+    Object.assign(transaction(stray, 1), { debtAmountMinor: 1 });
+    expect(() => parseCanonicalFixture(stray)).toThrow(/schema validation/i);
+
+    const templateId = copy();
+    (templateId.state.recurringRules![0] as { template: Record<string, unknown> }).template.id = "8b000000-0000-4000-8000-0000000000ff";
+    expect(() => parseCanonicalFixture(templateId)).toThrow(/schema validation/i);
+  });
+
+  it("refuses references that resolve to nothing, and currencies that do not fit", () => {
+    const tag = copy();
+    transaction(tag, 1).tagIds = ["8a000000-0000-4000-8000-0000000000ff"];
+    expect(() => parseCanonicalFixture(tag)).toThrow(/tagIds references unknown id/);
+
+    const debt = copy();
+    transaction(debt, 6).debtId = "8f000000-0000-4000-8000-0000000000ff";
+    expect(() => parseCanonicalFixture(debt)).toThrow(/debtId references unknown id/);
+
+    const rule = copy();
+    transaction(rule, 1).recurringRuleId = "8b000000-0000-4000-8000-0000000000ff";
+    expect(() => parseCanonicalFixture(rule)).toThrow(/recurringRuleId references unknown id/);
+
+    const unlisted = copy();
+    unlisted.currencies = [{ code: "RUB", exponent: 2 } as { code: string }];
+    expect(() => parseCanonicalFixture(unlisted)).toThrow(/uses currency USD the fixture does not list/);
+
+    const unconverted = copy();
+    for (const key of ["baseAmountMinor", "baseCurrency", "rate"]) delete transaction(unconverted, 2)[key];
+    expect(() => parseCanonicalFixture(unconverted)).toThrow(/snapshot exactly when its account is foreign/);
+
+    const arrived = copy();
+    delete transaction(arrived, 5).toAmountMinor;
+    expect(() => parseCanonicalFixture(arrived)).toThrow(/names what arrives exactly across currencies/);
+
+    const debtAmount = copy();
+    delete transaction(debtAmount, 9).debtAmountMinor;
+    expect(() => parseCanonicalFixture(debtAmount)).toThrow(/names the debt amount exactly across currencies/);
+
+    const shared = copy();
+    (shared.state.tags![0] as { id: string }).id = transaction(shared, 0).id as string;
+    expect(() => parseCanonicalFixture(shared)).toThrow(/G-003 state contains duplicate id/);
   });
 });

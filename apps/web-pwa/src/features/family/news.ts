@@ -16,7 +16,16 @@
  * Здесь только арифметика и слова. Когда новость считается увиденной — решает `App.tsx`:
  * человек ушёл с «Сегодня» или свернул приложение, пока она стояла на экране.
  */
-import type { BudgetState, Member, MemberId, Transaction } from "@family-budget/domain";
+import {
+  baseAmountOf,
+  baseCurrencyOf,
+  type BudgetState,
+  type Member,
+  type MemberId,
+  type RecurringRule,
+  type RecurringRuleId,
+  type Transaction,
+} from "@family-budget/domain";
 import type { JournalEntry } from "@family-budget/sync-protocol";
 
 import { formatMoney } from "../../money";
@@ -109,6 +118,8 @@ const KIND_ORDER: readonly Transaction["kind"][] = [
   "refund",
   "transfer",
   "goal_contribution",
+  "debt_out",
+  "debt_in",
 ];
 
 const KIND_FORMS: Readonly<Record<Transaction["kind"], readonly [string, string, string]>> = {
@@ -117,12 +128,69 @@ const KIND_FORMS: Readonly<Record<Transaction["kind"], readonly [string, string,
   refund: ["возврат", "возврата", "возвратов"],
   transfer: ["перевод", "перевода", "переводов"],
   goal_contribution: ["взнос", "взноса", "взносов"],
+  debt_out: ["выдача по долгу", "выдачи по долгу", "выдач по долгу"],
+  debt_in: ["поступление по долгу", "поступления по долгу", "поступлений по долгу"],
 };
 
 /** «а, б и в» — перечисление, как его читают вслух. */
 function joinSpoken(parts: readonly string[]): string {
   if (parts.length <= 1) return parts.join("");
   return `${parts.slice(0, -1).join(", ")} и ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Сколько операция весит в базовой валюте, или `null`, когда этого не сказать.
+ *
+ * Доход, расход и возврат несут свою цену в базовой валюте (`baseAmountOf`). У перевода, взноса и
+ * движения по долгу её нет: их сумма — в валюте счёта, с которого ушли деньги, и рублями она
+ * становится, только когда этот счёт и есть счёт в базовой валюте. Счёт, которого в бюджете не
+ * нашлось, читается как счёт в базовой — так писала каждая версия до валют.
+ */
+function baseValueOf(
+  transaction: Transaction,
+  currencies: ReadonlyMap<string, string>,
+  base: string,
+): number | null {
+  switch (transaction.kind) {
+    case "income":
+    case "expense":
+    case "refund":
+      return baseAmountOf(transaction);
+    case "transfer":
+    case "goal_contribution":
+      return (currencies.get(transaction.fromAccountId) ?? base) === base ? transaction.amountMinor : null;
+    case "debt_out":
+    case "debt_in":
+      return (currencies.get(transaction.accountId) ?? base) === base ? transaction.amountMinor : null;
+  }
+}
+
+/**
+ * «2 покупки на 4 500 ₽ и 1 доход на 80 000 ₽» — операции одного автора по видам.
+ *
+ * Сумма — в базовой валюте, как её считает бюджет: доллары не складываются с рублями как копейки.
+ * Вид, у которого хотя бы одна операция в базовой валюте не оценивается, называется без суммы —
+ * «1 перевод», — а не суммой, в которой часть чисел означает центы.
+ */
+function kindsLine(list: readonly FamilyNewsItem[], currencies: ReadonlyMap<string, string>, base: string): string {
+  const parts = KIND_ORDER.flatMap((kind) => {
+    const ofKind = list.filter((item) => item.transaction.kind === kind);
+    if (ofKind.length === 0) return [];
+    const values = ofKind.map((item) => baseValueOf(item.transaction, currencies, base));
+    const counted = plural(ofKind.length, KIND_FORMS[kind]);
+    if (values.some((value) => value === null)) return [counted];
+    const sumMinor = values.reduce<number>((total, value) => total + value!, 0);
+    return [`${counted} на ${formatMoney(sumMinor)}`];
+  });
+  return joinSpoken(parts);
+}
+
+/**
+ * Кто «автор» вхождения регулярной операции: правило, а не участник устройства, которое его
+ * материализовало. Правило без названия называется так, как его называет экран.
+ */
+function ruleLabel(rule: RecurringRule | undefined): string {
+  return rule?.name === undefined ? "По регулярной операции" : `По правилу «${rule.name}»`;
 }
 
 /**
@@ -133,26 +201,34 @@ function joinSpoken(parts: readonly string[]): string {
  * повторяет «Последние записи»: там пять последних операций по одной, здесь — итог того, что
  * пришло с прошлого раза, по видам и суммам. Глагола нет нарочно: имя участника рода не
  * называет, и «записал» ошибалось бы в половине семей.
+ *
+ * Вхождения регулярной операции идут своей строкой — «По правилу «Аренда»: 1 покупка на …», —
+ * а не строкой участника, чьё устройство их записало: его заголовок стоит на операции только
+ * потому, что материализовать правило выпало его устройству, и «Анна: 30 покупок» о том, что
+ * никто не покупал, было бы неправдой.
  */
 export function familyNewsLines(
   items: readonly FamilyNewsItem[],
   members: ReadonlyMap<MemberId, Member>,
+  budget: Partial<Pick<BudgetState, "recurringRules" | "accounts" | "household">> = {},
 ): readonly string[] {
+  const rules = new Map<RecurringRuleId, RecurringRule>((budget.recurringRules ?? []).map((rule) => [rule.id, rule]));
+  const currencies = new Map<string, string>((budget.accounts ?? []).map((account) => [account.id, account.currency]));
+  const base = baseCurrencyOf(budget);
   const byAuthor = new Map<string | undefined, FamilyNewsItem[]>();
+  const byRule = new Map<RecurringRuleId, FamilyNewsItem[]>();
   for (const item of items) {
+    const ruleId = item.transaction.recurringRuleId;
+    if (ruleId !== undefined) {
+      byRule.set(ruleId, [...(byRule.get(ruleId) ?? []), item]);
+      continue;
+    }
     const list = byAuthor.get(item.memberId) ?? [];
     list.push(item);
     byAuthor.set(item.memberId, list);
   }
-  return [...byAuthor.entries()]
-    .map(([memberId, list]) => {
-      const parts = KIND_ORDER.flatMap((kind) => {
-        const ofKind = list.filter((item) => item.transaction.kind === kind);
-        if (ofKind.length === 0) return [];
-        const sumMinor = ofKind.reduce((total, item) => total + item.transaction.amountMinor, 0);
-        return [`${plural(ofKind.length, KIND_FORMS[kind])} на ${formatMoney(sumMinor)}`];
-      });
-      return `${transactionAuthorLabel(members, memberId)}: ${joinSpoken(parts)}`;
-    })
-    .sort((left, right) => left.localeCompare(right, "ru-RU"));
+  return [
+    ...[...byAuthor.entries()].map(([memberId, list]) => `${transactionAuthorLabel(members, memberId)}: ${kindsLine(list, currencies, base)}`),
+    ...[...byRule.entries()].map(([ruleId, list]) => `${ruleLabel(rules.get(ruleId))}: ${kindsLine(list, currencies, base)}`),
+  ].sort((left, right) => left.localeCompare(right, "ru-RU"));
 }

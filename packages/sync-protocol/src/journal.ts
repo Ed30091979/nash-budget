@@ -5,11 +5,18 @@ import type {
   BudgetId,
   BudgetLine,
   Category,
+  CurrencyCode,
+  Debt,
+  ExchangeRate,
   Goal,
+  Household,
+  RecurringRule,
   ScheduledExpense,
   StableId,
+  Tag,
   Transaction,
 } from "@family-budget/domain";
+import { COLLECTION_LIMITS, convertMinor, DEFAULT_BASE_CURRENCY, HOUSEHOLD_ID, isUuid } from "@family-budget/domain";
 
 import {
   canonicalOperationText,
@@ -484,6 +491,12 @@ interface LiveEntities {
   readonly scheduledExpenses: Map<StableId, ScheduledExpense>;
   readonly transactions: Map<StableId, Transaction>;
   readonly members: Map<StableId, Member>;
+  readonly tags: Map<StableId, Tag>;
+  readonly exchangeRates: Map<StableId, ExchangeRate>;
+  /** At most one entry, under `HOUSEHOLD_ID`: the codec refuses any other target. */
+  readonly households: Map<StableId, Household>;
+  readonly debts: Map<StableId, Debt>;
+  readonly recurringRules: Map<StableId, RecurringRule>;
 }
 
 function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
@@ -497,6 +510,11 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
     scheduledExpenses: new Map(),
     transactions: new Map(),
     members: new Map(),
+    tags: new Map(),
+    exchangeRates: new Map(),
+    households: new Map(),
+    debts: new Map(),
+    recurringRules: new Map(),
   };
 
   for (const entry of ordered) {
@@ -531,6 +549,21 @@ function collectLiveEntities(ordered: readonly JournalEntry[]): LiveEntities {
       case "member":
         live.members.set(entry.targetId, { id: entry.targetId, ...entry.fields });
         break;
+      case "tag":
+        live.tags.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
+      case "exchangeRate":
+        live.exchangeRates.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
+      case "household":
+        live.households.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
+      case "debt":
+        live.debts.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
+      case "recurringRule":
+        live.recurringRules.set(entry.targetId, { id: entry.targetId, ...entry.fields });
+        break;
     }
   }
 
@@ -548,6 +581,11 @@ function entityIndexes(live: LiveEntities): readonly (readonly [EntityKind, Map<
     ["scheduledExpense", live.scheduledExpenses],
     ["transaction", live.transactions],
     ["member", live.members],
+    ["tag", live.tags],
+    ["exchangeRate", live.exchangeRates],
+    ["household", live.households],
+    ["debt", live.debts],
+    ["recurringRule", live.recurringRules],
   ];
 }
 
@@ -572,6 +610,34 @@ function reportEntryBudget(
   report: (problem: JournalProblem) => void,
 ): void {
   if (ordered.length > MAX_JOURNAL_ENTRIES) report(problem("journal_entry_budget", null, ""));
+}
+
+/**
+ * Withholds every entity whose identifier is not a UUID — second review of wave 1.
+ *
+ * The codec demands a UUID only of the kinds added in wave 1; the older kinds carry whatever
+ * identifier it reads, and the application's gate refuses a state that holds anything but a UUID.
+ * Left in the state, one account called "account-1" made the journal call ready a state every
+ * device then refused: held on yesterday's budget, the whole family, by one operation of one
+ * device that bypassed the domain. Withheld here, the family sees everything else and is told what
+ * it cannot see. The withholding comes first, so that whatever referred to the entity is swept
+ * out as dangling by the rules below rather than reaching the state.
+ *
+ * A function of the converged journal like every other step: the same entities go on every
+ * replica, whatever order the operations came in.
+ */
+function withholdInvalidIdentifiers(
+  live: LiveEntities,
+  report: (problem: JournalProblem) => void,
+  record: (entity: WithheldEntity) => void,
+): void {
+  for (const [kind, index] of entityIndexes(live)) {
+    for (const id of [...index.keys()]) {
+      if (isUuid(id)) continue;
+      index.delete(id);
+      withhold(report, record, withheldFor(kind, id, "invalid_id"));
+    }
+  }
 }
 
 /**
@@ -642,9 +708,58 @@ function expenseCategoryProblem(
   return null;
 }
 
-function goalProblem(live: LiveEntities, goal: Goal): WithheldEntity | null {
-  if (!live.accounts.has(goal.linkedAccountId)) return withheldFor("goal", goal.id, "unknown_reference");
+/** The currency the household counts in: its own, or roubles while no household has arrived. */
+function baseCurrencyOf(live: LiveEntities): CurrencyCode {
+  return live.households.get(HOUSEHOLD_ID)?.baseCurrency ?? DEFAULT_BASE_CURRENCY;
+}
+
+/**
+ * Why a plan — a goal, a large payment, a schedule — cannot sit on this account: it is kept in a
+ * currency other than the base one, and the annual plan adds plans up without a rate (D-032). The
+ * account's currency, or the household's base, may have changed on another device after the plan
+ * was written; the plan is withheld and comes back if the currencies agree again.
+ */
+function planAccountProblem(live: LiveEntities, entity: EntityKind, id: StableId, accountId: StableId): WithheldEntity | null {
+  const account = live.accounts.get(accountId);
+  if (account === undefined) return withheldFor(entity, id, "unknown_reference");
+  if (account.currency !== baseCurrencyOf(live)) return withheldFor(entity, id, "currency_mismatch");
   return null;
+}
+
+/**
+ * Whether the base-currency snapshot of an income, an expense or a refund fits its account, by the
+ * rule the domain enforces: none on an account in the base currency, all three fields in the base
+ * currency on any other. The codec has already made sure a snapshot is whole when it is there.
+ */
+function snapshotFits(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+  account: Account,
+  baseCurrency: CurrencyCode,
+): boolean {
+  if (account.currency === baseCurrency) return transaction.baseAmountMinor === undefined;
+  return transaction.baseAmountMinor !== undefined && transaction.baseCurrency === baseCurrency;
+}
+
+/**
+ * Why the snapshot of an income, an expense or a refund cannot stand although it fits its account:
+ * it is not the operation's amount at the operation's own rate, the rule the domain enforces. Null
+ * when there is no snapshot, or when it is exact.
+ */
+function snapshotProblem(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+): WithheldEntity | null {
+  if (transaction.baseAmountMinor === undefined || transaction.rate === undefined) return null;
+  let converted: number | null;
+  try {
+    converted = convertMinor(transaction.amountMinor, transaction.rate);
+  } catch {
+    converted = null;
+  }
+  return converted === transaction.baseAmountMinor ? null : withheldFor("transaction", transaction.id, "snapshot_mismatch");
+}
+
+function goalProblem(live: LiveEntities, goal: Goal): WithheldEntity | null {
+  return planAccountProblem(live, "goal", goal.id, goal.linkedAccountId);
 }
 
 function budgetLineProblem(live: LiveEntities, id: StableId, entry: JournalLine): WithheldEntity | null {
@@ -653,29 +768,41 @@ function budgetLineProblem(live: LiveEntities, id: StableId, entry: JournalLine)
 }
 
 function annualCommitmentProblem(live: LiveEntities, item: AnnualCommitment): WithheldEntity | null {
-  if (!live.accounts.has(item.accountId)) return withheldFor("annualCommitment", item.id, "unknown_reference");
-  return expenseCategoryProblem(live, "annualCommitment", item.id, item.categoryId);
+  return planAccountProblem(live, "annualCommitment", item.id, item.accountId)
+    ?? expenseCategoryProblem(live, "annualCommitment", item.id, item.categoryId);
 }
 
 function scheduledExpenseProblem(live: LiveEntities, item: ScheduledExpense): WithheldEntity | null {
-  if (!live.accounts.has(item.accountId)) return withheldFor("scheduledExpense", item.id, "unknown_reference");
-  return expenseCategoryProblem(live, "scheduledExpense", item.id, item.categoryId);
+  return planAccountProblem(live, "scheduledExpense", item.id, item.accountId)
+    ?? expenseCategoryProblem(live, "scheduledExpense", item.id, item.categoryId);
 }
 
 function transactionProblem(live: LiveEntities, transaction: Transaction): WithheldEntity | null {
   const id = transaction.id;
   const missing = withheldFor("transaction", id, "unknown_reference");
+  const mismatch = withheldFor("transaction", id, "currency_mismatch");
+  const base = baseCurrencyOf(live);
   switch (transaction.kind) {
-    case "income":
+    case "income": {
       // The account decides whether an income can be shown at all; its category never does.
       // A category on an income is a label, and an unresolved label is cleared rather than
       // withheld — see clearUnresolvedLabels for why the money may not go down with it.
-      return live.accounts.has(transaction.accountId) ? null : missing;
-    case "expense":
-      if (!live.accounts.has(transaction.accountId)) return missing;
-      return expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      return snapshotFits(transaction, account, base) ? snapshotProblem(transaction) : mismatch;
+    }
+    case "expense": {
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      if (!snapshotFits(transaction, account, base)) return mismatch;
+      return snapshotProblem(transaction) ?? expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
+    }
     case "refund": {
-      if (!live.accounts.has(transaction.accountId)) return missing;
+      const account = live.accounts.get(transaction.accountId);
+      if (account === undefined) return missing;
+      if (!snapshotFits(transaction, account, base)) return mismatch;
+      const inexact = snapshotProblem(transaction);
+      if (inexact !== null) return inexact;
       const categoryProblem = expenseCategoryProblem(live, "transaction", id, transaction.categoryId);
       if (categoryProblem !== null) return categoryProblem;
       const original = live.transactions.get(transaction.originalTransactionId);
@@ -686,18 +813,69 @@ function transactionProblem(live: LiveEntities, transaction: Transaction): Withh
       if (transaction.occurredOn < original.occurredOn) return invalid;
       return null;
     }
-    case "transfer":
-      if (!live.accounts.has(transaction.fromAccountId)) return missing;
-      return live.accounts.has(transaction.toAccountId) ? null : missing;
+    case "transfer": {
+      const from = live.accounts.get(transaction.fromAccountId);
+      const to = live.accounts.get(transaction.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      // The amount that arrived is named exactly when the currencies differ.
+      return (from.currency === to.currency) === (transaction.toAmountMinor === undefined) ? null : mismatch;
+    }
     case "goal_contribution": {
-      if (!live.accounts.has(transaction.fromAccountId)) return missing;
-      if (!live.accounts.has(transaction.toAccountId)) return missing;
+      const from = live.accounts.get(transaction.fromAccountId);
+      const to = live.accounts.get(transaction.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      if (from.currency !== to.currency) return mismatch;
       const goal = live.goals.get(transaction.goalId);
       if (goal === undefined) return missing;
       if (goal.linkedAccountId !== transaction.toAccountId) {
         return withheldFor("transaction", id, "goal_account_mismatch");
       }
       return null;
+    }
+    case "debt_out":
+    case "debt_in": {
+      // The debt is not a label: an operation on a debt that is gone, or has not arrived, has
+      // nothing to move, and its money cannot be shown against nothing. It is withheld, and comes
+      // back when the debt arrives; a deleted debt keeps it withheld for good, which is why the
+      // app archives a debt rather than deleting it (D-033).
+      const account = live.accounts.get(transaction.accountId);
+      const debt = live.debts.get(transaction.debtId);
+      if (account === undefined || debt === undefined) return missing;
+      return (account.currency === debt.currency) === (transaction.debtAmountMinor === undefined) ? null : mismatch;
+    }
+  }
+}
+
+/**
+ * Why a recurring rule cannot be shown, or null while it can.
+ *
+ * A rule writes operations, and its template is held to what the operation it writes is held to:
+ * the accounts must be there, an expense must go to an expense category that is there, and a
+ * transfer names what arrives exactly when its two accounts are kept in different currencies. A
+ * rule whose template fails one of these would write an operation the domain refuses, so it is
+ * withheld, and it comes back by itself when the account or the category arrives — or when the
+ * currencies agree again. The category of an income template and the tags of any template are
+ * labels, as they are on an operation, and are cleared by clearUnresolvedLabels instead.
+ *
+ * A rule's occurrences do not depend on it: they are ordinary operations, and a rule withheld or
+ * deleted only takes its label off them.
+ */
+function recurringRuleProblem(live: LiveEntities, rule: RecurringRule): WithheldEntity | null {
+  const template = rule.template;
+  const missing = withheldFor("recurringRule", rule.id, "unknown_reference");
+  switch (template.kind) {
+    case "expense":
+      if (!live.accounts.has(template.accountId)) return missing;
+      return expenseCategoryProblem(live, "recurringRule", rule.id, template.categoryId);
+    case "income":
+      return live.accounts.has(template.accountId) ? null : missing;
+    case "transfer": {
+      const from = live.accounts.get(template.fromAccountId);
+      const to = live.accounts.get(template.toAccountId);
+      if (from === undefined || to === undefined) return missing;
+      return (from.currency === to.currency) === (template.toAmountMinor === undefined)
+        ? null
+        : withheldFor("recurringRule", rule.id, "currency_mismatch");
     }
   }
 }
@@ -721,13 +899,19 @@ function incomeCategoryCode(live: LiveEntities, categoryId: StableId): JournalPr
 /**
  * Clears a label whose referent the journal does not hold, and says so out loud.
  *
- * Two labels reach a transaction this way — the participant credited with it, and the category
- * an income is filed under — and both are governed by the one rule written here rather than by a
- * rule each, because the case is the same case.
+ * Four labels reach a transaction this way — the participant credited with it, the category an
+ * income is filed under, its tags, and the recurring rule it is an occurrence of — and all of them
+ * are governed by the one rule written here rather than by a rule each, because the case is the
+ * same case. Tags are cleared one by one: a transaction keeps every tag that resolves, and loses
+ * the field only when none does, because there is no empty list of tags. A rule label is cleared
+ * when the journal holds no such rule — never written, deleted, or withheld — the same answer the
+ * backup gate gives it: the occurrence stays an ordinary operation. The category of an income
+ * template and the tags of any template are cleared by the same rule, reported about the rule.
  *
- * The state has to be one the domain accepts, and it refuses both: `calculateMemberExpenses`
+ * The state has to be one the domain accepts, and it refuses all four: `calculateMemberExpenses`
  * refuses a transaction whose `memberId` names nobody, and `calculateBudget` refuses an income
- * whose `categoryId` names nothing or names an expense category. But the answer cannot be the one
+ * whose `categoryId` names nothing or names an expense category, and a tag or a rule that names
+ * nothing on any transaction at all. But the answer cannot be the one
  * an unresolved account or an expense category gets: a family deleting a participant, or deleting
  * a category it no longer uses, is an ordinary thing to do, and doing it while another device
  * labels a transaction is ordinary concurrency. If the transaction went down with the label,
@@ -754,8 +938,11 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
     let cleared: Transaction = transaction;
     if (cleared.memberId !== undefined && !live.members.has(cleared.memberId)) {
       const { memberId: _unknown, ...unlabelled } = cleared;
+      // A label that is not even a UUID is malformed rather than merely unknown — the application
+      // refuses it either way — and is named for what it is. Its participant, if one was written
+      // under it, was withheld for the same reason above.
+      report(problem(isUuid(cleared.memberId) ? "unknown_reference" : "invalid_id", "transaction", id));
       cleared = unlabelled;
-      report(problem("unknown_reference", "transaction", id));
     }
     if (cleared.kind === "income" && cleared.categoryId !== undefined) {
       const code = incomeCategoryCode(live, cleared.categoryId);
@@ -765,7 +952,38 @@ function clearUnresolvedLabels(live: LiveEntities, report: (problem: JournalProb
         report(problem(code, "transaction", id));
       }
     }
+    if (cleared.tagIds !== undefined && cleared.tagIds.some((tagId) => !live.tags.has(tagId))) {
+      const { tagIds, ...untagged } = cleared;
+      const resolved = tagIds.filter((tagId) => live.tags.has(tagId));
+      cleared = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
+      report(problem("unknown_reference", "transaction", id));
+    }
+    if (cleared.recurringRuleId !== undefined && !live.recurringRules.has(cleared.recurringRuleId)) {
+      const { recurringRuleId: _unresolved, ...unlinked } = cleared;
+      cleared = unlinked;
+      report(problem("unknown_reference", "transaction", id));
+    }
     if (cleared !== transaction) live.transactions.set(id, cleared);
+  }
+
+  // The same two labels in the template of a rule: the category of an income and the tags.
+  for (const [id, rule] of live.recurringRules) {
+    let template = rule.template;
+    if (template.kind === "income" && template.categoryId !== undefined) {
+      const code = incomeCategoryCode(live, template.categoryId);
+      if (code !== null) {
+        const { categoryId: _unresolved, ...uncategorised } = template;
+        template = uncategorised;
+        report(problem(code, "recurringRule", id));
+      }
+    }
+    if (template.tagIds !== undefined && template.tagIds.some((tagId) => !live.tags.has(tagId))) {
+      const { tagIds, ...untagged } = template;
+      const resolved = tagIds.filter((tagId) => live.tags.has(tagId));
+      template = resolved.length === 0 ? untagged : { ...untagged, tagIds: resolved };
+      report(problem("unknown_reference", "recurringRule", id));
+    }
+    if (template !== rule.template) live.recurringRules.set(id, { ...rule, template });
   }
 }
 
@@ -800,6 +1018,7 @@ function dropDanglingEntities(
     sweep(live.annualCommitments, (item) => annualCommitmentProblem(live, item));
     sweep(live.scheduledExpenses, (item) => scheduledExpenseProblem(live, item));
     sweep(live.transactions, (item) => transactionProblem(live, item));
+    sweep(live.recurringRules, (rule) => recurringRuleProblem(live, rule));
   }
 }
 
@@ -861,6 +1080,11 @@ function beyondBound(value: number): boolean {
 /** Where one transaction lands: the running total of its kind and the balances it moves. */
 type Contribution = readonly [Map<string, number>, string, number];
 
+/**
+ * Where one transaction lands, the way the domain counts it: the totals in the base currency — the
+ * snapshot of an operation in another currency, its amount otherwise — and each balance in its own
+ * account's currency, the receiving side of a transfer between currencies by what arrived.
+ */
 function transactionContributions(
   totals: Map<string, number>,
   balances: Map<string, number>,
@@ -870,23 +1094,23 @@ function transactionContributions(
   switch (transaction.kind) {
     case "income":
       return [
-        [totals, "income", amount],
+        [totals, "income", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, amount],
       ];
     case "expense":
       return [
-        [totals, "grossExpenses", amount],
+        [totals, "grossExpenses", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, -amount],
       ];
     case "refund":
       return [
-        [totals, "refunds", amount],
+        [totals, "refunds", transaction.baseAmountMinor ?? amount],
         [balances, transaction.accountId, amount],
       ];
     case "transfer":
       return [
         [balances, transaction.fromAccountId, -amount],
-        [balances, transaction.toAccountId, amount],
+        [balances, transaction.toAccountId, transaction.toAmountMinor ?? amount],
       ];
     case "goal_contribution":
       return [
@@ -894,7 +1118,27 @@ function transactionContributions(
         [balances, transaction.fromAccountId, -amount],
         [balances, transaction.toAccountId, amount],
       ];
+    // Neither income nor expense: the account moves by the amount, the debt by its own amount.
+    case "debt_out":
+      return [
+        [balances, transaction.accountId, -amount],
+        [balances, debtKey(transaction.debtId), transaction.debtAmountMinor ?? amount],
+      ];
+    case "debt_in":
+      return [
+        [balances, transaction.accountId, amount],
+        [balances, debtKey(transaction.debtId), -(transaction.debtAmountMinor ?? amount)],
+      ];
   }
+}
+
+/**
+ * Where a debt's balance is kept among the balances the gate measures: apart from the accounts, by
+ * the one separator an identifier cannot carry. Measured as "opening + out − in" whatever the
+ * direction, because the magnitude is what the domain's arithmetic has to survive.
+ */
+function debtKey(debtId: StableId): string {
+  return `debt${KEY_SEPARATOR}${debtId}`;
 }
 
 /**
@@ -924,15 +1168,20 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
   ]);
   const balances = new Map<StableId, number>();
   for (const [id, account] of live.accounts) balances.set(id, account.openingBalanceMinor);
+  for (const [id, debt] of live.debts) balances.set(debtKey(id), debt.openingMinor);
   for (const transaction of live.transactions.values()) {
     for (const [map, key, delta] of transactionContributions(totals, balances, transaction)) {
       map.set(key, addSaturating(map.get(key) ?? 0, delta));
     }
   }
 
-  // Capital is the sum of the balances above, so it needs a pass of its own.
+  // Capital is the sum of the balances of the accounts in the base currency, as the domain builds
+  // it, so it needs a pass of its own.
   let capital = 0;
-  for (const balance of balances.values()) capital = addSaturating(capital, balance);
+  const base = baseCurrencyOf(live);
+  for (const [id, balance] of balances) {
+    if (live.accounts.get(id)?.currency === base) capital = addSaturating(capital, balance);
+  }
 
   // Planned expenses are summed per budget, both by calculateBudget and by the annual plan.
   const plannedByBudget = new Map<BudgetId, number>();
@@ -970,6 +1219,43 @@ function reportAggregateBounds(live: LiveEntities, report: (problem: JournalProb
     commitments,
   ];
   if (measured.some(beyondBound)) report(problem("amount_out_of_range", null, ""));
+}
+
+/**
+ * Says out loud that the state holds more entities of a kind than a document may — of any kind:
+ * accounts, categories, budgets and their lines, goals, large payments, schedules, operations,
+ * participants, tags, exchange rates, debts or recurring rules. Withholds nothing.
+ *
+ * The limit is the domain's (`COLLECTION_LIMITS`), shared with the backup gate, and each device
+ * stays under it when it creates. Several devices creating offline can still pass it together, and
+ * withholding the excess would mean choosing which of the family's entities to drop — by an order a
+ * writing peer controls, which is the eviction {@link MAX_AGGREGATE_MINOR} gave up for good. So the
+ * count is reported against the kind, the state stays ready, and the app goes on showing everything:
+ * the app's own gate does not refuse a document for a count either, only a backup file.
+ */
+function reportCollectionLimits(live: LiveEntities, report: (problem: JournalProblem) => void): void {
+  if (live.members.size > COLLECTION_LIMITS.members) report(problem("collection_limit", "member", ""));
+  if (live.tags.size > COLLECTION_LIMITS.tags) report(problem("collection_limit", "tag", ""));
+  if (live.exchangeRates.size > COLLECTION_LIMITS.exchangeRates) report(problem("collection_limit", "exchangeRate", ""));
+  if (live.debts.size > COLLECTION_LIMITS.debts) report(problem("collection_limit", "debt", ""));
+  if (live.recurringRules.size > COLLECTION_LIMITS.recurringRules) report(problem("collection_limit", "recurringRule", ""));
+  if (live.accounts.size > COLLECTION_LIMITS.accounts) report(problem("collection_limit", "account", ""));
+  if (live.categories.size > COLLECTION_LIMITS.categories) report(problem("collection_limit", "category", ""));
+  if (live.budgets.size > COLLECTION_LIMITS.budgets) report(problem("collection_limit", "budget", ""));
+  if (live.goals.size > COLLECTION_LIMITS.goals) report(problem("collection_limit", "goal", ""));
+  if (live.annualCommitments.size > COLLECTION_LIMITS.annualCommitments) report(problem("collection_limit", "annualCommitment", ""));
+  if (live.scheduledExpenses.size > COLLECTION_LIMITS.scheduledExpenses) report(problem("collection_limit", "scheduledExpense", ""));
+  if (live.transactions.size > COLLECTION_LIMITS.transactions) report(problem("collection_limit", "transaction", ""));
+  const linesPerBudget = new Map<BudgetId, number>();
+  for (const entry of live.budgetLines.values()) {
+    linesPerBudget.set(entry.budgetId, (linesPerBudget.get(entry.budgetId) ?? 0) + 1);
+  }
+  if (
+    live.budgetLines.size > COLLECTION_LIMITS.budgetLines ||
+    [...linesPerBudget.values()].some((count) => count > COLLECTION_LIMITS.linesPerBudget)
+  ) {
+    report(problem("collection_limit", "budgetLine", ""));
+  }
 }
 
 /**
@@ -1155,13 +1441,15 @@ function buildView(
     if (entry.action !== "delete") owners.set(entryKey(entry.entity, entry.targetId), entry);
   }
 
+  withholdInvalidIdentifiers(live, report, record);
   resolveSharedIdentifiers(live, owners, report, record);
   rejectDuplicateBudgetLines(live, owners, report, record);
   dropDanglingEntities(live, report, record);
   // After the sweep, so that a transaction already on its way out is not reported twice over,
-  // and after resolveSharedIdentifiers, which is the one step that can take a participant or a
-  // category out without a delete having been written for it.
+  // and after resolveSharedIdentifiers, which is the one step that can take a participant, a
+  // category or a tag out without a delete having been written for it.
   clearUnresolvedLabels(live, report);
+  reportCollectionLimits(live, report);
   reportAggregateBounds(live, report);
   reportTombstoneBudget(ordered, confirmedDevices(live, owners), report);
   reportImplausibleStamps(ordered, activations.values(), report);
@@ -1189,6 +1477,12 @@ function buildView(
     scheduledExpenses: [...live.scheduledExpenses.values()],
     transactions: [...live.transactions.values()],
     members: [...live.members.values()],
+    tags: [...live.tags.values()],
+    exchangeRates: [...live.exchangeRates.values()],
+    debts: [...live.debts.values()],
+    recurringRules: [...live.recurringRules.values()],
+    // Absent stays absent: a journal without a household is counted in roubles, like a backup.
+    ...(live.households.has(HOUSEHOLD_ID) ? { household: live.households.get(HOUSEHOLD_ID)! } : {}),
   };
 
   const unique = new Map<string, JournalProblem>();

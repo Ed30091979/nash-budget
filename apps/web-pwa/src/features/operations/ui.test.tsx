@@ -124,6 +124,19 @@ describe("operations UI", () => {
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
 
+  it("черновик, ушедший в запись, перестаёт быть несохранённым до первого ожидания, а неудача возвращает флаг", () => {
+    // Третье ревью (e2e b1): после «Записать» касание вкладки спрашивало «Несохранённый черновик
+    // будет удалён», потому что флаг доходил до приложения только пассивным эффектом.
+    const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+    const submit = source.slice(source.indexOf("const submit = (event: FormEvent<HTMLFormElement>) => {"), source.indexOf("const confirm = () => {"));
+    expect(submit.indexOf("beginSaving();")).toBeGreaterThan(0);
+    expect(submit.indexOf("beginSaving();")).toBeLessThan(submit.indexOf("void runChange((state) => createTransaction(state, pending)"));
+    expect(source).toContain("onDirtyChange?.(dirty && !savingRef.current);");
+    expect(source).toMatch(/const beginSaving = \(\) => \{\s*savingRef\.current = true;\s*onDirtyChange\?\.\(false\);/u);
+    expect(source).toMatch(/await onChange\(change\);\s*endSaving\(false\);\s*success\(\);\s*\} catch \(cause\) \{\s*endSaving\(true\);/u);
+    expect(source).toContain("if (failed) onDirtyChange?.(dirtyRef.current);");
+  });
+
   it("показывает под суммой, что останется в каждом конверте, — до записи, а не после", () => {
     // Табло отвечает на «а мы можем себе это позволить?» до траты, и сразу по всем конвертам.
     // Проверка рисует экран с уже введённой суммой: то же самое человек видит, набрав её.
@@ -188,5 +201,20 @@ describe("operations UI", () => {
     expect(source).toContain("Подтвердить изменение операции?");
     expect(source).toContain("Подтвердить удаление");
     expect(source).not.toMatch(/console\.|localStorage|sessionStorage|dangerouslySetInnerHTML|innerHTML/);
+  });
+});
+
+describe("виды операций в форме", () => {
+  it("предлагает только виды, которые форма записывает, даже когда в бюджете есть долги", () => {
+    const seed = makeSeedBudget();
+    const debtId = "8f100000-0000-4000-8000-0000000000d1";
+    const state: BudgetState = {
+      ...seed,
+      debts: [{ id: debtId, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...seed.transactions, { id: "8d100000-0000-4000-8000-000000000007", kind: "debt_out", status: "posted", occurredOn: "2026-07-09", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId }],
+    };
+    const html = renderToStaticMarkup(<OperationsScreen budget={state} clock={JULY_CLOCK} onChange={vi.fn(async () => undefined)} />);
+    const select = html.slice(html.indexOf('id="operation-kind"'), html.indexOf("</select>", html.indexOf('id="operation-kind"')));
+    expect([...select.matchAll(/<option value="([a-z_]+)"/g)].map((match) => match[1])).toEqual(["income", "expense", "refund", "transfer", "goal_contribution"]);
   });
 });

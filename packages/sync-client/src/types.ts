@@ -160,6 +160,13 @@ export interface PullResult
   /** Requests actually made. Zero means the cursor was already at the end of the journal. */
   readonly requests: number;
   /**
+   * The document was rewritten from the journal before the walk began, with nothing fetched: a
+   * hold lifted because this build now opens the journal's state, or the family's state taken up
+   * by a device that held it without the record saying so. A screen showing the document has a
+   * new state to show even when {@link applied} is `0`.
+   */
+  readonly settled: boolean;
+  /**
    * The walk stopped on this build's own page cap, not at the end of the journal.
    *
    * The cap bounds one call and not the journal, so `true` means "there is more, call again" and
@@ -169,9 +176,60 @@ export interface PullResult
   readonly pageLimitReached: boolean;
 }
 
+/**
+ * Why the document does not show the family's journal although the journal says it can be shown.
+ *
+ * A list and not a bare union for the reason {@link SYNC_STOP_REASONS} is: the record is written to
+ * disk and read back, and a reason no branch of this build knows would reach a screen as nothing.
+ */
+export const DOCUMENT_HOLD_REASONS = [
+  /**
+   * The application's own gate (`SyncEngineOptions.acceptsState`) refused the state the journal
+   * materialised — a version skew: a newer build of a peer wrote something this one does not open.
+   * The journal and the cursor moved, nothing of the family's is lost, the document holds what the
+   * application last accepted, and local writes are refused (`document_held`) — so the family is
+   * told, instead of looking at yesterday's budget in silence or writing over today's.
+   */
+  "rejected_by_app",
+  /**
+   * The journal's state cannot be shown at all — no active budget, or one the journal does not
+   * hold — on a device whose document is the family's (third review of wave 1). The document holds
+   * the last state that could be shown, and that is not the journal's state: a write built from it
+   * would be reported saved, would not appear, and would carry stale entities that undo a peer's
+   * edits. So local writes are refused (`journal_not_ready`) except one whose result is ready — the
+   * write that restores the family's budget, opening a month for one. Never recorded over a hold
+   * already in force, and never lifted by a fold that ends not ready.
+   */
+  "journal_not_ready",
+] as const;
+
+export type DocumentHoldReason = (typeof DOCUMENT_HOLD_REASONS)[number];
+
+export interface DocumentHold {
+  readonly reason: DocumentHoldReason;
+  /**
+   * What the document holds instead. `kept` — the last state of this family's journal the
+   * application accepted (or the budget this device founded the family with); `empty` — nothing of
+   * the family's: no document at all, or one that never was a state of this family's journal — the
+   * personal budget of a device that joined, for one — and a state the application refuses is not
+   * written in its place. Either way the device writes nothing while the hold is in force.
+   */
+  readonly document: "kept" | "empty";
+}
+
 export interface SyncStatusReport {
   readonly cursor: SyncCursor;
   readonly queued: number;
   readonly epoch: AcceptedEpoch;
   readonly stop: SyncStop | null;
+  /** The journal's state that the document does not show, and why; `null` while it shows it. */
+  readonly hold: DocumentHold | null;
+  /**
+   * Whether the document, when there is one, is this family's: written from a state of the
+   * family's journal that the application accepted, or the budget this device founded the family
+   * with (`SyncEngineOptions.foundedDocument`). `false` is a device whose document is still what
+   * it held before it joined — not a budget to show as the family's, nor one to write the family's
+   * operations from — or that never received one.
+   */
+  readonly familyDocument: boolean;
 }

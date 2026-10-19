@@ -1,12 +1,19 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateDebts,
   calculateMemberExpenses,
+  COLLECTION_LIMITS,
+  DEFAULT_MAX_OCCURRENCES_PER_CALL,
+  HOUSEHOLD_ID,
+  materializeRecurring,
+  recurringOccurrenceId,
   type Transaction,
 } from "@family-budget/domain";
-import { G002, toDomainBudgetState } from "@family-budget/test-fixtures";
+import { G002, toDomainBudgetState, type DomainBudgetState } from "@family-budget/test-fixtures";
 import { describe, expect, it } from "vitest";
 
+import { sha256Hex } from "../src/digest.js";
 import {
   applyJournal,
   applyOperations,
@@ -14,6 +21,7 @@ import {
   createClock,
   createEmptyJournal,
   createLocalOperation,
+  encodeOperation,
   ENTITY_KINDS,
   HONEST_LAMPORT_CEILING,
   MAX_AGGREGATE_MINOR,
@@ -49,9 +57,15 @@ import {
   DEVICE_C,
   DEVICE_D,
   DEVICE_E,
+  inSeries,
   mintedDevice,
   opUuid,
   SAMPLE_FIELDS,
+  sampleTargetId,
+  SERIES,
+  seriesUuid,
+  tagUuid,
+  testUuid,
   UPDATED_FIELDS,
 } from "./samples.js";
 
@@ -66,12 +80,18 @@ const PRODUCTS_EXPENSE_ID = "75555555-5555-4555-8555-555555555553";
 const MAIN_ACCOUNT_ID = "22222222-2222-4222-8222-222222222221";
 const RESERVE_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
 const GOAL_ID = "66666666-6666-4666-8666-666666666661";
-const MEMBER_ANNA = "member-anna";
-const MEMBER_PETR = "member-petr";
-const GHOST_ID = "ghost-transaction";
-const LABELLED_EXPENSE_ID = "expense-anna-wrote-down-for-petr";
+// UUIDs like every identifier the application writes: the journal withholds an entity under any
+// other (`invalid_id`), and a test about something else would be testing that instead.
+const MEMBER_ANNA = testUuid(0x3e3, 1);
+// Not `2`: the tie of "does not hand the last word to whoever writes the largest identifier" is
+// settled by the digest of the operations, and the claim it pins — the largest identifier there is
+// does not win by being largest — needs a target on which it loses. On this one it does.
+const MEMBER_PETR = testUuid(0x3e3, 4);
+const GHOST_ID = testUuid(0x60057, 1);
+const LABELLED_EXPENSE_ID = testUuid(0x1abe1, 1);
 
-type FixtureState = ReturnType<typeof toDomainBudgetState>;
+// The state of G-002, named: the adapter's return type also covers G-003's ledger since step 15.
+type FixtureState = DomainBudgetState;
 type FixtureTransaction = FixtureState["transactions"][number];
 
 function withoutId<T extends { readonly id: string }>(entity: T): Omit<T, "id"> {
@@ -123,8 +143,16 @@ function transactionFields(transaction: FixtureTransaction): TransactionFields {
   }
 }
 
-/** Rebuilds the canonical G-002 budget as an append-only journal written by one device. */
-function buildFixtureJournal(): Operation[] {
+/**
+ * Rebuilds the canonical G-002 budget as an append-only journal written by one device.
+ *
+ * `members` names its two participants. The default is UUIDs, like everything the application
+ * writes; the test that pins this journal's canonical text byte for byte passes the readable
+ * names it was pinned with.
+ */
+function buildFixtureJournal(members: { readonly anna: string; readonly petr: string } = { anna: MEMBER_ANNA, petr: MEMBER_PETR }): Operation[] {
+  const MEMBER_ANNA = members.anna;
+  const MEMBER_PETR = members.petr;
   const state: FixtureState = toDomainBudgetState(G002);
   const operations: Operation[] = [];
   let clock = createClock(DEVICE_A);
@@ -183,12 +211,19 @@ function productsLimitMinor(snapshot: JournalSnapshot): number {
   return metrics.availableMinor;
 }
 
+/**
+ * The author a header of the tie tests names. A header's participant never reaches the state, and
+ * the ties below are settled by the digest of these exact bytes, so it keeps the readable name the
+ * tests were written with.
+ */
+const TIE_AUTHOR = "member-anna";
+
 function productsLineEdit(deviceId: string, opId: string, plannedMinor: number, lamport: number): Operation {
   return {
     opId,
     deviceId,
     lamport,
-    memberId: MEMBER_ANNA,
+    memberId: TIE_AUTHOR,
     entity: "budgetLine",
     action: "update",
     targetId: PRODUCTS_LINE_ID,
@@ -260,6 +295,16 @@ function entityIds(state: SyncedBudgetState, entity: EntityKind): string[] {
       return state.transactions.map((item) => item.id);
     case "member":
       return state.members.map((item) => item.id);
+    case "tag":
+      return state.tags.map((item) => item.id);
+    case "exchangeRate":
+      return state.exchangeRates.map((item) => item.id);
+    case "household":
+      return state.household === undefined ? [] : [state.household.id];
+    case "debt":
+      return state.debts.map((item) => item.id);
+    case "recurringRule":
+      return state.recurringRules.map((item) => item.id);
   }
 }
 
@@ -269,6 +314,8 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
       return state.budgets.flatMap((budget) => budget.lines).find((line) => line.id === targetId);
     case "budget":
       return state.budgets.find((budget) => budget.id === targetId);
+    case "household":
+      return state.household?.id === targetId ? state.household : undefined;
     default: {
       const collections: readonly (readonly { readonly id: string }[])[] = [
         state.accounts,
@@ -278,6 +325,10 @@ function entityValue(state: SyncedBudgetState, entity: EntityKind, targetId: str
         state.scheduledExpenses,
         state.transactions,
         state.members,
+        state.tags,
+        state.exchangeRates,
+        state.debts,
+        state.recurringRules,
       ];
       return collections.flat().find((item) => item.id === targetId);
     }
@@ -299,6 +350,11 @@ const SEED_PARENTS: { readonly [K in EntityKind]: readonly ("account" | "categor
   scheduledExpense: ["account", "category"],
   transaction: ["account", "category"],
   member: [],
+  tag: [],
+  exchangeRate: [],
+  household: [],
+  debt: [],
+  recurringRule: ["account", "category"],
 };
 
 const SEED_TARGET = { account: SEED_ACCOUNT_ID, category: SEED_CATEGORY_ID, budget: SEED_BUDGET_ID } as const;
@@ -324,6 +380,7 @@ const REFERENCING_KINDS: readonly EntityKind[] = [
   "annualCommitment",
   "scheduledExpense",
   "transaction",
+  "recurringRule",
 ];
 
 /** Every identifier the state exposes, in the one flat set a backup export builds. */
@@ -382,7 +439,7 @@ function moneyJournal(count: number, amountMinor: number): Operation[] {
         lamport: 100 + index,
         entity: "transaction",
         action: "create",
-        targetId: `tx-${String(index).padStart(5, "0")}`,
+        targetId: seriesUuid(SERIES.tx, index),
         fields: { ...SAMPLE_FIELDS.transaction, amountMinor, accountId: SEED_ACCOUNT_ID, categoryId: SEED_CATEGORY_ID },
       }),
     );
@@ -438,7 +495,7 @@ describe("applyJournal", () => {
 
   it("creates, updates and deletes every entity kind", () => {
     for (const entity of ENTITY_KINDS) {
-      const targetId = `${entity}-under-test`;
+      const targetId = sampleTargetId(entity, "under-test");
       const stamp = (opId: string, action: "create" | "update" | "delete", lamport: number, updated: boolean) =>
         parseOperation({
           opId,
@@ -466,6 +523,12 @@ describe("applyJournal", () => {
             : { id: targetId, ...UPDATED_FIELDS[entity] },
       );
 
+      // The household is never deleted: the codec refuses the operation (plan 4.2), so the
+      // household stays what the update made it.
+      if (entity === "household") {
+        expect(() => stamp(opUuid(3), "delete", 4, false)).toThrow(/the household cannot be deleted/);
+        continue;
+      }
       const removed = applyOperations(updated, [stamp(opUuid(3), "delete", 4, false)]);
       expect(entityIds(removed.state, entity)).toEqual([]);
       expect(removed.entries).toHaveLength(seed.length + 1);
@@ -478,7 +541,7 @@ describe("applyJournal", () => {
     // reference and a tombstone is final, so the gate withholds the entity instead of
     // handing the domain a state it would refuse; the journal keeps it for when the parent lands.
     for (const entity of REFERENCING_KINDS) {
-      const targetId = `${entity}-under-test`;
+      const targetId = sampleTargetId(entity, "under-test");
       const orphan = applyJournal([
         parseOperation({
           opId: opUuid(1),
@@ -1146,7 +1209,7 @@ describe("integrity gate", () => {
           lamport: 10 + index,
           entity: "transaction",
           action: "create",
-          targetId: `salary-${String(index).padStart(4, "0")}`,
+          targetId: seriesUuid(SERIES.salary, index),
           fields: {
             kind: "income",
             occurredOn: "2026-07-05",
@@ -1164,7 +1227,7 @@ describe("integrity gate", () => {
           lamport: 1_000 + index,
           entity: "transaction",
           action: "create",
-          targetId: `hostile-${String(index).padStart(6, "0")}`,
+          targetId: seriesUuid(SERIES.hostile, index),
           fields: {
             kind: "income",
             occurredOn: "2026-07-05",
@@ -1181,8 +1244,8 @@ describe("integrity gate", () => {
 
       // Every salary is in the state, and so is every hostile income: the total is over the
       // ceiling and the gate says so instead of picking somebody's records.
-      expect(shown.filter((id) => id.startsWith("salary-"))).toHaveLength(salaries.length);
-      expect(shown.filter((id) => id.startsWith("hostile-"))).toHaveLength(hostileCount);
+      expect(shown.filter((id) => inSeries(id, SERIES.salary))).toHaveLength(salaries.length);
+      expect(shown.filter((id) => inSeries(id, SERIES.hostile))).toHaveLength(hostileCount);
       expect(snapshot.integrity.problems).toContainEqual({
         code: "amount_out_of_range",
         entity: null,
@@ -1223,7 +1286,7 @@ describe("integrity gate", () => {
       lamport: 100 + index,
       entity: "transaction",
       action: "create",
-      targetId: `flood-${String(index).padStart(7, "0")}`,
+      targetId: seriesUuid(SERIES.flood, index),
       fields: {
         ...SAMPLE_FIELDS.transaction,
         amountMinor: amountAt(index),
@@ -1268,7 +1331,7 @@ describe("integrity gate", () => {
 
   it("resolves an identifier claimed by two entity kinds instead of switching the family off", () => {
     const journal = buildFixtureJournal();
-    const shared = "identifier-claimed-twice";
+    const shared = seriesUuid(SERIES.named, 1);
     const claim = (entity: "account" | "category", opId: string, lamport: number): Operation =>
       parseOperation({
         opId,
@@ -1326,7 +1389,7 @@ describe("integrity gate", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1352,7 +1415,10 @@ describe("integrity gate", () => {
     // naming an author would put a string of the flooder's choosing in the report for no
     // purpose, because nothing follows from it. It does not lower the verdict on its own —
     // this journal holds no budget at all, and that is what does.
+    // A hundred thousand participants are also more than a document may hold, and that is said
+    // against the kind, again without withholding anybody.
     expect(forward.integrity.problems).toEqual([
+      { code: "collection_limit", entity: "member", id: "" },
       { code: "journal_entry_budget", entity: null, id: "" },
       { code: "no_active_budget", entity: "budget", id: "" },
     ]);
@@ -1386,7 +1452,7 @@ describe("integrity gate", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `honest-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.honest, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1401,7 +1467,7 @@ describe("integrity gate", () => {
         memberId: MEMBER_PETR,
         entity: "transaction",
         action: "create",
-        targetId: `spend-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.spend, index),
         fields: {
           kind: "expense",
           occurredOn: "2026-07-11",
@@ -1422,7 +1488,7 @@ describe("integrity gate", () => {
         lamport: MAX_LAMPORT_SKEW + index,
         entity: "member",
         action: "create",
-        targetId: `flood-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.flood, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -1452,7 +1518,11 @@ describe("integrity gate", () => {
     expect(flooded.state.activeBudgetId).toBe(BUDGET_ID);
     expect(flooded.integrity).toEqual({
       ready: true,
-      problems: [{ code: "journal_entry_budget", entity: null, id: "" }],
+      problems: [
+        // More participants than a document may hold, said against the kind and nothing more.
+        { code: "collection_limit", entity: "member", id: "" },
+        { code: "journal_entry_budget", entity: null, id: "" },
+      ],
       // Nothing is withheld for a flood: every entity of the family is on the screen.
       withheld: [],
     });
@@ -1486,7 +1556,7 @@ describe("integrity gate", () => {
       lamport: 610,
       entity: "transaction",
       action: "create",
-      targetId: "refund-before-the-expense",
+      targetId: seriesUuid(SERIES.named, 3),
       fields: {
         kind: "refund",
         occurredOn: "2026-07-01",
@@ -1503,7 +1573,7 @@ describe("integrity gate", () => {
       lamport: 611,
       entity: "transaction",
       action: "create",
-      targetId: "contribution-to-the-wrong-account",
+      targetId: seriesUuid(SERIES.named, 2),
       fields: {
         kind: "goal_contribution",
         occurredOn: "2026-07-11",
@@ -1517,8 +1587,8 @@ describe("integrity gate", () => {
 
     const snapshot = applyJournal([...journal, earlyRefund, strayContribution]);
     expect(snapshot.integrity.problems).toEqual([
-      { code: "goal_account_mismatch", entity: "transaction", id: "contribution-to-the-wrong-account" },
-      { code: "invalid_refund", entity: "transaction", id: "refund-before-the-expense" },
+      { code: "goal_account_mismatch", entity: "transaction", id: seriesUuid(SERIES.named, 2) },
+      { code: "invalid_refund", entity: "transaction", id: seriesUuid(SERIES.named, 3) },
     ]);
     // Both entities are out of the state, so what is left is exactly what the family had and
     // is safe for the domain. Waiting for more operations cannot change either verdict, and a
@@ -1532,10 +1602,10 @@ describe("integrity gate", () => {
     expect(snapshot.integrity.withheld).toEqual([
       {
         entity: "transaction",
-        id: "contribution-to-the-wrong-account",
+        id: seriesUuid(SERIES.named, 2),
         reason: "goal_account_mismatch",
       },
-      { entity: "transaction", id: "refund-before-the-expense", reason: "invalid_refund" },
+      { entity: "transaction", id: seriesUuid(SERIES.named, 3), reason: "invalid_refund" },
     ]);
     expect(calculateAnnualPlan(snapshot.state, G002.startMonth, 12).currentMonth.annualReserveMinor).toBe(1_980_900);
 
@@ -1549,7 +1619,7 @@ describe("integrity gate", () => {
       lamport: 612,
       entity: "transaction",
       action: "create",
-      targetId: "refund-of-an-expense-not-yet-delivered",
+      targetId: seriesUuid(SERIES.named, 4),
       fields: {
         kind: "refund",
         occurredOn: "2026-07-20",
@@ -1565,7 +1635,7 @@ describe("integrity gate", () => {
     expect(waiting.integrity.withheld).toEqual([
       {
         entity: "transaction",
-        id: "refund-of-an-expense-not-yet-delivered",
+        id: seriesUuid(SERIES.named, 4),
         reason: "unknown_reference",
       },
     ]);
@@ -1775,7 +1845,10 @@ describe("integrity gate", () => {
   it("settles a category planned twice by the total order, not by the name of the line", () => {
     // The lowest identifier used to stay, and an identifier is whatever the writing device
     // chose to call the line: naming one `!` replaced the limit the family had planned for
-    // that category however long ago they had planned it.
+    // that category however long ago they had planned it. A name that is not a UUID is withheld
+    // for that alone now (`invalid_id`), so the intruder takes the lowest UUID there is instead —
+    // the same lever, under the identifier the codec and the gate both accept.
+    const LOWEST = "00000000-0000-4000-8000-000000000000";
     const journal = buildFixtureJournal();
     const honest = productsLimitMinor(applyJournal(journal));
     const intruder = (opId: string, plannedMinor: number, lamport: number): Operation =>
@@ -1785,14 +1858,14 @@ describe("integrity gate", () => {
         lamport,
         entity: "budgetLine",
         action: "create",
-        targetId: "!products",
+        targetId: LOWEST,
         fields: { budgetId: BUDGET_ID, categoryId: PRODUCTS_CATEGORY_ID, plannedMinor },
       });
 
     const early = applyJournal([...journal, intruder(opUuid(978), 100_000, 1)]);
     expect(productsLimitMinor(early)).toBe(honest);
     expect(early.integrity.problems).toEqual([
-      { code: "duplicate_budget_line", entity: "budgetLine", id: "!products" },
+      { code: "duplicate_budget_line", entity: "budgetLine", id: LOWEST },
     ]);
     // Already resolved, so the family goes on seeing its budget.
     expect(early.integrity.ready).toBe(true);
@@ -1852,7 +1925,9 @@ describe("integrity gate", () => {
     ];
 
     const problems: readonly JournalProblem[] = applyJournal(journal).integrity.problems;
-    expect(problems).toEqual([{ code: "unknown_reference", entity: "goal", id: hostile }]);
+    // Not a UUID either, so the gate withholds the goal for its identifier before it ever looks at
+    // the reference — and still hands the identifier back as data, never as a sentence.
+    expect(problems).toEqual([{ code: "invalid_id", entity: "goal", id: hostile }]);
     for (const problem of problems) {
       expect(Object.keys(problem).sort()).toEqual(["code", "entity", "id"]);
     }
@@ -1921,13 +1996,14 @@ describe("untrusted input", () => {
     `{"opId":"${opUuid(2)}","deviceId":"${DEVICE_B}","lamport":9,"entity":"member","action":"create",` +
     `"targetId":"member-poison","fields":{"name":"Пётр","role":"member","active":true,"__proto__":{"polluted":true}}}`;
 
+  const REAL_ACCOUNT_ID = seriesUuid(SERIES.named, 0x60);
   const REAL_ENTRY = parseOperation({
     opId: opUuid(3),
     deviceId: DEVICE_A,
     lamport: 12,
     entity: "account",
     action: "create",
-    targetId: "account-1",
+    targetId: REAL_ACCOUNT_ID,
     fields: SAMPLE_FIELDS.account,
   });
 
@@ -1980,7 +2056,7 @@ describe("untrusted input", () => {
 
   it("rebuilds a snapshot it did not build instead of believing its state", () => {
     const rebuilt = applyOperations(forgedSnapshot(), []);
-    expect(rebuilt.state.accounts).toEqual([{ id: "account-1", ...SAMPLE_FIELDS.account }]);
+    expect(rebuilt.state.accounts).toEqual([{ id: REAL_ACCOUNT_ID, ...SAMPLE_FIELDS.account }]);
     expect(rebuilt.state.activeBudgetId).toBe("");
     // The entries are replayed and the state is recomputed. The bookkeeping and the clock are
     // validated and carried, not recomputed: an entry only holds the operation that still owns
@@ -2127,7 +2203,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2157,7 +2233,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2201,7 +2277,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-${String(index).padStart(6, "0")}`,
+        targetId: seriesUuid(SERIES.member, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2214,7 +2290,7 @@ describe("delivery in envelopes", () => {
         lamport: 9_000,
         entity: "member",
         action: "delete",
-        targetId: "member-000000",
+        targetId: seriesUuid(SERIES.member, 0),
       }),
     ]);
     expect(branch).not.toBe(base);
@@ -2261,7 +2337,7 @@ describe("delivery in envelopes", () => {
         lamport: 1 + index,
         entity: "member",
         action: "create",
-        targetId: `member-undo-${String(index).padStart(7, "0")}`,
+        targetId: seriesUuid(SERIES.memberUndo, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2292,7 +2368,9 @@ describe("delivery in envelopes", () => {
     ]);
     expect(recent.entries).toHaveLength(steps + 1);
     expect(snapshot.entries).toHaveLength(steps);
-  });
+    // A hundred and ten thousand operations folded: 3-4.4 s alone and past the default 5 s under the
+    // load of the whole suite, so it gets the explicit timeout of its heavy neighbour above.
+  }, 60_000);
 });
 
 describe("Lamport clock", () => {
@@ -2522,7 +2600,7 @@ describe("Lamport clock", () => {
         lamport,
         entity: "member",
         action: "create",
-        targetId: `minted-${String(index)}`,
+        targetId: seriesUuid(SERIES.minted, index),
         fields: SAMPLE_FIELDS.member,
       });
       const owned = applyOperations(base, [minted]);
@@ -2726,7 +2804,7 @@ describe("Lamport clock", () => {
         lamport: (index + 1) * MAX_LAMPORT_SKEW,
         entity: "member",
         action: "create",
-        targetId: `member-rung-${String(index).padStart(3, "0")}`,
+        targetId: seriesUuid(SERIES.memberRung, index),
         fields: SAMPLE_FIELDS.member,
       }),
     );
@@ -2774,17 +2852,74 @@ describe("withheld entities", () => {
   // can be added or removed without this test noticing.
   const PHANTOM_BUDGET_ID = "7bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
   const INCOME_CATEGORY_ID = "73333333-3333-4333-8333-333333333339";
-  const SHARED_ID = "claimed-by-two-kinds";
-  const STRAY_LINE_ID = "!products";
-  const ORPHAN_GOAL_ID = "goal-of-an-account-in-flight";
-  const INCOME_EXPENSE_ID = "expense-planned-on-an-income-category";
-  const EARLY_REFUND_ID = "refund-dated-before-its-expense";
-  const STRAY_CONTRIBUTION_ID = "contribution-to-an-unlinked-account";
+  // UUIDs, numbered in the order their old readable names sorted in, so the list below reads as
+  // it always did; the one entity under a readable name is the one withheld for that name.
+  const SHARED_ID = seriesUuid(SERIES.named, 0x10);
+  // The lowest UUID there is: the intruder's line sorts first and still loses by the total order.
+  const STRAY_LINE_ID = "00000000-0000-4000-8000-000000000000";
+  const ORPHAN_GOAL_ID = seriesUuid(SERIES.named, 0x40);
+  const INCOME_EXPENSE_ID = seriesUuid(SERIES.named, 0x50);
+  const STRAY_CONTRIBUTION_ID = seriesUuid(SERIES.named, 0x21);
+  const INEXACT_EXPENSE_ID = seriesUuid(SERIES.named, 0x22);
+  const UNVALUED_EXPENSE_ID = seriesUuid(SERIES.named, 0x23);
+  const EARLY_REFUND_ID = seriesUuid(SERIES.named, 0x24);
+  const DOLLAR_ACCOUNT_ID = seriesUuid(SERIES.named, 0x30);
+  /** A participant under a name the application never writes, and the purchase labelled with it. */
+  const READABLE_MEMBER_ID = "member-written-by-hand";
+  const READABLE_LABEL_EXPENSE_ID = seriesUuid(SERIES.named, 0x25);
 
   function journalWithEveryWithholding(): Operation[] {
     const write = (draft: Record<string, unknown>): Operation => parseOperation(draft);
     return [
       ...buildFixtureJournal(),
+      // A dollar account, and a purchase on it that carries no value in roubles: the budget could
+      // not count it, so it is withheld for its currencies (plan 4.5, currency_mismatch).
+      write({
+        opId: opUuid(978),
+        deviceId: DEVICE_B,
+        lamport: 698,
+        entity: "account",
+        action: "create",
+        targetId: DOLLAR_ACCOUNT_ID,
+        fields: { ...SAMPLE_FIELDS.account, name: "Доллары", currency: "USD" },
+      }),
+      write({
+        opId: opUuid(979),
+        deviceId: DEVICE_B,
+        lamport: 699,
+        entity: "transaction",
+        action: "create",
+        targetId: UNVALUED_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-11",
+          status: "posted",
+          amountMinor: 4_000,
+          accountId: DOLLAR_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+        },
+      }),
+      // A dollar purchase whose rouble value is not its amount at its own rate: 40 $ at 90 ₽ said to
+      // be 3 700 ₽, so the budget would add one figure and the row would show another.
+      write({
+        opId: opUuid(980),
+        deviceId: DEVICE_B,
+        lamport: 699,
+        entity: "transaction",
+        action: "create",
+        targetId: INEXACT_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-11",
+          status: "posted",
+          amountMinor: 4_000,
+          accountId: DOLLAR_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+          baseAmountMinor: 370_000,
+          baseCurrency: "RUB",
+          rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+      }),
       // Two kinds claim one identifier: the category outranks the account, so the account goes.
       write({
         opId: opUuid(981),
@@ -2883,6 +3018,35 @@ describe("withheld entities", () => {
           goalId: GOAL_ID,
         },
       }),
+      // A participant under an identifier that is not a UUID, and a purchase labelled with it: the
+      // application refuses a state that holds either (second review of wave 1, invalid_id). The
+      // participant is withheld; the purchase stays, to the kopeck, and only its label goes.
+      write({
+        opId: opUuid(990),
+        deviceId: DEVICE_B,
+        lamport: 708,
+        entity: "member",
+        action: "create",
+        targetId: READABLE_MEMBER_ID,
+        fields: SAMPLE_FIELDS.member,
+      }),
+      write({
+        opId: opUuid(991),
+        deviceId: DEVICE_B,
+        lamport: 709,
+        entity: "transaction",
+        action: "create",
+        targetId: READABLE_LABEL_EXPENSE_ID,
+        fields: {
+          kind: "expense",
+          occurredOn: "2026-07-12",
+          status: "posted",
+          amountMinor: 1_000,
+          accountId: MAIN_ACCOUNT_ID,
+          categoryId: PRODUCTS_CATEGORY_ID,
+          memberId: READABLE_MEMBER_ID,
+        },
+      }),
       // An activation of a budget nobody has: the pointer stays on the budget the family sees.
       write({
         opId: opUuid(989),
@@ -2902,7 +3066,10 @@ describe("withheld entities", () => {
     { entity: "goal", id: ORPHAN_GOAL_ID, reason: "unknown_reference" },
     { entity: "scheduledExpense", id: INCOME_EXPENSE_ID, reason: "wrong_category_type" },
     { entity: "transaction", id: STRAY_CONTRIBUTION_ID, reason: "goal_account_mismatch" },
+    { entity: "transaction", id: INEXACT_EXPENSE_ID, reason: "snapshot_mismatch" },
+    { entity: "transaction", id: UNVALUED_EXPENSE_ID, reason: "currency_mismatch" },
     { entity: "transaction", id: EARLY_REFUND_ID, reason: "invalid_refund" },
+    { entity: "member", id: READABLE_MEMBER_ID, reason: "invalid_id" },
   ];
 
   it("names the kind, the identifier and the reason of everything it left out of the state", () => {
@@ -2924,12 +3091,19 @@ describe("withheld entities", () => {
       expect(snapshot.entries.some((held) => held.targetId === entry.id)).toBe(true);
     }
     expect(snapshot.activations.map((entry) => entry.targetId)).toContain(PHANTOM_BUDGET_ID);
+    // The label that named the withheld participant is off the purchase, said out loud, and the
+    // purchase is counted.
+    const labelled = snapshot.state.transactions.find((item) => item.id === READABLE_LABEL_EXPENSE_ID);
+    expect(labelled).toBeDefined();
+    expect(labelled?.memberId).toBeUndefined();
+    expect(snapshot.integrity.problems).toContainEqual({ code: "invalid_id", entity: "transaction", id: READABLE_LABEL_EXPENSE_ID });
+    expect(snapshot.integrity.problems).toContainEqual({ code: "invalid_id", entity: "member", id: READABLE_MEMBER_ID });
   });
 
   it("goes on showing the family its budget while it withholds", () => {
     const snapshot = applyJournal(journalWithEveryWithholding());
 
-    // The point of decision 40: seven withheld entities, and the family still sees the budget
+    // The point of decision 40: eight withheld entities, and the family still sees the budget
     // it planned, to the kopeck. A resolved conflict freezes nobody.
     expect(snapshot.integrity.ready).toBe(true);
     expect(snapshot.state.activeBudgetId).toBe(BUDGET_ID);
@@ -2990,5 +3164,744 @@ describe("withheld entities", () => {
     // The same journal with the family's own activation back in it is ready, and the phantom
     // is withheld instead. Nothing else changed.
     expect(applyJournal(withheld).integrity.ready).toBe(true);
+  });
+});
+
+describe("tags and labels through the journal", () => {
+  // UUIDs, as the codec demands of a tag (security review MEDIUM-1).
+  const TAG_HOME = tagUuid(0x401);
+  const TAG_HOLIDAY = tagUuid(0x402);
+  const TAGGED_EXPENSE_ID = seriesUuid(SERIES.named, 0x70);
+
+  function tag(targetId: string, name: string, lamport: number, opIndex: number): Operation {
+    return parseOperation({
+      opId: opUuid(opIndex),
+      deviceId: DEVICE_B,
+      lamport,
+      entity: "tag",
+      action: "create",
+      targetId,
+      fields: { name, active: true },
+    });
+  }
+
+  function taggedExpense(tagIds: readonly string[], extra: Record<string, unknown> = {}): Operation {
+    return parseOperation({
+      opId: opUuid(1_001),
+      deviceId: DEVICE_B,
+      lamport: 910,
+      entity: "transaction",
+      action: "create",
+      targetId: TAGGED_EXPENSE_ID,
+      fields: {
+        kind: "expense",
+        occurredOn: "2026-07-12",
+        status: "posted",
+        amountMinor: 150_000,
+        accountId: MAIN_ACCOUNT_ID,
+        categoryId: PRODUCTS_CATEGORY_ID,
+        note: "Рассада на дачу",
+        tagIds,
+        ...extra,
+      },
+    });
+  }
+
+  const found = (snapshot: JournalSnapshot): Transaction | undefined =>
+    snapshot.state.transactions.find((item) => item.id === TAGGED_EXPENSE_ID);
+
+  it("leaves the canonical text of the G-002 journal exactly what it was", () => {
+    // Pinned before the codec learned a single new field: the kinds are appended at the end of
+    // ENTITY_KINDS, every new field is optional and absent stays absent, so a journal that uses
+    // none of them encodes, orders and converges byte for byte as before.
+    // The participants under the readable names this journal was pinned with, before the journal
+    // withheld an entity under an identifier that is not a UUID (`invalid_id`): the text of the
+    // journal is what is pinned, and the journal keeps every entry it is given.
+    const snapshot = applyJournal(buildFixtureJournal({ anna: "member-anna", petr: "member-petr" }));
+    expect(snapshot.entries).toHaveLength(28);
+    expect(sha256Hex(snapshot.entries.map((entry) => encodeOperation(entry)).join("\n")))
+      .toBe("8518c76130c93fc5f0282edff1869076f57353ef0fcad8c6684fd866c8588423");
+    expect(sha256Hex(snapshot.activations.map((entry) => encodeOperation(entry)).join("\n")))
+      .toBe("9df5e0a45dec26f541167505314af91cd8796324281a839dff50ba62f768cb12");
+    // And the state promises the new list the way it promises participants: empty, not absent.
+    expect(snapshot.state.tags).toEqual([]);
+    // The participants are in the journal and out of the state, by name, and the labels that named
+    // them are taken off the operations — reported, never silently, the money untouched.
+    expect(snapshot.integrity.withheld).toEqual([
+      { entity: "member", id: "member-anna", reason: "invalid_id" },
+      { entity: "member", id: "member-petr", reason: "invalid_id" },
+    ]);
+    expect(snapshot.state.members).toEqual([]);
+    expect(snapshot.state.transactions.every((transaction) => transaction.memberId === undefined)).toBe(true);
+    expect(snapshot.integrity.ready).toBe(true);
+    // The kinds of 1.0.0 in their order, and every later one after them (plan 4.1): the order
+    // sorts the entries, so a kind inserted among them would reorder this very listing.
+    expect(ENTITY_KINDS.slice(0, 9)).toEqual([
+      "account", "category", "budget", "budgetLine", "goal", "annualCommitment", "scheduledExpense", "transaction", "member",
+    ]);
+    expect(ENTITY_KINDS.slice(9, 14)).toEqual(["tag", "exchangeRate", "household", "debt", "recurringRule"]);
+  });
+
+  it("carries tags and a note across devices and through storage, without moving the money", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const shown = applyJournal([
+      ...journal,
+      tag(TAG_HOME, "Дом", 900, 1_002),
+      tag(TAG_HOLIDAY, "Дача", 901, 1_003),
+      taggedExpense([TAG_HOME, TAG_HOLIDAY]),
+    ]);
+
+    expect(shown.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(shown.state.tags.map((item) => item.name).sort()).toEqual(["Дача", "Дом"]);
+    expect(found(shown)).toMatchObject({ note: "Рассада на дачу", tagIds: [TAG_HOME, TAG_HOLIDAY], amountMinor: 150_000 });
+    expect(found(restoreJournal(JSON.parse(JSON.stringify(shown)) as unknown))?.tagIds).toEqual([TAG_HOME, TAG_HOLIDAY]);
+    // The state is one the domain accepts whole, and labels decide nothing in it.
+    expect(calculateBudget(shown.state).expensesMinor).toBe(calculateBudget(plain.state).expensesMinor + 150_000);
+    expect(() => calculateMemberExpenses(shown.state)).not.toThrow();
+    expect(() => calculateAnnualPlan(shown.state, G002.startMonth, 12)).not.toThrow();
+  });
+
+  it("takes off a tag that is gone or has not arrived, keeps the rest, and gives it back when it lands", () => {
+    const journal = buildFixtureJournal();
+    const home = tag(TAG_HOME, "Дом", 900, 1_002);
+    const holiday = tag(TAG_HOLIDAY, "Дача", 901, 1_003);
+    const expense = taggedExpense([TAG_HOME, TAG_HOLIDAY]);
+
+    // Дача has not been delivered yet: the expense stays, to the kopeck, tagged with what resolves.
+    const early = applyJournal([...journal, home, expense]);
+    expect(found(early)?.tagIds).toEqual([TAG_HOME]);
+    expect(found(early)?.amountMinor).toBe(150_000);
+    expect(early.integrity.withheld).toEqual([]);
+    expect(early.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: TAGGED_EXPENSE_ID }]);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+
+    const arrived = applyOperations(early, [holiday]);
+    expect(found(arrived)?.tagIds).toEqual([TAG_HOME, TAG_HOLIDAY]);
+    expect(arrived.integrity.problems).toEqual([]);
+
+    // Both deleted while the expense was in flight: the field goes, not to an empty list.
+    const deletions = [TAG_HOME, TAG_HOLIDAY].map((targetId, index) => parseOperation({
+      opId: opUuid(1_010 + index),
+      deviceId: DEVICE_C,
+      lamport: 920 + index,
+      entity: "tag",
+      action: "delete",
+      targetId,
+    }));
+    const untagged = applyJournal([...journal, home, holiday, expense, ...deletions]);
+    const kept = found(untagged);
+    expect(kept?.amountMinor).toBe(150_000);
+    expect(kept !== undefined && "tagIds" in kept).toBe(false);
+    expect(kept?.note).toBe("Рассада на дачу");
+    expect(untagged.state.tags).toEqual([]);
+    expect(calculateBudget(untagged.state).expensesMinor).toBe(calculateBudget(arrived.state).expensesMinor);
+
+    // Every replica, every delivery order, and a restart all say the same.
+    const random = mulberry32(34);
+    const reference = applyJournal([...journal, home, expense]);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const shuffled = applyJournal(shuffle([...journal, home, expense], random));
+      expect(shuffled.state).toEqual(reference.state);
+      expect(shuffled.integrity).toEqual(reference.integrity);
+    }
+    expect(restoreJournal(JSON.parse(JSON.stringify(reference)) as unknown).state).toEqual(reference.state);
+  });
+
+  // Orchestrator step 13: rules travel through the journal now, so the label goes only when it names
+  // no rule the journal holds — as here; "recurring rules through the journal" keeps one that it does.
+  it("takes off a recurring-rule label that names no rule the journal holds", () => {
+    const journal = buildFixtureJournal();
+    const snapshot = applyJournal([...journal, taggedExpense([tagUuid(0x4ff)], { recurringRuleId: testUuid(0x7b0, 0x4ff) })]);
+    const kept = found(snapshot);
+
+    expect(kept?.amountMinor).toBe(150_000);
+    expect(kept !== undefined && ("recurringRuleId" in kept || "tagIds" in kept)).toBe(false);
+    expect(snapshot.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: TAGGED_EXPENSE_ID }]);
+    expect(() => calculateBudget(snapshot.state)).not.toThrow();
+  });
+
+  it("settles a tag and another entity claiming one identifier like any other pair, and the label follows", () => {
+    const journal = buildFixtureJournal();
+    // A tag written under the identifier of the family's main account, ranked lower: it loses.
+    const intruder = parseOperation({
+      opId: opUuid(1_020),
+      deviceId: DEVICE_C,
+      lamport: 1,
+      entity: "tag",
+      action: "create",
+      targetId: MAIN_ACCOUNT_ID,
+      fields: { name: "Захват", active: true },
+    });
+    const snapshot = applyJournal([...journal, intruder, taggedExpense([MAIN_ACCOUNT_ID])]);
+
+    expect(snapshot.integrity.withheld).toContainEqual({ entity: "tag", id: MAIN_ACCOUNT_ID, reason: "identifier_claimed_twice" });
+    expect(snapshot.state.tags).toEqual([]);
+    expect(snapshot.state.accounts.map((item) => item.id)).toContain(MAIN_ACCOUNT_ID);
+    expect(found(snapshot) !== undefined && "tagIds" in found(snapshot)!).toBe(false);
+    expect(new Set(allStateIds(snapshot.state)).size).toBe(allStateIds(snapshot.state).length);
+  });
+
+  it("reports a state holding more tags than a document may, and still shows all of them", () => {
+    // Several devices creating offline can pass the limit together, and none of them did anything
+    // wrong: nothing is withheld, the family keeps seeing everything, and the count is reported.
+    const journal = buildFixtureJournal();
+    const tags = Array.from({ length: COLLECTION_LIMITS.tags + 1 }, (_, index) =>
+      tag(testUuid(0x7a6, index), `Метка ${index}`, 1_000 + index, 20_000 + index));
+    const atLimit = applyJournal([...journal, ...tags.slice(1)]);
+    expect(atLimit.integrity.problems).toEqual([]);
+
+    const over = applyJournal([...journal, ...tags]);
+    expect(over.integrity.ready).toBe(true);
+    expect(over.integrity.withheld).toEqual([]);
+    expect(over.integrity.problems).toEqual([{ code: "collection_limit", entity: "tag", id: "" }]);
+    expect(over.state.tags).toHaveLength(COLLECTION_LIMITS.tags + 1);
+  });
+
+  it("carries display fields of accounts, categories and goals into the state", () => {
+    const journal = buildFixtureJournal();
+    const account = journal.find((item) => item.action === "create" && item.entity === "account" && item.targetId === MAIN_ACCOUNT_ID);
+    if (account === undefined || account.action !== "create" || account.entity !== "account") throw new Error("fixture account is missing");
+    const decorated = parseOperation({
+      ...account,
+      opId: opUuid(1_030),
+      lamport: 930,
+      action: "update",
+      fields: { ...account.fields, sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false },
+    });
+    const snapshot = applyJournal([...journal, decorated]);
+
+    expect(snapshot.state.accounts.find((item) => item.id === MAIN_ACCOUNT_ID))
+      .toMatchObject({ sortOrder: 20, icon: "banknote", color: "sage", includeInTotal: false });
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(applyJournal(journal).state));
+  });
+});
+
+describe("several currencies through the journal", () => {
+  const DOLLARS = "7c000000-0000-4000-8000-0000000000d1";
+  const DOLLAR_EXPENSE = "7c000000-0000-4000-8000-0000000000d2";
+  const TRANSFER = "7c000000-0000-4000-8000-0000000000d3";
+  const RATE_JULY = "7c000000-0000-4000-8000-0000000000e1";
+  const RATE = { baseMinor: 9_000, quoteMinor: 100 };
+  let nextOp = 30_000;
+
+  function write(entity: string, targetId: string, fields: unknown, lamport = 950, action: "create" | "update" = "create"): Operation {
+    nextOp += 1;
+    return parseOperation({ opId: opUuid(nextOp), deviceId: DEVICE_B, lamport, entity, action, targetId, fields });
+  }
+
+  const dollarAccount = (lamport = 950, currency = "USD"): Operation =>
+    write("account", DOLLARS, { name: "Доллары", type: "savings", currency, openingBalanceMinor: 50_000, active: true }, lamport, lamport === 950 ? "create" : "update");
+
+  function expense(extra: Record<string, unknown> = {}, accountId = DOLLARS): Operation {
+    return write("transaction", DOLLAR_EXPENSE, {
+      kind: "expense",
+      occurredOn: "2026-07-10",
+      status: "posted",
+      amountMinor: 4_000,
+      accountId,
+      categoryId: PRODUCTS_CATEGORY_ID,
+      baseAmountMinor: 360_000,
+      baseCurrency: "RUB",
+      rate: RATE,
+      ...extra,
+    });
+  }
+
+  function withoutSnapshot(operation: Operation): Operation {
+    if (operation.action !== "create" || operation.entity !== "transaction") throw new Error("not a transaction write");
+    const { baseAmountMinor: _amount, baseCurrency: _currency, rate: _rate, ...plain } = operation.fields as Record<string, unknown>;
+    return parseOperation({ ...operation, fields: plain });
+  }
+
+  function transfer(extra: Record<string, unknown> = {}, toAccountId = DOLLARS): Operation {
+    return write("transaction", TRANSFER, {
+      kind: "transfer",
+      occurredOn: "2026-07-05",
+      status: "posted",
+      amountMinor: 1_800_000,
+      fromAccountId: MAIN_ACCOUNT_ID,
+      toAccountId,
+      ...extra,
+    });
+  }
+
+  const withheldOf = (snapshot: JournalSnapshot) => snapshot.integrity.withheld;
+
+  it("shows a dollar account, its purchase at the rouble value it carries, and the rates", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const snapshot = applyJournal([
+      ...journal,
+      dollarAccount(),
+      expense(),
+      transfer({ toAmountMinor: 20_000 }),
+      write("exchangeRate", RATE_JULY, { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE }),
+    ]);
+
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.exchangeRates).toEqual([{ id: RATE_JULY, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE }]);
+    expect("household" in snapshot.state).toBe(false);
+    const metrics = calculateBudget(snapshot.state);
+    expect(metrics.grossExpensesMinor).toBe(calculateBudget(plain.state).grossExpensesMinor + 360_000);
+    expect(metrics.accountBalancesMinor[DOLLARS]).toBe(50_000 - 4_000 + 20_000);
+    // Capital stays the roubles: the dollars are not added to it as kopecks.
+    expect(metrics.capitalMinor).toBe(calculateBudget(plain.state).capitalMinor - 1_800_000);
+    expect(() => calculateAnnualPlan(snapshot.state, G002.startMonth, 12)).not.toThrow();
+    expect(() => calculateMemberExpenses(snapshot.state)).not.toThrow();
+  });
+
+  it("withholds an operation whose currencies do not fit, and nothing else", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    const cases: readonly (readonly [string, Operation])[] = [
+      ["a dollar purchase without its rouble value", withoutSnapshot(expense())],
+      ["a rouble purchase with a snapshot", expense({}, MAIN_ACCOUNT_ID)],
+      ["a snapshot in another base", expense({ baseCurrency: "EUR" })],
+      ["a transfer between currencies without what arrived", transfer()],
+      ["a transfer within roubles that names what arrived", transfer({ toAmountMinor: 100 }, RESERVE_ACCOUNT_ID)],
+      ["a contribution from dollars to a rouble goal", write("transaction", TRANSFER, { kind: "goal_contribution", occurredOn: "2026-07-06", status: "posted", amountMinor: 100, fromAccountId: DOLLARS, toAccountId: RESERVE_ACCOUNT_ID, goalId: GOAL_ID })],
+    ];
+    for (const [label, operation] of cases) {
+      const snapshot = applyJournal([...journal, operation]);
+      expect(withheldOf(snapshot), label).toEqual([{ entity: "transaction", id: operation.targetId, reason: "currency_mismatch" }]);
+      expect(snapshot.integrity.problems, label).toEqual([{ code: "currency_mismatch", entity: "transaction", id: operation.targetId }]);
+      expect(snapshot.integrity.ready, label).toBe(true);
+      expect(() => calculateBudget(snapshot.state), label).not.toThrow();
+      expect(() => calculateMemberExpenses(snapshot.state), label).not.toThrow();
+    }
+  });
+
+  it("withholds a snapshot that is not the amount at its rate, and shows it again once it is", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    for (const [label, baseAmountMinor] of [["a kopeck too much", 360_001], ["a kopeck too little", 359_999], ["another figure", 1]] as const) {
+      const inexact = expense({ baseAmountMinor });
+      const snapshot = applyJournal([...journal, inexact]);
+      expect(withheldOf(snapshot), label).toEqual([{ entity: "transaction", id: inexact.targetId, reason: "snapshot_mismatch" }]);
+      expect(snapshot.integrity.problems, label).toEqual([{ code: "snapshot_mismatch", entity: "transaction", id: inexact.targetId }]);
+      expect(snapshot.integrity.ready, label).toBe(true);
+      expect(() => calculateBudget(snapshot.state), label).not.toThrow();
+    }
+    // An edit that makes the two agree brings the purchase back; a hand-entered rouble value is a
+    // rate of its own and agrees exactly.
+    const corrected = write("transaction", expense({ baseAmountMinor: 1 }).targetId, {
+      kind: "expense", occurredOn: "2026-07-10", status: "posted", amountMinor: 4_000, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID,
+      baseAmountMinor: 365_000, baseCurrency: "RUB", rate: { baseMinor: 365_000, quoteMinor: 4_000 },
+    }, 5_000, "update");
+    const repaired = applyJournal([...journal, expense({ baseAmountMinor: 1 }), corrected]);
+    expect(withheldOf(repaired)).toEqual([]);
+    expect(calculateBudget(repaired.state).grossExpensesMinor).toBe(calculateBudget(applyJournal(journal).state).grossExpensesMinor + 365_000);
+  });
+
+  it("withholds a plan on an account outside the base currency", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount()];
+    const goal = write("goal", "7c000000-0000-4000-8000-0000000000f1", { ...SAMPLE_FIELDS.goal, linkedAccountId: DOLLARS });
+    const commitment = write("annualCommitment", "7c000000-0000-4000-8000-0000000000f2", { ...SAMPLE_FIELDS.annualCommitment, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID });
+    const schedule = write("scheduledExpense", "7c000000-0000-4000-8000-0000000000f3", { ...SAMPLE_FIELDS.scheduledExpense, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID });
+    const snapshot = applyJournal([...journal, goal, commitment, schedule]);
+
+    expect(withheldOf(snapshot)).toEqual([
+      { entity: "goal", id: goal.targetId, reason: "currency_mismatch" },
+      { entity: "annualCommitment", id: commitment.targetId, reason: "currency_mismatch" },
+      { entity: "scheduledExpense", id: schedule.targetId, reason: "currency_mismatch" },
+    ]);
+    const plan = calculateAnnualPlan(snapshot.state, G002.startMonth, 12);
+    expect(plan.currentMonth.annualReserveMinor).toBe(1_980_900);
+    expect(plan.currentMonth.spendableAfterPlanMinor).toBe(4_419_100);
+  });
+
+  it("settles a change of currency made while another device wrote against the old one", () => {
+    // Device B writes a rouble purchase on the account; device C turns the account into dollars at
+    // the same time. Whatever the order, every replica withholds the purchase, and turning the
+    // account back brings it back by itself.
+    const journal = buildFixtureJournal();
+    const roubles = dollarAccount(950, "RUB");
+    const purchase = withoutSnapshot(expense());
+    const toDollars = dollarAccount(960, "USD");
+    const all = [...journal, roubles, purchase, toDollars];
+    const reference = applyJournal(all);
+
+    expect(withheldOf(reference)).toEqual([{ entity: "transaction", id: DOLLAR_EXPENSE, reason: "currency_mismatch" }]);
+    const random = mulberry32(31);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const shuffled = applyJournal(shuffle(all, random));
+      expect(shuffled.state).toEqual(reference.state);
+      expect(shuffled.integrity).toEqual(reference.integrity);
+    }
+    expect(restoreJournal(JSON.parse(JSON.stringify(reference)) as unknown).integrity).toEqual(reference.integrity);
+    const back = applyOperations(reference, [dollarAccount(970, "RUB")]);
+    expect(withheldOf(back)).toEqual([]);
+    expect(back.state.transactions.map((item) => item.id)).toContain(DOLLAR_EXPENSE);
+  });
+
+  it("counts in the household's base currency when the household names one", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const roubles = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "RUB" })]);
+    expect(roubles.state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB" });
+    expect(calculateBudget(roubles.state)).toEqual(calculateBudget(plain.state));
+
+    // A base changed under operations already written is the case the plan does not support: the
+    // rouble operations no longer fit, and they are withheld rather than counted as dollars.
+    const dollars = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "USD" })]);
+    expect(withheldOf(dollars).map((item) => item.reason)).toContain("currency_mismatch");
+    expect(dollars.state.transactions).toEqual([]);
+    expect(dollars.state.goals).toEqual([]);
+    expect(dollars.integrity.ready).toBe(true);
+    expect(() => calculateBudget(dollars.state)).not.toThrow();
+  });
+
+  it("pins what one household in another currency does to a rouble history: withheld, visible, reversible", () => {
+    // Security review LOW-3. No screen writes the household — the base currency is set once (D-031) —
+    // but any device can send one. This pins today's answer, so that changing it is a decision and
+    // not an accident: every rouble operation and every plan on a rouble account is withheld with
+    // currency_mismatch and named, nothing is lost, and writing roubles back shows all of it again.
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const dollars = applyJournal([...journal, write("household", HOUSEHOLD_ID, { baseCurrency: "USD" }, 960)]);
+
+    const counted = plain.state.transactions.filter((item) => item.kind === "income" || item.kind === "expense" || item.kind === "refund");
+    const expected = [
+      ...plain.state.goals.map((item) => ({ entity: "goal", id: item.id, reason: "currency_mismatch" })),
+      ...plain.state.annualCommitments.map((item) => ({ entity: "annualCommitment", id: item.id, reason: "currency_mismatch" })),
+      ...plain.state.scheduledExpenses.map((item) => ({ entity: "scheduledExpense", id: item.id, reason: "currency_mismatch" })),
+      ...counted.map((item) => ({ entity: "transaction", id: item.id, reason: "currency_mismatch" })),
+    ];
+    expect(counted.length).toBeGreaterThan(0);
+    const order = (list: readonly { entity: string; id: string }[]) => [...list].sort((left, right) => `${left.entity} ${left.id}`.localeCompare(`${right.entity} ${right.id}`));
+    expect(order(withheldOf(dollars))).toEqual(order(expected));
+    expect(dollars.integrity.ready).toBe(true);
+    expect(dollars.state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "USD" });
+    // What is not about money in the base currency stays: accounts, categories, the budget and its lines.
+    expect(dollars.state.accounts).toEqual(plain.state.accounts);
+    expect(dollars.state.budgets).toEqual(plain.state.budgets);
+    // The journal still holds every one of them.
+    expect(dollars.entries.length).toBe(plain.entries.length + 1);
+
+    const back = applyJournal([
+      ...journal,
+      write("household", HOUSEHOLD_ID, { baseCurrency: "USD" }, 960),
+      write("household", HOUSEHOLD_ID, { baseCurrency: "RUB" }, 961, "update"),
+    ]);
+    expect(withheldOf(back)).toEqual([]);
+    expect(calculateBudget(back.state)).toEqual(calculateBudget(plain.state));
+    expect(calculateAnnualPlan(back.state, G002.startMonth, 12)).toEqual(calculateAnnualPlan(plain.state, G002.startMonth, 12));
+  });
+
+  it("measures the totals in the base currency, the way the domain adds them", () => {
+    // A thousand and one purchases of one cent, each worth the field ceiling in roubles: the gross
+    // expenses the domain builds pass the totals ceiling, although the amounts on the wire are tiny.
+    const count = MAX_AGGREGATE_MINOR / MAX_MONEY_MINOR + 1;
+    const purchases = Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(40_000 + index),
+      deviceId: DEVICE_B,
+      lamport: 2_000 + index,
+      entity: "transaction",
+      action: "create",
+      targetId: `7c100000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { kind: "expense", occurredOn: "2026-07-10", status: "posted", amountMinor: 1, accountId: DOLLARS, categoryId: PRODUCTS_CATEGORY_ID, baseAmountMinor: MAX_MONEY_MINOR, baseCurrency: "RUB", rate: { baseMinor: 10 ** 10, quoteMinor: 1 } },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), dollarAccount(), ...purchases]);
+    expect(snapshot.integrity.problems).toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+    // And dollar balances are not part of capital: a thousand and one of them at the ceiling pass
+    // the totals ceiling together only if they are added to the roubles, which the domain never does.
+    const accounts = (currency: string) => Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(50_000 + index),
+      deviceId: DEVICE_B,
+      lamport: 3_000 + index,
+      entity: "account",
+      action: "create",
+      targetId: `7c200000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { name: "Счёт", type: "savings", currency, openingBalanceMinor: MAX_MONEY_MINOR, active: true },
+    }));
+    // A thousand and one accounts are also more than a document may hold, which is said against the
+    // kind (collection_limit) whatever their currency; only the roubles reach the totals ceiling.
+    expect(applyJournal([...buildFixtureJournal(), ...accounts("USD")]).integrity.problems)
+      .toEqual([{ code: "collection_limit", entity: "account", id: "" }]);
+    expect(applyJournal([...buildFixtureJournal(), ...accounts("RUB")]).integrity.problems)
+      .toEqual([{ code: "amount_out_of_range", entity: null, id: "" }, { code: "collection_limit", entity: "account", id: "" }]);
+  });
+
+  it("keeps a deleted rate harmless: nothing refers to one", () => {
+    const journal = [...buildFixtureJournal(), dollarAccount(), expense(), write("exchangeRate", RATE_JULY, { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: RATE })];
+    const deleted = applyOperations(applyJournal(journal), [parseOperation({ opId: opUuid(39_999), deviceId: DEVICE_C, lamport: 990, entity: "exchangeRate", action: "delete", targetId: RATE_JULY })]);
+    expect(deleted.state.exchangeRates).toEqual([]);
+    expect(deleted.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(calculateBudget(deleted.state)).toEqual(calculateBudget(applyJournal(journal).state));
+  });
+});
+
+describe("debts through the journal", () => {
+  const PETYA = "7d000000-0000-4000-8000-0000000000d1";
+
+  function debt(lamport: number, fields: Record<string, unknown> = SAMPLE_FIELDS.debt, action: "create" | "update" = "create"): Operation {
+    return parseOperation({ opId: opUuid(60_000 + lamport), deviceId: DEVICE_B, lamport, entity: "debt", action, targetId: PETYA, fields });
+  }
+
+  it("carries a debt into the state without moving a kopeck of the budget", () => {
+    const journal = buildFixtureJournal();
+    const snapshot = applyJournal([...journal, debt(950)]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.debts).toEqual([{ id: PETYA, ...SAMPLE_FIELDS.debt }]);
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(applyJournal(journal).state));
+    expect(calculateDebts(snapshot.state, "2026-07-31").receivableInBaseMinor).toBe(300_000);
+    expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state.debts).toEqual(snapshot.state.debts);
+  });
+
+  function movement(id: string, lamport: number, fields: Record<string, unknown>): Operation {
+    return parseOperation({
+      opId: opUuid(62_000 + lamport), deviceId: DEVICE_B, lamport, entity: "transaction", action: "create", targetId: id,
+      fields: { kind: "debt_out", occurredOn: "2026-07-07", status: "posted", amountMinor: 500_000, accountId: MAIN_ACCOUNT_ID, debtId: PETYA, ...fields },
+    });
+  }
+  const LENT = "7d000000-0000-4000-8000-0000000000e1";
+  const REPAID = "7d000000-0000-4000-8000-0000000000e2";
+
+  it("moves the account and the debt, and no figure of the budget", () => {
+    const journal = buildFixtureJournal();
+    const plain = applyJournal(journal);
+    const snapshot = applyJournal([...journal, debt(950, { ...SAMPLE_FIELDS.debt, openingMinor: 0 }), movement(LENT, 951, {}), movement(REPAID, 952, { kind: "debt_in", amountMinor: 200_000, occurredOn: "2026-07-25" })]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    const before = calculateBudget(plain.state);
+    const after = calculateBudget(snapshot.state);
+    expect(after.incomeMinor).toBe(before.incomeMinor);
+    expect(after.expensesMinor).toBe(before.expensesMinor);
+    expect(after.accountBalancesMinor[MAIN_ACCOUNT_ID]).toBe(before.accountBalancesMinor[MAIN_ACCOUNT_ID]! - 300_000);
+    expect(calculateDebts(snapshot.state, "2026-07-31").byDebt[PETYA]?.balanceMinor).toBe(300_000);
+  });
+
+  it("withholds a movement whose debt is gone or has not arrived, and gives it back when it lands", () => {
+    const journal = buildFixtureJournal();
+    const early = applyJournal([...journal, movement(LENT, 951, {})]);
+    expect(early.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "unknown_reference" }]);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+    const arrived = applyOperations(early, [debt(950)]);
+    expect(arrived.integrity.withheld).toEqual([]);
+    expect(arrived.state.transactions.map((item) => item.id)).toContain(LENT);
+    // A deleted debt keeps it withheld for good: the money has nothing to be shown against.
+    const deleted = applyOperations(arrived, [parseOperation({ opId: opUuid(62_999), deviceId: DEVICE_C, lamport: 990, entity: "debt", action: "delete", targetId: PETYA })]);
+    expect(deleted.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "unknown_reference" }]);
+    expect(deleted.state.debts).toEqual([]);
+  });
+
+  it("withholds a movement whose amounts do not fit the currencies of the account and the debt", () => {
+    const journal = [...buildFixtureJournal(), debt(950, { ...SAMPLE_FIELDS.debt, currency: "USD" })];
+    const unconverted = applyJournal([...journal, movement(LENT, 951, {})]);
+    expect(unconverted.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "currency_mismatch" }]);
+    const converted = applyJournal([...journal, movement(LENT, 951, { debtAmountMinor: 5_500 })]);
+    expect(converted.integrity.withheld).toEqual([]);
+    expect(calculateDebts(converted.state, "2026-07-31").byDebt[PETYA]?.outMinor).toBe(5_500);
+    const extra = applyJournal([...buildFixtureJournal(), debt(950), movement(LENT, 951, { debtAmountMinor: 5_000 })]);
+    expect(extra.integrity.withheld).toEqual([{ entity: "transaction", id: LENT, reason: "currency_mismatch" }]);
+  });
+
+  it("measures a debt's balance among the totals the domain must survive", () => {
+    const count = MAX_AGGREGATE_MINOR / MAX_MONEY_MINOR + 1;
+    const lending = Array.from({ length: count }, (_, index) => parseOperation({
+      opId: opUuid(63_000 + index), deviceId: DEVICE_B, lamport: 3_000 + index, entity: "transaction", action: "create",
+      targetId: `7d200000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      fields: { kind: "debt_in", occurredOn: "2026-07-07", status: "posted", amountMinor: 1, accountId: MAIN_ACCOUNT_ID, debtId: PETYA, debtAmountMinor: MAX_MONEY_MINOR },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), debt(950, { ...SAMPLE_FIELDS.debt, currency: "USD" }), ...lending]);
+    expect(snapshot.integrity.problems).toEqual([{ code: "amount_out_of_range", entity: null, id: "" }]);
+  });
+
+  it("reports more debts than a document may hold, and shows all of them", () => {
+    const debts = Array.from({ length: COLLECTION_LIMITS.debts + 1 }, (_, index) => parseOperation({
+      opId: opUuid(61_000 + index), deviceId: DEVICE_B, lamport: 1_000 + index, entity: "debt", action: "create",
+      targetId: testUuid(0x7d1, index), fields: { ...SAMPLE_FIELDS.debt, counterparty: `Сосед ${index}` },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...debts]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "debt", id: "" }]);
+    expect(snapshot.state.debts).toHaveLength(COLLECTION_LIMITS.debts + 1);
+  });
+});
+
+describe("counts of every kind", () => {
+  it("reports more accounts and budget lines than a document may hold, withholds none, and stays ready", () => {
+    // Two devices that each opened sixty accounts offline meet with a hundred and twenty: honest
+    // work, and once a state the app refused, on every device, for a count.
+    const accounts = Array.from({ length: COLLECTION_LIMITS.accounts + 1 }, (_, index) => parseOperation({
+      opId: opUuid(64_000 + index), deviceId: index % 2 === 0 ? DEVICE_A : DEVICE_B, lamport: 1_000 + index,
+      entity: "account", action: "create", targetId: testUuid(0x7a1, index),
+      fields: { name: `Счёт ${index}`, type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true },
+    }));
+    const categories = Array.from({ length: COLLECTION_LIMITS.linesPerBudget + 1 }, (_, index) => parseOperation({
+      opId: opUuid(65_000 + index), deviceId: DEVICE_B, lamport: 2_000 + index, entity: "category", action: "create",
+      targetId: testUuid(0x7c1, index),
+      fields: { name: `Категория ${index}`, type: "expense", group: "everyday", active: true, sortOrder: 1_000 + index },
+    }));
+    const lines = categories.map((category, index) => parseOperation({
+      opId: opUuid(66_000 + index), deviceId: DEVICE_B, lamport: 3_000 + index, entity: "budgetLine", action: "create",
+      targetId: testUuid(0x7b1, index), fields: { budgetId: BUDGET_ID, categoryId: category.targetId, plannedMinor: 100 },
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...accounts, ...categories, ...lines]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.withheld).toEqual([]);
+    expect(snapshot.integrity.problems).toEqual([
+      { code: "collection_limit", entity: "account", id: "" },
+      { code: "collection_limit", entity: "budgetLine", id: "" },
+      { code: "collection_limit", entity: "category", id: "" },
+    ]);
+    expect(snapshot.state.accounts.length).toBeGreaterThan(COLLECTION_LIMITS.accounts);
+    expect(snapshot.state.budgets.find((budget) => budget.id === BUDGET_ID)!.lines.length).toBeGreaterThan(COLLECTION_LIMITS.linesPerBudget);
+    expect(() => calculateBudget(snapshot.state)).not.toThrow();
+  });
+});
+
+describe("recurring rules through the journal", () => {
+  const RULE = "7f000000-0000-4000-8000-0000000000a1";
+  const DOLLARS = "7f000000-0000-4000-8000-0000000000c1";
+  const TAG = tagUuid(0x7f1);
+  const WATER = { kind: "expense", amountMinor: 150_000, accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID, note: "Доставка воды" };
+  const RULE_FIELDS = { name: "Доставка воды", template: WATER, frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true };
+  const FIRST = recurringOccurrenceId(RULE, "2026-07-07");
+  let nextOp = 70_000;
+
+  function write(entity: EntityKind, targetId: string, fields: unknown, lamport = 950, device = DEVICE_B, action: "create" | "update" = "create"): Operation {
+    nextOp += 1;
+    return parseOperation({ opId: opUuid(nextOp), deviceId: device, lamport, entity, action, targetId, fields });
+  }
+
+  const rule = (template: unknown = WATER, lamport = 950, extra: Record<string, unknown> = {}): Operation =>
+    write("recurringRule", RULE, { ...RULE_FIELDS, template, ...extra }, lamport);
+
+  /** The occurrence of the water delivery on 7 July, as materializeRecurring writes it. */
+  const occurrence = (lamport = 951, device = DEVICE_B): Operation => write("transaction", FIRST, {
+    kind: "expense", occurredOn: "2026-07-07", status: "posted", amountMinor: 150_000,
+    accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID, note: "Доставка воды", recurringRuleId: RULE,
+  }, lamport, device);
+
+  const ruleOf = (snapshot: JournalSnapshot) => snapshot.state.recurringRules.find((item) => item.id === RULE);
+  const firstOf = (snapshot: JournalSnapshot) => snapshot.state.transactions.find((item) => item.id === FIRST);
+
+  it("carries a rule into the state, and its occurrence keeps its label", () => {
+    const snapshot = applyJournal([...buildFixtureJournal(), rule(), occurrence()]);
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.recurringRules).toEqual([{ id: RULE, ...RULE_FIELDS }]);
+    expect(firstOf(snapshot)?.recurringRuleId).toBe(RULE);
+    // The domain accepts what the journal shows, and writes the rest of the month from it: the day
+    // another device already wrote is passed over under its derived identifier.
+    expect(materializeRecurring(snapshot.state, "2026-07-31").created.map((item) => item.occurredOn)).toEqual(["2026-07-21"]);
+    expect(restoreJournal(JSON.parse(JSON.stringify(snapshot)) as unknown).state).toEqual(snapshot.state);
+    // A journal without rules promises the list, empty.
+    expect(applyJournal(buildFixtureJournal()).state.recurringRules).toEqual([]);
+  });
+
+  it("hands the journal's tombstones to materialisation: a deleted occurrence is not written again", () => {
+    // The occurrence of 7 July was written and then deleted; the rule's watermark lost to an older
+    // edit of the rule, so by the watermark alone the day is open. The tombstone is final in the
+    // journal, and the day is passed over and reported instead of being written on this device alone.
+    nextOp += 1;
+    const deletion = parseOperation({ opId: opUuid(nextOp), deviceId: DEVICE_C, lamport: 970, entity: "transaction", action: "delete", targetId: FIRST });
+    const snapshot = applyJournal([...buildFixtureJournal(), rule(), occurrence(), deletion]);
+    expect(firstOf(snapshot)).toBeUndefined();
+    expect(ruleOf(snapshot)?.materializedThrough).toBeUndefined();
+    const deletedIds = new Set(
+      snapshot.entries.filter((entry) => entry.entity === "transaction" && entry.action === "delete").map((entry) => entry.targetId),
+    );
+    const result = materializeRecurring(snapshot.state, "2026-07-31", { deletedIds });
+    expect(result.created.map((item) => item.occurredOn)).toEqual(["2026-07-21"]);
+    // One day passed over, reported as a run of one day (second review of wave 1, LOW-6).
+    expect(result.skipped).toEqual([{ ruleId: RULE, from: "2026-07-07", to: "2026-07-07", reason: "deleted" }]);
+    // And what one call writes always fits one batch of the journal.
+    expect(DEFAULT_MAX_OCCURRENCES_PER_CALL).toBeLessThan(MAX_BATCH_OPERATIONS);
+  });
+
+  it("writes one operation for a day two devices materialised offline", () => {
+    const journal = buildFixtureJournal();
+    const watermark = (device: string, lamport: number) =>
+      write("recurringRule", RULE, { ...RULE_FIELDS, materializedThrough: "2026-07-31" }, lamport, device, "update");
+    const operations = [rule(), occurrence(960, DEVICE_B), occurrence(960, DEVICE_C), watermark(DEVICE_B, 961), watermark(DEVICE_C, 961)];
+    const reference = applyJournal([...journal, ...operations]);
+    expect(reference.state.transactions.filter((item) => item.id === FIRST)).toHaveLength(1);
+    expect(ruleOf(reference)?.materializedThrough).toBe("2026-07-31");
+    expect(reference.integrity.withheld).toEqual([]);
+    const random = mulberry32(0x7f);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect(applyJournal(shuffle([...journal, ...operations], random)).state).toEqual(reference.state);
+    }
+  });
+
+  it("takes the label off the occurrences of a deleted rule, and keeps every kopeck", () => {
+    const labelled = applyJournal([...buildFixtureJournal(), rule(), occurrence()]);
+    const deleted = applyOperations(labelled, [parseOperation({ opId: opUuid(71_999), deviceId: DEVICE_C, lamport: 990, entity: "recurringRule", action: "delete", targetId: RULE })]);
+    expect(deleted.state.recurringRules).toEqual([]);
+    expect(firstOf(deleted)).toBeDefined();
+    expect(firstOf(deleted) !== undefined && "recurringRuleId" in firstOf(deleted)!).toBe(false);
+    expect(deleted.integrity.problems).toEqual([{ code: "unknown_reference", entity: "transaction", id: FIRST }]);
+    expect(deleted.integrity.withheld).toEqual([]);
+    expect(calculateBudget(deleted.state)).toEqual(calculateBudget(labelled.state));
+  });
+
+  it("withholds a rule whose template names an account or an expense category that is not there, and gives it back", () => {
+    const LATE_ACCOUNT_ID = seriesUuid(SERIES.named, 0x80);
+    const journal = buildFixtureJournal();
+    const early = applyJournal([...journal, rule({ ...WATER, accountId: LATE_ACCOUNT_ID }), occurrence()]);
+    expect(early.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+    // The occurrence is an ordinary operation: it stays, and only the label of a rule nobody sees goes.
+    expect(firstOf(early)?.amountMinor).toBe(150_000);
+    expect(firstOf(early) !== undefined && "recurringRuleId" in firstOf(early)!).toBe(false);
+    expect(() => calculateBudget(early.state)).not.toThrow();
+    const arrived = applyOperations(early, [write("account", LATE_ACCOUNT_ID, SAMPLE_FIELDS.account, 990)]);
+    expect(arrived.integrity.withheld).toEqual([]);
+    expect(firstOf(arrived)?.recurringRuleId).toBe(RULE);
+
+    const salary = write("category", SALARY_CATEGORY_ID, { name: "Зарплата", type: "income", group: "Доходы", active: true, sortOrder: 90 }, 940);
+    const wrongSide = applyJournal([...journal, salary, rule({ ...WATER, categoryId: SALARY_CATEGORY_ID })]);
+    expect(wrongSide.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "wrong_category_type" }]);
+    const noCategory = applyJournal([...journal, rule({ ...WATER, categoryId: "category-late" })]);
+    expect(noCategory.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+    const transferFrom = applyJournal([...journal, rule({ kind: "transfer", amountMinor: 100, fromAccountId: LATE_ACCOUNT_ID, toAccountId: MAIN_ACCOUNT_ID })]);
+    expect(transferFrom.integrity.withheld).toEqual([{ entity: "recurringRule", id: RULE, reason: "unknown_reference" }]);
+  });
+
+  it("withholds a transfer rule whose currencies do not fit", () => {
+    const journal = [...buildFixtureJournal(), write("account", DOLLARS, { ...SAMPLE_FIELDS.account, name: "Доллары", currency: "USD" }, 940)];
+    const across = { kind: "transfer", amountMinor: 1_800_000, fromAccountId: MAIN_ACCOUNT_ID, toAccountId: DOLLARS };
+    expect(applyJournal([...journal, rule(across)]).integrity.withheld)
+      .toEqual([{ entity: "recurringRule", id: RULE, reason: "currency_mismatch" }]);
+    const converted = applyJournal([...journal, rule({ ...across, toAmountMinor: 20_000 })]);
+    expect(converted.integrity.withheld).toEqual([]);
+    expect(() => calculateBudget(converted.state)).not.toThrow();
+    const within = { kind: "transfer", amountMinor: 100, fromAccountId: MAIN_ACCOUNT_ID, toAccountId: RESERVE_ACCOUNT_ID, toAmountMinor: 100 };
+    expect(applyJournal([...journal, rule(within)]).integrity.withheld)
+      .toEqual([{ entity: "recurringRule", id: RULE, reason: "currency_mismatch" }]);
+  });
+
+  it("takes off the category of an income template and template tags that are not there, and keeps the rule", () => {
+    const journal = buildFixtureJournal();
+    const income = { kind: "income", amountMinor: 12_000_000, accountId: MAIN_ACCOUNT_ID, categoryId: SALARY_CATEGORY_ID, tagIds: [TAG] };
+    const early = applyJournal([...journal, rule(income)]);
+    expect(early.integrity.withheld).toEqual([]);
+    expect(early.integrity.problems).toEqual([{ code: "unknown_reference", entity: "recurringRule", id: RULE }]);
+    expect(ruleOf(early)?.template).toEqual({ kind: "income", amountMinor: 12_000_000, accountId: MAIN_ACCOUNT_ID });
+    expect(() => calculateBudget(early.state)).not.toThrow();
+
+    const arrived = applyOperations(early, [
+      write("category", SALARY_CATEGORY_ID, { name: "Зарплата", type: "income", group: "Доходы", active: true, sortOrder: 90 }, 990),
+      write("tag", TAG, { name: "Дом", active: true }, 991),
+    ]);
+    expect(arrived.integrity.problems).toEqual([]);
+    expect(ruleOf(arrived)?.template).toEqual(income);
+
+    const wrongSide = applyJournal([...journal, rule({ kind: "income", amountMinor: 1, accountId: MAIN_ACCOUNT_ID, categoryId: PRODUCTS_CATEGORY_ID })]);
+    expect(wrongSide.integrity.problems).toEqual([{ code: "wrong_category_type", entity: "recurringRule", id: RULE }]);
+    expect(ruleOf(wrongSide)?.template).toEqual({ kind: "income", amountMinor: 1, accountId: MAIN_ACCOUNT_ID });
+
+    // An expense keeps the tags that resolve and loses only the others.
+    const tagged = applyJournal([...journal, write("tag", TAG, { name: "Дом", active: true }, 940), rule({ ...WATER, tagIds: [TAG, tagUuid(0x7f2)] })]);
+    expect(ruleOf(tagged)?.template).toEqual({ ...WATER, tagIds: [TAG] });
+  });
+
+  it("reports more rules than a document may hold, and shows all of them", () => {
+    const rules = Array.from({ length: COLLECTION_LIMITS.recurringRules + 1 }, (_, index) => parseOperation({
+      opId: opUuid(72_000 + index), deviceId: DEVICE_B, lamport: 1_000 + index, entity: "recurringRule", action: "create",
+      targetId: testUuid(0x7f3, index), fields: RULE_FIELDS,
+    }));
+    const snapshot = applyJournal([...buildFixtureJournal(), ...rules]);
+    expect(snapshot.integrity.ready).toBe(true);
+    expect(snapshot.integrity.problems).toEqual([{ code: "collection_limit", entity: "recurringRule", id: "" }]);
+    expect(snapshot.state.recurringRules).toHaveLength(COLLECTION_LIMITS.recurringRules + 1);
   });
 });

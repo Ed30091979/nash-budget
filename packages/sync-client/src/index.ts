@@ -56,10 +56,12 @@ export {
   type SubmitResult,
   type SyncTransport,
 } from "./transport.js";
-export { SYNC_STOP_REASONS } from "./types.js";
+export { DOCUMENT_HOLD_REASONS, SYNC_STOP_REASONS } from "./types.js";
 export type {
   AcceptedEpoch,
   DeliveredEnvelope,
+  DocumentHold,
+  DocumentHoldReason,
   IntakeResult,
   LamportNotice,
   OutgoingEnvelope,

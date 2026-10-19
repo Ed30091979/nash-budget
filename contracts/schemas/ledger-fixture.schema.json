@@ -1,0 +1,1496 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:family-budget:contracts:ledger-fixture:1.0.0",
+  "title": "Family budget multi-currency ledger golden fixture",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "fixtureId",
+    "title",
+    "asOf",
+    "materializeThrough",
+    "currencies",
+    "state",
+    "expected"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0.0"
+    },
+    "fixtureId": {
+      "const": "G-003"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "asOf": {
+      "$ref": "#/$defs/date"
+    },
+    "materializeThrough": {
+      "$ref": "#/$defs/date"
+    },
+    "currencies": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "exponent"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/$defs/currency"
+          },
+          "exponent": {
+            "enum": [
+              0,
+              2,
+              3
+            ]
+          }
+        }
+      }
+    },
+    "state": {
+      "$ref": "#/$defs/state"
+    },
+    "expected": {
+      "$ref": "#/$defs/expected"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "displayKey": {
+      "type": "string",
+      "maxLength": 40,
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "tagName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "pattern": "^\\S(.*\\S)?$"
+    },
+    "label80": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^\\S(.*\\S)?$"
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^\\S(.*\\S)?$"
+    },
+    "money": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "nonNegativeMoney": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positiveMoney": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "fieldMoney": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000000000
+    },
+    "openingDebtMoney": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000000000
+    },
+    "sortOrder": {
+      "type": "integer",
+      "minimum": -1000000,
+      "maximum": 1000000
+    },
+    "ratePart": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000000000
+    },
+    "rate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseMinor",
+        "quoteMinor"
+      ],
+      "properties": {
+        "baseMinor": {
+          "$ref": "#/$defs/ratePart"
+        },
+        "quoteMinor": {
+          "$ref": "#/$defs/ratePart"
+        }
+      }
+    },
+    "basisPoints": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": -1000000000,
+      "maximum": 1000000000
+    },
+    "tagIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/id"
+      }
+    },
+    "household": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "baseCurrency"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "baseCurrency": {
+          "$ref": "#/$defs/currency"
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "role",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "role": {
+          "enum": [
+            "owner",
+            "member"
+          ]
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/tagName"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "exchangeRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "currency",
+        "baseCurrency",
+        "date",
+        "rate"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "baseCurrency": {
+          "$ref": "#/$defs/currency"
+        },
+        "date": {
+          "$ref": "#/$defs/date"
+        },
+        "rate": {
+          "$ref": "#/$defs/rate"
+        }
+      }
+    },
+    "debt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "counterparty",
+        "direction",
+        "currency",
+        "openingMinor",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "counterparty": {
+          "$ref": "#/$defs/label80"
+        },
+        "direction": {
+          "enum": [
+            "i_owe",
+            "owed_to_me"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "openingMinor": {
+          "$ref": "#/$defs/openingDebtMoney"
+        },
+        "dueDate": {
+          "$ref": "#/$defs/date"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "expenseTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "amountMinor",
+        "accountId",
+        "categoryId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "expense"
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "accountId": {
+          "$ref": "#/$defs/id"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        },
+        "tagIds": {
+          "$ref": "#/$defs/tagIds"
+        }
+      }
+    },
+    "incomeTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "amountMinor",
+        "accountId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "income"
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "accountId": {
+          "$ref": "#/$defs/id"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        },
+        "tagIds": {
+          "$ref": "#/$defs/tagIds"
+        }
+      }
+    },
+    "transferTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "amountMinor",
+        "fromAccountId",
+        "toAccountId"
+      ],
+      "properties": {
+        "kind": {
+          "const": "transfer"
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "fromAccountId": {
+          "$ref": "#/$defs/id"
+        },
+        "toAccountId": {
+          "$ref": "#/$defs/id"
+        },
+        "toAmountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        },
+        "tagIds": {
+          "$ref": "#/$defs/tagIds"
+        }
+      }
+    },
+    "recurringRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "template",
+        "frequency",
+        "interval",
+        "startDate",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/label80"
+        },
+        "template": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/expenseTemplate"
+            },
+            {
+              "$ref": "#/$defs/incomeTemplate"
+            },
+            {
+              "$ref": "#/$defs/transferTemplate"
+            }
+          ]
+        },
+        "frequency": {
+          "enum": [
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999
+        },
+        "startDate": {
+          "$ref": "#/$defs/date"
+        },
+        "endDate": {
+          "$ref": "#/$defs/date"
+        },
+        "materializedThrough": {
+          "$ref": "#/$defs/date"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "currency",
+        "openingBalanceMinor",
+        "active"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "type": {
+          "enum": [
+            "current",
+            "cash",
+            "savings",
+            "reserve"
+          ]
+        },
+        "currency": {
+          "$ref": "#/$defs/currency"
+        },
+        "openingBalanceMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "sortOrder": {
+          "$ref": "#/$defs/sortOrder"
+        },
+        "icon": {
+          "$ref": "#/$defs/displayKey"
+        },
+        "color": {
+          "$ref": "#/$defs/displayKey"
+        },
+        "includeInTotal": {
+          "type": "boolean"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "group",
+        "active",
+        "sortOrder"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "type": {
+          "enum": [
+            "income",
+            "expense"
+          ]
+        },
+        "group": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "sortOrder": {
+          "type": "integer"
+        },
+        "icon": {
+          "$ref": "#/$defs/displayKey"
+        },
+        "color": {
+          "$ref": "#/$defs/displayKey"
+        }
+      }
+    },
+    "budgetLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "categoryId",
+        "plannedMinor"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "plannedMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "rolloverMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "adjustmentMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "startDate",
+        "endDate",
+        "status",
+        "plannedIncomeMinor",
+        "warningThreshold",
+        "lines"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "startDate": {
+          "$ref": "#/$defs/date"
+        },
+        "endDate": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "open",
+            "closed"
+          ]
+        },
+        "plannedIncomeMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "warningThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "lines": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/budgetLine"
+          }
+        }
+      }
+    },
+    "goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "linkedAccountId",
+        "targetMinor",
+        "openingContributedMinor",
+        "plannedContributionMinor",
+        "status"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "linkedAccountId": {
+          "$ref": "#/$defs/id"
+        },
+        "targetMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "openingContributedMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "plannedContributionMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "completed",
+            "cancelled"
+          ]
+        },
+        "deadline": {
+          "$ref": "#/$defs/date"
+        },
+        "icon": {
+          "$ref": "#/$defs/displayKey"
+        }
+      }
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "occurredOn",
+        "status",
+        "kind",
+        "amountMinor"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "occurredOn": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "enum": [
+            "posted",
+            "pending",
+            "draft"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "income",
+            "expense",
+            "refund",
+            "transfer",
+            "goal_contribution",
+            "debt_out",
+            "debt_in"
+          ]
+        },
+        "amountMinor": {
+          "$ref": "#/$defs/positiveMoney"
+        },
+        "accountId": {
+          "$ref": "#/$defs/id"
+        },
+        "categoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "fromAccountId": {
+          "$ref": "#/$defs/id"
+        },
+        "toAccountId": {
+          "$ref": "#/$defs/id"
+        },
+        "goalId": {
+          "$ref": "#/$defs/id"
+        },
+        "originalTransactionId": {
+          "$ref": "#/$defs/id"
+        },
+        "debtId": {
+          "$ref": "#/$defs/id"
+        },
+        "memberId": {
+          "$ref": "#/$defs/id"
+        },
+        "note": {
+          "$ref": "#/$defs/note"
+        },
+        "tagIds": {
+          "$ref": "#/$defs/tagIds"
+        },
+        "recurringRuleId": {
+          "$ref": "#/$defs/id"
+        },
+        "baseAmountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "baseCurrency": {
+          "$ref": "#/$defs/currency"
+        },
+        "rate": {
+          "$ref": "#/$defs/rate"
+        },
+        "toAmountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        },
+        "debtAmountMinor": {
+          "$ref": "#/$defs/fieldMoney"
+        }
+      },
+      "dependentRequired": {
+        "baseAmountMinor": [
+          "baseCurrency",
+          "rate"
+        ],
+        "baseCurrency": [
+          "baseAmountMinor",
+          "rate"
+        ],
+        "rate": [
+          "baseAmountMinor",
+          "baseCurrency"
+        ]
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "income",
+                  "expense",
+                  "refund",
+                  "debt_out",
+                  "debt_in"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "accountId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "expense",
+                  "refund"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "categoryId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "refund"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "originalTransactionId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "transfer",
+                  "goal_contribution"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "fromAccountId",
+              "toAccountId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "goal_contribution"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "goalId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "debt_out",
+                  "debt_in"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "debtId"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "not": {
+                  "enum": [
+                    "income",
+                    "expense",
+                    "refund"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "baseAmountMinor": false,
+              "baseCurrency": false,
+              "rate": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "not": {
+                  "enum": [
+                    "transfer"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "toAmountMinor": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "not": {
+                  "enum": [
+                    "debt_out",
+                    "debt_in"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "debtId": false,
+              "debtAmountMinor": false
+            }
+          }
+        }
+      ]
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activeBudgetId",
+        "accounts",
+        "categories",
+        "budgets",
+        "goals",
+        "annualCommitments",
+        "scheduledExpenses",
+        "transactions"
+      ],
+      "properties": {
+        "activeBudgetId": {
+          "$ref": "#/$defs/id"
+        },
+        "household": {
+          "$ref": "#/$defs/household"
+        },
+        "members": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/member"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/tag"
+          }
+        },
+        "exchangeRates": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/exchangeRate"
+          }
+        },
+        "debts": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/debt"
+          }
+        },
+        "recurringRules": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "$ref": "#/$defs/recurringRule"
+          }
+        },
+        "accounts": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/account"
+          },
+          "minItems": 1
+        },
+        "categories": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/category"
+          },
+          "minItems": 1
+        },
+        "budgets": {
+          "type": "array",
+          "maxItems": 240,
+          "items": {
+            "$ref": "#/$defs/budget"
+          },
+          "minItems": 1
+        },
+        "goals": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/goal"
+          }
+        },
+        "annualCommitments": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "scheduledExpenses": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "transactions": {
+          "type": "array",
+          "maxItems": 50000,
+          "items": {
+            "$ref": "#/$defs/transaction"
+          }
+        }
+      }
+    },
+    "occurrence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "recurringRuleId",
+        "occurredOn"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "recurringRuleId": {
+          "$ref": "#/$defs/id"
+        },
+        "occurredOn": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    },
+    "watermark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recurringRuleId",
+        "date"
+      ],
+      "properties": {
+        "recurringRuleId": {
+          "$ref": "#/$defs/id"
+        },
+        "date": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    },
+    "skip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recurringRuleId",
+        "date",
+        "reason"
+      ],
+      "properties": {
+        "recurringRuleId": {
+          "$ref": "#/$defs/id"
+        },
+        "date": {
+          "$ref": "#/$defs/date"
+        },
+        "reason": {
+          "enum": [
+            "missing_rate",
+            "archived_account",
+            "archived_category",
+            "limit"
+          ]
+        }
+      }
+    },
+    "categoryMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "categoryId",
+        "availableMinor",
+        "expenseMinor",
+        "refundMinor",
+        "actualMinor",
+        "remainingMinor",
+        "usageBasisPoints",
+        "status"
+      ],
+      "properties": {
+        "categoryId": {
+          "$ref": "#/$defs/id"
+        },
+        "availableMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "expenseMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "refundMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "actualMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "remainingMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "usageBasisPoints": {
+          "$ref": "#/$defs/basisPoints"
+        },
+        "status": {
+          "enum": [
+            "no_plan",
+            "normal",
+            "near_limit",
+            "exhausted",
+            "over_limit"
+          ]
+        }
+      }
+    },
+    "debtMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "debtId",
+        "outMinor",
+        "inMinor",
+        "balanceMinor",
+        "balanceInBaseMinor",
+        "overdue"
+      ],
+      "properties": {
+        "debtId": {
+          "$ref": "#/$defs/id"
+        },
+        "outMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "inMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "balanceMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "balanceInBaseMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "overdue": {
+          "type": "boolean"
+        }
+      }
+    },
+    "holdingMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accountId",
+        "balanceMinor",
+        "balanceInBaseMinor"
+      ],
+      "properties": {
+        "accountId": {
+          "$ref": "#/$defs/id"
+        },
+        "balanceMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "balanceInBaseMinor": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "tagMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tagId",
+        "incomeMinor",
+        "expenseMinor",
+        "refundMinor",
+        "actualMinor",
+        "transactionCount"
+      ],
+      "properties": {
+        "tagId": {
+          "$ref": "#/$defs/id"
+        },
+        "incomeMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "expenseMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "refundMinor": {
+          "$ref": "#/$defs/nonNegativeMoney"
+        },
+        "actualMinor": {
+          "$ref": "#/$defs/money"
+        },
+        "transactionCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "materialization",
+        "budget",
+        "debts",
+        "holdings",
+        "tags"
+      ],
+      "properties": {
+        "materialization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "occurrences",
+            "materializedThrough",
+            "skipped",
+            "createdOnRepeat"
+          ],
+          "properties": {
+            "occurrences": {
+              "type": "array",
+              "maxItems": 10000,
+              "items": {
+                "$ref": "#/$defs/occurrence"
+              }
+            },
+            "materializedThrough": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {
+                "$ref": "#/$defs/watermark"
+              }
+            },
+            "skipped": {
+              "type": "array",
+              "maxItems": 10000,
+              "items": {
+                "$ref": "#/$defs/skip"
+              }
+            },
+            "createdOnRepeat": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "budgetId",
+            "incomeMinor",
+            "grossExpensesMinor",
+            "refundsMinor",
+            "expensesMinor",
+            "plannedExpenseMinor",
+            "executionBasisPoints",
+            "capitalMinor",
+            "accountBalances",
+            "categories",
+            "goalContributions"
+          ],
+          "properties": {
+            "budgetId": {
+              "$ref": "#/$defs/id"
+            },
+            "incomeMinor": {
+              "$ref": "#/$defs/nonNegativeMoney"
+            },
+            "grossExpensesMinor": {
+              "$ref": "#/$defs/nonNegativeMoney"
+            },
+            "refundsMinor": {
+              "$ref": "#/$defs/nonNegativeMoney"
+            },
+            "expensesMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "plannedExpenseMinor": {
+              "$ref": "#/$defs/nonNegativeMoney"
+            },
+            "executionBasisPoints": {
+              "$ref": "#/$defs/basisPoints"
+            },
+            "capitalMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "accountBalances": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "accountId",
+                  "balanceMinor"
+                ],
+                "properties": {
+                  "accountId": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "balanceMinor": {
+                    "$ref": "#/$defs/money"
+                  }
+                }
+              }
+            },
+            "categories": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "$ref": "#/$defs/categoryMetrics"
+              }
+            },
+            "goalContributions": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "goalId",
+                  "contributedMinor"
+                ],
+                "properties": {
+                  "goalId": {
+                    "$ref": "#/$defs/id"
+                  },
+                  "contributedMinor": {
+                    "$ref": "#/$defs/nonNegativeMoney"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "debts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "debts",
+            "receivableInBaseMinor",
+            "payableInBaseMinor",
+            "netInBaseMinor",
+            "unvaluedDebtIds"
+          ],
+          "properties": {
+            "debts": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "$ref": "#/$defs/debtMetrics"
+              }
+            },
+            "receivableInBaseMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "payableInBaseMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "netInBaseMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "unvaluedDebtIds": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        },
+        "holdings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accounts",
+            "totalInBaseMinor",
+            "unvaluedAccountIds",
+            "netWorthInBaseMinor"
+          ],
+          "properties": {
+            "accounts": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "$ref": "#/$defs/holdingMetrics"
+              }
+            },
+            "totalInBaseMinor": {
+              "$ref": "#/$defs/money"
+            },
+            "unvaluedAccountIds": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "$ref": "#/$defs/id"
+              }
+            },
+            "netWorthInBaseMinor": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "$ref": "#/$defs/tagMetrics"
+          }
+        }
+      }
+    }
+  }
+}

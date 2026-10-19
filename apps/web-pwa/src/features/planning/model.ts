@@ -1,5 +1,10 @@
 import {
   calculateAnnualPlan,
+  COLLECTION_LIMITS,
+  documentIds,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MIN_LOCAL_DATE,
   type AnnualCommitment,
   type BudgetLine,
   type BudgetState,
@@ -8,17 +13,22 @@ import {
   type ScheduledExpense,
 } from "@family-budget/domain";
 import { parseMoney } from "../../money";
+import { BudgetWriteRefusal } from "../../write-refusal";
 
+/**
+ * Пределы, которыми план ограничивает рост: сколько крупных платежей, расписаний, категорий и
+ * повседневных лимитов он даёт завести. Существующий документ, в котором записей больше, план не
+ * отвергает — правка и архив работают всегда (см. `validateResult`).
+ *
+ * `budgetLines` — строк в одном бюджете, `totalBudgetLines` — во всех вместе, как в домене.
+ */
 export const PLANNING_LIMITS = {
   nameLength: 80,
-  accounts: 100,
   categories: 500,
-  budgets: 120,
-  goals: 1_000,
   commitments: 500,
   schedules: 500,
   budgetLines: 500,
-  transactions: 10_000,
+  totalBudgetLines: COLLECTION_LIMITS.budgetLines,
 } as const;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -116,6 +126,11 @@ function assertLocalDate(value: string): string {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
     return fail("dueDate", "Выберите существующую календарную дату.");
   }
+  // Окно календаря, которое переносит журнал семьи: дату за его пределами запись приняла бы, а
+  // синхронизация потом отвергла бы на каждом устройстве. Старые документы читаются как раньше.
+  if (!isWithinDateWindow(value)) {
+    return fail("dueDate", `Выберите дату с ${MIN_LOCAL_DATE.slice(0, 4)} по ${MAX_LOCAL_DATE.slice(0, 4)} год.`);
+  }
   return value;
 }
 
@@ -133,16 +148,9 @@ function allDocumentIds(state: BudgetState): Set<string> {
     if (ids.has(id)) fail("id", "Документ содержит повторяющийся идентификатор.");
     ids.add(id);
   };
-  state.accounts.forEach((item) => accept(item.id));
-  state.categories.forEach((item) => accept(item.id));
-  state.budgets.forEach((item) => {
-    accept(item.id);
-    item.lines.forEach((line) => accept(line.id));
-  });
-  state.goals.forEach((item) => accept(item.id));
-  state.annualCommitments.forEach((item) => accept(item.id));
-  state.scheduledExpenses.forEach((item) => accept(item.id));
-  state.transactions.forEach((item) => accept(item.id));
+  // The domain's one census, so participants and tags are counted as well — see allDocumentIds in
+  // operations/model.ts.
+  documentIds(state).forEach(accept);
   return ids;
 }
 
@@ -153,16 +161,8 @@ function nextId(ids: Set<string>, makeId: PlanningIdFactory): string {
   return id;
 }
 
-function validateLimits(state: BudgetState): void {
-  if (state.accounts.length > PLANNING_LIMITS.accounts) fail("accounts", "Слишком много счетов.");
-  if (state.categories.length > PLANNING_LIMITS.categories) fail("categories", "Слишком много категорий.");
-  if (state.budgets.length > PLANNING_LIMITS.budgets) fail("budgets", "Слишком много бюджетных периодов.");
-  if (state.goals.length > PLANNING_LIMITS.goals) fail("goals", "Слишком много целей.");
-  if (state.annualCommitments.length > PLANNING_LIMITS.commitments) fail("commitments", "Слишком много крупных платежей.");
-  if (state.scheduledExpenses.length > PLANNING_LIMITS.schedules) fail("schedules", "Слишком много регулярных платежей.");
-  if (state.transactions.length > PLANNING_LIMITS.transactions) fail("transactions", "Слишком много операций для одного локального документа.");
-  const lines = state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
-  if (lines > PLANNING_LIMITS.budgetLines) fail("lines", "Слишком много повседневных лимитов.");
+function totalBudgetLines(state: BudgetState): number {
+  return state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
 }
 
 function activeAccount(state: BudgetState, id: string): void {
@@ -177,8 +177,13 @@ function activeExpenseCategory(state: BudgetState, id: string): void {
   }
 }
 
+/**
+ * Проверка всего документа после правки — без пределов числа записей: они ограничивают только рост
+ * (каждая функция `create…` проверяет свой вид), а документ, в котором записей больше предела,
+ * правится и архивируется как любой другой. Иначе одно слияние офлайн-правок семьи навсегда
+ * запрещало бы трогать план.
+ */
 function validateResult(state: BudgetState): BudgetState {
-  validateLimits(state);
   allDocumentIds(state);
   const activeBudget = state.budgets.find((budget) => budget.id === state.activeBudgetId);
   calculateAnnualPlan(state, activeBudget?.startDate.slice(0, 7), 24);
@@ -197,7 +202,6 @@ export function createCommitment(
   draft: CommitmentDraft,
   makeId: PlanningIdFactory = () => crypto.randomUUID(),
 ): BudgetState {
-  validateLimits(state);
   if (state.annualCommitments.length >= PLANNING_LIMITS.commitments) fail("commitments", "Достигнут лимит крупных платежей.");
   activeAccount(state, draft.accountId);
   activeExpenseCategory(state, draft.categoryId);
@@ -221,7 +225,6 @@ export function createCommitment(
 }
 
 export function editCommitment(state: BudgetState, id: string, draft: CommitmentDraft): BudgetState {
-  validateLimits(state);
   const current = state.annualCommitments.find((item) => item.id === id);
   if (!current) fail("id", "Крупный платёж не найден.");
   activeAccount(state, draft.accountId);
@@ -246,7 +249,6 @@ export function editCommitment(state: BudgetState, id: string, draft: Commitment
 }
 
 export function setCommitmentActive(state: BudgetState, id: string, active: boolean): BudgetState {
-  validateLimits(state);
   const current = state.annualCommitments.find((item) => item.id === id);
   if (!current) fail("id", "Крупный платёж не найден.");
   if (active) {
@@ -271,7 +273,6 @@ export function createSchedule(
   draft: ScheduleDraft,
   makeId: PlanningIdFactory = () => crypto.randomUUID(),
 ): BudgetState {
-  validateLimits(state);
   if (state.scheduledExpenses.length >= PLANNING_LIMITS.schedules) fail("schedules", "Достигнут лимит регулярных платежей.");
   activeAccount(state, draft.accountId);
   activeExpenseCategory(state, draft.categoryId);
@@ -292,7 +293,6 @@ export function createSchedule(
 }
 
 export function editSchedule(state: BudgetState, id: string, draft: ScheduleDraft): BudgetState {
-  validateLimits(state);
   if (!state.scheduledExpenses.some((item) => item.id === id)) fail("id", "Регулярный платёж не найден.");
   activeAccount(state, draft.accountId);
   activeExpenseCategory(state, draft.categoryId);
@@ -313,7 +313,6 @@ export function editSchedule(state: BudgetState, id: string, draft: ScheduleDraf
 }
 
 export function setScheduleActive(state: BudgetState, id: string, active: boolean): BudgetState {
-  validateLimits(state);
   const current = state.scheduledExpenses.find((item) => item.id === id);
   if (!current) fail("id", "Регулярный платёж не найден.");
   if (active) {
@@ -334,7 +333,6 @@ export function createFlexibleLine(
   draft: FlexibleDraft,
   makeId: PlanningIdFactory = () => crypto.randomUUID(),
 ): BudgetState {
-  validateLimits(state);
   const budget = activeBudget(state);
   const name = normalizeName(draft.name);
   const matchingCategory = state.categories.find((item) => item.active && item.type === "expense" && normalizedComparison(item.name) === normalizedComparison(name));
@@ -349,6 +347,7 @@ export function createFlexibleLine(
     );
   }
   if (budget.lines.length >= PLANNING_LIMITS.budgetLines) fail("lines", "Достигнут лимит повседневных категорий.");
+  if (totalBudgetLines(state) >= PLANNING_LIMITS.totalBudgetLines) fail("lines", "Достигнут лимит повседневных лимитов во всех месяцах.");
   if (!matchingCategory && state.categories.length >= PLANNING_LIMITS.categories) fail("categories", "Достигнут лимит категорий.");
   const ids = allDocumentIds(state);
   const categoryId = matchingCategory?.id ?? nextId(ids, makeId);
@@ -363,7 +362,6 @@ export function createFlexibleLine(
 }
 
 export function editFlexibleLine(state: BudgetState, lineId: string, draft: FlexibleDraft): BudgetState {
-  validateLimits(state);
   const budget = activeBudget(state);
   const line = budget.lines.find((item) => item.id === lineId);
   if (!line) fail("id", "Повседневный лимит не найден.");
@@ -380,7 +378,6 @@ export function editFlexibleLine(state: BudgetState, lineId: string, draft: Flex
 }
 
 export function archiveFlexibleLine(state: BudgetState, lineId: string): BudgetState {
-  validateLimits(state);
   const budget = activeBudget(state);
   const line = budget.lines.find((item) => item.id === lineId);
   if (!line) fail("id", "Повседневный лимит не найден.");
@@ -397,7 +394,6 @@ export function reactivateFlexibleLine(
   state: BudgetState,
   lineId: string,
 ): BudgetState {
-  validateLimits(state);
   const budget = activeBudget(state);
   const line = budget.lines.find((item) => item.id === lineId && item.active === false);
   if (!line) fail("id", "Архивный повседневный лимит не найден.");
@@ -465,5 +461,6 @@ export function planningError(error: unknown): PlanningErrorView {
   if (error instanceof PlanningValidationError) {
     return { field: error.field, message: error.message };
   }
+  if (error instanceof BudgetWriteRefusal) return { field: "form", message: error.userMessage };
   return { field: "form", message: "Не удалось сохранить изменение." };
 }

@@ -1,4 +1,11 @@
-import { makeSeedBudget, SEED_IDS, type BudgetState, type Transaction } from "@family-budget/domain";
+import {
+  makeSeedBudget,
+  materializeRecurring,
+  SEED_IDS,
+  type BudgetState,
+  type RecurringRule,
+  type Transaction,
+} from "@family-budget/domain";
 import type { JournalEntry } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
@@ -197,3 +204,79 @@ describe("семейная новость словами", () => {
     expect(lines[0]).toContain("1 перевод на");
   });
 });
+
+describe("семейная новость о регулярных операциях", () => {
+  const seed = makeSeedBudget();
+  const WATER: RecurringRule = {
+    id: "0000000d-0000-4000-8000-00000000d001",
+    name: "Доставка воды",
+    template: { kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food },
+    frequency: "weekly",
+    interval: 2,
+    startDate: "2026-07-07",
+    active: true,
+  };
+
+  it("вхождения правила — строка правила, а не участника, чьё устройство их записало", () => {
+    const ruled = withMembers({ ...seed, recurringRules: [WATER] }, [expense("t-b", 100_000)]);
+    const { state, created } = materializeRecurring(ruled, "2026-07-31");
+    expect(created).toHaveLength(2);
+    // Boris's device materialised both occurrences, so its header is on them in the journal.
+    const authors = authorsOfTransactions([
+      entry("t-b", DEVICE_BORIS, MEMBER_BORIS),
+      ...created.map((transaction) => entry(transaction.id, DEVICE_BORIS, MEMBER_BORIS)),
+    ]);
+    const news = familyNewsSince(transactionIds(seed), state, authors, ANNA);
+    expect(news).toHaveLength(3);
+    expect(familyNewsLines(news, membersById(state), state)).toEqual([
+      `Борис: 1 покупка на ${formatMoney(100_000)}`,
+      `По правилу «Доставка воды»: 2 покупки на ${formatMoney(300_000)}`,
+    ]);
+  });
+
+  it("правило без названия названо регулярной операцией, а не выдумано", () => {
+    const { name: _name, ...nameless } = WATER;
+    const { state, created } = materializeRecurring(withMembers({ ...seed, recurringRules: [nameless] }, []), "2026-07-31");
+    const authors = authorsOfTransactions(created.map((transaction) => entry(transaction.id, DEVICE_BORIS, MEMBER_BORIS)));
+    expect(familyNewsLines(familyNewsSince(transactionIds(seed), state, authors, ANNA), membersById(state), state))
+      .toEqual([`По регулярной операции: 2 покупки на ${formatMoney(300_000)}`]);
+  });
+
+  it("свои вхождения новостью не являются, как и любая своя запись", () => {
+    const { state, created } = materializeRecurring(withMembers({ ...seed, recurringRules: [WATER] }, []), "2026-07-31");
+    const authors = authorsOfTransactions(created.map((transaction) => entry(transaction.id, DEVICE_ANNA, MEMBER_ANNA)));
+    expect(familyNewsSince(transactionIds(seed), state, authors, ANNA)).toEqual([]);
+  });
+});
+
+describe("семейная новость о деньгах в другой валюте", () => {
+  const seed = makeSeedBudget();
+  const DOLLARS = "0000000d-0000-4000-8000-00000000d0a1";
+  const withDollars: BudgetState = {
+    ...seed,
+    accounts: [...seed.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+  };
+
+  it("складывает покупки по их цене в рублях, а перевод долларами называет без суммы", () => {
+    const dollarExpense: Transaction = {
+      ...expense("t-usd", 4_000), accountId: DOLLARS, baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+    } as Transaction;
+    const dollarTransfer = {
+      id: "t-usd-move", occurredOn: "2026-07-11", status: "posted", kind: "transfer", amountMinor: 1_000, fromAccountId: DOLLARS, toAccountId: SEED_IDS.accounts.main, toAmountMinor: 90_000,
+    } as Transaction;
+    const roubleTransfer = {
+      id: "t-rub-move", occurredOn: "2026-07-11", status: "posted", kind: "transfer", amountMinor: 500_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: SEED_IDS.accounts.savings,
+    } as Transaction;
+    const state = withMembers(withDollars, [expense("t-rub", 100_000), dollarExpense, dollarTransfer]);
+    const authors = authorsOfTransactions(["t-rub", "t-usd", "t-usd-move"].map((id) => entry(id, DEVICE_BORIS, MEMBER_BORIS)));
+    const news = familyNewsSince(transactionIds(seed), state, authors, ANNA);
+    // 1 000 ₽ and 40 $ at 90 ₽ are 4 600 ₽; the 10 $ transfer has no rouble value, so no sum is invented.
+    expect(familyNewsLines(news, membersById(state), state)).toEqual([
+      `Борис: 2 покупки на ${formatMoney(460_000)} и 1 перевод`,
+    ]);
+    const rouble = withMembers(withDollars, [roubleTransfer]);
+    const roubleNews = familyNewsSince(transactionIds(seed), rouble, authorsOfTransactions([entry("t-rub-move", DEVICE_BORIS, MEMBER_BORIS)]), ANNA);
+    expect(familyNewsLines(roubleNews, membersById(rouble), rouble)).toEqual([`Борис: 1 перевод на ${formatMoney(500_000)}`]);
+  });
+});
+

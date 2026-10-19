@@ -72,6 +72,20 @@ export interface LocalCommit<T> {
   readonly syncState?: readonly SyncStateEntry[];
 }
 
+/**
+ * A step of synchronisation that changed the queue or the bookkeeping and has no document to write:
+ * {@link LocalCommit} without the value, under the same compare-and-set.
+ */
+export type BookkeepingCommit = Omit<LocalCommit<never>, "value">;
+
+/**
+ * What a {@link BookkeepingCommit} did. `saved` carries the document exactly as it was left — absent
+ * when there was none — so a caller never has to read it again to know what it holds.
+ */
+export type BookkeepingCommitResult<T> =
+  | { readonly status: "saved"; readonly current: VersionedSnapshot<T> | null }
+  | { readonly status: "conflict"; readonly current: VersionedSnapshot<T> | null };
+
 export interface SyncRecordCounts {
   readonly outbox: number;
   readonly state: number;
@@ -889,6 +903,84 @@ export class IndexedDbBudgetRepository<T> {
               throw databaseError("Транзакция хранилища завершилась ошибкой.");
             }
             result = { status: "saved", value: stored.value, revision: nextRevision };
+          }
+        }
+      } catch (error) {
+        try {
+          transaction.abort();
+        } catch {
+          // The terminal transaction event owns settlement.
+        }
+        await settled.catch(() => undefined);
+        throw error instanceof Error ? error : databaseError("Ошибка локального хранилища.");
+      }
+      await settled;
+      return result;
+    }, DATABASE_SYNC_VERSION);
+  }
+
+  /**
+   * Writes the outgoing envelopes and the sync bookkeeping in one transaction, under the same
+   * compare-and-set as {@link commitWithSync}, and leaves the document exactly as it is.
+   *
+   * For the steps that change the journal and not what a device may show: a delivery the
+   * application's gate refused on a device that has never held a document, and the bookkeeping
+   * writes that follow it. Writing the journal's state there would put a budget the application
+   * refuses into the document, refused on every launch; writing nothing would lose the journal and
+   * the cursor. So the document stays absent — or as it was — and the rest is written, and a
+   * document that appeared or moved in between is a conflict exactly as it is for
+   * {@link commitWithSync}.
+   */
+  async commitBookkeeping(commit: BookkeepingCommit): Promise<BookkeepingCommitResult<T>> {
+    const appends = (commit.outbox ?? []).map((entry) => {
+      if (typeof entry.opId !== "string" || entry.opId.length === 0 || entry.opId.length > 128) {
+        throw databaseError("Идентификатор операции в очереди некорректен.");
+      }
+      return { opId: entry.opId, envelope: cloneForStorage(entry.envelope) };
+    });
+    const stateEntries = (commit.syncState ?? []).map((entry) => {
+      if (typeof entry.key !== "string" || entry.key.length === 0 || entry.key.length > 128) {
+        throw databaseError("Ключ состояния синхронизации некорректен.");
+      }
+      return { key: entry.key, value: cloneForStorage(entry.value) };
+    });
+
+    return this.withDatabase(async (database) => {
+      const transaction = database.transaction(
+        [STORE_NAME, SYNC_OUTBOX_STORE, SYNC_STATE_STORE],
+        "readwrite",
+      );
+      const settled = transactionComplete(transaction);
+      let result: BookkeepingCommitResult<T>;
+      try {
+        const current = await requestResult(
+          transaction.objectStore(STORE_NAME).get(ACTIVE_BUDGET_KEY) as IDBRequest<StoredDocument<T> | undefined>,
+        );
+        if (current && !isCurrentRevision(current.revision)) {
+          if (current.revision !== undefined) throw corruptRevisionError();
+          // Nothing here may give a legacy document its revision: that is a write of the document,
+          // and this commit does not write one. `loadVersioned` gives it one, and the caller retries.
+          result = { status: "conflict", current: null };
+        } else {
+          const snapshot = current ? { value: current.value, revision: current.revision! } : null;
+          const matches = snapshot
+            ? snapshot.revision === commit.expectedRevision
+            : commit.expectedRevision === null;
+          if (!matches) {
+            result = { status: "conflict", current: snapshot };
+          } else {
+            const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
+            const index = outbox.index(OUTBOX_OP_ID_INDEX);
+            for (const entry of appends) {
+              // The same rule as commitWithSync: a repeat of an identifier is a no-op, never an
+              // abort that would take the bookkeeping down with it.
+              const existing = await requestResult(index.getKey(entry.opId));
+              if (existing !== undefined) continue;
+              await requestResult(outbox.add(entry));
+            }
+            const state = transaction.objectStore(SYNC_STATE_STORE);
+            for (const entry of stateEntries) await requestResult(state.put(entry));
+            result = { status: "saved", current: snapshot };
           }
         }
       } catch (error) {

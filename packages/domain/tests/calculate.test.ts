@@ -5,13 +5,20 @@ import {
   calculateAnnualPlan,
   calculateBudget,
   calculateMemberExpenses,
+  HOUSEHOLD_ID,
   makePlanningSeed,
+  MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_SORT_ORDER,
+  MIN_LOCAL_DATE,
   makeSeedBudget,
   normalizeScheduledDueDate,
   PLANNING_IDS,
   SEED_IDS,
+  type Account,
   type BudgetState,
   type Category,
+  type ExchangeRate,
   type Transaction,
 } from "../src/index.js";
 
@@ -972,5 +979,449 @@ describe("calculateMemberExpenses", () => {
     expect(Object.keys(breakdown.byMember)).toEqual(["__proto__", "constructor"]);
     expect(breakdown.byMember["__proto__"]?.actualMinor).toBe(1_200_000);
     expect(breakdown.byMember["constructor"]?.actualMinor).toBe(800_000);
+  });
+});
+
+const TAG_HOLIDAY = "8a000000-0000-4000-8000-0000000000a1";
+const TAG_HOME = "8a000000-0000-4000-8000-0000000000a2";
+const TAG_OLD = "8a000000-0000-4000-8000-0000000000a3";
+
+/** Every new optional field at once: display fields, tags, notes. None of them is money. */
+function withEverythingLabelled(state: BudgetState): BudgetState {
+  return {
+    ...state,
+    tags: [
+      { id: TAG_HOLIDAY, name: "Отпуск", active: true },
+      { id: TAG_HOME, name: "Дом", active: true },
+      { id: TAG_OLD, name: "Старое", active: false },
+    ],
+    accounts: state.accounts.map((account, index) => ({
+      ...account,
+      sortOrder: (index + 1) * 10,
+      icon: "banknote",
+      color: "sage",
+      includeInTotal: index === 0,
+    })),
+    categories: state.categories.map((category) => ({ ...category, icon: "shopping-basket", color: "mint" })),
+    goals: state.goals.map((goal) => ({ ...goal, deadline: "2027-06-01", icon: "plane" })),
+    transactions: state.transactions.map((transaction, index) => ({
+      ...transaction,
+      note: `Заметка ${index + 1}`,
+      tagIds: index % 2 === 0 ? [TAG_HOLIDAY, TAG_OLD] : [TAG_HOME],
+    })),
+  };
+}
+
+function withTransaction(state: BudgetState, change: (transaction: Transaction) => Transaction): BudgetState {
+  const labelled = withEverythingLabelled(state);
+  return { ...labelled, transactions: [change(labelled.transactions[0]!), ...labelled.transactions.slice(1)] };
+}
+
+describe("labels and display fields", () => {
+  it("leave every canonical G-000, G-001 and G-002 figure exactly where it was", () => {
+    for (const fixture of [G000, G001, G002]) {
+      const plain = toDomainBudgetState(fixture) as BudgetState;
+      const labelled = withEverythingLabelled(plain);
+      expect(calculateBudget(labelled), fixture.fixtureId).toEqual(calculateBudget(plain));
+      expect(calculateMemberExpenses(labelled), fixture.fixtureId).toEqual(calculateMemberExpenses(plain));
+    }
+    const g002 = toDomainBudgetState(G002) as BudgetState;
+    expect(calculateAnnualPlan(withEverythingLabelled(g002), G002.startMonth, 24))
+      .toEqual(calculateAnnualPlan(g002, G002.startMonth, 24));
+  });
+
+  it("does not let includeInTotal touch capital", () => {
+    const seed = makeSeedBudget();
+    const excluded: BudgetState = { ...seed, accounts: seed.accounts.map((account) => ({ ...account, includeInTotal: false })) };
+    expect(calculateBudget(excluded).capitalMinor).toBe(calculateBudget(seed).capitalMinor);
+  });
+
+  it("accepts an archived tag on an operation, as an archived category is accepted", () => {
+    const state = withTransaction(makeSeedBudget(), (transaction) => ({ ...transaction, tagIds: [TAG_OLD] }));
+    expect(() => calculateBudget(state)).not.toThrow();
+  });
+
+  it("refuses a dangling tag, a repeated one, an empty list and more than ten, on every operation", () => {
+    const seed = makeSeedBudget();
+    const tagged = (tagIds: readonly string[]) => withTransaction(seed, (transaction) => ({ ...transaction, tagIds }));
+    const many = Array.from({ length: 11 }, (_, index) => `8a000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`);
+    const manyTags: BudgetState = {
+      ...tagged(many),
+      tags: [...(withEverythingLabelled(seed).tags ?? []), ...many.map((id, index) => ({ id, name: `Метка ${index}`, active: true }))],
+    };
+    const firstId = seed.transactions[0]!.id;
+
+    expect(() => calculateBudget(tagged(["8a000000-0000-4000-8000-0000000000ff"])))
+      .toThrow(new RegExp(`transaction ${firstId} tagIds references unknown id`));
+    expect(() => calculateBudget(tagged([TAG_HOME, TAG_HOME]))).toThrow(/tagIds repeats tag/);
+    expect(() => calculateBudget(tagged([]))).toThrow(/tagIds must list from 1 to 10 tags/);
+    expect(() => calculateBudget(manyTags)).toThrow(/tagIds must list from 1 to 10 tags/);
+    expect(() => calculateBudget({ ...manyTags, transactions: [{ ...manyTags.transactions[0]!, tagIds: many.slice(0, 10) }, ...manyTags.transactions.slice(1)] }))
+      .not.toThrow();
+    // Checked on a draft outside the window too, by the plan and the split as much as the budget.
+    const draft: Transaction = { ...seed.transactions[1]!, id: "55555555-5555-4555-8555-5555555555ff", status: "draft", occurredOn: "2027-01-01", tagIds: ["8a000000-0000-4000-8000-0000000000ff"] };
+    const withDraft: BudgetState = { ...withEverythingLabelled(seed), transactions: [...withEverythingLabelled(seed).transactions, draft] };
+    expect(() => calculateBudget(withDraft)).toThrow(/tagIds references unknown id/);
+    expect(() => calculateAnnualPlan(withDraft, "2026-07", 12)).toThrow(/tagIds references unknown id/);
+    expect(() => calculateMemberExpenses(withDraft)).toThrow(/tagIds references unknown id/);
+  });
+
+  it("refuses a note that is not stored the way normalizeNote stores one", () => {
+    const seed = makeSeedBudget();
+    for (const note of ["", " Пятёрочка", "Пятёрочка\nу дома", "Пятёрочка\u202e", "я".repeat(501)]) {
+      const state = withTransaction(seed, (transaction) => ({ ...transaction, note }));
+      expect(() => calculateBudget(state), JSON.stringify(note)).toThrow(/note must be one trimmed line of stored text of at most 500 characters/);
+    }
+  });
+
+  // Orchestrator step 12: rules are part of the model now, so the label is refused when it names a
+  // rule the state does not carry, not always; tests/recurring.test.ts accepts one that it does.
+  it("refuses a recurring-rule label that names no rule of the state", () => {
+    const state = withTransaction(makeSeedBudget(), (transaction) => ({ ...transaction, recurringRuleId: "8b000000-0000-4000-8000-000000000001" }));
+    expect(() => calculateBudget(state)).toThrow(/recurringRuleId references unknown id 8b000000-0000-4000-8000-000000000001/);
+  });
+
+  it("refuses a tag with a malformed name, a non-boolean flag or a repeated identifier", () => {
+    const seed = withEverythingLabelled(makeSeedBudget());
+    const withTags = (tags: unknown): BudgetState => ({ ...seed, tags } as BudgetState);
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: " Отпуск", active: true }])))
+      .toThrow(new RegExp(`tag ${TAG_HOLIDAY} name must be stored text`));
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "я".repeat(41), active: true }])))
+      .toThrow(/name must be stored text of at most 40 characters/);
+    expect(() => calculateBudget(withTags([{ id: TAG_HOLIDAY, name: "Отпуск", active: "yes" }])))
+      .toThrow(/active must be a boolean/);
+    expect(() => calculateBudget({ ...seed, tags: [...(seed.tags ?? []), seed.tags![0]!] }))
+      .toThrow(/tags contains duplicate id/);
+  });
+
+  it("refuses a display key that is not a design token and a sort order that is not an integer", () => {
+    const seed = makeSeedBudget();
+    const account = (change: Record<string, unknown>): BudgetState => ({
+      ...seed,
+      accounts: [{ ...seed.accounts[0]!, ...change } as BudgetState["accounts"][number], ...seed.accounts.slice(1)],
+    });
+    expect(() => calculateBudget(account({ icon: "#00ff00" }))).toThrow(/account .* icon must be a display key/);
+    expect(() => calculateBudget(account({ color: "Sage" }))).toThrow(/account .* color must be a display key/);
+    expect(() => calculateBudget(account({ sortOrder: 1.5 }))).toThrow(/account .* sortOrder must be an integer/);
+    expect(() => calculateBudget(account({ includeInTotal: "no" }))).toThrow(/includeInTotal must be a boolean/);
+    expect(() => calculateAnnualPlan(account({ icon: "icon.svg" }), "2026-07", 12)).toThrow(/icon must be a display key/);
+    expect(() => calculateBudget({ ...seed, categories: [{ ...seed.categories[0]!, color: "" }, ...seed.categories.slice(1)] }))
+      .toThrow(/category .* color must be a display key/);
+    expect(() => calculateBudget({ ...seed, goals: [{ ...seed.goals[0]!, icon: "Plane" }] }))
+      .toThrow(/goal .* icon must be a display key/);
+    expect(() => calculateBudget({ ...seed, goals: [{ ...seed.goals[0]!, deadline: "2027-02-29" }] }))
+      .toThrow(/goal .* deadline must be a valid calendar date/);
+  });
+});
+
+const USD_ACCOUNT = "8c000000-0000-4000-8000-0000000000a2";
+const RATE_JULY = "8e000000-0000-4000-8000-000000000001";
+const RATE_AUGUST = "8e000000-0000-4000-8000-000000000002";
+const USD_EXPENSE = "8d000000-0000-4000-8000-000000000003";
+const USD_REFUND = "8d000000-0000-4000-8000-000000000004";
+
+const USD_RATES: readonly ExchangeRate[] = [
+  { id: RATE_JULY, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } },
+  { id: RATE_AUGUST, currency: "USD", baseCurrency: "RUB", date: "2026-07-15", rate: { baseMinor: 9_250, quoteMinor: 100 } },
+];
+
+/**
+ * The seed with a dollar account beside the rouble ones: 500,00 $ opening, a 40,00 $ purchase of
+ * food worth 3 600 ₽ that day and a 10,00 $ refund of it worth 900 ₽ — the shape of G-003.
+ */
+function withDollars(state: BudgetState = makeSeedBudget(), foodId: string = SEED_IDS.categories.food): BudgetState {
+  const usd: Account = { id: USD_ACCOUNT, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true };
+  const snapshot = (baseAmountMinor: number) => ({ baseAmountMinor, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 } });
+  return {
+    ...state,
+    exchangeRates: USD_RATES,
+    accounts: [...state.accounts, usd],
+    transactions: [
+      ...state.transactions,
+      { id: USD_EXPENSE, occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_000, accountId: USD_ACCOUNT, categoryId: foodId, ...snapshot(360_000) },
+      { id: USD_REFUND, occurredOn: "2026-07-12", status: "posted", kind: "refund", amountMinor: 1_000, accountId: USD_ACCOUNT, categoryId: foodId, originalTransactionId: USD_EXPENSE, ...snapshot(90_000) },
+    ],
+  };
+}
+
+function replaceTransaction(state: BudgetState, id: string, change: (transaction: Transaction) => Transaction): BudgetState {
+  return { ...state, transactions: state.transactions.map((item) => (item.id === id ? change(item) : item)) };
+}
+
+function withoutSnapshot(transaction: Transaction): Transaction {
+  if (transaction.kind !== "income" && transaction.kind !== "expense" && transaction.kind !== "refund") return transaction;
+  const { baseAmountMinor: _amount, baseCurrency: _currency, rate: _rate, ...plain } = transaction;
+  return plain;
+}
+
+describe("several currencies", () => {
+  it("counts a foreign operation in the budget by its snapshot and on its account by its amount", () => {
+    const seed = calculateBudget(makeSeedBudget());
+    const metrics = calculateBudget(withDollars());
+    const food = metrics.categoryMetrics[SEED_IDS.categories.food]!;
+
+    expect(metrics.grossExpensesMinor).toBe(seed.grossExpensesMinor + 360_000);
+    expect(metrics.refundsMinor).toBe(seed.refundsMinor + 90_000);
+    expect(metrics.expensesMinor).toBe(seed.expensesMinor + 270_000);
+    expect(food.expenseMinor).toBe(3_150_000 + 360_000);
+    expect(food.refundMinor).toBe(90_000);
+    expect(food.actualMinor).toBe(3_150_000 + 270_000);
+    // The account moves in dollars: 500 − 40 + 10.
+    expect(metrics.accountBalancesMinor[USD_ACCOUNT]).toBe(47_000);
+  });
+
+  it("leaves capital to the accounts in the base currency", () => {
+    const seed = calculateBudget(makeSeedBudget());
+    const metrics = calculateBudget(withDollars());
+    expect(metrics.capitalMinor).toBe(seed.capitalMinor);
+    // Mixing the units would have added 470 dollars to the roubles as 470 kopecks.
+    expect(metrics.capitalMinor).not.toBe(seed.capitalMinor + 47_000);
+  });
+
+  it("does not let a new rate revalue an operation of the past", () => {
+    const state = withDollars();
+    const revalued: BudgetState = {
+      ...state,
+      exchangeRates: state.exchangeRates!.map((rate) => ({ ...rate, rate: { baseMinor: 9_500, quoteMinor: 100 } })),
+    };
+    expect(calculateBudget(revalued)).toEqual(calculateBudget(state));
+    expect(calculateMemberExpenses(revalued)).toEqual(calculateMemberExpenses(state));
+    expect(calculateBudget({ ...state, exchangeRates: [] })).toEqual(calculateBudget(state));
+  });
+
+  it("refuses a foreign operation without a snapshot, with part of one, or with one in another base", () => {
+    const state = withDollars();
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, withoutSnapshot)))
+      .toThrow(new RegExp(`transaction ${USD_EXPENSE} on an account in USD must carry baseAmountMinor, baseCurrency and rate together`));
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => {
+      const { rate: _rate, ...partial } = item as Extract<Transaction, { kind: "expense" }>;
+      return partial;
+    }))).toThrow(/must carry baseAmountMinor, baseCurrency and rate together/);
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseCurrency: "EUR" }))))
+      .toThrow(/snapshot must be in the base currency RUB/);
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor: 0 }))))
+      .toThrow(/baseAmountMinor must be greater than zero/);
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, rate: { baseMinor: 0, quoteMinor: 100 } }))))
+      .toThrow(/rate parts must be integers from 1 to 1000000000000/);
+    // A draft outside the window is held to it as well, by every calculation.
+    const draft = replaceTransaction(state, USD_REFUND, (item) => ({ ...withoutSnapshot(item), status: "draft", occurredOn: "2027-01-01" }));
+    expect(() => calculateBudget(draft)).toThrow(/must carry baseAmountMinor/);
+    expect(() => calculateMemberExpenses(draft)).toThrow(/must carry baseAmountMinor/);
+    expect(() => calculateAnnualPlan(draft, "2026-07", 12)).toThrow(/must carry baseAmountMinor/);
+  });
+
+  it("refuses a snapshot on an operation in the base currency", () => {
+    const seed = makeSeedBudget();
+    const doubled = replaceTransaction(seed, SEED_IDS.transactions.food, (item) => ({
+      ...item, baseAmountMinor: 3_150_000, baseCurrency: "RUB", rate: { baseMinor: 1, quoteMinor: 1 },
+    }));
+    expect(() => calculateBudget(doubled))
+      .toThrow(new RegExp(`transaction ${SEED_IDS.transactions.food} is in the base currency and must not carry a base-currency snapshot`));
+  });
+
+  it("asks a transfer between two currencies for the amount that arrived, and only then", () => {
+    const state = withDollars();
+    const transfer: Transaction = {
+      id: "8d000000-0000-4000-8000-000000000006", occurredOn: "2026-07-05", status: "posted", kind: "transfer",
+      amountMinor: 1_800_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: USD_ACCOUNT, toAmountMinor: 20_000,
+    };
+    const metrics = calculateBudget({ ...state, transactions: [...state.transactions, transfer] });
+    expect(metrics.accountBalancesMinor[USD_ACCOUNT]).toBe(47_000 + 20_000);
+    expect(metrics.accountBalancesMinor[SEED_IDS.accounts.main]).toBe(calculateBudget(state).accountBalancesMinor[SEED_IDS.accounts.main]! - 1_800_000);
+    // A transfer is not income or expense in any currency.
+    expect(metrics.expensesMinor).toBe(calculateBudget(state).expensesMinor);
+
+    const { toAmountMinor: _arrived, ...missing } = transfer;
+    expect(() => calculateBudget({ ...state, transactions: [...state.transactions, missing] }))
+      .toThrow(/moves from RUB to USD and must carry toAmountMinor/);
+    const inRoubles: Transaction = { ...transfer, toAccountId: SEED_IDS.accounts.savings };
+    expect(() => calculateBudget({ ...state, transactions: [...state.transactions, inRoubles] }))
+      .toThrow(/moves within one currency and must not carry toAmountMinor/);
+    expect(() => calculateBudget({ ...state, transactions: [...state.transactions, { ...transfer, toAmountMinor: -1 }] }))
+      .toThrow(/toAmountMinor must be greater than zero/);
+  });
+
+  it("keeps a goal contribution inside one currency", () => {
+    const state = withDollars();
+    const contribution = replaceTransaction(state, SEED_IDS.transactions.goal, (item) => ({ ...item, fromAccountId: USD_ACCOUNT }));
+    expect(() => calculateBudget(contribution)).toThrow(/must move between two accounts in one currency/);
+  });
+
+  it("keeps goals, large payments and schedules on accounts in the base currency", () => {
+    const state = withDollars(makePlanningSeed(), PLANNING_IDS.categories.food);
+    expect(() => calculateAnnualPlan(state, "2026-07", 12)).not.toThrow();
+    const goal: BudgetState = { ...state, goals: state.goals.map((item) => ({ ...item, linkedAccountId: USD_ACCOUNT })) };
+    expect(() => calculateBudget(goal)).toThrow(/goal .* must use an account in the base currency RUB/);
+    expect(() => calculateAnnualPlan(goal, "2026-07", 12)).toThrow(/goal .* must use an account in the base currency RUB/);
+    const commitment: BudgetState = {
+      ...state,
+      annualCommitments: state.annualCommitments.map((item, index) => (index === 0 ? { ...item, accountId: USD_ACCOUNT } : item)),
+    };
+    expect(() => calculateAnnualPlan(commitment, "2026-07", 12)).toThrow(/annual commitment .* must use an account in the base currency RUB/);
+    const schedule: BudgetState = {
+      ...state,
+      scheduledExpenses: state.scheduledExpenses.map((item, index) => (index === 0 ? { ...item, accountId: USD_ACCOUNT } : item)),
+    };
+    expect(() => calculateAnnualPlan(schedule, "2026-07", 12)).toThrow(/scheduled expense .* must use an account in the base currency RUB/);
+    // The budget itself does not read plans, and its errors stay what they were.
+    expect(() => calculateBudget(commitment)).not.toThrow();
+  });
+
+  it("splits foreign expenses by participant in the base currency, and the split still adds up", () => {
+    const state = withDollars();
+    const member = "8f000000-0000-4000-8000-000000000001";
+    const attributed: BudgetState = {
+      ...replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, memberId: member })),
+      members: [{ id: member, name: "Анна", role: "owner", active: true }],
+    };
+    const split = calculateMemberExpenses(attributed);
+    expect(split.byMember[member]?.expenseMinor).toBe(360_000);
+    expect(split.attributedMinor + split.unattributed.actualMinor).toBe(split.expensesMinor);
+    expect(split.expensesMinor).toBe(calculateBudget(attributed).expensesMinor);
+  });
+
+  it("counts everything in the household's base currency when it names one", () => {
+    const state = withDollars();
+    const inDollars: BudgetState = { ...state, household: { id: HOUSEHOLD_ID, baseCurrency: "USD" } };
+    // Now the rouble accounts are the foreign ones: the goal on one is a plan in another currency,
+    // and their operations carry no snapshot.
+    expect(() => calculateBudget(inDollars)).toThrow(/goal .* must use an account in the base currency USD/);
+    expect(() => calculateMemberExpenses(inDollars)).toThrow(/on an account in RUB must carry baseAmountMinor/);
+    expect(() => calculateBudget({ ...state, household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" } })).not.toThrow();
+    expect(calculateBudget({ ...state, household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" } })).toEqual(calculateBudget(state));
+  });
+
+  it("refuses a household under another identifier or in a currency it does not know", () => {
+    const seed = makeSeedBudget();
+    expect(() => calculateBudget({ ...seed, household: { id: "8f000000-0000-4000-8000-0000000000ff", baseCurrency: "RUB" } }))
+      .toThrow(new RegExp(`household id must be ${HOUSEHOLD_ID}`));
+    expect(() => calculateMemberExpenses({ ...seed, household: { id: HOUSEHOLD_ID, baseCurrency: "XYZ" } }))
+      .toThrow(/household baseCurrency has unknown value XYZ/);
+  });
+
+  it("refuses an account in a currency it does not know", () => {
+    const seed = makeSeedBudget();
+    const unknown: BudgetState = { ...seed, accounts: seed.accounts.map((item, index) => (index === 1 ? { ...item, currency: "XYZ" } : item)) };
+    expect(() => calculateBudget(unknown)).toThrow(/account .* currency has unknown value XYZ/);
+    expect(() => calculateBudget({ ...seed, accounts: seed.accounts.map((item) => ({ ...item, currency: "rub" })) }))
+      .toThrow(/currency has unknown value rub/);
+  });
+
+  it("refuses an exchange rate that values a currency in itself, in nothing, or by a part it does not store", () => {
+    const state = withDollars();
+    const withRate = (change: Partial<ExchangeRate>): BudgetState => ({ ...state, exchangeRates: [{ ...USD_RATES[0]!, ...change }] });
+    expect(() => calculateBudget(withRate({ currency: "RUB" }))).toThrow(/must value one currency in another/);
+    expect(() => calculateBudget(withRate({ currency: "XYZ" }))).toThrow(/exchange rate .* currency has unknown value XYZ/);
+    expect(() => calculateBudget(withRate({ baseCurrency: "rub" }))).toThrow(/baseCurrency has unknown value rub/);
+    expect(() => calculateBudget(withRate({ date: "2026-02-30" }))).toThrow(/exchange rate .* date must be a valid calendar date/);
+    expect(() => calculateBudget(withRate({ rate: { baseMinor: 9_000, quoteMinor: 10 ** 12 + 1 } }))).toThrow(/rate parts must be integers/);
+    expect(() => calculateBudget({ ...state, exchangeRates: [USD_RATES[0]!, USD_RATES[0]!] })).toThrow(/exchangeRates contains duplicate id/);
+    // A rate against another base is kept and simply never chosen.
+    expect(() => calculateBudget(withRate({ baseCurrency: "EUR" }))).not.toThrow();
+  });
+});
+
+describe("bounds shared with the journal", () => {
+  it("holds the new fields to the window and the ceilings the codec carries, and no further", () => {
+    const seed = makeSeedBudget();
+    const account = (sortOrder: number): BudgetState => ({
+      ...seed,
+      accounts: [{ ...seed.accounts[0]!, sortOrder }, ...seed.accounts.slice(1)],
+    });
+    expect(() => calculateBudget(account(MAX_SORT_ORDER))).not.toThrow();
+    expect(() => calculateBudget(account(-MAX_SORT_ORDER))).not.toThrow();
+    expect(() => calculateBudget(account(MAX_SORT_ORDER + 1))).toThrow(/sortOrder must be from -1000000 to 1000000/);
+    expect(() => calculateBudget(account(-MAX_SORT_ORDER - 1))).toThrow(/sortOrder must be from -1000000 to 1000000/);
+
+    const deadline = (value: string): BudgetState => ({ ...seed, goals: [{ ...seed.goals[0]!, deadline: value }] });
+    expect(() => calculateBudget(deadline(MIN_LOCAL_DATE))).not.toThrow();
+    expect(() => calculateBudget(deadline(MAX_LOCAL_DATE))).not.toThrow();
+    expect(() => calculateBudget(deadline("2200-01-01"))).toThrow(/deadline must be from 1900-01-01 to 2199-12-31/);
+    expect(() => calculateBudget(deadline("1899-12-31"))).toThrow(/deadline must be from 1900-01-01 to 2199-12-31/);
+
+    const state = withDollars();
+    const rateOn = (date: string): BudgetState => ({ ...state, exchangeRates: [{ ...USD_RATES[0]!, date }] });
+    expect(() => calculateBudget(rateOn("2200-01-01"))).toThrow(/exchange rate .* date must be from 1900-01-01 to 2199-12-31/);
+    // A base sum is always the amount at its rate, so a sum entered by hand is written as the rate
+    // {baseMinor: sum, quoteMinor: amount}; at the ceiling and past it.
+    const valuedAt = (baseAmountMinor: number) => (item: Transaction): Transaction =>
+      ({ ...item, baseAmountMinor, rate: { baseMinor: baseAmountMinor, quoteMinor: item.amountMinor } }) as Transaction;
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, valuedAt(MAX_MONEY_MINOR)))).not.toThrow();
+    expect(() => calculateBudget(replaceTransaction(state, USD_EXPENSE, valuedAt(MAX_MONEY_MINOR + 1))))
+      .toThrow(/baseAmountMinor must be at most 10000000000/);
+    const transfer: Transaction = {
+      id: "8d000000-0000-4000-8000-000000000006", occurredOn: "2026-07-05", status: "posted", kind: "transfer",
+      amountMinor: 1_800_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: USD_ACCOUNT, toAmountMinor: MAX_MONEY_MINOR + 1,
+    };
+    expect(() => calculateBudget({ ...state, transactions: [...state.transactions, transfer] }))
+      .toThrow(/toAmountMinor must be at most 10000000000/);
+  });
+
+  it("holds every operation of the new model to the codec's amount and window, and only those", () => {
+    // A debt movement, a foreign purchase, a transfer between currencies and one between two dollar
+    // accounts: none of them can be in a 1.0.0 document, so the domain bounds them itself instead of
+    // leaving the bound to the codec, which refused them at the first sync and stranded the value.
+    const state = withDollars();
+    const other: Account = { id: "8c000000-0000-4000-8000-0000000000a3", name: "Доллары 2", type: "cash", currency: "USD", openingBalanceMinor: 0, active: true };
+    const debt = { id: "8f000000-0000-4000-8000-0000000000d1", counterparty: "Петя", direction: "owed_to_me" as const, currency: "RUB", openingMinor: 0, active: true };
+    const base: BudgetState = { ...state, accounts: [...state.accounts, other], debts: [debt] };
+    const operations: readonly (readonly [string, Transaction])[] = [
+      ["a debt movement", { id: "8d000000-0000-4000-8000-0000000000e1", occurredOn: "2026-07-09", status: "posted", kind: "debt_out", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId: debt.id }],
+      ["a transfer between currencies", { id: "8d000000-0000-4000-8000-0000000000e2", occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_800_000, fromAccountId: SEED_IDS.accounts.main, toAccountId: USD_ACCOUNT, toAmountMinor: 20_000 }],
+      ["a transfer between dollar accounts", { id: "8d000000-0000-4000-8000-0000000000e3", occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_000, fromAccountId: USD_ACCOUNT, toAccountId: other.id }],
+      ["a foreign purchase", { id: "8d000000-0000-4000-8000-0000000000e4", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 100, accountId: USD_ACCOUNT, categoryId: SEED_IDS.categories.food, baseAmountMinor: 9_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+    ];
+    for (const [label, operation] of operations) {
+      const withOperation = (change: Partial<Transaction>): BudgetState =>
+        ({ ...base, transactions: [...base.transactions, { ...operation, ...change } as Transaction] });
+      expect(() => calculateBudget(withOperation({})), label).not.toThrow();
+      expect(() => calculateBudget(withOperation({ occurredOn: MIN_LOCAL_DATE })), label).not.toThrow();
+      expect(() => calculateBudget(withOperation({ occurredOn: MAX_LOCAL_DATE })), label).not.toThrow();
+      for (const occurredOn of ["1899-12-31", "2200-01-01"]) {
+        expect(() => calculateMemberExpenses(withOperation({ occurredOn })), `${label} ${occurredOn}`).toThrow(/occurredOn must be from 1900-01-01 to 2199-12-31/);
+      }
+      // The snapshot of the purchase would move with its amount; the bound is reached first.
+      const huge = operation.kind === "expense"
+        ? { amountMinor: MAX_MONEY_MINOR + 1, baseAmountMinor: 1, rate: { baseMinor: 1, quoteMinor: MAX_MONEY_MINOR + 1 } }
+        : { amountMinor: MAX_MONEY_MINOR + 1 };
+      expect(() => calculateBudget(withOperation(huge as Partial<Transaction>)), label).toThrow(/amountMinor must be at most 10000000000/);
+    }
+    // A rouble purchase of 1.0.0 keeps the fields it always had: an amount past the ceiling is still read.
+    const legacy = { ...base.transactions[0]!, id: "8d000000-0000-4000-8000-0000000000e5", amountMinor: MAX_MONEY_MINOR * 3 } as Transaction;
+    expect(() => calculateBudget({ ...base, transactions: [...base.transactions, legacy] })).not.toThrow();
+  });
+
+  it("refuses a snapshot that is not the amount at its rate, and accepts a sum entered by hand as its own rate", () => {
+    const state = withDollars();
+    const snapshot = (baseAmountMinor: number, rate: { baseMinor: number; quoteMinor: number }) =>
+      replaceTransaction(state, USD_EXPENSE, (item) => ({ ...item, baseAmountMinor, rate }) as Transaction);
+    // 40,00 $ at 90 ₽ is 3 600 ₽, not a kopeck more or less.
+    for (const wrong of [359_999, 360_001, 1]) {
+      expect(() => calculateBudget(snapshot(wrong, { baseMinor: 9_000, quoteMinor: 100 })), String(wrong))
+        .toThrow(/baseAmountMinor must be amountMinor at its rate, 360000/);
+    }
+    // Rounded half-up once, as the contracts round: 25,55 $ at 92,50 ₽ is 2 363,375 ₽ → 2 363,38 ₽.
+    const rounded = replaceTransaction(state, USD_EXPENSE, (item) =>
+      ({ ...item, amountMinor: 2_555, baseAmountMinor: 236_338, rate: { baseMinor: 9_250, quoteMinor: 100 } }) as Transaction);
+    expect(() => calculateBudget(rounded)).not.toThrow();
+    // A family that paid 3 650 ₽ for its 40 $ writes the rate it paid at, and the equality holds.
+    expect(() => calculateBudget(snapshot(365_000, { baseMinor: 365_000, quoteMinor: 4_000 }))).not.toThrow();
+    // A rate at which the amount leaves the safe range is no rate for any snapshot: 100,00 $ at a
+    // trillion kopecks a cent is 10^16 kopecks.
+    const runaway = replaceTransaction(state, USD_EXPENSE, (item) =>
+      ({ ...item, amountMinor: 10_000, baseAmountMinor: 1, rate: { baseMinor: 10 ** 12, quoteMinor: 1 } }) as Transaction);
+    expect(() => calculateBudget(runaway)).toThrow(/baseAmountMinor must be amountMinor at its rate, beyond the safe range/);
+  });
+
+  it("leaves the fields that existed before the window as they were, so an old document still opens", () => {
+    // A 1.0.0 document may hold an operation dated outside the window and a category sorted past the
+    // bound; the codec refuses them on the wire, the domain keeps reading them.
+    const seed = makeSeedBudget();
+    const old: BudgetState = {
+      ...seed,
+      categories: seed.categories.map((item, index) => (index === 0 ? { ...item, sortOrder: 2_000_000 } : item)),
+      transactions: [...seed.transactions, { ...seed.transactions[2]!, id: "55555555-5555-4555-8555-5555555555aa", status: "draft", occurredOn: "2250-01-01" }],
+    };
+    expect(() => calculateBudget(old)).not.toThrow();
   });
 });

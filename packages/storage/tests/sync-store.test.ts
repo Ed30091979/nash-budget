@@ -207,6 +207,39 @@ describe("хранилище синхронизации (схема 3)", () => {
     expect(await repository.readSyncState("cursor")).toBeUndefined();
   });
 
+  it("пишет очередь и состояние синхронизации без документа, под тем же сравнением ревизии", async () => {
+    const repository = new IndexedDbBudgetRepository<Doc>({ databaseName: name("bookkeeping") });
+
+    // No document, none expected: the queue and the cursor are written, and the document stays absent.
+    const empty = await repository.commitBookkeeping({
+      expectedRevision: null,
+      outbox: [{ opId: "op-1", envelope: { ciphertext: "AAAA" } }],
+      syncState: [{ key: "cursor", value: { keyEpoch: 1, seq: 3 } }],
+    });
+    expect(empty).toEqual({ status: "saved", current: null });
+    expect(await repository.loadVersioned()).toBeNull();
+    expect((await repository.listOutbox()).map((record) => record.opId)).toEqual(["op-1"]);
+    expect(await repository.readSyncState("cursor")).toEqual({ keyEpoch: 1, seq: 3 });
+
+    // A document that appeared in between is a conflict, and nothing of the commit is written.
+    await repository.createIfAbsent({ amountMinor: 5 });
+    const late = await repository.commitBookkeeping({
+      expectedRevision: null,
+      outbox: [{ opId: "op-lost", envelope: {} }],
+      syncState: [{ key: "cursor", value: { keyEpoch: 1, seq: 9 } }],
+    });
+    const current = await repository.loadVersioned();
+    expect(late).toEqual({ status: "conflict", current });
+    expect(await repository.countOutbox()).toBe(1);
+    expect(await repository.readSyncState("cursor")).toEqual({ keyEpoch: 1, seq: 3 });
+
+    // Against the document's own revision it is saved and the document is left exactly as it was.
+    const kept = await repository.commitBookkeeping({ expectedRevision: current!.revision, syncState: [{ key: "cursor", value: { keyEpoch: 1, seq: 9 } }] });
+    expect(kept).toEqual({ status: "saved", current });
+    expect(await repository.loadVersioned()).toEqual(current);
+    expect(await repository.readSyncState("cursor")).toEqual({ keyEpoch: 1, seq: 9 });
+  });
+
   it("держит очередь в порядке записи и переживает переоткрытие хранилища", async () => {
     const databaseName = name("restart");
     const first = new IndexedDbBudgetRepository<Doc>({ databaseName });

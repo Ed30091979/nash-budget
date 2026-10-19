@@ -22,8 +22,13 @@ import { UpdatePrompt } from "./components/UpdatePrompt";
 import { DashboardScreen, monthsSpan, nextScheduledDate } from "./features/dashboard";
 import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./features/data-management";
 import {
+  documentHoldNotice,
+  FamilyHoldScreen,
+  holdWriteRefusal,
+  familyDocumentNotice,
   FamilyScreen,
   MEMBER_FILTER_ALL,
+  showsFamilyHoldScreen,
   familyNewsLines,
   familyNewsSince,
   filterTransactionsByMember,
@@ -41,12 +46,12 @@ import {
 } from "./features/family";
 import { createImportMemory, ImportScreen } from "./features/import";
 import { OperationsScreen } from "./features/operations";
-import { HistoryScreen, operationsCount, TotalsFact, type EditRequest } from "./features/operations";
+import { HistoryScreen, OperationAmount, operationsCount, TotalsFact, transactionCurrency, type EditRequest } from "./features/operations";
 import { PlanningScreen } from "./features/planning";
 import { Onboarding } from "./onboarding/Onboarding";
 import { persistCompletedOnboarding } from "./onboarding/model";
 import { buildDemoBudgetState } from "./onboarding/demo";
-import { createBudgetBackup, prepareBudgetState, restoreBudgetBackup } from "./backup";
+import { createBudgetBackup, describeBackupRepairs, prepareBudgetState, restoreBudgetBackup, type BackupRepair } from "./backup";
 import { formatMoney, moneyScale } from "./money";
 import { plural } from "./plural";
 import {
@@ -62,6 +67,7 @@ import {
   type ReachState,
 } from "./reach";
 import { createBudgetRepository } from "./storage-repository";
+import { WRITE_REFUSAL_TEXT } from "./write-refusal";
 
 export type Screen = "today" | "year" | "planning" | "operations" | "more" | "family" | "import" | "history";
 type LoadState = "loading" | "empty" | "ready" | "error";
@@ -108,6 +114,8 @@ const transactionLabels: Record<Transaction["kind"], string> = {
   refund: "Возврат",
   transfer: "Перевод",
   goal_contribution: "Взнос в цель",
+  debt_out: "Долг: со счёта",
+  debt_in: "Долг: на счёт",
 };
 
 type BudgetSaveResult =
@@ -176,6 +184,9 @@ export function paydayWords(days: readonly number[]): string {
   const named = days.map((day) => `${day}-го`);
   return named.length === 1 ? named[0]! : `${named.slice(0, -1).join(", ")} и ${named[named.length - 1]}`;
 }
+
+/** Бюджета на устройстве нет — «Семье» нечего предупреждать о его замене. */
+const NO_LOCAL_BUDGET = { transactions: [] } as const;
 
 function SkipLink() {
   return <a className="skip-link" href={`#${MAIN_CONTENT_ID}`}>К основному содержимому</a>;
@@ -333,6 +344,8 @@ const transactionIcons: Record<Transaction["kind"], IconName> = {
   refund: "rotate-ccw",
   transfer: "arrow-left-right",
   goal_contribution: "target",
+  debt_out: "arrow-up-right",
+  debt_in: "arrow-down-left",
 };
 
 function storageText(health: StorageHealth | null): string {
@@ -374,6 +387,10 @@ export default function App() {
   const budgetRef = useRef<BudgetState | null>(null);
   const revisionRef = useRef<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
+  const loadStateRef = useRef<LoadState>(loadState);
+  loadStateRef.current = loadState;
+  // «Семья» поверх экрана задержки: на нём нет навигации, а выйти из семьи или проверить вход надо.
+  const [holdFamilyOpen, setHoldFamilyOpen] = useState(false);
   const [slowLoad, setSlowLoad] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [headerScrolled, setHeaderScrolled] = useState(false);
@@ -412,6 +429,8 @@ export default function App() {
   // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
   // начинает вести журнал сразу, без перезагрузки.
   const journalWriteRef = useRef<BudgetJournalWrite | null>(null);
+  // Семья ли сейчас на устройстве — для приёма документа на экране ожидания (см. publishRemoteBudget).
+  const inFamilyRef = useRef(false);
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
     repository,
@@ -443,21 +462,29 @@ export default function App() {
     // экран. Пока идёт собственная запись, показ откладывается: её сравнение ревизии — источник
     // истины, и подменять состояние у неё под руками нельзя.
     publishRemoteBudget: (value, revision) => {
-      // Обновляется тот бюджет, который экран показывает. Показывать нечего — значит и обновлять
-      // нечего: приложение без бюджета стоит на онбординге, и подменять его состоянием из журнала
-      // означало бы онбординг поверх готового бюджета.
-      if (budgetRef.current === null || budgetSave.locked) return;
+      // Обновляется тот бюджет, который экран показывает. Без бюджета приложение стоит на онбординге
+      // — подменять его состоянием из журнала означало бы онбординг поверх готового бюджета, — или,
+      // в семье, на экране ожидания (`FamilyHoldScreen`), и тогда пришедший документ семьи и есть
+      // то, чего он ждал.
+      if (budgetSave.locked) return;
+      const waiting = budgetRef.current === null && loadStateRef.current === "empty" && inFamilyRef.current;
+      if (budgetRef.current === null && !waiting) return;
       try {
         const next = prepareBudgetState(value);
         budgetRef.current = next;
         revisionRef.current = revision;
         setBudget(next);
+        if (waiting) {
+          setSeenTransactionIds(transactionIds(next));
+          setLoadState("ready");
+        }
       } catch {
         // Пришедшее состояние не собирается в показуемый бюджет — экран остаётся на прежнем.
       }
     },
   });
   journalWriteRef.current = family.writeBudget;
+  inFamilyRef.current = family.inFamily;
 
   useEffect(() => {
     let cancelled = false;
@@ -568,7 +595,10 @@ export default function App() {
     const own: OwnAuthor = { deviceId: ownDeviceId, memberId: ownMemberId };
     return familyNewsSince(seenTransactionIds, budget, family.transactionAuthors, own);
   }, [budget, seenTransactionIds, family.transactionAuthors, ownDeviceId, ownMemberId]);
-  const familyNewsText = useMemo(() => familyNewsLines(familyNews, memberById), [familyNews, memberById]);
+  const familyNewsText = useMemo(
+    () => familyNewsLines(familyNews, memberById, budget ?? {}),
+    [familyNews, memberById, budget],
+  );
   // Новость увидена, когда человек ушёл с «Сегодня» или свернул приложение, пока она там стояла:
   // «прошлый раз» становится нынешним состоянием, и за тем же она не возвращается.
   const newsOnScreen = screen === "today" && familyNews.length > 0;
@@ -600,8 +630,46 @@ export default function App() {
     if (source === null) throw new Error("Budget is not ready.");
     const backup = await createBudgetBackup(source, async () => undefined);
     await downloadTextFile(prepareJsonDownload(backup.text));
+    // Копия, которую эта версия не восстановит, последней успешной не становится, и человек узнаёт
+    // об этом сразу.
+    if (backup.restoreWarning !== null) {
+      setMessage(`Резервная копия JSON скачана. ${backup.restoreWarning}`);
+      return;
+    }
     await recordBackup(backup.createdAt);
   };
+
+  /** «Семья» — и в оболочке, и поверх экрана ожидания, где бюджета на устройстве может не быть. */
+  const familyScreen = (onBack: () => void) => (
+    <FamilyScreen
+      serverUrl={family.serverUrl}
+      session={family.session}
+      membership={family.membership}
+      members={family.members}
+      devices={family.devices}
+      ownFingerprint={family.ownFingerprint}
+      pinOf={family.pinOf}
+      bindVerdictOf={family.bindVerdictOf}
+      offeredFingerprintOf={family.offeredFingerprintOf}
+      memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}
+      localBudget={budget ?? NO_LOCAL_BUDGET}
+      lastBackupAt={lastSuccessfulBackup}
+      onCreateBackup={createBackup}
+      invite={family.invite}
+      status={family.status}
+      syncRound={family.syncRound}
+      integrity={family.integrity}
+      rotation={family.rotation}
+      epochAlarm={family.epochAlarm}
+      now={Date.now()}
+      busy={family.busy}
+      message={family.message}
+      error={family.error}
+      awaitingLoginCode={family.awaitingLoginCode}
+      actions={family.actions}
+      onBack={onBack}
+    />
+  );
 
   const publishInitialBudget = (next: BudgetState) => {
     budgetRef.current = next;
@@ -632,6 +700,27 @@ export default function App() {
   // тогда, когда ждать действительно пришлось, — и тогда оно уже не мельтешение, а объяснение.
   if (loadState === "loading") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" aria-busy="true">{slowLoad ? <p>Открываем семейный план…</p> : null}</main></AppFrame>;
   if (loadState === "error") return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state storage-error-state"><section role="alert"><h1>Не удалось открыть локальные данные</h1><p>Мы не подставили демо и не создали новый бюджет. Проверьте, разрешено ли хранение данных для этого сайта.</p><button className="primary-button" type="button" onClick={() => setLoadAttempt((value) => value + 1)}>Повторить</button></section></main></AppFrame>;
+  // Второе ревью, LOW-5 и MEDIUM-3: в семье без документа семьи — нет документа вовсе или на
+  // устройстве всё ещё бюджет, который был до вступления, — на месте бюджета стоит экран ожидания,
+  // а не онбординг и не прежний бюджет, выданный за семейный.
+  if (showsFamilyHoldScreen(family.inFamily, loadState !== "empty", family.status)) {
+    return (
+      <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}>
+        <IconSprite />
+        <SkipLink />
+        <main id={MAIN_CONTENT_ID} tabIndex={-1} className={holdFamilyOpen ? "content" : "loading-state storage-error-state"}>
+          {holdFamilyOpen
+            ? familyScreen(() => setHoldFamilyOpen(false))
+            : <FamilyHoldScreen
+                notice={familyDocumentNotice(family.status?.hold ?? null)}
+                hasLocalBudget={budget !== null}
+                onBackup={createBackup}
+                onFamily={() => setHoldFamilyOpen(true)}
+              />}
+        </main>
+      </AppFrame>
+    );
+  }
   if (loadState === "empty") return <AppFrame className="onboarding-route" hasUnsavedChanges={false} messageShown={false}><IconSprite /><SkipLink /><div id={MAIN_CONTENT_ID} tabIndex={-1}><Onboarding onComplete={completeOnboarding} onDemo={loadDemo} /></div></AppFrame>;
   if (!budget || !metrics || !plan) return <AppFrame className="loading-route" hasUnsavedChanges={false} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
 
@@ -690,6 +779,8 @@ export default function App() {
   // and no timer, and it follows the person onto whichever screen they are on — the family screen
   // renders its own copy, so this one steps aside there.
   const keyAlarm = syncAlarm(family.status?.stop ?? null);
+  const hold = family.inFamily ? family.status?.hold ?? null : null;
+  const holdNotice = documentHoldNotice(hold);
   const navigate = (destination: Screen) => {
     if (shouldChangeScreen(
       screen,
@@ -725,6 +816,18 @@ export default function App() {
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
         <div className="route-screen" data-screen={screen}>
+          {/* Второе ревью: пока документ задержан, устройство только читает, и человек узнаёт об этом
+              до того, как запись откажет, на любом экране, кроме «Семьи», где задержка названа сама. */}
+          {hold !== null && holdNotice !== null && screen !== "family" ? (
+            <section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">
+              <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
+              <div>
+                <h2 id="app-hold-title">{holdNotice.title}</h2>
+                <p>{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}</p>
+                <button className="primary-button" type="button" onClick={() => navigate("family")}>Подробнее</button>
+              </div>
+            </section>
+          ) : null}
           {keyAlarm && screen !== "family" ? (
             <section className="key-alarm" role="alert" aria-labelledby="app-key-alarm-title">
               <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
@@ -751,16 +854,16 @@ export default function App() {
             )}
             onRecordSuccessfulBackup={recordBackup}
             onRestoreBackup={async (file) => {
-              let clearedLabels = 0;
+              const repairs: BackupRepair[] = [];
               await restoreBudgetBackup(
                 file,
                 (restored) => budgetSave.apply(() => restored).then(() => undefined),
                 () => undefined,
-                () => { clearedLabels += 1; },
+                (repair) => { repairs.push(repair); },
               );
-              if (clearedLabels > 0) {
-                setMessage(`Снято меток участника: ${clearedLabels}. Такого участника в копии нет; сами операции и все суммы восстановлены без изменений.`);
-              }
+              // Каждый вид ремонта называется своими словами: снятая метка — не снятый участник.
+              const notice = describeBackupRepairs(repairs);
+              if (notice !== null) setMessage(notice);
             }}
             onPersistClear={async () => {
               await repository.clear();
@@ -788,34 +891,7 @@ export default function App() {
           {/* Вся история — маршрут внутри «Ещё»; строка истории открывает операцию в форме записи. */}
           {screen === "history" ? <HistoryScreen budget={budget} onEdit={(transaction) => { setEditRequest({ id: transaction.id, nonce: Date.now() }); navigate("operations"); }} onAdd={() => navigate("operations")} onBack={() => navigate("more")} /> : null}
           {screen === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setImportDraftDirty} onBack={() => navigate("more")} /> : null}
-          {screen === "family" ? <FamilyScreen
-            serverUrl={family.serverUrl}
-            session={family.session}
-            membership={family.membership}
-            members={family.members}
-            devices={family.devices}
-            ownFingerprint={family.ownFingerprint}
-            pinOf={family.pinOf}
-            bindVerdictOf={family.bindVerdictOf}
-            offeredFingerprintOf={family.offeredFingerprintOf}
-            memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}
-            localBudget={budget}
-            lastBackupAt={lastSuccessfulBackup}
-            onCreateBackup={createBackup}
-            invite={family.invite}
-            status={family.status}
-            syncRound={family.syncRound}
-            integrity={family.integrity}
-            rotation={family.rotation}
-            epochAlarm={family.epochAlarm}
-            now={Date.now()}
-            busy={family.busy}
-            message={family.message}
-            error={family.error}
-            awaitingLoginCode={family.awaitingLoginCode}
-            actions={family.actions}
-            onBack={() => navigate("more")}
-          /> : null}
+          {screen === "family" ? familyScreen(() => navigate("more")) : null}
         </div>
       </main>
 
@@ -980,7 +1056,7 @@ export function TodayScreen({ budget, plan, flexibleRows, safeToSpendMinor, flex
           {memberOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
       </div> : null}
-      <TransactionList transactions={recentTransactions} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
+      <TransactionList transactions={recentTransactions} accounts={budget.accounts} categoryById={categoryById} memberById={memberById} showAuthor={memberOptions.length > 2} onAdd={onAdd} hiddenByMemberFilter={hasRecords && memberFilter !== MEMBER_FILTER_ALL} onShowEveryone={() => onMemberFilterChange(MEMBER_FILTER_ALL)} />
     </section>
 
     {/* Холодный старт: пока записей нет, вторая дверь — выписка банка. Она стоит после пустого
@@ -1235,7 +1311,7 @@ function CategoryList({ rows, clock, onPlanning }: { rows: CategoryRow[]; clock:
   })}</ul>;
 }
 
-function TransactionList({ transactions, categoryById, memberById, showAuthor, onAdd, hiddenByMemberFilter = false, onShowEveryone }: { transactions: Transaction[]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean; onAdd?: () => void; hiddenByMemberFilter?: boolean; onShowEveryone?: () => void }) {
+function TransactionList({ transactions, accounts, categoryById, memberById, showAuthor, onAdd, hiddenByMemberFilter = false, onShowEveryone }: { transactions: Transaction[]; accounts: BudgetState["accounts"]; categoryById: Map<string, BudgetState["categories"][number]>; memberById: ReadonlyMap<string, Member>; showAuthor: boolean; onAdd?: () => void; hiddenByMemberFilter?: boolean; onShowEveryone?: () => void }) {
   // §6 исследования, пункт 29: пустое состояние обязано сообщить состояние системы, объяснить,
   // что сюда попадает, и дать прямой путь к задаче. «Здесь появятся операции» отвечало только на
   // первый вопрос, и человек, только что создавший бюджет, оставался с ним один на один.
@@ -1273,7 +1349,8 @@ function TransactionList({ transactions, categoryById, memberById, showAuthor, o
         <strong>{title}</strong>
         <small>{note.join(" · ")}</small>
       </span>
-      <b><Money value={transaction.amountMinor} sign={transactionSign(transaction.kind)} /></b>
+      {/* В валюте счёта операции, как в «Вся история»: «₽» у покупки по счёту в долларах был бы неправдой. */}
+      <b><OperationAmount value={transaction.amountMinor} currency={transactionCurrency(transaction, { accounts })} sign={transactionSign(transaction.kind)} /></b>
     </li>;
   })}</ul>;
 }
@@ -1298,7 +1375,7 @@ function MoreScreen(props: {
   storageHealth: StorageHealth | null;
   showIosInstall: boolean;
   lastSuccessfulBackup: string | null;
-  onCreateBackup: () => Promise<{ readonly text: string; readonly createdAt: string }>;
+  onCreateBackup: () => Promise<{ readonly text: string; readonly createdAt: string; readonly restoreWarning?: string | null }>;
   onRecordSuccessfulBackup: Parameters<typeof DataManagementScreen>[0]["onRecordSuccessfulBackup"];
   onRestoreBackup: Parameters<typeof DataManagementScreen>[0]["onRestoreBackup"];
   onPersistClear: () => Promise<void>;

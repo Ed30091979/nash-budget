@@ -32,6 +32,28 @@ export const SYNC_CLIENT_ERROR_CODES = [
    * «ключ семьи не совпадает» would spend the one loud signal the system has on a state error.
    */
   "epoch_conflict",
+  /**
+   * A local write was refused because the document is held ({@link SyncStatusReport.hold}): the
+   * family's journal materialised a state this build's application does not open, so the device
+   * shows the last state it accepted and writes nothing until the journal's state opens again.
+   *
+   * Refused rather than queued because a write is built from what the screen shows, and while a
+   * hold is in force that is not the journal's state: an update carries its entity whole, under a
+   * stamp that outranks the family's, and would undo whatever the family changed meanwhile.
+   */
+  "document_held",
+  /**
+   * A local write was refused because the state it would leave — this device's operations on top
+   * of the family's journal — is one the application does not open. Nothing was queued: the
+   * write would otherwise have started a hold of this device's own making.
+   */
+  "state_refused",
+  /**
+   * A local write was refused because the journal's state cannot be shown on a device whose
+   * document is the family's ({@link DocumentHoldReason} `journal_not_ready`), and the write would
+   * not make it showable. Nothing was queued.
+   */
+  "journal_not_ready",
 ] as const;
 
 export type SyncClientErrorCode = (typeof SYNC_CLIENT_ERROR_CODES)[number];

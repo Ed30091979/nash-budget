@@ -187,4 +187,36 @@ describe("dashboard derived model", () => {
       .toEqual(rebuilt.entries.slice(0, 50).map((item) => item.transaction.id));
     expect(state.transactions).toBe(transactions);
   });
+
+  it("counts an operation on a foreign account by the value it carries in roubles, not by its cents", () => {
+    const source = makePlanningSeed();
+    const dollars = "85555555-5555-4555-8555-5555555555d1";
+    const plain = createDashboardModel(source, "2026-07", 12).months[0]!;
+    const state: BudgetState = {
+      ...source,
+      accounts: [...source.accounts, { id: dollars, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [
+        ...source.transactions,
+        {
+          id: "85555555-5555-4555-8555-5555555555d2", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_000,
+          accountId: dollars, categoryId: PLANNING_IDS.categories.food, baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+        {
+          id: "85555555-5555-4555-8555-5555555555d3", occurredOn: "2026-07-12", status: "posted", kind: "refund", amountMinor: 1_000,
+          accountId: dollars, categoryId: PLANNING_IDS.categories.food, originalTransactionId: "85555555-5555-4555-8555-5555555555d2",
+          baseAmountMinor: 90_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+        {
+          id: "85555555-5555-4555-8555-5555555555d4", occurredOn: "2026-07-15", status: "posted", kind: "income", amountMinor: 10_000,
+          accountId: dollars, baseAmountMinor: 900_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+      ],
+    };
+    const month = createDashboardModel(state, "2026-07", 12).months[0]!;
+    // 40 $ spent and 10 $ back, at 90 ₽: 2 700 ₽ more spent — never 30 ₽ — and 100 $ earned is 9 000 ₽.
+    expect(month.totalExpenseFactMinor).toBe(plain.totalExpenseFactMinor + 270_000);
+    expect(month.flexibleFactMinor).toBe(plain.flexibleFactMinor + 270_000);
+    expect(month.totalIncomeFactMinor).toBe(plain.totalIncomeFactMinor + 900_000);
+    expect(month.totalExpenseFactMinor - plain.totalExpenseFactMinor).toBe(calculateBudget(state).expensesMinor - calculateBudget(source).expensesMinor);
+  });
 });

@@ -8,7 +8,7 @@ import {
 } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBudgetBackup, restoreBudgetBackup } from "./backup";
+import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup } from "./backup";
 import {
   createOperationsCsv,
   prepareOperationsCsvDownload,
@@ -309,10 +309,27 @@ describe("phase 7 App composition", () => {
   it("App tells the user about a cleared attribution instead of swallowing it", () => {
     const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 
+    // Every repair the restore reports reaches the message, and the message names each kind.
     expect(source).toMatch(
-      /await restoreBudgetBackup\([\s\S]*\(\) => \{ clearedLabels \+= 1; \},[\s\S]*if \(clearedLabels > 0\) \{[\s\S]*setMessage\(/,
+      /await restoreBudgetBackup\([\s\S]*\(repair\) => \{ repairs\.push\(repair\); \},[\s\S]*const notice = describeBackupRepairs\(repairs\);[\s\S]*if \(notice !== null\) setMessage\(notice\);/,
     );
-    expect(source).toContain("Снято меток участника:");
+    expect(describeBackupRepairs([])).toBeNull();
+    const members = describeBackupRepairs([
+      { kind: "unknown_member_attribution", transactionId: "t1", memberId: "m1" },
+      { kind: "unknown_member_attribution", transactionId: "t2", memberId: "m1" },
+    ]);
+    expect(members).toBe("Снято меток участника: 2 — такого участника в копии нет. Сами операции и все суммы восстановлены без изменений.");
+    // A tag or a recurring rule is never reported as a participant.
+    const labels = describeBackupRepairs([
+      { kind: "unknown_tag", transactionId: "t1", tagId: "g1" },
+      { kind: "unknown_tag", transactionId: "t1", tagId: "g2" },
+      { kind: "unknown_tag", transactionId: "t2", tagId: "g1" },
+      { kind: "unknown_recurring_rule", transactionId: "t3", recurringRuleId: "r1" },
+    ]);
+    expect(labels).toBe(
+      "Снято меток: 3 — таких меток в копии нет. Снята привязка к регулярной операции: 1 — такого правила в копии нет. Сами операции и все суммы восстановлены без изменений.",
+    );
+    expect(labels).not.toContain("участника");
   });
 
   it("rejects a damaged restore before save, publication, or revision changes", async () => {
@@ -383,7 +400,8 @@ describe("phase 7 App composition", () => {
     const prepared = prepareOperationsCsvDownload(state, new Date(2026, 6, 24, 23, 55));
 
     expect(rows).toHaveLength(7);
-    expect(rows[0]).toBe("Дата,Тип,Статус,\"Сумма, ₽\",Счёт,Категория или цель,Связь с исходной операцией");
+    // Plan 6: the seven columns of 1.0.0 stay first and unchanged; wave 1 appends its own after them.
+    expect(rows[0]!.startsWith("Дата,Тип,Статус,\"Сумма, ₽\",Счёт,Категория или цель,Связь с исходной операцией,")).toBe(true);
     expect(rows.filter((row) => row.includes("Продукты"))).toHaveLength(2);
     expect(prepared).toMatchObject({
       filename: "family-budget-operations-2026-07-24.csv",

@@ -1,15 +1,44 @@
+import {
+  COUNTERPARTY_MAX_LENGTH,
+  HOUSEHOLD_ID,
+  isBlankStoredText,
+  isDisplayKey,
+  isStorableLabel,
+  isStorableNote,
+  isSupportedCurrency,
+  isUuid,
+  MAX_LOCAL_DATE,
+  MAX_MONEY_MINOR,
+  MAX_SORT_ORDER,
+  MAX_TAGS_PER_TRANSACTION,
+  MIN_LOCAL_DATE,
+  NOTE_MAX_LENGTH,
+  RATE_PART_MAX,
+  RATE_PART_MIN,
+  MAX_RECURRENCE_INTERVAL,
+  RULE_NAME_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
+  type ExchangeRateValue,
+  type RecurringTemplate,
+} from "@family-budget/domain";
+
 import type {
   AccountFields,
   AnnualCommitmentFields,
   BudgetFields,
   BudgetLineFields,
   CategoryFields,
+  DebtFields,
   EntityKind,
+  ExchangeRateFields,
   GoalFields,
+  HouseholdFields,
   MemberFields,
   Operation,
   OperationHeader,
+  RecurringRuleFields,
   ScheduledExpenseFields,
+  TagFields,
   TransactionFields,
 } from "./types.js";
 import { ENTITY_KINDS, OPERATION_ACTIONS } from "./types.js";
@@ -67,17 +96,19 @@ export const MAX_HONEST_LAMPORT = HONEST_LAMPORT_CEILING - 1;
 export const MAX_LAMPORT_SKEW = 1_000_000;
 
 /**
- * Upper bound for every money field: 10^10 minor units, a hundred million roubles for a
- * single amount. The previous 10^13 did not protect the domain at all — 901 amounts at that
- * ceiling add up to 9.01·10^15, past Number.MAX_SAFE_INTEGER, and every device in the family
- * loses its calculations at once. This ceiling is a field bound only; sums are bounded
- * separately by the integrity gate, because no per-field ceiling can bound a sum.
+ * Upper bound for every money field, and the calendar window every date must fall into: defined
+ * once, in the domain (`limits.ts`, `calendar.ts`), and re-exported here for the callers that have
+ * always found them in this package. A bound the codec kept for itself let the domain and the backup
+ * gate accept a value the codec then refused — a goal deadline in 2200 stranded on the device that
+ * wrote it — so the codec owns none of them any more.
+ *
+ * The money ceiling is 10^10 minor units, a hundred million roubles for a single amount. The
+ * previous 10^13 did not protect the domain at all — 901 amounts at that ceiling add up to
+ * 9.01·10^15, past Number.MAX_SAFE_INTEGER, and every device in the family loses its calculations
+ * at once. It is a field bound only; sums are bounded separately by the integrity gate, because no
+ * per-field ceiling can bound a sum. Outside the date window the domain's month arithmetic breaks.
  */
-export const MAX_MONEY_MINOR = 10 ** 10;
-
-/** Calendar window every date must fall into. Outside it the domain's month arithmetic breaks. */
-export const MIN_LOCAL_DATE = "1900-01-01";
-export const MAX_LOCAL_DATE = "2199-12-31";
+export { MAX_LOCAL_DATE, MAX_MONEY_MINOR, MIN_LOCAL_DATE };
 
 const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_ID_LENGTH = 128;
@@ -104,8 +135,11 @@ const GOAL_STATUSES = ["active", "completed", "cancelled"] as const;
 const COMMITMENT_RECURRENCES = ["annual", "one_time"] as const;
 const SCHEDULE_MODES = ["monthly", "selected_months"] as const;
 const TRANSACTION_STATUSES = ["posted", "pending", "draft"] as const;
-const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution"] as const;
+const TRANSACTION_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"] as const;
 const MEMBER_ROLES = ["owner", "member"] as const;
+const DEBT_DIRECTIONS = ["i_owe", "owed_to_me"] as const;
+const RECURRENCE_FREQUENCIES = ["daily", "weekly", "monthly", "yearly"] as const;
+const TEMPLATE_KINDS = ["expense", "income", "transfer"] as const;
 
 /** Every rejection raised by the protocol, so callers can tell a bad envelope from a bug. */
 export class SyncProtocolError extends Error {
@@ -207,7 +241,9 @@ function requireFieldNames(
 function readString(record: Record<string, unknown>, key: string, label: string, allowEmpty = false): string {
   const value = record[key];
   if (typeof value !== "string") fail(`${label} must be a string`);
-  if (!allowEmpty && value.trim().length === 0) fail(`${label} must not be empty`);
+  // The domain's stored-text whitespace, not `trim`: whether a field is empty must not depend on the
+  // Unicode version of the engine reading the journal.
+  if (!allowEmpty && isBlankStoredText(value)) fail(`${label} must not be empty`);
   if (value.length > MAX_TEXT_LENGTH) fail(`${label} must be at most ${MAX_TEXT_LENGTH} characters`);
   if (hasUnsafeCharacter(value)) fail(`${label} must not contain control or formatting characters`);
   return value;
@@ -220,10 +256,14 @@ function readString(record: Record<string, unknown>, key: string, label: string,
  * from naming one and the same budget line. A space would not — see journal.ts.
  */
 function readId(record: Record<string, unknown>, key: string, label: string): string {
-  const value = record[key];
+  return parseId(record[key], label);
+}
+
+/** The rule of {@link readId}, for an identifier that is not a field of a record: a list entry. */
+function parseId(value: unknown, label: string): string {
   if (typeof value !== "string") fail(`${label} must be a string`);
   // The domain rejects a blank stable id, so whitespace alone never counts as an identifier.
-  if (value.trim().length === 0) fail(`${label} must not be empty`);
+  if (isBlankStoredText(value)) fail(`${label} must not be empty`);
   if (value.length > MAX_ID_LENGTH) fail(`${label} must be at most ${MAX_ID_LENGTH} characters`);
   if (hasUnsafeCharacter(value)) fail(`${label} must not contain control or formatting characters`);
   return value;
@@ -295,10 +335,48 @@ function readRatio(record: Record<string, unknown>, key: string, label: string):
   return value;
 }
 
+/**
+ * A currency of the domain's table (`SUPPORTED_CURRENCIES`). An unknown code is refused rather than
+ * carried: an account in a currency this build cannot count is an operation it cannot apply, and the
+ * sync client answers that with «update the application», which for a code added in a later version
+ * is the truth.
+ */
 function readCurrency(record: Record<string, unknown>, key: string, label: string): string {
   const value = readString(record, key, label);
   if (!CURRENCY_PATTERN.test(value)) fail(`${label} must be a three-letter currency code`);
+  if (!isSupportedCurrency(value)) fail(`${label} must be a supported currency, not ${echo(value)}`);
   return value;
+}
+
+/** A rate as the domain stores one: two integers from one minor unit to a trillion, nothing else. */
+function readRate(record: Record<string, unknown>, key: string, label: string): ExchangeRateValue {
+  const rate = requireRecord(record[key], label);
+  requireFieldNames(rate, ["baseMinor", "quoteMinor"], [], label);
+  return {
+    baseMinor: readInteger(rate, "baseMinor", `${label} baseMinor`, RATE_PART_MIN, RATE_PART_MAX),
+    quoteMinor: readInteger(rate, "quoteMinor", `${label} quoteMinor`, RATE_PART_MIN, RATE_PART_MAX),
+  };
+}
+
+/**
+ * The base-currency snapshot of an income, an expense or a refund: all three fields or none, as the
+ * domain demands. Whether the account needs one is the integrity gate's question — the account may
+ * be in another entry, or change its currency on another device — so the codec only refuses a
+ * snapshot that is not one.
+ */
+function readSnapshot(record: Record<string, unknown>): {
+  baseAmountMinor?: number;
+  baseCurrency?: string;
+  rate?: ExchangeRateValue;
+} {
+  const present = ["baseAmountMinor", "baseCurrency", "rate"].filter((key) => record[key] !== undefined);
+  if (present.length === 0) return {};
+  if (present.length < 3) fail("transaction baseAmountMinor, baseCurrency and rate must come together");
+  return {
+    baseAmountMinor: readMinor(record, "baseAmountMinor", "transaction baseAmountMinor", 1),
+    baseCurrency: readCurrency(record, "baseCurrency", "transaction baseCurrency"),
+    rate: readRate(record, "rate", "transaction rate"),
+  };
 }
 
 /**
@@ -319,6 +397,86 @@ function readLocalDate(record: Record<string, unknown>, key: string, label: stri
   return value;
 }
 
+/**
+ * A label the domain may store (`isStorableLabel`): trimmed, without a control or a hidden
+ * character, at most `maxLength`.
+ *
+ * Held to the domain's own stored-text predicate rather than to {@link readString} alone, because the
+ * domain checks a tag's name on every calculation, and a journal that accepted a name the domain
+ * refuses would hand every device of the family a state whose every calculation throws. And to the
+ * stored-text rule, not to the rule a person's typing is held to: that one asks the engine about
+ * Unicode, and an entry it accepted on one engine would stop decoding after a browser update — on
+ * every device, for good, because `restoreJournal` refuses a journal with an entry it cannot read.
+ */
+function readLabel(record: Record<string, unknown>, key: string, label: string, maxLength: number): string {
+  const value = readString(record, key, label);
+  if (value.length > maxLength) fail(`${label} must be at most ${maxLength} characters`);
+  if (!isStorableLabel(value, maxLength)) fail(`${label} must be trimmed text without hidden characters`);
+  return value;
+}
+
+/**
+ * A note on an operation: one line of up to {@link NOTE_MAX_LENGTH} characters, held to the
+ * domain's `isStorableNote` for the reason {@link readLabel} gives.
+ *
+ * Longer than any other text the codec carries ({@link MAX_TEXT_LENGTH} is for names). The
+ * stored-text rule refuses everything {@link UNSAFE_TEXT} refuses and a little more, and accepts
+ * everything `normalizeNote` produces, so whatever a device stored, every other device accepts.
+ */
+function readNote(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  if (typeof value !== "string") fail(`${label} must be a string`);
+  if (value.length > NOTE_MAX_LENGTH) fail(`${label} must be at most ${NOTE_MAX_LENGTH} characters`);
+  if (!isStorableNote(value)) fail(`${label} must be one trimmed line without hidden characters`);
+  return value;
+}
+
+/**
+ * An identifier of an entity kind added in wave 1, or a reference to one: a UUID, as the backup gate
+ * and the domain's census demand of every identifier (`isUuid` in the domain).
+ *
+ * The kinds that existed before carry whatever identifier `readId` accepts, and the gate demands a
+ * UUID of them too. That older gap is closed one step later, in the journal's integrity gate, which
+ * withholds such an entity (`invalid_id`) rather than refusing the operation: an operation the
+ * codec refuses is gone for good, while a withheld entity stays in the journal, is named on the
+ * family screen and is back the moment it is rewritten under a UUID. For the new kinds there is no
+ * history, and a journal that accepted a tag called "x" handed the family a state the app refused
+ * on every write.
+ */
+function parseEntityUuid(value: unknown, label: string): string {
+  const id = parseId(value, label);
+  if (!isUuid(id)) fail(`${label} must be a UUID`);
+  return id;
+}
+
+/** Entity kinds whose identifiers are UUIDs on the wire. See {@link parseEntityUuid}. */
+const UUID_KINDS: ReadonlySet<EntityKind> = new Set<EntityKind>(["tag", "exchangeRate", "debt", "recurringRule"]);
+
+/**
+ * The tags on an operation: from one to {@link MAX_TAGS_PER_TRANSACTION} identifiers, none twice,
+ * each a UUID. An empty list is refused rather than read as "no tags", because no tags is no field;
+ * whether each tag exists is the integrity gate's question, not the codec's.
+ */
+function readTagIds(record: Record<string, unknown>, key: string, label: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TAGS_PER_TRANSACTION) {
+    fail(`${label} must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
+  }
+  const ids: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    ids.push(parseEntityUuid(value[index], `${label}[${index}]`));
+  }
+  if (new Set(ids).size !== ids.length) fail(`${label} must not repeat a tag`);
+  return ids;
+}
+
+/** The key of a design token, never a colour or a file name — see `DisplayKey` in the domain. */
+function readDisplayKey(record: Record<string, unknown>, key: string, label: string): string {
+  const value = record[key];
+  if (!isDisplayKey(value)) fail(`${label} must be a design-token key`);
+  return value;
+}
+
 function readMonths(record: Record<string, unknown>, key: string, label: string): number[] {
   const value = record[key];
   if (!Array.isArray(value) || value.length === 0 || value.length > MAX_MONTHS) {
@@ -334,29 +492,49 @@ function readMonths(record: Record<string, unknown>, key: string, label: string)
   return months;
 }
 
+/**
+ * Display fields: optional everywhere, and absent stays absent, exactly as the participant's label
+ * on a transaction. An entity written before they existed carries none, and a trip through the
+ * codec must not hand it an empty one. Named one by one in each strict list, never opened up.
+ */
 function parseAccountFields(value: unknown): AccountFields {
   const label = "account fields";
   const record = requireRecord(value, label);
-  requireFieldNames(record, ["name", "type", "currency", "openingBalanceMinor", "active"], [], label);
+  requireFieldNames(
+    record,
+    ["name", "type", "currency", "openingBalanceMinor", "active"],
+    ["sortOrder", "icon", "color", "includeInTotal"],
+    label,
+  );
   return {
     name: readString(record, "name", "account name"),
     type: readEnum(record, "type", ACCOUNT_TYPES, "account type"),
     currency: readCurrency(record, "currency", "account currency"),
     openingBalanceMinor: readMinor(record, "openingBalanceMinor", "account openingBalanceMinor"),
     active: readBoolean(record, "active", "account active"),
+    ...(record.sortOrder === undefined
+      ? {}
+      : { sortOrder: readInteger(record, "sortOrder", "account sortOrder", -MAX_SORT_ORDER, MAX_SORT_ORDER) }),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "account icon") }),
+    ...(record.color === undefined ? {} : { color: readDisplayKey(record, "color", "account color") }),
+    ...(record.includeInTotal === undefined
+      ? {}
+      : { includeInTotal: readBoolean(record, "includeInTotal", "account includeInTotal") }),
   };
 }
 
 function parseCategoryFields(value: unknown): CategoryFields {
   const label = "category fields";
   const record = requireRecord(value, label);
-  requireFieldNames(record, ["name", "type", "group", "active", "sortOrder"], [], label);
+  requireFieldNames(record, ["name", "type", "group", "active", "sortOrder"], ["icon", "color"], label);
   return {
     name: readString(record, "name", "category name"),
     type: readEnum(record, "type", CATEGORY_TYPES, "category type"),
     group: readString(record, "group", "category group", true),
     active: readBoolean(record, "active", "category active"),
-    sortOrder: readInteger(record, "sortOrder", "category sortOrder", -1_000_000, 1_000_000),
+    sortOrder: readInteger(record, "sortOrder", "category sortOrder", -MAX_SORT_ORDER, MAX_SORT_ORDER),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "category icon") }),
+    ...(record.color === undefined ? {} : { color: readDisplayKey(record, "color", "category color") }),
   };
 }
 
@@ -417,7 +595,7 @@ function parseGoalFields(value: unknown): GoalFields {
   requireFieldNames(
     record,
     ["name", "linkedAccountId", "targetMinor", "openingContributedMinor", "plannedContributionMinor", "status"],
-    [],
+    ["deadline", "icon"],
     label,
   );
   return {
@@ -427,6 +605,8 @@ function parseGoalFields(value: unknown): GoalFields {
     openingContributedMinor: readMinor(record, "openingContributedMinor", "goal openingContributedMinor", 0),
     plannedContributionMinor: readMinor(record, "plannedContributionMinor", "goal plannedContributionMinor", 0),
     status: readEnum(record, "status", GOAL_STATUSES, "goal status"),
+    ...(record.deadline === undefined ? {} : { deadline: readLocalDate(record, "deadline", "goal deadline") }),
+    ...(record.icon === undefined ? {} : { icon: readDisplayKey(record, "icon", "goal icon") }),
   };
 }
 
@@ -506,6 +686,16 @@ function parseTransactionFields(value: unknown): TransactionFields {
    * written before participants existed omits it, and such an operation stays valid for ever.
    */
   const attribution = ["memberId"];
+  /**
+   * The three labels every kind may carry besides the participant: a note, tags and the recurring
+   * rule the operation is an occurrence of. Optional for the same reason, and absent stays absent
+   * for the same reason. No figure reads any of them, so whether the tags and the rule exist is
+   * left to the integrity gate, which takes off a label that names nothing and keeps the money.
+   */
+  const labels = ["note", "tagIds", "recurringRuleId"];
+  const optional = [...attribution, ...labels];
+  /** The snapshot of an operation on an account in another currency; see {@link readSnapshot}. */
+  const snapshot = ["baseAmountMinor", "baseCurrency", "rate"];
   const base = {
     occurredOn: readLocalDate(record, "occurredOn", "transaction occurredOn"),
     status: readEnum(record, "status", TRANSACTION_STATUSES, "transaction status"),
@@ -513,6 +703,11 @@ function parseTransactionFields(value: unknown): TransactionFields {
     // Absent stays absent: an unlabelled transaction must not gain an empty label by passing
     // through the codec, because `memberId: undefined` is a different value to the domain.
     ...(record.memberId === undefined ? {} : { memberId: readId(record, "memberId", "transaction memberId") }),
+    ...(record.note === undefined ? {} : { note: readNote(record, "note", "transaction note") }),
+    ...(record.tagIds === undefined ? {} : { tagIds: readTagIds(record, "tagIds", "transaction tagIds") }),
+    ...(record.recurringRuleId === undefined
+      ? {}
+      : { recurringRuleId: parseEntityUuid(record.recurringRuleId, "transaction recurringRuleId") }),
   };
 
   switch (kind) {
@@ -530,9 +725,10 @@ function parseTransactionFields(value: unknown): TransactionFields {
        * omits it and stays valid for ever. Only an income carries it — the other kinds either
        * require a category or have none at all, and their lists are unchanged.
        */
-      requireFieldNames(record, [...shared, "accountId"], [...attribution, "categoryId"], label);
+      requireFieldNames(record, [...shared, "accountId"], [...optional, ...snapshot, "categoryId"], label);
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         // Absent stays absent, exactly as for the label above: `categoryId: undefined` is a
@@ -543,9 +739,10 @@ function parseTransactionFields(value: unknown): TransactionFields {
       };
     }
     case "expense":
-      requireFieldNames(record, [...shared, "accountId", "categoryId"], attribution, label);
+      requireFieldNames(record, [...shared, "accountId", "categoryId"], [...optional, ...snapshot], label);
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         categoryId: readId(record, "categoryId", "transaction categoryId"),
@@ -554,31 +751,58 @@ function parseTransactionFields(value: unknown): TransactionFields {
       requireFieldNames(
         record,
         [...shared, "accountId", "categoryId", "originalTransactionId"],
-        attribution,
+        [...optional, ...snapshot],
         label,
       );
       return {
         ...base,
+        ...readSnapshot(record),
         kind,
         accountId: readId(record, "accountId", "transaction accountId"),
         categoryId: readId(record, "categoryId", "transaction categoryId"),
         originalTransactionId: readId(record, "originalTransactionId", "transaction originalTransactionId"),
       };
     case "transfer": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], attribution, label);
+      // What arrived, in the currency of the receiving account: there exactly when the currencies
+      // differ, which is the integrity gate's question, not the codec's.
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId"], [...optional, "toAmountMinor"], label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       // The domain refuses a movement inside one account, so it never reaches a journal.
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");
-      return { ...base, kind, fromAccountId, toAccountId };
+      return {
+        ...base,
+        kind,
+        fromAccountId,
+        toAccountId,
+        ...(record.toAmountMinor === undefined
+          ? {}
+          : { toAmountMinor: readMinor(record, "toAmountMinor", "transaction toAmountMinor", 1) }),
+      };
     }
     case "goal_contribution": {
-      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], attribution, label);
+      requireFieldNames(record, [...shared, "fromAccountId", "toAccountId", "goalId"], optional, label);
       const fromAccountId = readId(record, "fromAccountId", "transaction fromAccountId");
       const toAccountId = readId(record, "toAccountId", "transaction toAccountId");
       if (fromAccountId === toAccountId) fail("transaction must use two different accounts");
       return { ...base, kind, fromAccountId, toAccountId, goalId: readId(record, "goalId", "transaction goalId") };
     }
+    case "debt_out":
+    case "debt_in":
+      // Money between an account and a debt: the account, the debt — a UUID, as a debt is
+      // identified — and, when the two currencies differ, the amount in the debt's currency.
+      // Whether they differ is the integrity gate's question; no snapshot, because no figure of the
+      // budget counts a debt movement.
+      requireFieldNames(record, [...shared, "accountId", "debtId"], [...optional, "debtAmountMinor"], label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", "transaction accountId"),
+        debtId: parseEntityUuid(record.debtId, "transaction debtId"),
+        ...(record.debtAmountMinor === undefined
+          ? {}
+          : { debtAmountMinor: readMinor(record, "debtAmountMinor", "transaction debtAmountMinor", 1) }),
+      };
   }
 }
 
@@ -591,6 +815,141 @@ function parseMemberFields(value: unknown): MemberFields {
     role: readEnum(record, "role", MEMBER_ROLES, "member role"),
     active: readBoolean(record, "active", "member active"),
   };
+}
+
+function parseTagFields(value: unknown): TagFields {
+  const label = "tag fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["name", "active"], [], label);
+  return {
+    name: readLabel(record, "name", "tag name", TAG_NAME_MAX_LENGTH),
+    active: readBoolean(record, "active", "tag active"),
+  };
+}
+
+function parseExchangeRateFields(value: unknown): ExchangeRateFields {
+  const label = "exchange rate fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["currency", "baseCurrency", "date", "rate"], [], label);
+  const currency = readCurrency(record, "currency", "exchange rate currency");
+  const baseCurrency = readCurrency(record, "baseCurrency", "exchange rate baseCurrency");
+  // The domain refuses a rate of a currency in itself, so it never reaches a journal.
+  if (currency === baseCurrency) fail("exchange rate must value one currency in another");
+  return {
+    currency,
+    baseCurrency,
+    date: readLocalDate(record, "date", "exchange rate date"),
+    rate: readRate(record, "rate", "exchange rate rate"),
+  };
+}
+
+/**
+ * A debt: who it is with (a stored label of up to {@link COUNTERPARTY_MAX_LENGTH}), which way it
+ * runs, its currency and its opening amount from zero up. The due date is optional and absent stays
+ * absent.
+ */
+function parseDebtFields(value: unknown): DebtFields {
+  const label = "debt fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["counterparty", "direction", "currency", "openingMinor", "active"], ["dueDate"], label);
+  return {
+    counterparty: readLabel(record, "counterparty", "debt counterparty", COUNTERPARTY_MAX_LENGTH),
+    direction: readEnum(record, "direction", DEBT_DIRECTIONS, "debt direction"),
+    currency: readCurrency(record, "currency", "debt currency"),
+    openingMinor: readMinor(record, "openingMinor", "debt openingMinor", 0),
+    ...(record.dueDate === undefined ? {} : { dueDate: readLocalDate(record, "dueDate", "debt dueDate") }),
+    active: readBoolean(record, "active", "debt active"),
+  };
+}
+
+/**
+ * The operation a recurring rule writes, nested in the rule: one of three kinds, each with a strict
+ * list of fields, as an operation of that kind has — and no identifier, date, status or snapshot,
+ * because every occurrence gets those when it is written. Whether the accounts, the category and
+ * the tags exist, and whether the currencies of a transfer differ, is the integrity gate's question.
+ */
+function parseRecurringTemplate(value: unknown): RecurringTemplate {
+  const label = "recurringRule template";
+  const record = requireRecord(value, label);
+  const kind = readEnum(record, "kind", TEMPLATE_KINDS, `${label} kind`);
+  const labels = ["note", "tagIds"];
+  const base = {
+    amountMinor: readMinor(record, "amountMinor", `${label} amountMinor`, 1),
+    ...(record.note === undefined ? {} : { note: readNote(record, "note", `${label} note`) }),
+    ...(record.tagIds === undefined ? {} : { tagIds: readTagIds(record, "tagIds", `${label} tagIds`) }),
+  };
+  switch (kind) {
+    case "expense":
+      requireFieldNames(record, ["kind", "amountMinor", "accountId", "categoryId"], labels, label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", `${label} accountId`),
+        categoryId: readId(record, "categoryId", `${label} categoryId`),
+      };
+    case "income":
+      requireFieldNames(record, ["kind", "amountMinor", "accountId"], [...labels, "categoryId"], label);
+      return {
+        ...base,
+        kind,
+        accountId: readId(record, "accountId", `${label} accountId`),
+        ...(record.categoryId === undefined ? {} : { categoryId: readId(record, "categoryId", `${label} categoryId`) }),
+      };
+    case "transfer": {
+      requireFieldNames(record, ["kind", "amountMinor", "fromAccountId", "toAccountId"], [...labels, "toAmountMinor"], label);
+      const fromAccountId = readId(record, "fromAccountId", `${label} fromAccountId`);
+      const toAccountId = readId(record, "toAccountId", `${label} toAccountId`);
+      if (fromAccountId === toAccountId) fail(`${label} must use two different accounts`);
+      return {
+        ...base,
+        kind,
+        fromAccountId,
+        toAccountId,
+        ...(record.toAmountMinor === undefined
+          ? {}
+          : { toAmountMinor: readMinor(record, "toAmountMinor", `${label} toAmountMinor`, 1) }),
+      };
+    }
+  }
+}
+
+/**
+ * A recurring rule: an optional name (a stored label of up to {@link RULE_NAME_MAX_LENGTH}), the
+ * template, how often (every 1 to {@link MAX_RECURRENCE_INTERVAL} days, weeks, months or years),
+ * from when, until when (included, not before the start) and how far it has written. Absent stays
+ * absent for each optional field.
+ */
+function parseRecurringRuleFields(value: unknown): RecurringRuleFields {
+  const label = "recurringRule fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(
+    record,
+    ["template", "frequency", "interval", "startDate", "active"],
+    ["name", "endDate", "materializedThrough"],
+    label,
+  );
+  const startDate = readLocalDate(record, "startDate", "recurringRule startDate");
+  const endDate = record.endDate === undefined ? undefined : readLocalDate(record, "endDate", "recurringRule endDate");
+  if (endDate !== undefined && endDate < startDate) fail("recurringRule endDate must not be before startDate");
+  return {
+    ...(record.name === undefined ? {} : { name: readLabel(record, "name", "recurringRule name", RULE_NAME_MAX_LENGTH) }),
+    template: parseRecurringTemplate(record.template),
+    frequency: readEnum(record, "frequency", RECURRENCE_FREQUENCIES, "recurringRule frequency"),
+    interval: readInteger(record, "interval", "recurringRule interval", 1, MAX_RECURRENCE_INTERVAL),
+    startDate,
+    ...(endDate === undefined ? {} : { endDate }),
+    ...(record.materializedThrough === undefined
+      ? {}
+      : { materializedThrough: readLocalDate(record, "materializedThrough", "recurringRule materializedThrough") }),
+    active: readBoolean(record, "active", "recurringRule active"),
+  };
+}
+
+function parseHouseholdFields(value: unknown): HouseholdFields {
+  const label = "household fields";
+  const record = requireRecord(value, label);
+  requireFieldNames(record, ["baseCurrency"], [], label);
+  return { baseCurrency: readCurrency(record, "baseCurrency", "household baseCurrency") };
 }
 
 function parseWrite(
@@ -619,6 +978,16 @@ function parseWrite(
       return { ...header, entity, action, targetId, fields: parseTransactionFields(fields) };
     case "member":
       return { ...header, entity, action, targetId, fields: parseMemberFields(fields) };
+    case "tag":
+      return { ...header, entity, action, targetId, fields: parseTagFields(fields) };
+    case "exchangeRate":
+      return { ...header, entity, action, targetId, fields: parseExchangeRateFields(fields) };
+    case "household":
+      return { ...header, entity, action, targetId, fields: parseHouseholdFields(fields) };
+    case "debt":
+      return { ...header, entity, action, targetId, fields: parseDebtFields(fields) };
+    case "recurringRule":
+      return { ...header, entity, action, targetId, fields: parseRecurringRuleFields(fields) };
   }
 }
 
@@ -671,7 +1040,16 @@ export function parseOperation(value: unknown): Operation {
     lamport,
     ...(record.memberId === undefined ? {} : { memberId: readId(record, "memberId", "operation memberId") }),
   };
-  const targetId = readId(record, "targetId", "operation targetId");
+  const targetId = UUID_KINDS.has(entity)
+    ? parseEntityUuid(record.targetId, "operation targetId")
+    : readId(record, "targetId", "operation targetId");
+  // One household per family, under the identifier every device derives, and never deleted: two
+  // households would be two base currencies, and a deleted one could never be written again, because
+  // a tombstone is final and the identifier cannot change.
+  if (entity === "household") {
+    if (targetId !== HOUSEHOLD_ID) fail("household targetId must be the household identifier");
+    if (action === "delete") fail("the household cannot be deleted");
+  }
 
   if (action === "delete") return sized({ ...header, entity, action, targetId });
   if (action === "activate") {

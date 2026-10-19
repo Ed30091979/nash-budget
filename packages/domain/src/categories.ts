@@ -8,6 +8,7 @@ import type {
   CategoryType,
   StoredCategoryGroup,
 } from "./types.js";
+import { labelKey, normalizeLabel, TextValidationError, type TextErrorCode } from "./text.js";
 
 /**
  * Groups are a closed set, not free text: the interface prints these titles as headings and
@@ -77,7 +78,10 @@ export function resolveCategoryGroup(
   if (category.type === "income") return INCOME_GROUP;
   const raw = String(category.group ?? "");
   if (isCategoryGroup(raw) && categoryGroupDefinition(raw).type === "expense") return raw;
-  const legacy = LEGACY_GROUP_LABELS[raw.normalize("NFKC").trim().toLocaleLowerCase("ru-RU")];
+  // An own key or nothing: a group written as "constructor" or "__proto__" would otherwise find
+  // Object or Object.prototype in the plain table, and the definition lookup below would throw.
+  const key = raw.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
+  const legacy = Object.hasOwn(LEGACY_GROUP_LABELS, key) ? LEGACY_GROUP_LABELS[key] : undefined;
   if (legacy !== undefined && categoryGroupDefinition(legacy).type === "expense") return legacy;
   return FALLBACK_EXPENSE_GROUP;
 }
@@ -158,13 +162,6 @@ export const CATEGORY_SUGGESTIONS: readonly CategoryTemplate[] = [
 
 export const CATEGORY_NAME_MAX_LENGTH = 80;
 
-const FORBIDDEN_FORMATTING_PATTERN = /[\p{Cc}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u;
-const LABEL_SCRIPT_PATTERNS = [
-  /\p{Script=Latin}/u,
-  /\p{Script=Cyrillic}/u,
-  /\p{Script=Greek}/u,
-] as const;
-
 export type CategoryErrorCode =
   | "name_required"
   | "name_too_long"
@@ -199,28 +196,28 @@ function fail(
   throw new CategoryValidationError(code, field, message);
 }
 
-/** Trims and normalises a name the way it will be stored, or refuses it. */
+/** The text rule's refusals, in the codes and words a category has always answered with. */
+const NAME_REFUSALS: Readonly<Record<TextErrorCode, readonly [CategoryErrorCode, string]>> = {
+  required: ["name_required", "Укажите название."],
+  too_long: ["name_too_long", `Не более ${CATEGORY_NAME_MAX_LENGTH} символов.`],
+  forbidden_characters: ["name_forbidden_characters", "Уберите скрытые или служебные символы."],
+  mixed_scripts: ["name_mixed_scripts", "Не смешивайте похожие символы разных алфавитов."],
+};
+
+/** Trims and normalises a name the way it will be stored, or refuses it. See `normalizeLabel`. */
 export function normalizeCategoryName(value: string): string {
-  if (typeof value !== "string" || value.length > CATEGORY_NAME_MAX_LENGTH * 4) {
-    fail("name_too_long", "name", `Не более ${CATEGORY_NAME_MAX_LENGTH} символов.`);
+  try {
+    return normalizeLabel(value, CATEGORY_NAME_MAX_LENGTH);
+  } catch (error) {
+    if (!(error instanceof TextValidationError)) throw error;
+    const [code, message] = NAME_REFUSALS[error.code];
+    return fail(code, "name", message);
   }
-  const normalized = value.normalize("NFC").trim();
-  if (!normalized) fail("name_required", "name", "Укажите название.");
-  if (normalized.length > CATEGORY_NAME_MAX_LENGTH) {
-    fail("name_too_long", "name", `Не более ${CATEGORY_NAME_MAX_LENGTH} символов.`);
-  }
-  if (FORBIDDEN_FORMATTING_PATTERN.test(normalized)) {
-    fail("name_forbidden_characters", "name", "Уберите скрытые или служебные символы.");
-  }
-  if (LABEL_SCRIPT_PATTERNS.filter((pattern) => pattern.test(normalized)).length > 1) {
-    fail("name_mixed_scripts", "name", "Не смешивайте похожие символы разных алфавитов.");
-  }
-  return normalized;
 }
 
 /** Comparison key for duplicate detection: case- and width-insensitive, Russian locale. */
 export function categoryNameKey(value: string): string {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
+  return labelKey(value);
 }
 
 /**
@@ -365,11 +362,11 @@ export function suggestedCategories(
   const taken = new Set(
     state.categories
       .filter((item) => item.active)
-      .map((item) => `${item.type} ${categoryNameKey(item.name)}`),
+      .map((item) => `${item.type}\u0000${categoryNameKey(item.name)}`),
   );
   return CATEGORY_SUGGESTIONS.filter(
     (template) =>
       (type === undefined || template.type === type) &&
-      !taken.has(`${template.type} ${categoryNameKey(template.name)}`),
+      !taken.has(`${template.type}\u0000${categoryNameKey(template.name)}`),
   );
 }

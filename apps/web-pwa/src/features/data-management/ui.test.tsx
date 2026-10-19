@@ -90,6 +90,14 @@ describe("data-management UI", () => {
     expect(screenSource).toMatch(
       /activity: "csv"[\s\S]*await downloadTextFile\(prepareOperationsCsvDownload\(budget\)\)[\s\S]*type: "succeed"/,
     );
+    // Third review: a copy this build will not restore is downloaded and said so, and is kept as
+    // written with a warning — never recorded as the last successful one.
+    const warned = screenSource.slice(screenSource.indexOf("if (result.restoreWarning) {"), screenSource.indexOf("const createdAt = await downloadThenRecordSuccessfulBackup("));
+    expect(warned).toContain("await downloadTextFile(prepareJsonDownload(result.text));");
+    expect(warned).toContain("setWarnedBackupAt(result.createdAt);");
+    expect(warned).toContain("return;");
+    expect(warned).not.toMatch(/onRecordSuccessfulBackup|setLastBackupAt/u);
+    expect(screenSource).toContain("записана с предупреждением: эта версия её не восстановит.");
   });
 
   it("keeps a visible focus indicator when the hidden restore input receives keyboard focus", () => {

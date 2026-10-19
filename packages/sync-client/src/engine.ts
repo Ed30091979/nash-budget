@@ -33,7 +33,6 @@ import {
   type IndexedDbBudgetRepository,
   type OutboxAppend,
   type OutboxRecord,
-  type SaveIfRevisionResult,
 } from "@family-budget/storage";
 import {
   checkpointDigest,
@@ -67,9 +66,10 @@ import {
 import { SyncClientError } from "./errors.js";
 import { applyDelivery } from "./intake.js";
 import type { SyncTransport } from "./transport.js";
-import { SYNC_STOP_REASONS } from "./types.js";
+import { DOCUMENT_HOLD_REASONS, SYNC_STOP_REASONS } from "./types.js";
 import type {
   AcceptedEpoch,
+  DocumentHold,
   OutgoingEnvelope,
   PullResult,
   PushResult,
@@ -107,6 +107,24 @@ export const SYNC_STATE_KEYS = {
    * lost travel in `inheritedGaps` of the first checkpoint of the new epoch instead).
    */
   anchor: "anchor",
+  /**
+   * The {@link DocumentHold} of the last write that folded the journal: why the document does not
+   * show the journal's state although the journal says it could be shown, or `null` while it does.
+   * Written in the same transaction as the journal it is about, so the two never disagree, and read
+   * back by {@link SyncEngine.status} — a refusal that only lived in memory would be gone at the
+   * next launch while the document went on not showing the family's work.
+   */
+  hold: "hold",
+  /**
+   * `{ familyId }` of the family whose journal last wrote the document: the record that the budget
+   * this device holds is that family's, and not the personal budget it had before it joined.
+   *
+   * Written in the same transaction as every document the engine writes from an accepted state,
+   * and nowhere else. A hold reads it to say what the device is left showing
+   * ({@link DocumentHold.document}), and the application reads it ({@link SyncStatusReport}) to
+   * decide whether the budget on screen may be presented as the family's at all.
+   */
+  familyDocument: "family-document",
 } as const;
 
 /**
@@ -193,7 +211,42 @@ export interface SyncEngineOptions {
   readonly inheritedGaps?: readonly number[];
   /** This device's clock, for the once-in-ten-minutes floor of 3.6. Injected so tests can move it. */
   readonly now?: () => number;
+  /**
+   * The application's own gate over a materialised state, asked before the state replaces the
+   * document.
+   *
+   * The journal's integrity gate guarantees a state the domain accepts, and withholds whatever it
+   * can tell the application would refuse (an identifier that is not a UUID, for one); what is left
+   * is a version skew — a peer's newer build wrote what this one does not open. Such a state, ready
+   * but refused, would otherwise be written to the document and then refused on every load and
+   * every write of every device. Absent, every ready state is accepted, as before.
+   *
+   * `false` keeps the refused state out of the document, and four things make that safe rather
+   * than a silent freeze. The refusal is recorded ({@link SYNC_STATE_KEYS.hold}) and reported by
+   * {@link SyncEngine.status}, for a screen to say so. The device is read-only while it lasts:
+   * {@link SyncEngine.enqueue} refuses every write (`document_held`), because a write is built
+   * from what the screen shows, and that is not the journal's state — an update carries its entity
+   * whole under a stamp that outranks the family's, and would quietly undo a peer's change. A
+   * device that never held a document of this family is not given one the application refuses: it
+   * stays without, and says why. And the gate is asked again at the start of every pull and every
+   * write ({@link SyncEngine.settleDocument}), so a build that opens the state lifts the hold by
+   * itself. The journal and the cursor are saved in every case, so the operation that repairs the
+   * state lands on top of everything else.
+   */
+  readonly acceptsState?: (state: SyncedBudgetState) => boolean;
+  /**
+   * The document this device holds is the family's from the start: the device founded the family
+   * with it, and its first write seeds the journal with it. A hold then still keeps it on screen
+   * (`kept`). Every other device's document becomes the family's only when the engine writes an
+   * accepted state of the journal into it ({@link SYNC_STATE_KEYS.familyDocument}).
+   */
+  readonly foundedDocument?: boolean;
 }
+
+/** A write of {@link SyncEngine}'s, whichever of the two commits of the store carried it. */
+type Committed =
+  | { readonly status: "saved"; readonly revision: string | null }
+  | { readonly status: "conflict" };
 
 /** What one pass over the queue moved to the epoch in hand, and what it could not move. */
 interface OutboxRekey {
@@ -222,7 +275,8 @@ export interface CheckpointReport {
 
 export interface EnqueueResult {
   readonly snapshot: JournalSnapshot;
-  readonly revision: string;
+  /** The document's revision after the write; `null` when the device holds no document. */
+  readonly revision: string | null;
   readonly queued: number;
 }
 
@@ -385,6 +439,8 @@ export class SyncEngine {
   private readonly skipped: readonly string[];
   private readonly inheritedGaps: readonly number[];
   private readonly now: () => number;
+  private readonly acceptsState: (state: SyncedBudgetState) => boolean;
+  private readonly foundedDocument: boolean;
 
   constructor(options: SyncEngineOptions) {
     this.repository = options.repository;
@@ -406,6 +462,8 @@ export class SyncEngine {
     this.skipped = [...new Set(options.skipped ?? [])].sort();
     this.inheritedGaps = [...new Set(options.inheritedGaps ?? [])].sort((a, b) => a - b);
     this.now = options.now ?? (() => Date.now());
+    this.acceptsState = options.acceptsState ?? (() => true);
+    this.foundedDocument = options.foundedDocument ?? false;
   }
 
   private async readJournal(): Promise<JournalSnapshot> {
@@ -494,6 +552,73 @@ export class SyncEngine {
       opId: record.opId,
       attempts: record.attempts as number,
     };
+  }
+
+  /**
+   * The hold recorded by the last write that folded the journal, read back with the same suspicion
+   * as the stop: a record this build did not write is a corrupted record, not a hold to show.
+   */
+  async readHold(): Promise<DocumentHold | null> {
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.hold);
+    if (stored === undefined || stored === null) return null;
+    const record = stored as Partial<DocumentHold>;
+    if (
+      typeof record.reason !== "string" ||
+      !(DOCUMENT_HOLD_REASONS as readonly string[]).includes(record.reason) ||
+      (record.document !== "kept" && record.document !== "empty")
+    ) {
+      throw new SyncClientError("corrupt_sync_state", "the stored hold is not a hold");
+    }
+    return { reason: record.reason as DocumentHold["reason"], document: record.document };
+  }
+
+  /**
+   * Whether the stored record names this family as the one whose journal wrote the document. A
+   * record of another family — one this device left — is simply not this family's; a record this
+   * build did not write is a corrupted record.
+   */
+  private async recordedFamilyDocument(): Promise<boolean> {
+    const stored = await this.repository.readSyncState(SYNC_STATE_KEYS.familyDocument);
+    if (stored === undefined || stored === null) return false;
+    const record = stored as { readonly familyId?: unknown };
+    if (typeof stored !== "object" || typeof record.familyId !== "string") {
+      throw new SyncClientError("corrupt_sync_state", "the stored family document is not a record of one");
+    }
+    return record.familyId === this.familyId;
+  }
+
+  /** Whether the document this device holds is the family's — see {@link SyncStatusReport.familyDocument}. */
+  private async holdsFamilyDocument(): Promise<boolean> {
+    return this.foundedDocument || (await this.recordedFamilyDocument());
+  }
+
+  /**
+   * The hold a write leaves behind when the journal's state does not reach the document: refused by
+   * the application (`ready`), or not showable at all.
+   *
+   * A state that cannot be shown never lifts a hold already in force — one `budget delete` would
+   * otherwise reopen writes from a held document (third review, S2b) — and on a family document it
+   * is a hold of its own (`journal_not_ready`). On any other device it is what it always was: the
+   * integrity verdict says so, and nothing more is recorded. A journal with nothing in it — a
+   * founder's before its first write — is not a journal waiting for anything.
+   */
+  private async nextHold(ready: boolean, hasDocument: boolean, snapshot: JournalSnapshot): Promise<DocumentHold | null> {
+    const family = await this.holdsFamilyDocument();
+    const document: DocumentHold["document"] = hasDocument && family ? "kept" : "empty";
+    if (ready) return { reason: "rejected_by_app", document };
+    const previous = await this.readHold();
+    if (previous !== null) return previous;
+    if (!family || snapshot.entries.length === 0) return null;
+    return { reason: "journal_not_ready", document };
+  }
+
+  /**
+   * The two fields of {@link status} that decide whether this device may write, read without the
+   * cursor: a write does not touch the cursor, and a cursor this build cannot place (an epoch
+   * conflict) is no reason to refuse one.
+   */
+  async documentStatus(): Promise<Pick<SyncStatusReport, "hold" | "familyDocument">> {
+    return { hold: await this.readHold(), familyDocument: await this.holdsFamilyDocument() };
   }
 
   /**
@@ -608,6 +733,7 @@ export class SyncEngine {
       // behind, the envelope went with the journal it belonged to (5.5 step 7) and the alarm is
       // no longer about anything; `pull()` erases the record itself on its next run.
       stop: stored.keyEpoch === cursor.keyEpoch ? await this.readStop() : null,
+      ...(await this.documentStatus()),
     };
   }
 
@@ -633,8 +759,17 @@ export class SyncEngine {
    */
   async enqueue(drafts: readonly OperationDraft[]): Promise<EnqueueResult> {
     if (drafts.length === 0) throw new SyncClientError("corrupt_sync_state", "nothing to enqueue");
+    // A build that now opens the journal's state lifts the hold here, before the write is judged.
+    await this.settleDocument();
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
+      // Read-only while a hold is in force — see `SyncEngineOptions.acceptsState`. Checked on every
+      // attempt, inside the loop: a delivery folded in another tab between two attempts may have
+      // started one. A hold over a state that cannot be shown lets one write through, below.
+      const hold = await this.readHold();
+      if (hold !== null && hold.reason === "rejected_by_app") {
+        throw new SyncClientError("document_held", "the document is held: this build does not open the journal's state");
+      }
       const journal = await this.readJournal();
 
       let clock = createClock(this.deviceId, journal.lamport);
@@ -643,6 +778,27 @@ export class SyncEngine {
         const local = createLocalOperation(clock, draft);
         clock = local.clock;
         operations.push(local.operation);
+      }
+
+      const snapshot = applyOperations(journal, operations);
+      if (snapshot.integrity.ready && !this.acceptsState(snapshot.state)) {
+        // This write, on top of the family's journal, would leave a state the application does not
+        // open. Queued, it would start a hold of this device's own making and travel to every
+        // device of the family; refused, nothing is written and nothing is sent.
+        throw new SyncClientError("state_refused", "the write would leave a state this build does not open");
+      }
+      if (!snapshot.integrity.ready && (hold !== null || (await this.holdsFamilyDocument()))) {
+        // A family document over a journal that cannot be shown is read-only, and only a write whose
+        // result can be shown — the one that restores the family's budget — goes. Any other would be
+        // built from the last state that could be shown, reported saved, and never appear.
+        if (hold === null && !journal.integrity.ready) {
+          // The journal was not ready before this write either, and nothing has recorded it yet — a
+          // device that updated its build onto such a journal. Recorded now, so the screen says so.
+          await this.repository.writeSyncState([
+            { key: SYNC_STATE_KEYS.hold, value: { reason: "journal_not_ready", document: document === null ? "empty" : "kept" } satisfies DocumentHold },
+          ]);
+        }
+        throw new SyncClientError("journal_not_ready", "the journal's state cannot be shown, and this write does not restore it");
       }
 
       const appends: OutboxAppend[] = [];
@@ -668,10 +824,12 @@ export class SyncEngine {
         });
       }
 
-      const snapshot = applyOperations(journal, operations);
-      const commit = await this.commit(document, snapshot, appends, [
-        { key: SYNC_STATE_KEYS.journal, value: serializeJournal(snapshot) },
-      ]);
+      const commit = await this.commit(
+        document,
+        snapshot,
+        appends,
+        [{ key: SYNC_STATE_KEYS.journal, value: serializeJournal(snapshot) }],
+      );
       if (commit.status === "saved") {
         return { snapshot, revision: commit.revision, queued: appends.length };
       }
@@ -685,24 +843,109 @@ export class SyncEngine {
    * One write of everything a step produced.
    *
    * The materialised state is only handed to the document when the integrity gate says it can be
-   * shown. When it cannot — no active budget, or one the journal does not hold — the document
-   * keeps the last state that could, exactly as decision 19 asks, and the journal is still saved
-   * so the missing operation repairs it when it arrives.
+   * shown and the application's own gate accepts it, and nothing else is ever written in its
+   * place. When it cannot — no active budget, one the journal does not hold, or a state the
+   * application refuses to store — the document keeps the last state that could, exactly as
+   * decision 19 asks, and the journal is still saved so the missing operation repairs it when it
+   * arrives. A device without a document stays without one rather than being given one the
+   * application refuses. Every write of an accepted state records, in the same transaction, that
+   * the document is this family's ({@link SYNC_STATE_KEYS.familyDocument}).
+   *
+   * A refusal by the application is recorded beside the journal ({@link SYNC_STATE_KEYS.hold}); a
+   * state that is merely not ready is not a refusal and says so through its own integrity verdict.
+   * The hold names what the device is left showing: `kept` only when that is a document of this
+   * family, so a personal budget is never presented as the family's.
    */
   private async commit(
     document: { readonly value: SyncedBudgetState; readonly revision: string } | null,
     snapshot: JournalSnapshot,
     outbox: readonly OutboxAppend[],
     syncState: readonly { readonly key: string; readonly value: unknown }[],
-  ): Promise<SaveIfRevisionResult<SyncedBudgetState>> {
-    const value =
-      snapshot.integrity.ready || document === null ? snapshot.state : document.value;
-    return this.repository.commitWithSync({
-      expectedRevision: document?.revision ?? null,
-      value,
+  ): Promise<Committed> {
+    const ready = snapshot.integrity.ready;
+    const accepted = ready && this.acceptsState(snapshot.state);
+    const value = accepted ? snapshot.state : document?.value;
+    const hold = accepted ? null : await this.nextHold(ready, value !== undefined, snapshot);
+    const entries = [
+      ...syncState,
+      { key: SYNC_STATE_KEYS.hold, value: hold },
+      ...(accepted ? [{ key: SYNC_STATE_KEYS.familyDocument, value: { familyId: this.familyId } }] : []),
+    ];
+    const expectedRevision = document?.revision ?? null;
+    if (value === undefined) {
+      const kept = await this.repository.commitBookkeeping({ expectedRevision, outbox, syncState: entries });
+      return kept.status === "saved" ? { status: "saved", revision: kept.current?.revision ?? null } : kept;
+    }
+    const saved = await this.repository.commitWithSync({ expectedRevision, value, outbox, syncState: entries });
+    return saved.status === "saved" ? { status: "saved", revision: saved.revision } : { status: "conflict" };
+  }
+
+  /**
+   * Asks the application's gate again about the journal this device already holds — LOW-4 of the
+   * second review, and the reason a hold is not for ever.
+   *
+   * A hold is a version skew: a peer's newer build wrote what this one does not open. The update
+   * that fixes it arrives as a new build, not as an operation, so nothing would ever fold the
+   * journal again to ask — a pull with nothing to fetch writes nothing. So this runs at the start
+   * of every pull, sync and write: the journal is rebuilt by this build's own rules
+   * (`restoreJournal` materialises it afresh), and when the gate now accepts the state it is
+   * written to the document, and the hold cleared, in one transaction.
+   *
+   * The same step takes up the family's state on a device whose document the record does not yet
+   * call the family's although the journal opens — a device of a build that kept no record — and
+   * starts a hold when this build refuses a state an older one accepted. Returns whether the
+   * document's content was replaced — a hold lifted, or a document written where there was none —
+   * which is when a screen showing the old one is stale. With no hold and the record in place, it
+   * costs two reads.
+   */
+  async settleDocument(): Promise<boolean> {
+    for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+      const hold = await this.readHold();
+      if (hold === null && (await this.recordedFamilyDocument())) return false;
+      // The document before the journal, as `enqueue` and `pull` read them: the revision checked by
+      // the commit below then covers the journal read too, and a write another tab makes in between
+      // is a conflict to retry rather than a state written over it (third review, LOW S3).
+      const document = await this.repository.loadVersioned();
+      const journal = await this.readJournal();
+      if (!journal.integrity.ready) {
+        // A state that cannot be shown never lifts a hold, and on a family document it is a hold of
+        // its own — recorded here for a device that updated its build onto such a journal.
+        const next = await this.nextHold(false, document !== null, journal);
+        if (next !== null && hold === null) await this.repository.writeSyncState([{ key: SYNC_STATE_KEYS.hold, value: next }]);
+        return false;
+      }
+      // Already refused, and refused still: nothing to write.
+      if (hold !== null && !this.acceptsState(journal.state)) return false;
+      const commit = await this.commit(document, journal, [], []);
+      // Rewritten means the content may have moved under the screen: a hold lifted, or a document
+      // where there was none. A device that only lacked the record already showed this very state
+      // — every accepted write put it there — so writing the record is not news for the screen.
+      if (commit.status === "saved") return hold !== null || document === null;
+    }
+    throw new SyncClientError("write_conflict", "settling the document lost its revision check");
+  }
+
+  /**
+   * A write of the queue or of the bookkeeping that leaves the budget as it was found: the document
+   * written back unchanged, or — on a device that holds none — no document written at all, so that
+   * moving a queue or anchoring a checkpoint never invents one out of a state nobody accepted.
+   */
+  private async commitUnchanged(
+    document: { readonly value: SyncedBudgetState; readonly revision: string } | null,
+    outbox: readonly OutboxAppend[],
+    syncState: readonly { readonly key: string; readonly value: unknown }[],
+  ): Promise<Committed> {
+    if (document === null) {
+      const kept = await this.repository.commitBookkeeping({ expectedRevision: null, outbox, syncState });
+      return kept.status === "saved" ? { status: "saved", revision: kept.current?.revision ?? null } : kept;
+    }
+    const saved = await this.repository.commitWithSync({
+      expectedRevision: document.revision,
+      value: document.value,
       outbox,
       syncState,
     });
+    return saved.status === "saved" ? { status: "saved", revision: saved.revision } : { status: "conflict" };
   }
 
   /** A queue record as it was written, or `null` when it is not the shape this build writes. */
@@ -791,15 +1034,10 @@ export class SyncEngine {
     await this.repository.confirmOutbox(appends.map((append) => append.opId));
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
-      const commit = await this.repository.commitWithSync({
-        expectedRevision: document?.revision ?? null,
-        // The document is not what changed here — only the queue is — so it is written back as it
-        // was found. A device with a queue always has a document (3.1 step 7 writes both), and the
-        // journal answers for the case that cannot happen rather than leaving it to `null`.
-        value: document?.value ?? (await this.readJournal()).state,
-        outbox: appends,
-        syncState: [{ key: SYNC_STATE_KEYS.rekey, value: null }],
-      });
+      // The document is not what changed here — only the queue is — so it is written back as it
+      // was found, and a device without one is not given one: the journal's state is not something
+      // this device's application has accepted just because the queue moved.
+      const commit = await this.commitUnchanged(document, appends, [{ key: SYNC_STATE_KEYS.rekey, value: null }]);
       if (commit.status === "saved") return;
     }
     throw new SyncClientError("write_conflict", "the re-encrypted queue lost its revision check");
@@ -985,6 +1223,11 @@ export class SyncEngine {
    * otherwise hold every device in a fetch loop for nothing.
    */
   async pull(): Promise<PullResult> {
+    return this.walk(await this.settleDocument());
+  }
+
+  /** {@link pull} after the document was settled — `settled` is what that step reports. */
+  private async walk(settled: boolean): Promise<PullResult> {
     let requests = 0;
     let applied = 0;
     let checkpoints = 0;
@@ -1112,6 +1355,7 @@ export class SyncEngine {
       stop,
       requests,
       pageLimitReached,
+      settled,
     };
   }
 
@@ -1189,23 +1433,19 @@ export class SyncEngine {
     // would claim again.
     for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
       const document = await this.repository.loadVersioned();
-      const commit = await this.repository.commitWithSync({
-        expectedRevision: document?.revision ?? null,
-        // A checkpoint changes nothing in the budget, so the document is written back as found.
-        value: document?.value ?? (await this.readJournal()).state,
-        outbox: [append],
-        syncState: [
-          {
-            key: SYNC_STATE_KEYS.anchor,
-            value: serializeAnchor({
-              ...anchor,
-              own: { index, digest },
-              sinceLast: 0,
-              writtenAt: now,
-            }),
-          },
-        ],
-      });
+      // A checkpoint changes nothing in the budget, so the document is written back as found — and
+      // on a device that holds none, none is written.
+      const commit = await this.commitUnchanged(document, [append], [
+        {
+          key: SYNC_STATE_KEYS.anchor,
+          value: serializeAnchor({
+            ...anchor,
+            own: { index, digest },
+            sinceLast: 0,
+            writtenAt: now,
+          }),
+        },
+      ]);
       if (commit.status === "saved") return true;
     }
     throw new SyncClientError("write_conflict", "the checkpoint lost its revision check");
@@ -1219,8 +1459,11 @@ export class SyncEngine {
    * the queue like any other.
    */
   async sync(): Promise<{ readonly push: PushResult; readonly pull: PullResult }> {
+    // Settled first, before anything can fail on the network: a device that updated its build
+    // while offline lifts its hold on the next round all the same.
+    const settled = await this.settleDocument();
     const pushed = await this.push();
-    const pulled = await this.pull();
+    const pulled = await this.walk(settled);
     await this.writeCheckpoint();
     return { push: pushed, pull: pulled };
   }

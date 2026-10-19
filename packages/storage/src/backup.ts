@@ -1,6 +1,19 @@
 export const MAX_BACKUP_BYTES = 5 * 1024 * 1024;
 export const BACKUP_FORMAT_VERSION = 2;
-export const BACKUP_SCHEMA_VERSION = 1;
+/**
+ * The payload schema every new backup is written with.
+ *
+ * Version 2 is the wave-1 model: tags, notes and display fields, all optional. A version 1
+ * payload is a version 2 payload that uses none of them, so reading one is the identity — no
+ * migration exists because none is needed — and both stay readable for good. A backup always
+ * says 2 now (D-037): 1.0.0 was never published, so no older build has to be able to read what
+ * this one writes, and one that tries refuses it as newer rather than guessing at fields it does
+ * not know.
+ */
+export const BACKUP_SCHEMA_VERSION = 2;
+/** Every payload schema this build reads, oldest first. Anything above the last is newer. */
+export const SUPPORTED_BACKUP_SCHEMA_VERSIONS = [1, 2] as const;
+export type BackupSchemaVersion = (typeof SUPPORTED_BACKUP_SCHEMA_VERSIONS)[number];
 
 const BACKUP_APP = "family-budget";
 const BACKUP_APP_VERSION = "0.1.0";
@@ -21,7 +34,7 @@ export interface FamilyBudgetBackup<T> {
   readonly app: "family-budget";
   readonly appVersion: string;
   readonly formatVersion: 2;
-  readonly schemaVersion: 1;
+  readonly schemaVersion: BackupSchemaVersion;
   readonly createdAt: string;
   readonly integrity: BackupIntegrity;
   readonly payload: T;
@@ -224,7 +237,7 @@ function requireEnvelope(value: unknown): FamilyBudgetBackup<unknown> {
         : "Это не поддерживаемая версия резервной копии.",
     );
   }
-  if (value.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+  if (!(SUPPORTED_BACKUP_SCHEMA_VERSIONS as readonly unknown[]).includes(value.schemaVersion)) {
     throw new Error(
       typeof value.schemaVersion === "number" && value.schemaVersion > BACKUP_SCHEMA_VERSION
         ? "Версия схемы данных новее поддерживаемой."

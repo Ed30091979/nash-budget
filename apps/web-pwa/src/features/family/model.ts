@@ -12,12 +12,15 @@ import type { BudgetState, Member, MemberId, Transaction } from "@family-budget/
 import { formatKeyFingerprint } from "@family-budget/sync-crypto";
 import {
   SyncClientError,
+  type DocumentHold,
+  type DocumentHoldReason,
   type PinState,
   type SyncStatusReport,
   type SyncStop,
 } from "@family-budget/sync-client";
 import type { JournalIntegrity, WithheldEntity } from "@family-budget/sync-protocol";
 
+import type { WriteRefusalReason } from "../../write-refusal";
 import type { RotationGap, RotationPhase, SkippedDevice } from "./rotation";
 
 /* ───────────────────────────── Индикатор состояния ───────────────────────────── */
@@ -190,6 +193,92 @@ export function syncNotice(stop: SyncStop | null): SyncNotice | null {
   return { title: template.title, body: template.body, dismissible: true };
 }
 
+/* ───────────────────────────── Состояние, которое приложение не открыло ───────────────────────────── */
+
+export interface DocumentHoldNotice {
+  readonly title: string;
+  readonly body: string;
+}
+
+const HOLD_NOTICES = {
+  rejected_by_app: {
+    kept: {
+      title: "Новые записи семьи не открываются в этой версии",
+      body: "Семья прислала изменения, которые эта версия приложения открыть не может. На экране — бюджет в том виде, в каком он открылся в последний раз, и записи на этом устройстве временно недоступны: правка устаревшего бюджета затёрла бы то, что семья изменила с тех пор. Обновите приложение на этом устройстве — записи откроются сами. Ничего не потеряно: записи семьи хранятся в журнале и появятся, как только бюджет снова откроется — после обновления или после того, как участник, который вносил изменения, их поправит.",
+    },
+    empty: {
+      title: "Бюджет семьи не открывается в этой версии",
+      body: "Журнал семьи пришёл, но эта версия приложения не может его открыть, поэтому бюджет семьи на этом устройстве пока не показан, а записи недоступны. Обновите приложение — бюджет и записи откроются сами. Ничего не потеряно: записи семьи хранятся в журнале и появятся, как только бюджет откроется.",
+    },
+  },
+  journal_not_ready: {
+    kept: {
+      title: "Бюджет семьи пришёл не целиком",
+      body: "В журнале семьи сейчас нет бюджета, который можно показать: его удалили или он ещё не пришёл. На экране — бюджет в том виде, в каком он открылся в последний раз, и записи на этом устройстве временно недоступны: записанное поверх него не появилось бы на экране и затёрло бы изменения семьи. Записи откроются сами, как только семья восстановит бюджет — например, откроет новый месяц. Ничего не потеряно: всё записанное семьёй хранится в журнале.",
+    },
+    empty: {
+      title: "Бюджет семьи пришёл не целиком",
+      body: "Журнал семьи пришёл, но бюджета, который можно показать, в нём сейчас нет, поэтому бюджет семьи на этом устройстве пока не показан, а записи недоступны. Он откроется сам, как только семья восстановит бюджет — например, откроет новый месяц.",
+    },
+  },
+} as const satisfies Readonly<Record<DocumentHoldReason, Readonly<Record<DocumentHold["document"], DocumentHoldNotice>>>>;
+
+/**
+ * Слова для состояния журнала, которое шлюз приложения не принял (`SyncStatusReport.hold`), или
+ * `null`, когда документ показывает журнал.
+ *
+ * Не гасится кнопкой: запись снимается сама, когда пришедшее состояние снова открывается, а до тех
+ * пор человек смотрит на вчерашний бюджет и обязан об этом знать. Прежде этот случай не говорил
+ * ничего — журнал «готов», проблем нет, а на экране у всей семьи оставался последний открывшийся
+ * снимок.
+ */
+export function documentHoldNotice(hold: DocumentHold | null): DocumentHoldNotice | null {
+  if (hold === null) return null;
+  return HOLD_NOTICES[hold.reason][hold.document];
+}
+
+/**
+ * Почему записи недоступны, словами плашки и формы: задержка расхождения версий говорит
+ * «обновите приложение», журнал без показуемого бюджета — «дождитесь, пока семья его восстановит».
+ */
+export function holdWriteRefusal(hold: DocumentHold): WriteRefusalReason {
+  return hold.reason === "rejected_by_app" ? "held" : "notReady";
+}
+
+const PENDING_FAMILY_NOTICE: DocumentHoldNotice = {
+  title: "Бюджет семьи ещё не пришёл",
+  body: "Устройство уже в семье, но бюджет семьи на него ещё не пришёл. Он придёт журналом семьи, как только устройство свяжется с сервером синхронизации, и откроется сам. До тех пор записи на этом устройстве недоступны: так ничего из бюджета, который был на нём раньше, не уйдёт семье как семейное.",
+};
+
+/**
+ * Слова для экрана, который стоит вместо бюджета, пока у устройства в семье нет документа семьи:
+ * документа нет вовсе, или на нём всё ещё бюджет, который был до вступления (второе ревью, LOW-5 и
+ * MEDIUM-3). Такой бюджет не показывается как семейный — экран говорит, чего устройство ждёт.
+ *
+ * Задержка называет причину своими словами (`empty`); без задержки бюджет семьи просто ещё не
+ * пришёл.
+ */
+export function familyDocumentNotice(hold: DocumentHold | null): DocumentHoldNotice {
+  return hold === null ? PENDING_FAMILY_NOTICE : HOLD_NOTICES[hold.reason].empty;
+}
+
+/**
+ * Стоит ли на месте бюджета экран ожидания документа семьи ({@link familyDocumentNotice}).
+ *
+ * Да — когда устройство в семье, а документа семьи у него нет: документа нет вовсе (второе ревью,
+ * LOW-5: здесь стоял онбординг, и созданный им личный бюджет следующий приём выдавал за семейный)
+ * или отчёт движка говорит, что документ — не семьи (`familyDocument: false`: вступившее
+ * устройство всё ещё держит прежний бюджет). Пока отчёта нет, бюджет на устройстве показывается
+ * как был: писать из него всё равно нельзя — это решает запись, а не экран.
+ */
+export function showsFamilyHoldScreen(
+  inFamily: boolean,
+  hasDocument: boolean,
+  report: Pick<SyncStatusReport, "familyDocument"> | null,
+): boolean {
+  return inFamily && (!hasDocument || report?.familyDocument === false);
+}
+
 /* ───────────────────────────── Удержанные сущности ───────────────────────────── */
 
 const ENTITY_LABELS = {
@@ -202,6 +291,11 @@ const ENTITY_LABELS = {
   scheduledExpense: "Расход по расписанию",
   transaction: "Операция",
   member: "Участник",
+  tag: "Метка",
+  exchangeRate: "Курс валюты",
+  household: "Хозяйство",
+  debt: "Долг",
+  recurringRule: "Регулярная операция",
 } as const satisfies Readonly<Record<WithheldEntity["entity"], string>>;
 
 const WITHHOLDING_LABELS = {
@@ -212,6 +306,9 @@ const WITHHOLDING_LABELS = {
   goal_account_mismatch: "взнос попал не на тот счёт, что привязан к цели",
   duplicate_budget_line: "категория запланирована в бюджете дважды",
   unknown_active_budget: "выбранный бюджет в семью ещё не пришёл",
+  currency_mismatch: "валюта записи не сходится с валютой счёта или семьи",
+  snapshot_mismatch: "сумма в базовой валюте не сходится с суммой операции по её курсу",
+  invalid_id: "идентификатор записи не того вида, что пишет приложение",
 } as const satisfies Readonly<Record<WithheldEntity["reason"], string>>;
 
 export interface WithheldRow {

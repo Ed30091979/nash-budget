@@ -6,12 +6,14 @@ import { Money } from "../../components/Money";
 import { categoryVisual } from "../../category-visual";
 import { searchOperations } from "../dashboard";
 import {
+  amountText,
   kindIcons,
   kindLabels,
   kindSign,
+  operationLabel,
   operationsCount,
-  rubles,
   transactionCategory,
+  transactionCurrency,
   transactionDetail,
 } from "./transaction-words";
 
@@ -72,14 +74,17 @@ export function HistoryScreen({ budget, onEdit, onAdd, onBack, busy = false }: H
       {filtered.length ? <ul className="transaction-list">{filtered.slice(0, visibleCount).map(({ transaction }) => {
         const category = transactionCategory(transaction, budget);
         const visual = category ? categoryVisual(category) : null;
-        const name = `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}`;
+        const name = operationLabel(transaction, budget);
         return <li className={`transaction-row history-row ${transaction.kind}`} key={transaction.id}>
           {/* Вся строка — одна цель нажатия: она открывает операцию в форме «Записать», где её и
               меняют, и удаляют. Разрушающее действие не стоит под пальцем при пролистывании. */}
           <button className="row-open" type="button" disabled={busy} aria-label={`Изменить операцию «${name}»`} onClick={() => onEdit(transaction)}>
             <span className={`transaction-icon ${visual ? `tone-${visual.tone}` : "tone-neutral"}`}><Icon name={visual ? visual.icon : kindIcons[transaction.kind]} size={24} /></span>
             <span className="transaction-copy"><strong>{category ? category.name : kindLabels[transaction.kind]}</strong><small>{transaction.occurredOn} · {category ? kindLabels[transaction.kind] : transactionDetail(transaction, budget)}</small></span>
-            <b><Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} /></b>
+            {/* Сумма строки — в валюте её счёта и с её знаком: «₽» у счёта в долларах был бы неправдой. */}
+            <b>{transactionCurrency(transaction, budget) === "RUB"
+              ? <Money value={transaction.amountMinor} sign={kindSign(transaction.kind)} />
+              : <span className="money">{kindSign(transaction.kind)}{amountText(transaction, budget)}</span>}</b>
           </button>
         </li>;
       })}</ul> : <div className="empty-state">

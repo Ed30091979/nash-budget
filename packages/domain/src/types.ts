@@ -8,6 +8,20 @@ export type TransactionId = StableId;
 export type AnnualCommitmentId = StableId;
 export type ScheduledExpenseId = StableId;
 export type MemberId = StableId;
+export type TagId = StableId;
+export type RecurringRuleId = StableId;
+export type ExchangeRateId = StableId;
+export type DebtId = StableId;
+export type HouseholdId = StableId;
+/** An ISO 4217 code, and only one of `SUPPORTED_CURRENCIES` in `currency.ts`. */
+export type CurrencyCode = string;
+
+/**
+ * Key of a design token the interface draws an entity with: kebab-case, at most 40 characters,
+ * such as `shopping-basket` or `sage`. Never a hex colour and never a file name, so the journal
+ * carries a choice from the design system and not an arbitrary style or picture.
+ */
+export type DisplayKey = string;
 
 /** Money stored as an integer count of the currency's minor unit. */
 export type MinorUnits = number;
@@ -49,7 +63,9 @@ export type TransactionKind =
   | "expense"
   | "refund"
   | "transfer"
-  | "goal_contribution";
+  | "goal_contribution"
+  | "debt_out"
+  | "debt_in";
 
 /**
  * A family participant. Attribution only: nothing in the money calculations reads a member,
@@ -66,9 +82,22 @@ export interface Account {
   readonly id: AccountId;
   readonly name: string;
   readonly type: AccountType;
-  readonly currency: string;
+  /** Every amount on the account is a count of this currency's minor unit. */
+  readonly currency: CurrencyCode;
   readonly openingBalanceMinor: MinorUnits;
   readonly active: boolean;
+  // Display fields. Each is optional on purpose, exactly like `BaseTransaction.memberId`: every
+  // account written before they existed omits them and stays valid without a single edit. No
+  // figure in BudgetMetrics or AnnualPlanMetrics reads any of them.
+  /** Position in the list of accounts; a safe integer. */
+  readonly sortOrder?: number;
+  readonly icon?: DisplayKey;
+  readonly color?: DisplayKey;
+  /**
+   * Whether the account counts towards the total of everything the household holds. Absent
+   * means it does. Only that total reads it: `capitalMinor` never does.
+   */
+  readonly includeInTotal?: boolean;
 }
 
 export interface Category {
@@ -79,6 +108,9 @@ export interface Category {
   readonly group: StoredCategoryGroup;
   readonly active: boolean;
   readonly sortOrder: number;
+  /** Display fields, optional for the same reason as on {@link Account}. Read by no figure. */
+  readonly icon?: DisplayKey;
+  readonly color?: DisplayKey;
 }
 
 /** One entry of a category catalogue: everything a category needs except its identity. */
@@ -126,6 +158,86 @@ export interface Goal {
   readonly openingContributedMinor: MinorUnits;
   readonly plannedContributionMinor: MinorUnits;
   readonly status: GoalStatus;
+  /** The date the family means to reach the goal by. Optional, and read by no figure. */
+  readonly deadline?: LocalDate;
+  readonly icon?: DisplayKey;
+}
+
+/**
+ * A label a family puts on operations: «Отпуск», «Дача», «Ремонт». Attribution only, like a
+ * {@link Member}: nothing in the money calculations reads a tag, so creating, renaming,
+ * archiving or deleting one never moves a single kopeck. An archived tag stays on the
+ * operations that carry it and is merely no longer offered for new ones.
+ */
+export interface Tag {
+  readonly id: TagId;
+  readonly name: string;
+  readonly active: boolean;
+}
+
+/** Who owes whom: the family owes the counterparty, or the counterparty owes the family. */
+export type DebtDirection = "i_owe" | "owed_to_me";
+
+/**
+ * Money lent or borrowed: «Петя должен мне», «я должен Сергею».
+ *
+ * A debt is a balance of its own, outside the budget: lending is not an expense and borrowing is not
+ * an income (rule 4 of `contracts/README.md`), so no figure of `BudgetMetrics` reads a debt. What a
+ * debt is worth is a metric of its own, `calculateDebts`. The direction gives the operations on the
+ * debt their meaning, so it does not change once operations are written against it.
+ */
+export interface Debt {
+  readonly id: DebtId;
+  /** Who the debt is with, as the family calls them: a label, at most 80 characters. */
+  readonly counterparty: string;
+  readonly direction: DebtDirection;
+  /** The debt is counted in this currency; any supported one, the base or not. */
+  readonly currency: CurrencyCode;
+  /** What was owed when the debt was entered, before any operation, in the debt's currency; ≥ 0. */
+  readonly openingMinor: MinorUnits;
+  /** When it is due. Optional; a debt past it with something still owed is overdue. */
+  readonly dueDate?: LocalDate;
+  /** An archived debt is no longer offered for new operations and still counts in every total. */
+  readonly active: boolean;
+}
+
+/**
+ * The household itself: for now, the one currency every budget, category and plan is counted in.
+ *
+ * An entity rather than a setting, because the journal replicates entities and only entities, and
+ * its identifier is derived — always `HOUSEHOLD_ID` — so two devices that name the base currency
+ * independently write one and the same record. A state without one is counted in roubles, which is
+ * what every state written before it existed is.
+ */
+export interface Household {
+  readonly id: HouseholdId;
+  readonly baseCurrency: CurrencyCode;
+}
+
+/**
+ * A rate as two integers: `quoteMinor` minor units of the quoted currency are worth `baseMinor`
+ * minor units of the base one. Integers on both sides, so a conversion is exact arithmetic followed
+ * by one rounding, and never a binary fraction.
+ */
+export interface ExchangeRateValue {
+  readonly baseMinor: MinorUnits;
+  readonly quoteMinor: MinorUnits;
+}
+
+/**
+ * What one unit of `currency` was worth in `baseCurrency` on `date`.
+ *
+ * Read only by valuations that are meant to move with the rate — the holdings of a later step —
+ * and by whoever writes a snapshot. No budget figure reads it: an operation carries its own value in
+ * the base currency, so a new rate never revalues the past.
+ */
+export interface ExchangeRate {
+  readonly id: ExchangeRateId;
+  /** The quoted currency; never the base one. */
+  readonly currency: CurrencyCode;
+  readonly baseCurrency: CurrencyCode;
+  readonly date: LocalDate;
+  readonly rate: ExchangeRateValue;
 }
 
 /** A large predictable payment with one next due date and a reserve built in advance. */
@@ -166,9 +278,39 @@ interface BaseTransaction {
    * only by {@link MemberExpenseBreakdown}; the budget and planning figures ignore it.
    */
   readonly memberId?: MemberId;
+  /**
+   * A one-line note, at most 500 characters, normalised by `normalizeNote`. There is no empty
+   * note: an operation without one omits the field.
+   */
+  readonly note?: string;
+  /**
+   * Tags on the operation: from one to ten, no repeats, each naming a tag of
+   * {@link BudgetState.tags}, archived ones included. There is no empty list: an operation
+   * without tags omits the field. Labels, read by no figure in {@link BudgetMetrics}.
+   */
+  readonly tagIds?: readonly TagId[];
+  /**
+   * The recurring rule this operation is an occurrence of. A label read by no figure; when present
+   * it names a rule of {@link BudgetState.recurringRules}.
+   */
+  readonly recurringRuleId?: RecurringRuleId;
 }
 
-export interface IncomeTransaction extends BaseTransaction {
+/**
+ * The value of an operation in the base currency, fixed when it was written.
+ *
+ * Carried only by an operation on an account in another currency, and then all three fields
+ * together: the budget, the categories and the plan add up `baseAmountMinor` and never read a rate
+ * table, so the rouble figure of a dollar purchase is the one the family saw that day. An operation
+ * in the base currency carries none of them — its amount already is the figure.
+ */
+interface BaseAmountSnapshot {
+  readonly baseAmountMinor?: MinorUnits;
+  readonly baseCurrency?: CurrencyCode;
+  readonly rate?: ExchangeRateValue;
+}
+
+export interface IncomeTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "income";
   readonly accountId: AccountId;
   /**
@@ -181,13 +323,13 @@ export interface IncomeTransaction extends BaseTransaction {
   readonly categoryId?: CategoryId;
 }
 
-export interface ExpenseTransaction extends BaseTransaction {
+export interface ExpenseTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "expense";
   readonly accountId: AccountId;
   readonly categoryId: CategoryId;
 }
 
-export interface RefundTransaction extends BaseTransaction {
+export interface RefundTransaction extends BaseTransaction, BaseAmountSnapshot {
   readonly kind: "refund";
   readonly accountId: AccountId;
   readonly categoryId: CategoryId;
@@ -198,6 +340,12 @@ export interface TransferTransaction extends BaseTransaction {
   readonly kind: "transfer";
   readonly fromAccountId: AccountId;
   readonly toAccountId: AccountId;
+  /**
+   * What arrived, in the currency of `toAccountId`; `amountMinor` is what left, in the currency of
+   * `fromAccountId`. Present exactly when the two accounts are in different currencies: within one
+   * currency the two amounts are one amount, and two fields for it could disagree.
+   */
+  readonly toAmountMinor?: MinorUnits;
 }
 
 export interface GoalContributionTransaction extends BaseTransaction {
@@ -207,17 +355,117 @@ export interface GoalContributionTransaction extends BaseTransaction {
   readonly goalId: GoalId;
 }
 
+/**
+ * Money that moved between an account and a debt: not an income and not an expense (rule 4 of
+ * `contracts/README.md`). Two kinds and not four: which way the money went is the kind, and what it
+ * means — lent or repaid, borrowed or paid back — is the debt's direction, so a debt whose direction
+ * changed in flight cannot leave an operation that says the opposite.
+ */
+interface DebtMovement extends BaseTransaction {
+  readonly accountId: AccountId;
+  readonly debtId: DebtId;
+  /**
+   * The amount in the debt's currency; `amountMinor` is the account's. Present exactly when the two
+   * currencies differ — within one currency the two amounts are one amount.
+   */
+  readonly debtAmountMinor?: MinorUnits;
+}
+
+/** Money left the account: «дал в долг» on a debt owed to the family, «вернул долг» on one it owes. */
+export interface DebtOutTransaction extends DebtMovement {
+  readonly kind: "debt_out";
+}
+
+/** Money came to the account: «взял в долг» on a debt the family owes, «мне вернули» on one owed to it. */
+export interface DebtInTransaction extends DebtMovement {
+  readonly kind: "debt_in";
+}
+
 export type Transaction =
   | IncomeTransaction
   | ExpenseTransaction
   | RefundTransaction
   | TransferTransaction
-  | GoalContributionTransaction;
+  | GoalContributionTransaction
+  | DebtOutTransaction
+  | DebtInTransaction;
+
+export type RecurrenceFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
+interface RecurringTemplateBase {
+  /** In the currency of the account the template moves money from. */
+  readonly amountMinor: MinorUnits;
+  readonly note?: string;
+  readonly tagIds?: readonly TagId[];
+}
+
+export interface RecurringExpenseTemplate extends RecurringTemplateBase {
+  readonly kind: "expense";
+  readonly accountId: AccountId;
+  readonly categoryId: CategoryId;
+}
+
+export interface RecurringIncomeTemplate extends RecurringTemplateBase {
+  readonly kind: "income";
+  readonly accountId: AccountId;
+  readonly categoryId?: CategoryId;
+}
+
+export interface RecurringTransferTemplate extends RecurringTemplateBase {
+  readonly kind: "transfer";
+  readonly fromAccountId: AccountId;
+  readonly toAccountId: AccountId;
+  /** What arrives, in the receiving account's currency; present exactly when the currencies differ. */
+  readonly toAmountMinor?: MinorUnits;
+}
+
+/**
+ * The operation a rule writes on each of its days. No `id` and no date — every occurrence gets
+ * both — and no base-currency snapshot: the value of a foreign occurrence is fixed by the rate of
+ * its own day, when it is written.
+ */
+export type RecurringTemplate = RecurringExpenseTemplate | RecurringIncomeTemplate | RecurringTransferTemplate;
+
+/**
+ * An operation that repeats: «доставка воды каждые две недели», «зарплата 5-го».
+ *
+ * Its occurrences are ordinary posted operations, written with derived identifiers
+ * (`recurringOccurrenceId`) and labelled with the rule, so they are in the history, the backup and
+ * the journal like any other and can be edited or deleted like any other (D-035). The rule only
+ * remembers how far it has written: every day on or before `materializedThrough` is closed, and an
+ * occurrence deleted there does not come back.
+ */
+export interface RecurringRule {
+  readonly id: RecurringRuleId;
+  /** A label the family may give the rule, at most 80 characters. */
+  readonly name?: string;
+  readonly template: RecurringTemplate;
+  readonly frequency: RecurrenceFrequency;
+  /** Every `interval` days, weeks, months or years: an integer from 1 to 999. */
+  readonly interval: number;
+  readonly startDate: LocalDate;
+  /** The last day an occurrence may fall on, included; not before `startDate`. */
+  readonly endDate?: LocalDate;
+  /** The watermark: occurrences on or before this day are never written again, even deleted ones. */
+  readonly materializedThrough?: LocalDate;
+  /** An inactive rule writes nothing; its occurrences stay. */
+  readonly active: boolean;
+}
 
 export interface BudgetState {
   readonly activeBudgetId: BudgetId;
   /** Absent in every budget written before members existed; such a state stays valid. */
   readonly members?: readonly Member[];
+  /** Absent in every budget written before tags existed, exactly like `members`. */
+  readonly tags?: readonly Tag[];
+  /** Absent in every budget written before it existed; such a state is counted in roubles. */
+  readonly household?: Household;
+  /** Absent in every budget written before rates existed, exactly like `members`. */
+  readonly exchangeRates?: readonly ExchangeRate[];
+  /** Absent in every budget written before debts existed, exactly like `members`. */
+  readonly debts?: readonly Debt[];
+  /** Absent in every budget written before recurring rules existed, exactly like `members`. */
+  readonly recurringRules?: readonly RecurringRule[];
   readonly accounts: readonly Account[];
   readonly categories: readonly Category[];
   readonly budgets: readonly Budget[];
@@ -292,6 +540,100 @@ export interface MemberExpenseBreakdown {
   readonly byMember: Readonly<Record<MemberId, MemberExpenseMetrics>>;
   /** Everything posted without a memberId, including every pre-member operation. */
   readonly unattributed: ExpenseShareMetrics;
+}
+
+/** One debt as it stands on a day. */
+export interface DebtBalanceMetrics {
+  readonly debtId: DebtId;
+  readonly direction: DebtDirection;
+  readonly currency: CurrencyCode;
+  /**
+   * Posted money that left an account for this debt up to the day, in the debt's currency; null
+   * when the sum leaves the safe integer range.
+   */
+  readonly outMinor: MinorUnits | null;
+  /** Posted money that came to an account from this debt up to the day; null as {@link outMinor}. */
+  readonly inMinor: MinorUnits | null;
+  /**
+   * owed_to_me: opening + out − in; i_owe: opening + in − out. Below zero is an overpayment; null
+   * when the exact balance leaves the safe integer range.
+   */
+  readonly balanceMinor: MinorUnits | null;
+  /**
+   * The balance in the base currency at the latest rate on or before the day; null without one, or
+   * when it cannot be represented, or when it would carry its total past what can.
+   */
+  readonly balanceInBaseMinor: MinorUnits | null;
+  /** Past its due date with something still owed, decided on the exact balance. */
+  readonly overdue: boolean;
+}
+
+/**
+ * Every debt of the household on a day, archived ones included. A standalone metric, like the split
+ * by participant: no figure of {@link BudgetMetrics} reads a debt.
+ */
+export interface DebtMetrics {
+  readonly asOf: LocalDate;
+  readonly baseCurrency: CurrencyCode;
+  /** Declaration order of state.debts. */
+  readonly debts: readonly DebtBalanceMetrics[];
+  readonly byDebt: Readonly<Record<DebtId, DebtBalanceMetrics>>;
+  /** What others owe the family, in the base currency: the valued owed_to_me balances, summed. */
+  readonly receivableInBaseMinor: MinorUnits;
+  /** What the family owes others, in the base currency: the valued i_owe balances, summed. */
+  readonly payableInBaseMinor: MinorUnits;
+  /** receivable − payable, exactly; null when that difference cannot be represented. */
+  readonly netInBaseMinor: MinorUnits | null;
+  /** Debts whose balance could not be valued in the base currency: no rate, or too large a sum. */
+  readonly unvaluedDebtIds: readonly DebtId[];
+}
+
+/**
+ * Everything the household holds on a day: each account's balance since it was opened, in its own
+ * currency and in the base one, and the debts. Cumulative and blind to budgets, unlike the balances
+ * of {@link BudgetMetrics}, which count only the operations of the budget's own window.
+ */
+export interface HoldingsMetrics {
+  readonly asOf: LocalDate;
+  readonly baseCurrency: CurrencyCode;
+  /**
+   * Opening balance and every posted operation dated on or before `asOf`, in the account's own
+   * currency; null when the sum leaves the safe integer range, which no gate in front of the
+   * domain lets a state reach.
+   */
+  readonly accountBalancesMinor: Readonly<Record<AccountId, MinorUnits | null>>;
+  /** The balance in the base currency at the latest rate on or before `asOf`; null when it cannot be valued. */
+  readonly accountBalancesInBaseMinor: Readonly<Record<AccountId, MinorUnits | null>>;
+  /** The valued balances of the accounts with `includeInTotal !== false`, summed. */
+  readonly totalInBaseMinor: MinorUnits;
+  /** Accounts whose balance could not be valued: no rate, or too large a sum. Declaration order. */
+  readonly unvaluedAccountIds: readonly AccountId[];
+  readonly debts: DebtMetrics;
+  /** total + receivable − payable; null when that sum cannot be represented exactly. */
+  readonly netWorthInBaseMinor: MinorUnits | null;
+}
+
+/** One tag's share of a budget, in the base currency. */
+export interface TagMetrics {
+  readonly tagId: TagId;
+  readonly incomeMinor: MinorUnits;
+  readonly expenseMinor: MinorUnits;
+  readonly refundMinor: MinorUnits;
+  /** expense − refund. */
+  readonly actualMinor: MinorUnits;
+  /** Posted incomes, expenses and refunds of the window carrying the tag. */
+  readonly transactionCount: number;
+}
+
+/**
+ * The budget by tag. An operation with two tags counts in both, so the tags do not add up to the
+ * budget and are not meant to: a tag is a second way to look at the same money.
+ */
+export interface TagBreakdown {
+  readonly budgetId: BudgetId;
+  /** Declaration order of state.tags, archived tags included. */
+  readonly tags: readonly TagMetrics[];
+  readonly byTag: Readonly<Record<TagId, TagMetrics>>;
 }
 
 export type AnnualCommitmentStatus = "funded" | "on_track" | "due_soon" | "overdue";

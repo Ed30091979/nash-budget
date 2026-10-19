@@ -8,6 +8,7 @@ import {
   carriedBudgetLineId,
   carryBudgetForward,
   findBudgetForMonth,
+  HOUSEHOLD_ID,
   makeSeedBudget,
   monthAfterPeriod,
   SEED_IDS,
@@ -111,6 +112,17 @@ describe("перенос месяца", () => {
     expect(new Set([july.activeBudgetId, anna.budget.id, september.budget.id]).size).toBe(3);
   });
 
+  it("выводит те же имена, что сборка 1.0.0: значения закреплены литералами", () => {
+    // Имя — функция и частей ключа, и разделителя между ними. Устройство на новой сборке и
+    // устройство на старой обязаны назвать один и тот же август одинаково, иначе семья получит
+    // два августа, поэтому запись разделителя в исходнике (U+0000) может меняться только так,
+    // чтобы эти строки остались прежними. Значения вычислены кодом 1.0.0.
+    expect(carriedBudgetId(SEED_IDS.budget, "2026-08")).toBe("e509f49c-d23c-8f28-a5fa-8c8825f728e2");
+    expect(carriedBudgetLineId("44444444-4444-4444-8444-444444444451", "2026-08"))
+      .toBe("f97df4be-d7b2-8abc-ae43-cbb8fdd5bd33");
+    expect(carryBudgetForward(makeSeedBudget(), "2026-08").budget.id).toBe("e509f49c-d23c-8f28-a5fa-8c8825f728e2");
+  });
+
   it("переносит остаток дальше по цепочке месяцев, накапливая его в конверте", () => {
     const august = carryBudgetForward(makeSeedBudget(), "2026-08").state;
     // В августе по транспорту ничего не потрачено: 10 000 плана и 5 000 переноса целы.
@@ -204,5 +216,52 @@ describe("перенос месяца", () => {
     expect(february.budget.endDate).toBe("2028-02-29");
     const april = carryBudgetForward(july, "2027-04");
     expect(april.budget.endDate).toBe("2027-04-30");
+  });
+
+  it("не трогает метки и помеченные операции, а выведенное имя проверяет и против них", () => {
+    const july = makeSeedBudget();
+    const tagged: BudgetState = {
+      ...july,
+      tags: [{ id: "8a000000-0000-4000-8000-0000000000a1", name: "Отпуск", active: true }],
+      transactions: july.transactions.map((transaction) => ({
+        ...transaction,
+        note: "Заметка",
+        tagIds: ["8a000000-0000-4000-8000-0000000000a1"],
+      })),
+    };
+    const { state } = carryBudgetForward(tagged, "2026-08");
+    expect(state.tags).toEqual(tagged.tags);
+    expect(state.transactions).toEqual(tagged.transactions);
+
+    // Метка, занявшая имя будущего августа, — та же коллизия, что и любая другая сущность.
+    const clash: BudgetState = {
+      ...tagged,
+      tags: [{ id: carriedBudgetId(july.activeBudgetId, "2026-08"), name: "Совпадение", active: true }],
+      transactions: july.transactions,
+    };
+    expect(() => carryBudgetForward(clash, "2026-08")).toThrow(/is already used/);
+  });
+  it("не трогает хозяйство, курсы и валютные счета и переносит остаток конверта в базовой валюте", () => {
+    const july = makeSeedBudget();
+    const usd = "8c000000-0000-4000-8000-0000000000a2";
+    const state: BudgetState = {
+      ...july,
+      household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" },
+      exchangeRates: [{ id: "8e000000-0000-4000-8000-000000000001", currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+      accounts: [...july.accounts, { id: usd, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [
+        ...july.transactions,
+        // 10 $ на транспорт по 90 ₽: в конверт попадают 900 ₽, а не 10 «копеек».
+        { id: "8d000000-0000-4000-8000-000000000003", occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 1_000, accountId: usd, categoryId: TRANSPORT, baseAmountMinor: 90_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 } },
+      ],
+    };
+    const { state: next, budget } = carryBudgetForward(state, "2026-08");
+
+    expect(next.household).toEqual(state.household);
+    expect(next.exchangeRates).toEqual(state.exchangeRates);
+    expect(next.accounts).toEqual(state.accounts);
+    expect(next.transactions).toEqual(state.transactions);
+    // Доступно 10 000 ₽, потрачено 5 000 ₽ и ещё 900 ₽ долларами — переносится 4 100 ₽.
+    expect(lineOf(next, budget.id, TRANSPORT)?.rolloverMinor).toBe(410_000);
   });
 });

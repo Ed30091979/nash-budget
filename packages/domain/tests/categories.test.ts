@@ -69,6 +69,15 @@ describe("category groups", () => {
     expect(resolveCategoryGroup({ type: "income", group: "Повседневные" })).toBe("income");
   });
 
+  it("never throws on a label that names what every object inherits", () => {
+    // A category from a backup or the journal with such a group used to find Object or
+    // Object.prototype in the table of legacy labels, and rendering it threw.
+    for (const group of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "prototype", " Constructor "]) {
+      expect(resolveCategoryGroup({ type: "expense", group }), group).toBe("other");
+      expect(categoryGroupDefinition(resolveCategoryGroup({ type: "expense", group })).type).toBe("expense");
+    }
+  });
+
   it("resolves every group written by the shipped seeds", () => {
     for (const category of [...makeSeedBudget().categories, ...toDomainBudgetState(G002).categories]) {
       expect(isCategoryGroup(resolveCategoryGroup(category))).toBe(true);

@@ -7,11 +7,20 @@
  * набросок, который кодек отвергнет, — это операция, которая никогда не дойдёт до семьи, и узнать
  * об этом на экране пользователя было бы поздно.
  */
-import { makePlanningSeed, makeSeedBudget, SEED_IDS, type BudgetState } from "@family-budget/domain";
+import {
+  calculateBudget,
+  HOUSEHOLD_ID,
+  makePlanningSeed,
+  makeSeedBudget,
+  materializeRecurring,
+  SEED_IDS,
+  type BudgetState,
+  type RecurringRule,
+} from "@family-budget/domain";
 import { applyJournal, createClock, createLocalOperation, type Operation } from "@family-budget/sync-protocol";
 import { describe, expect, it } from "vitest";
 
-import { budgetJournalDrafts } from "./journal";
+import { budgetJournalDrafts, canonical } from "./journal";
 
 const DEVICE = "0000000a-0000-4000-8000-000000000001";
 const MEMBER = "0000000a-0000-4000-8000-00000000aaaa";
@@ -70,6 +79,18 @@ describe("бюджет как операции журнала", () => {
     };
     expect(budgetJournalDrafts(state, shuffled, MEMBER)).toEqual([]);
     expect(budgetJournalDrafts(state, state, MEMBER)).toEqual([]);
+  });
+
+  it("перестановка ключей вложенного объекта — тоже не изменение, а порядок списка — изменение", () => {
+    // Сортировка одного верхнего уровня пропустила бы вложенный курс или шаблон правила, собранный
+    // в другом порядке ключей, и каждое открытие экрана рассылало бы семье «обновление».
+    const one = { amountMinor: 1, rate: { baseMinor: 9_000, quoteMinor: 100 }, template: { kind: "expense", nested: { b: [1, { y: 2, x: 1 }], a: null } } };
+    const two = { template: { nested: { a: null, b: [1, { x: 1, y: 2 }] }, kind: "expense" }, rate: { quoteMinor: 100, baseMinor: 9_000 }, amountMinor: 1 };
+    expect(canonical(two)).toBe(canonical(one));
+    expect(canonical({ tagIds: ["b", "a"] })).not.toBe(canonical({ tagIds: ["a", "b"] }));
+    expect(canonical({ rate: { baseMinor: 9_000, quoteMinor: 100 } })).not.toBe(canonical({ rate: { baseMinor: 9_250, quoteMinor: 100 } }));
+    // Имя поля — данные: «__proto__» во вложенном объекте не становится прототипом.
+    expect(canonical(JSON.parse('{"a":{"__proto__":{"x":1}}}') as Record<string, unknown>)).toBe('{"a":{"__proto__":{"x":1}}}');
   });
 
   it("правка — это update той же записи, а не второе создание", () => {
@@ -183,5 +204,255 @@ describe("бюджет как операции журнала", () => {
     // Доход без категории остаётся доходом без категории — поля у него нет вовсе.
     const plain = applyJournal(stamp(state)).state.transactions.find((entry) => entry.id === income!.id);
     expect(Object.hasOwn(plain ?? {}, "categoryId")).toBe(false);
+  });
+});
+
+describe("метки, заметки и оформление как операции журнала", () => {
+  const TAG_HOME = "0000000a-0000-4000-8000-0000000000d1";
+  const TAG_OLD = "0000000a-0000-4000-8000-0000000000d2";
+
+  /** Посевной бюджет, в котором есть всё, что принесла волна 1. */
+  function labelled(): BudgetState {
+    const state = makeSeedBudget();
+    return {
+      ...state,
+      tags: [
+        { id: TAG_HOME, name: "Дом", active: true },
+        { id: TAG_OLD, name: "Старое", active: false },
+      ],
+      accounts: state.accounts.map((account, index) => ({
+        ...account,
+        sortOrder: (index + 1) * 10,
+        icon: "banknote",
+        color: "sage",
+        ...(index === 1 ? { includeInTotal: false } : {}),
+      })),
+      categories: state.categories.map((category) => ({ ...category, icon: "shopping-basket", color: "mint" })),
+      goals: state.goals.map((goal) => ({ ...goal, deadline: "2027-06-01", icon: "plane" })),
+      transactions: state.transactions.map((entry) =>
+        entry.id === SEED_IDS.transactions.food
+          ? { ...entry, note: "Пятёрочка у дома", tagIds: [TAG_HOME, TAG_OLD] }
+          : entry,
+      ),
+    };
+  }
+
+  it("посев переносит метки, заметку и оформление так, что журнал собирает то же состояние", () => {
+    const state = labelled();
+    const materialized = applyJournal(stamp(state)).state;
+
+    expect([...materialized.tags].sort((left, right) => left.id.localeCompare(right.id))).toEqual(state.tags);
+    expect(materialized.transactions.find((entry) => entry.id === SEED_IDS.transactions.food))
+      .toMatchObject({ note: "Пятёрочка у дома", tagIds: [TAG_HOME, TAG_OLD] });
+    for (const account of state.accounts) {
+      expect(materialized.accounts.find((entry) => entry.id === account.id)).toEqual(account);
+    }
+    for (const category of state.categories) {
+      expect(materialized.categories.find((entry) => entry.id === category.id)).toEqual(category);
+    }
+    expect(materialized.goals).toEqual(state.goals);
+  });
+
+  it("бюджет без новых полей даёт ровно те поля, что давал всегда", () => {
+    const drafts = budgetJournalDrafts(null, makeSeedBudget());
+    for (const draft of drafts) {
+      if (!("fields" in draft)) continue;
+      for (const field of ["sortOrder", "icon", "color", "includeInTotal", "deadline", "note", "tagIds", "recurringRuleId"]) {
+        // У категории порядок был всегда, у остальных этих полей нет вовсе.
+        if (draft.entity === "category" && field === "sortOrder") continue;
+        expect(Object.hasOwn(draft.fields, field), `${draft.entity}.${field}`).toBe(false);
+      }
+    }
+    expect(drafts.some((draft) => draft.entity === "tag")).toBe(false);
+  });
+
+  it("перестановка ключей и записей — не изменение, а правка метки — update одной записи", () => {
+    const state = labelled();
+    const reordered: BudgetState = {
+      ...state,
+      tags: [...(state.tags ?? [])].reverse(),
+      accounts: state.accounts.map((account) =>
+        Object.fromEntries(Object.entries(account).reverse()) as unknown as typeof account),
+      transactions: [...state.transactions].reverse().map((entry) =>
+        Object.fromEntries(Object.entries(entry).reverse()) as unknown as typeof entry),
+    };
+    expect(budgetJournalDrafts(state, reordered, MEMBER)).toEqual([]);
+
+    const renamed: BudgetState = {
+      ...state,
+      tags: (state.tags ?? []).map((tag) => (tag.id === TAG_HOME ? { ...tag, name: "Дача" } : tag)),
+    };
+    expect(budgetJournalDrafts(state, renamed, MEMBER)).toEqual([
+      { memberId: MEMBER, entity: "tag", action: "update", targetId: TAG_HOME, fields: { name: "Дача", active: true } },
+    ]);
+
+    const untagged: BudgetState = {
+      ...state,
+      tags: (state.tags ?? []).filter((tag) => tag.id !== TAG_OLD),
+      transactions: state.transactions.map((entry) =>
+        entry.id === SEED_IDS.transactions.food ? { ...entry, tagIds: [TAG_HOME] } : entry),
+    };
+    const drafts = budgetJournalDrafts(state, untagged, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action, draft.targetId])).toEqual([
+      ["transaction", "update", SEED_IDS.transactions.food],
+      ["tag", "delete", TAG_OLD],
+    ]);
+    // И каждый набросок проходит настоящий кодек.
+    expect(() => stamp(untagged, state)).not.toThrow();
+  });
+});
+
+describe("валюты как операции журнала", () => {
+  const DOLLARS = "0000000a-0000-4000-8000-0000000000e1";
+  const DOLLAR_EXPENSE = "0000000a-0000-4000-8000-0000000000e2";
+  const TRANSFER = "0000000a-0000-4000-8000-0000000000e3";
+  const RATE = "0000000a-0000-4000-8000-0000000000e4";
+
+  /** Посевной бюджет с хозяйством, курсом, долларовым счётом, покупкой и переводом в доллары. */
+  function dollars(): BudgetState {
+    const state = makeSeedBudget();
+    return {
+      ...state,
+      household: { id: HOUSEHOLD_ID, baseCurrency: "RUB" },
+      exchangeRates: [{ id: RATE, currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_000, quoteMinor: 100 } }],
+      accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 50_000, active: true }],
+      transactions: [
+        ...state.transactions,
+        {
+          id: DOLLAR_EXPENSE, occurredOn: "2026-07-10", status: "posted", kind: "expense", amountMinor: 4_000,
+          accountId: DOLLARS, categoryId: SEED_IDS.categories.food,
+          baseAmountMinor: 360_000, baseCurrency: "RUB", rate: { baseMinor: 9_000, quoteMinor: 100 },
+        },
+        {
+          id: TRANSFER, occurredOn: "2026-07-05", status: "posted", kind: "transfer", amountMinor: 1_800_000,
+          fromAccountId: SEED_IDS.accounts.main, toAccountId: DOLLARS, toAmountMinor: 20_000,
+        },
+      ],
+    };
+  }
+
+  it("посев переносит хозяйство, курс, снимок и сумму зачисления, и журнал собирает то же состояние", () => {
+    const state = dollars();
+    const snapshot = applyJournal(stamp(state));
+
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.household).toEqual(state.household);
+    expect(snapshot.state.exchangeRates).toEqual(state.exchangeRates);
+    for (const id of [DOLLAR_EXPENSE, TRANSFER]) {
+      expect(snapshot.state.transactions.find((entry) => entry.id === id)).toEqual(state.transactions.find((entry) => entry.id === id));
+    }
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(state));
+  });
+
+  it("порядок ключей вложенного курса — не изменение, а новый курс — update одной записи", () => {
+    const state = dollars();
+    const reordered: BudgetState = {
+      ...state,
+      exchangeRates: state.exchangeRates!.map((rate) => ({ ...rate, rate: { quoteMinor: rate.rate.quoteMinor, baseMinor: rate.rate.baseMinor } })),
+      transactions: state.transactions.map((entry) =>
+        entry.kind === "expense" && entry.rate !== undefined
+          ? { ...entry, rate: { quoteMinor: entry.rate.quoteMinor, baseMinor: entry.rate.baseMinor } }
+          : entry),
+    };
+    expect(budgetJournalDrafts(state, reordered, MEMBER)).toEqual([]);
+
+    const revalued: BudgetState = {
+      ...state,
+      exchangeRates: state.exchangeRates!.map((rate) => ({ ...rate, rate: { baseMinor: 9_250, quoteMinor: 100 } })),
+    };
+    expect(budgetJournalDrafts(state, revalued, MEMBER)).toEqual([
+      {
+        memberId: MEMBER, entity: "exchangeRate", action: "update", targetId: RATE,
+        fields: { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_250, quoteMinor: 100 } },
+      },
+    ]);
+  });
+
+  it("не удаляет хозяйство, даже если его нет в следующем состоянии", () => {
+    const state = dollars();
+    const { household: _household, ...without } = state;
+    expect(budgetJournalDrafts(state, without, MEMBER)).toEqual([]);
+  });
+});
+
+describe("долги как операции журнала", () => {
+  const PETYA = "0000000a-0000-4000-8000-0000000000f1";
+  const LENT = "0000000a-0000-4000-8000-0000000000f2";
+
+  it("посев переносит долг и движение по нему, срок — только когда он есть", () => {
+    const seed = makeSeedBudget();
+    const state: BudgetState = {
+      ...seed,
+      debts: [{ id: PETYA, counterparty: "Петя", direction: "owed_to_me", currency: "RUB", openingMinor: 0, active: true }],
+      transactions: [...seed.transactions, { id: LENT, kind: "debt_out", status: "posted", occurredOn: "2026-07-09", amountMinor: 500_000, accountId: SEED_IDS.accounts.main, debtId: PETYA }],
+    };
+    const snapshot = applyJournal(stamp(state));
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.debts).toEqual(state.debts);
+    expect(snapshot.state.transactions.find((item) => item.id === LENT)).toEqual(state.transactions.at(-1));
+    const debtDraft = budgetJournalDrafts(null, state).find((draft) => draft.entity === "debt");
+    expect(debtDraft !== undefined && "fields" in debtDraft && Object.hasOwn(debtDraft.fields, "dueDate")).toBe(false);
+  });
+});
+
+describe("регулярные операции как операции журнала", () => {
+  const RULE = "0000000a-0000-4000-8000-0000000000e1";
+  const TAG = "0000000a-0000-4000-8000-0000000000e2";
+  const WATER: RecurringRule = {
+    id: RULE,
+    name: "Доставка воды",
+    template: {
+      kind: "expense", amountMinor: 150_000, accountId: SEED_IDS.accounts.main, categoryId: SEED_IDS.categories.food,
+      note: "Доставка воды", tagIds: [TAG],
+    },
+    frequency: "weekly",
+    interval: 2,
+    startDate: "2026-07-07",
+    active: true,
+  };
+
+  function withRule(): BudgetState {
+    return { ...makeSeedBudget(), tags: [{ id: TAG, name: "Дом", active: true }], recurringRules: [WATER] };
+  }
+
+  it("посев переносит правило с шаблоном и его вхождения с меткой правила", () => {
+    const state = materializeRecurring(withRule(), "2026-07-31").state;
+    const snapshot = applyJournal(stamp(state));
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.recurringRules).toEqual(state.recurringRules);
+    const occurrences = state.transactions.filter((entry) => entry.recurringRuleId === RULE);
+    expect(occurrences.map((entry) => entry.occurredOn)).toEqual(["2026-07-07", "2026-07-21"]);
+    for (const occurrence of occurrences) {
+      expect(snapshot.state.transactions.find((entry) => entry.id === occurrence.id)).toEqual(occurrence);
+    }
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(state));
+  });
+
+  it("материализация — создания вхождений и одно обновление правила, а порядок ключей шаблона — не изменение", () => {
+    const before = withRule();
+    const after = materializeRecurring(before, "2026-07-31").state;
+    const drafts = budgetJournalDrafts(before, after, MEMBER);
+    expect(drafts.map((draft) => [draft.entity, draft.action])).toEqual([
+      ["recurringRule", "update"],
+      ["transaction", "create"],
+      ["transaction", "create"],
+    ]);
+    expect(drafts[0]).toMatchObject({ targetId: RULE, fields: { materializedThrough: "2026-07-31" } });
+
+    const reordered: BudgetState = {
+      ...after,
+      // The same fields in the opposite order of keys, the template's included.
+      recurringRules: after.recurringRules!.map((rule) => Object.fromEntries(Object.entries({
+        ...rule,
+        template: Object.fromEntries(Object.entries(rule.template).reverse()),
+      }).reverse()) as unknown as RecurringRule),
+    };
+    expect(budgetJournalDrafts(after, reordered, MEMBER)).toEqual([]);
+    const plain = budgetJournalDrafts(null, { ...makeSeedBudget(), recurringRules: [{ ...WATER, template: { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main } }] })
+      .find((draft) => draft.entity === "recurringRule");
+    expect(plain !== undefined && "fields" in plain ? plain.fields : null).toEqual({
+      name: "Доставка воды", template: { kind: "income", amountMinor: 1, accountId: SEED_IDS.accounts.main },
+      frequency: "weekly", interval: 2, startDate: "2026-07-07", active: true,
+    });
   });
 });

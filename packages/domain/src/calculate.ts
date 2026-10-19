@@ -12,21 +12,61 @@ import type {
   CategoryBudgetStatus,
   CategoryId,
   CategoryMetrics,
+  CurrencyCode,
+  Debt,
+  ExchangeRate,
   ExpenseShareMetrics,
   FormatMinorOptions,
   Goal,
   GoalId,
+  Household,
   Member,
   MemberExpenseBreakdown,
+  TagBreakdown,
+  TagMetrics,
   MemberExpenseMetrics,
   MemberId,
   MinorUnits,
   PlanningMonthMetrics,
+  RecurringRule,
   ScheduledExpense,
   StableId,
+  Tag,
+  TagId,
   Transaction,
 } from "./types.js";
-import { daysInMonth, MAX_LOCAL_MONTH_INDEX, monthFromIndex, monthIndex } from "./calendar.js";
+import {
+  daysInMonth,
+  isWithinDateWindow,
+  MAX_LOCAL_DATE,
+  MAX_LOCAL_MONTH_INDEX,
+  MIN_LOCAL_DATE,
+  monthFromIndex,
+  monthIndex,
+} from "./calendar.js";
+import {
+  baseAmountOf,
+  baseCurrencyOf,
+  convertMinor,
+  DEFAULT_BASE_CURRENCY,
+  indexRates,
+  isExchangeRateValue,
+  isSupportedCurrency,
+  RATE_PART_MAX,
+  RATE_PART_MIN,
+  type RateIndex,
+} from "./currency.js";
+import { HOUSEHOLD_ID } from "./identity.js";
+import { MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
+import { isBlankStoredText, isStorableLabel, isStorableNote } from "./stored-text.js";
+import {
+  COUNTERPARTY_MAX_LENGTH,
+  isDisplayKey,
+  MAX_TAGS_PER_TRANSACTION,
+  NOTE_MAX_LENGTH,
+  RULE_NAME_MAX_LENGTH,
+  TAG_NAME_MAX_LENGTH,
+} from "./text.js";
 
 const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -37,7 +77,9 @@ function assertEnum(value: unknown, allowed: readonly string[], label: string): 
 }
 
 function assertStableId(id: StableId, label: string): void {
-  if (id.trim().length === 0) {
+  // The stored-text whitespace and not `trim`: a document's identifier must not become blank
+  // because the engine's Unicode version moved.
+  if (isBlankStoredText(id)) {
     throw new Error(`${label} must have a non-empty stable id`);
   }
 }
@@ -85,6 +127,22 @@ function assertLocalDate(value: string, label: string): void {
   }
 }
 
+/**
+ * A date of a field added to the model since the journal existed: a calendar date, and inside the
+ * window the codec carries. Older fields are checked by {@link assertLocalDate} alone, because a
+ * document written by 1.0.0 may hold a date outside the window and must keep opening.
+ */
+function assertWindowDate(value: string, label: string): void {
+  assertLocalDate(value, label);
+  if (!isWithinDateWindow(value)) throw new Error(`${label} must be from ${MIN_LOCAL_DATE} to ${MAX_LOCAL_DATE}`);
+}
+
+/** An amount of a field added since the journal existed: positive, and at most a field's ceiling. */
+function assertFieldMinor(value: MinorUnits, label: string): void {
+  assertPositiveMinor(value, label);
+  if (value > MAX_MONEY_MINOR) throw new Error(`${label} must be at most ${MAX_MONEY_MINOR}`);
+}
+
 function indexById<T extends { readonly id: StableId }>(
   entities: readonly T[],
   label: string,
@@ -100,6 +158,203 @@ function indexById<T extends { readonly id: StableId }>(
   }
 
   return result;
+}
+
+/**
+ * The collections of a state indexed by identifier, each checked for a repeated id on the way.
+ *
+ * Every calculation used to build these maps itself, three times over, and three copies of one
+ * index are three places a new collection can be forgotten in. Indexing happens here, in the order
+ * the copies indexed: what each calculation then validates is its own business, so that the set of
+ * errors each one raises stays exactly what it was — participants are still checked only by the
+ * split by participant, and large payments and schedules only by the annual plan.
+ *
+ * Tags are the one collection validated here as well. Every calculation resolves the tags of every
+ * transaction it reads, so every calculation needs them whole, and no state written before tags
+ * existed carries one: checking them in all three adds no refusal to any state that was valid. The
+ * household and the exchange rates are validated here for the same reason — every calculation
+ * reads the base currency, to know which operations must carry a snapshot — and no older state
+ * carries either.
+ */
+export interface StateIndex {
+  readonly accounts: ReadonlyMap<StableId, Account>;
+  readonly categories: ReadonlyMap<StableId, Category>;
+  readonly budgets: ReadonlyMap<StableId, Budget>;
+  readonly goals: ReadonlyMap<StableId, Goal>;
+  readonly transactions: ReadonlyMap<StableId, Transaction>;
+  readonly tags: ReadonlyMap<TagId, Tag>;
+  readonly exchangeRates: ReadonlyMap<StableId, ExchangeRate>;
+  readonly debts: ReadonlyMap<StableId, Debt>;
+  readonly recurringRules: ReadonlyMap<StableId, RecurringRule>;
+  /** The currency every budget figure is counted in: the household's, or roubles. */
+  readonly baseCurrency: CurrencyCode;
+  /**
+   * The exchange rates arranged for lookup, built once per calculation and shared by everything
+   * it values: the debts, the holdings and the occurrences of a recurring rule.
+   */
+  readonly rates: RateIndex;
+}
+
+export function indexState(state: BudgetState): StateIndex {
+  // Object literals evaluate in source order, so a duplicate is reported for the same collection
+  // the inlined copies reported it for; the collections no older state has come last.
+  const indexed = {
+    accounts: indexById(state.accounts, "accounts"),
+    categories: indexById(state.categories, "categories"),
+    budgets: indexById(state.budgets, "budgets"),
+    goals: indexById(state.goals, "goals"),
+    transactions: indexById(state.transactions, "transactions"),
+    tags: indexById(state.tags ?? [], "tags"),
+    exchangeRates: indexById(state.exchangeRates ?? [], "exchangeRates"),
+    debts: indexById(state.debts ?? [], "debts"),
+    recurringRules: indexById(state.recurringRules ?? [], "recurringRules"),
+    baseCurrency: baseCurrencyOf(state),
+  };
+  const index: StateIndex = { ...indexed, rates: indexRates(indexed.exchangeRates.values()) };
+  for (const tag of index.tags.values()) validateTag(tag);
+  if (state.household !== undefined) validateHousehold(state.household);
+  for (const rate of index.exchangeRates.values()) validateExchangeRate(rate);
+  for (const debt of index.debts.values()) validateDebt(debt);
+  // Last: a rule's template names accounts, categories and tags, so it is checked against them all.
+  for (const rule of index.recurringRules.values()) validateRecurringRule(rule, index);
+  return index;
+}
+
+/**
+ * A recurring rule: its schedule by the bounds every new field is held to, and its template by the
+ * rules of the operation it writes — the same references, category types, labels and currencies —
+ * so that every occurrence it writes is one the domain accepts.
+ */
+function validateRecurringRule(rule: RecurringRule, index: StateIndex): void {
+  const label = `recurring rule ${rule.id}`;
+  if (rule.name !== undefined && !isStorableLabel(rule.name, RULE_NAME_MAX_LENGTH)) {
+    throw new Error(`${label} name must be stored text of at most ${RULE_NAME_MAX_LENGTH} characters`);
+  }
+  assertEnum(rule.frequency, ["daily", "weekly", "monthly", "yearly"], `${label} frequency`);
+  if (!Number.isSafeInteger(rule.interval) || rule.interval < 1 || rule.interval > MAX_RECURRENCE_INTERVAL) {
+    throw new Error(`${label} interval must be an integer from 1 to ${MAX_RECURRENCE_INTERVAL}`);
+  }
+  assertWindowDate(rule.startDate, `${label} startDate`);
+  if (rule.endDate !== undefined) {
+    assertWindowDate(rule.endDate, `${label} endDate`);
+    if (rule.endDate < rule.startDate) throw new Error(`${label} endDate must not be before startDate`);
+  }
+  if (rule.materializedThrough !== undefined) assertWindowDate(rule.materializedThrough, `${label} materializedThrough`);
+  if (typeof rule.active !== "boolean") throw new Error(`${label} active must be a boolean`);
+  validateRecurringTemplate(rule, index);
+}
+
+function validateRecurringTemplate(rule: RecurringRule, index: StateIndex): void {
+  const label = `recurring rule ${rule.id} template`;
+  const template: unknown = rule.template;
+  if (typeof template !== "object" || template === null || Array.isArray(template)) {
+    throw new Error(`${label} must be an operation template`);
+  }
+  const value = rule.template;
+  assertEnum(value.kind, ["expense", "income", "transfer"], `${label} kind`);
+  assertFieldMinor(value.amountMinor, `${label} amountMinor`);
+  if (value.note !== undefined && !isStorableNote(value.note)) {
+    throw new Error(`${label} note must be one trimmed line of stored text of at most ${NOTE_MAX_LENGTH} characters`);
+  }
+  validateTagIds(value.tagIds, index, label);
+  switch (value.kind) {
+    case "expense": {
+      requireEntity(index.accounts, value.accountId, label);
+      const category = requireEntity(index.categories, value.categoryId, label);
+      if (category.type !== "expense") throw new Error(`${label} must reference an expense category`);
+      return;
+    }
+    case "income": {
+      requireEntity(index.accounts, value.accountId, label);
+      if (value.categoryId !== undefined) {
+        const category = requireEntity(index.categories, value.categoryId, label);
+        if (category.type !== "income") throw new Error(`${label} must reference an income category`);
+      }
+      return;
+    }
+    case "transfer": {
+      const from = requireEntity(index.accounts, value.fromAccountId, label);
+      const to = requireEntity(index.accounts, value.toAccountId, label);
+      if (value.fromAccountId === value.toAccountId) throw new Error(`${label} must use two different accounts`);
+      if (from.currency === to.currency) {
+        if (value.toAmountMinor !== undefined) throw new Error(`${label} moves within one currency and must not carry toAmountMinor`);
+        return;
+      }
+      if (value.toAmountMinor === undefined) {
+        throw new Error(`${label} moves from ${from.currency} to ${to.currency} and must carry toAmountMinor`);
+      }
+      assertFieldMinor(value.toAmountMinor, `${label} toAmountMinor`);
+      return;
+    }
+  }
+}
+
+/**
+ * A debt, by the rules of every field added since the journal existed: a stored label for the
+ * counterparty, a direction of the two, a supported currency, an opening amount from zero to the
+ * field ceiling and a due date inside the window.
+ */
+function validateDebt(debt: Debt): void {
+  if (!isStorableLabel(debt.counterparty, COUNTERPARTY_MAX_LENGTH)) {
+    throw new Error(`debt ${debt.id} counterparty must be stored text of at most ${COUNTERPARTY_MAX_LENGTH} characters`);
+  }
+  assertEnum(debt.direction, ["i_owe", "owed_to_me"], `debt ${debt.id} direction`);
+  if (!isSupportedCurrency(debt.currency)) {
+    throw new Error(`debt ${debt.id} currency has unknown value ${String(debt.currency)}`);
+  }
+  assertNonNegativeMinor(debt.openingMinor, `debt ${debt.id} openingMinor`);
+  if (debt.openingMinor > MAX_MONEY_MINOR) throw new Error(`debt ${debt.id} openingMinor must be at most ${MAX_MONEY_MINOR}`);
+  if (debt.dueDate !== undefined) assertWindowDate(debt.dueDate, `debt ${debt.id} dueDate`);
+  if (typeof debt.active !== "boolean") throw new Error(`debt ${debt.id} active must be a boolean`);
+}
+
+function validateHousehold(household: Household): void {
+  if (household.id !== HOUSEHOLD_ID) {
+    throw new Error(`household id must be ${HOUSEHOLD_ID}, the identifier every device derives`);
+  }
+  if (!isSupportedCurrency(household.baseCurrency)) {
+    throw new Error(`household baseCurrency has unknown value ${String(household.baseCurrency)}`);
+  }
+}
+
+function assertRateValue(value: unknown, label: string): void {
+  if (!isExchangeRateValue(value)) {
+    throw new Error(`${label} parts must be integers from ${RATE_PART_MIN} to ${RATE_PART_MAX}`);
+  }
+}
+
+function validateExchangeRate(rate: ExchangeRate): void {
+  if (!isSupportedCurrency(rate.currency)) {
+    throw new Error(`exchange rate ${rate.id} currency has unknown value ${String(rate.currency)}`);
+  }
+  if (!isSupportedCurrency(rate.baseCurrency)) {
+    throw new Error(`exchange rate ${rate.id} baseCurrency has unknown value ${String(rate.baseCurrency)}`);
+  }
+  if (rate.currency === rate.baseCurrency) {
+    throw new Error(`exchange rate ${rate.id} must value one currency in another`);
+  }
+  assertWindowDate(rate.date, `exchange rate ${rate.id} date`);
+  assertRateValue(rate.rate, `exchange rate ${rate.id} rate`);
+}
+
+/**
+ * Stored text is held to the stored-text rule, which asks the engine nothing (stored-text.ts): a
+ * label the input rule accepted on one engine must not become a state this engine refuses.
+ */
+function validateTag(tag: Tag): void {
+  if (!isStorableLabel(tag.name, TAG_NAME_MAX_LENGTH)) {
+    throw new Error(`tag ${tag.id} name must be stored text of at most ${TAG_NAME_MAX_LENGTH} characters`);
+  }
+  if (typeof tag.active !== "boolean") {
+    throw new Error(`tag ${tag.id} active must be a boolean`);
+  }
+}
+
+/** A display field is optional; when present it names a design token. */
+function assertOptionalDisplayKey(value: unknown, label: string): void {
+  if (value !== undefined && !isDisplayKey(value)) {
+    throw new Error(`${label} must be a display key`);
+  }
 }
 
 function createIdRecord<Key extends StableId, Value>(): Record<Key, Value> {
@@ -154,7 +409,22 @@ function categoryStatus(
 
 function validateAccount(account: Account): void {
   assertEnum(account.type, ["current", "cash", "savings", "reserve"], `account ${account.id} type`);
+  if (!isSupportedCurrency(account.currency)) {
+    throw new Error(`account ${account.id} currency has unknown value ${String(account.currency)}`);
+  }
   assertMinor(account.openingBalanceMinor, `account ${account.id} openingBalanceMinor`);
+  // Display fields: optional, read by no figure, and never allowed to be something else.
+  if (account.sortOrder !== undefined && !Number.isSafeInteger(account.sortOrder)) {
+    throw new Error(`account ${account.id} sortOrder must be an integer`);
+  }
+  if (account.sortOrder !== undefined && Math.abs(account.sortOrder) > MAX_SORT_ORDER) {
+    throw new Error(`account ${account.id} sortOrder must be from -${MAX_SORT_ORDER} to ${MAX_SORT_ORDER}`);
+  }
+  assertOptionalDisplayKey(account.icon, `account ${account.id} icon`);
+  assertOptionalDisplayKey(account.color, `account ${account.id} color`);
+  if (account.includeInTotal !== undefined && typeof account.includeInTotal !== "boolean") {
+    throw new Error(`account ${account.id} includeInTotal must be a boolean when provided`);
+  }
 }
 
 function validateCategory(category: Category): void {
@@ -162,9 +432,23 @@ function validateCategory(category: Category): void {
   if (!Number.isSafeInteger(category.sortOrder)) {
     throw new Error(`category ${category.id} sortOrder must be an integer`);
   }
+  assertOptionalDisplayKey(category.icon, `category ${category.id} icon`);
+  assertOptionalDisplayKey(category.color, `category ${category.id} color`);
 }
 
-function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): void {
+/**
+ * A plan — a goal, a large payment, a schedule — lives on an account kept in the base currency.
+ *
+ * The annual plan adds their amounts up as they stand, without a rate, so a plan that mixed dollars
+ * into roubles would be a plausible figure and a wrong one (D-032).
+ */
+function assertBaseCurrencyAccount(account: Account, baseCurrency: CurrencyCode, label: string): void {
+  if (account.currency !== baseCurrency) {
+    throw new Error(`${label} must use an account in the base currency ${baseCurrency}`);
+  }
+}
+
+function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>, baseCurrency: CurrencyCode): void {
   assertEnum(goal.status, ["active", "completed", "cancelled"], `goal ${goal.id} status`);
   assertNonNegativeMinor(goal.targetMinor, `goal ${goal.id} targetMinor`);
   assertNonNegativeMinor(
@@ -175,7 +459,10 @@ function validateGoal(goal: Goal, accounts: ReadonlyMap<StableId, Account>): voi
     goal.plannedContributionMinor,
     `goal ${goal.id} plannedContributionMinor`,
   );
-  requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
+  const account = requireEntity(accounts, goal.linkedAccountId, `goal ${goal.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `goal ${goal.id}`);
+  if (goal.deadline !== undefined) assertWindowDate(goal.deadline, `goal ${goal.id} deadline`);
+  assertOptionalDisplayKey(goal.icon, `goal ${goal.id} icon`);
 }
 
 function validateBudget(
@@ -238,21 +525,194 @@ function validateBudget(
   return availableByCategory;
 }
 
-function validateTransactionReferences(
-  transaction: Transaction,
-  accounts: ReadonlyMap<StableId, Account>,
-  categories: ReadonlyMap<StableId, Category>,
-  goals: ReadonlyMap<StableId, Goal>,
-  transactions: ReadonlyMap<StableId, Transaction>,
+/**
+ * The labels every operation may carry — a note, tags and the recurring rule it came from — checked
+ * on every transaction, whatever its status and whichever side of the budget window it falls on,
+ * for the reason `calculateMemberExpenses` gives for the participant: a label checked only where it
+ * is counted can sit dangling in a draft until the day the draft is posted.
+ *
+ * No figure reads any of them. They are strict all the same, because a stored label that names
+ * nothing is a broken reference whoever reads it next; the backup gate and the journal clear a
+ * dangling one and say so, and the domain never sees it.
+ */
+function validateTransactionLabels(transaction: Transaction, index: StateIndex): void {
+  const id = transaction.id;
+  if (transaction.note !== undefined && !isStorableNote(transaction.note)) {
+    throw new Error(`transaction ${id} note must be one trimmed line of stored text of at most ${NOTE_MAX_LENGTH} characters`);
+  }
+  validateTagIds(transaction.tagIds, index, `transaction ${id}`);
+  if (transaction.recurringRuleId !== undefined) {
+    // A label, and strict all the same: it names a rule the state holds.
+    assertStableId(transaction.recurringRuleId, `transaction ${id} recurringRuleId`);
+    requireEntity(index.recurringRules, transaction.recurringRuleId, `transaction ${id} recurringRuleId`);
+  }
+}
+
+/** Tags on an operation or a template: from one to ten, no repeats, each a tag the state holds. */
+function validateTagIds(value: unknown, index: StateIndex, label: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_TAGS_PER_TRANSACTION) {
+    throw new Error(`${label} tagIds must list from 1 to ${MAX_TAGS_PER_TRANSACTION} tags`);
+  }
+  const seen = new Set<TagId>();
+  for (const tagId of value as readonly unknown[]) {
+    if (typeof tagId !== "string") throw new Error(`${label} tagIds must list tag ids`);
+    assertStableId(tagId, `${label} tagIds`);
+    if (seen.has(tagId)) throw new Error(`${label} tagIds repeats tag ${tagId}`);
+    seen.add(tagId);
+    requireEntity(index.tags, tagId, `${label} tagIds`);
+  }
+}
+
+/**
+ * The base-currency snapshot of an income, an expense or a refund, against the account it moves.
+ *
+ * On an account in the base currency there is none — the amount already is the figure, and a second
+ * copy of it could only disagree. On any other account all three fields are there, the snapshot is
+ * in this household's base currency, and the value is a positive amount: the budget adds it up as it
+ * stands and never looks at a rate table, which is what keeps a new rate from revaluing the past.
+ */
+function validateBaseSnapshot(
+  transaction: Extract<Transaction, { readonly kind: "income" | "expense" | "refund" }>,
+  account: Account,
+  baseCurrency: CurrencyCode,
 ): void {
+  const id = transaction.id;
+  const parts = [transaction.baseAmountMinor, transaction.baseCurrency, transaction.rate];
+  const present = parts.filter((part) => part !== undefined).length;
+  if (account.currency === baseCurrency) {
+    if (present > 0) throw new Error(`transaction ${id} is in the base currency and must not carry a base-currency snapshot`);
+    return;
+  }
+  if (present < parts.length) {
+    throw new Error(`transaction ${id} on an account in ${account.currency} must carry baseAmountMinor, baseCurrency and rate together`);
+  }
+  if (transaction.baseCurrency !== baseCurrency) {
+    throw new Error(`transaction ${id} snapshot must be in the base currency ${baseCurrency}`);
+  }
+  assertFieldMinor(transaction.baseAmountMinor!, `transaction ${id} baseAmountMinor`);
+  assertRateValue(transaction.rate, `transaction ${id} rate`);
+  // The snapshot is the amount at its rate, exactly, so that what the budget adds up and what a row
+  // shows in the account's currency are one figure seen twice. A base sum entered by hand is written
+  // as the rate {baseMinor: base, quoteMinor: amount}, at which the equality is exact.
+  let converted: MinorUnits | null;
+  try {
+    converted = convertMinor(transaction.amountMinor, transaction.rate!);
+  } catch {
+    converted = null;
+  }
+  if (converted !== transaction.baseAmountMinor) {
+    throw new Error(`transaction ${id} baseAmountMinor must be amountMinor at its rate, ${converted ?? "beyond the safe range"}`);
+  }
+}
+
+/**
+ * Whether an operation belongs to the model as it has been since the journal existed: a debt
+ * movement, one that carries a base-currency snapshot or an amount that arrived in another currency,
+ * or one that touches an account in a currency other than roubles — which no state written by 1.0.0
+ * holds, because 1.0.0 knew roubles only.
+ *
+ * Such an operation is held to the bounds the journal's codec carries — an amount at most the field
+ * ceiling, a date inside the window — by the domain itself, as every field added since is. Held only
+ * by the codec, a value the domain and the backup gate accepted was refused at the first sync, which
+ * then threw on every write and stranded the value on the device that wrote it. An older operation
+ * keeps the unbounded fields it always had: a 1.0.0 document may hold one, and it must keep opening.
+ */
+function isWaveOneOperation(transaction: Transaction, accounts: ReadonlyMap<StableId, Account>): boolean {
+  const foreign = (accountId: AccountId): boolean => {
+    const currency = accounts.get(accountId)?.currency;
+    return currency !== undefined && currency !== DEFAULT_BASE_CURRENCY;
+  };
+  switch (transaction.kind) {
+    case "debt_out":
+    case "debt_in":
+      return true;
+    case "income":
+    case "expense":
+    case "refund":
+      return transaction.baseAmountMinor !== undefined || foreign(transaction.accountId);
+    case "transfer":
+      return transaction.toAmountMinor !== undefined || foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+    case "goal_contribution":
+      return foreign(transaction.fromAccountId) || foreign(transaction.toAccountId);
+    default:
+      return false;
+  }
+}
+
+/**
+ * The amount that arrives on the other account of a transfer: in its own currency, and named only
+ * when that currency is not the one the money left in.
+ */
+function validateTransferAmounts(
+  transaction: Extract<Transaction, { readonly kind: "transfer" }>,
+  from: Account,
+  to: Account,
+): void {
+  const id = transaction.id;
+  if (from.currency === to.currency) {
+    if (transaction.toAmountMinor !== undefined) {
+      throw new Error(`transaction ${id} moves within one currency and must not carry toAmountMinor`);
+    }
+    return;
+  }
+  if (transaction.toAmountMinor === undefined) {
+    throw new Error(`transaction ${id} moves from ${from.currency} to ${to.currency} and must carry toAmountMinor`);
+  }
+  assertFieldMinor(transaction.toAmountMinor, `transaction ${id} toAmountMinor`);
+}
+
+/**
+ * The two amounts of a debt movement: the account's, and the debt's when its currency is another.
+ * A debt movement is neither income nor expense, so it carries no base-currency snapshot either —
+ * nothing in the budget counts it.
+ */
+function validateDebtAmounts(
+  transaction: Extract<Transaction, { readonly kind: "debt_out" | "debt_in" }>,
+  account: Account,
+  debt: Debt,
+): void {
+  const id = transaction.id;
+  for (const field of ["baseAmountMinor", "baseCurrency", "rate", "toAmountMinor"]) {
+    if (field in transaction) throw new Error(`transaction ${id} moves a debt and must not carry ${field}`);
+  }
+  if (account.currency === debt.currency) {
+    if (transaction.debtAmountMinor !== undefined) {
+      throw new Error(`transaction ${id} is in the debt's currency and must not carry debtAmountMinor`);
+    }
+    return;
+  }
+  if (transaction.debtAmountMinor === undefined) {
+    throw new Error(`transaction ${id} moves ${account.currency} against a debt in ${debt.currency} and must carry debtAmountMinor`);
+  }
+  assertFieldMinor(transaction.debtAmountMinor, `transaction ${id} debtAmountMinor`);
+}
+
+/**
+ * Every reference and label of one transaction, against the whole index. Exported for the metrics
+ * that live in modules of their own (`debts.ts`, `holdings.ts`), so they refuse exactly what the
+ * budget refuses; not part of the package's public surface.
+ */
+export function validateTransactionReferences(transaction: Transaction, index: StateIndex): void {
+  const { accounts, categories, goals, transactions, baseCurrency } = index;
   assertEnum(transaction.status, ["posted", "pending", "draft"], `transaction ${transaction.id} status`);
-  assertEnum(transaction.kind, ["income", "expense", "refund", "transfer", "goal_contribution"], `transaction ${transaction.id} kind`);
+  assertEnum(
+    transaction.kind,
+    ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"],
+    `transaction ${transaction.id} kind`,
+  );
   assertLocalDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
   assertPositiveMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+  if (isWaveOneOperation(transaction, accounts)) {
+    assertFieldMinor(transaction.amountMinor, `transaction ${transaction.id} amountMinor`);
+    assertWindowDate(transaction.occurredOn, `transaction ${transaction.id} occurredOn`);
+  }
+  validateTransactionLabels(transaction, index);
 
   switch (transaction.kind) {
     case "income": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const categoryId = transaction.categoryId;
       // Optional, like memberId: absent in every income written before income had categories.
       if (categoryId !== undefined) {
@@ -265,7 +725,8 @@ function validateTransactionReferences(
       return;
     }
     case "expense": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const category = requireEntity(
         categories,
         transaction.categoryId,
@@ -277,7 +738,8 @@ function validateTransactionReferences(
       return;
     }
     case "refund": {
-      requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      validateBaseSnapshot(transaction, account, baseCurrency);
       const category = requireEntity(categories, transaction.categoryId, `transaction ${transaction.id}`);
       if (category.type !== "expense") throw new Error(`transaction ${transaction.id} must reference an expense category`);
       const original = requireEntity(transactions, transaction.originalTransactionId, `refund ${transaction.id} originalTransactionId`);
@@ -292,18 +754,24 @@ function validateTransactionReferences(
       }
       return;
     }
-    case "transfer":
-      requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
-      requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
+    case "transfer": {
+      const from = requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
+      const to = requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
       if (transaction.fromAccountId === transaction.toAccountId) {
         throw new Error(`transaction ${transaction.id} must use two different accounts`);
       }
+      validateTransferAmounts(transaction, from, to);
       return;
+    }
     case "goal_contribution": {
-      requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
-      requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
+      const from = requireEntity(accounts, transaction.fromAccountId, `transaction ${transaction.id}`);
+      const to = requireEntity(accounts, transaction.toAccountId, `transaction ${transaction.id}`);
       if (transaction.fromAccountId === transaction.toAccountId) {
         throw new Error(`transaction ${transaction.id} must use two different accounts`);
+      }
+      // A contribution carries one amount, so both accounts count it in one currency.
+      if (from.currency !== to.currency) {
+        throw new Error(`transaction ${transaction.id} must move between two accounts in one currency`);
       }
       const goal = requireEntity(goals, transaction.goalId, `transaction ${transaction.id}`);
       if (goal.linkedAccountId !== transaction.toAccountId) {
@@ -311,6 +779,13 @@ function validateTransactionReferences(
           `transaction ${transaction.id} destination must match goal ${goal.id} linked account`,
         );
       }
+      return;
+    }
+    case "debt_out":
+    case "debt_in": {
+      const account = requireEntity(accounts, transaction.accountId, `transaction ${transaction.id}`);
+      const debt = requireEntity(index.debts, transaction.debtId, `transaction ${transaction.id} debtId`);
+      validateDebtAmounts(transaction, account, debt);
       return;
     }
     default: {
@@ -324,18 +799,14 @@ export function calculateBudget(
   state: BudgetState,
   budgetId: string = state.activeBudgetId,
 ): BudgetMetrics {
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
+  const index = indexState(state);
 
   for (const account of state.accounts) validateAccount(account);
   for (const category of state.categories) validateCategory(category);
-  for (const goal of state.goals) validateGoal(goal, accounts);
+  for (const goal of state.goals) validateGoal(goal, index.accounts, index.baseCurrency);
 
-  const budget = requireEntity(budgets, budgetId, "calculateBudget");
-  const availableByCategory = validateBudget(budget, categories);
+  const budget = requireEntity(index.budgets, budgetId, "calculateBudget");
+  const availableByCategory = validateBudget(budget, index.categories);
 
   const accountBalances = new Map<AccountId, MinorUnits>();
   for (const account of state.accounts) {
@@ -370,41 +841,42 @@ export function calculateBudget(
   };
 
   for (const transaction of state.transactions) {
-    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+    validateTransactionReferences(transaction, index);
     if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
 
+    // The budget's figures are counted in the base currency, the balances in each account's own:
+    // an operation on an account in another currency moves that account by its amount and the
+    // budget by the snapshot it carries, and no rate table is read on the way.
     switch (transaction.kind) {
       case "income":
-        incomeMinor = addMinor(incomeMinor, transaction.amountMinor, "incomeMinor");
+        incomeMinor = addMinor(incomeMinor, baseAmountOf(transaction), "incomeMinor");
         changeAccount(transaction.accountId, transaction.amountMinor);
         break;
       case "expense": {
-        grossExpensesMinor = addMinor(
-          grossExpensesMinor,
-          transaction.amountMinor,
-          "grossExpensesMinor",
-        );
+        const baseMinor = baseAmountOf(transaction);
+        grossExpensesMinor = addMinor(grossExpensesMinor, baseMinor, "grossExpensesMinor");
         const categoryAmount = expenseByCategory.get(transaction.categoryId) ?? 0;
         expenseByCategory.set(
           transaction.categoryId,
-          addMinor(categoryAmount, transaction.amountMinor, "category expenseMinor"),
+          addMinor(categoryAmount, baseMinor, "category expenseMinor"),
         );
         changeAccount(transaction.accountId, -transaction.amountMinor);
         break;
       }
       case "refund": {
-        refundsMinor = addMinor(refundsMinor, transaction.amountMinor, "refundsMinor");
+        const baseMinor = baseAmountOf(transaction);
+        refundsMinor = addMinor(refundsMinor, baseMinor, "refundsMinor");
         const categoryAmount = refundByCategory.get(transaction.categoryId) ?? 0;
         refundByCategory.set(
           transaction.categoryId,
-          addMinor(categoryAmount, transaction.amountMinor, "category refundMinor"),
+          addMinor(categoryAmount, baseMinor, "category refundMinor"),
         );
         changeAccount(transaction.accountId, transaction.amountMinor);
         break;
       }
       case "transfer":
         changeAccount(transaction.fromAccountId, -transaction.amountMinor);
-        changeAccount(transaction.toAccountId, transaction.amountMinor);
+        changeAccount(transaction.toAccountId, transaction.toAmountMinor ?? transaction.amountMinor);
         break;
       case "goal_contribution": {
         changeAccount(transaction.fromAccountId, -transaction.amountMinor);
@@ -421,6 +893,15 @@ export function calculateBudget(
         );
         break;
       }
+      // A debt movement is neither income nor expense (rule 4 of the contracts): it moves the
+      // account it touches and no figure of the budget. Its other side is the debt's balance,
+      // which `calculateDebts` keeps.
+      case "debt_out":
+        changeAccount(transaction.accountId, -transaction.amountMinor);
+        break;
+      case "debt_in":
+        changeAccount(transaction.accountId, transaction.amountMinor);
+        break;
     }
   }
 
@@ -457,10 +938,15 @@ export function calculateBudget(
   }
 
   const expensesMinor = addMinor(grossExpensesMinor, -refundsMinor, "expensesMinor");
-  const capitalMinor = [...accountBalances.values()].reduce(
-    (total, balance) => addMinor(total, balance, "capitalMinor"),
-    0,
-  );
+  // Capital adds up the accounts kept in the base currency and no other: a dollar balance added to
+  // a rouble one is a sum of cents and kopecks, which is no amount of anything. Every state written
+  // before currencies were more than a label keeps its accounts in roubles, so its capital is what
+  // it always was. The valuation of everything held, at a rate, is a metric of its own (holdings).
+  let capitalMinor = 0;
+  for (const account of state.accounts) {
+    if (account.currency !== index.baseCurrency) continue;
+    capitalMinor = addMinor(capitalMinor, accountBalances.get(account.id) ?? 0, "capitalMinor");
+  }
 
   return {
     budgetId: budget.id,
@@ -533,12 +1019,8 @@ export function calculateMemberExpenses(
   state: BudgetState,
   budgetId: string = state.activeBudgetId,
 ): MemberExpenseBreakdown {
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
-  const budget = requireEntity(budgets, budgetId, "calculateMemberExpenses");
+  const index = indexState(state);
+  const budget = requireEntity(index.budgets, budgetId, "calculateMemberExpenses");
   assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
   assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
 
@@ -562,7 +1044,7 @@ export function calculateMemberExpenses(
   let refundsMinor = 0;
 
   for (const transaction of state.transactions) {
-    validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+    validateTransactionReferences(transaction, index);
     // The label is a reference like any other and is checked here, before the status and
     // window filter, so no dangling one can hide in an operation this budget does not count.
     const memberId = transaction.memberId;
@@ -574,17 +1056,19 @@ export function calculateMemberExpenses(
     if (transaction.kind !== "expense" && transaction.kind !== "refund") continue;
 
     const isRefund = transaction.kind === "refund";
+    // In the base currency, exactly as calculateBudget counts it, so the split adds up to its total.
+    const baseMinor = baseAmountOf(transaction);
     if (isRefund) {
-      refundsMinor = addMinor(refundsMinor, transaction.amountMinor, "refundsMinor");
+      refundsMinor = addMinor(refundsMinor, baseMinor, "refundsMinor");
     } else {
-      grossExpensesMinor = addMinor(grossExpensesMinor, transaction.amountMinor, "grossExpensesMinor");
+      grossExpensesMinor = addMinor(grossExpensesMinor, baseMinor, "grossExpensesMinor");
     }
 
     if (memberId === undefined) {
       if (isRefund) {
-        unattributedRefundMinor = addMinor(unattributedRefundMinor, transaction.amountMinor, "unattributed refundMinor");
+        unattributedRefundMinor = addMinor(unattributedRefundMinor, baseMinor, "unattributed refundMinor");
       } else {
-        unattributedExpenseMinor = addMinor(unattributedExpenseMinor, transaction.amountMinor, "unattributed expenseMinor");
+        unattributedExpenseMinor = addMinor(unattributedExpenseMinor, baseMinor, "unattributed expenseMinor");
       }
       unattributedCount += 1;
       continue;
@@ -592,7 +1076,7 @@ export function calculateMemberExpenses(
 
     const bucket = isRefund ? refundByMember : expenseByMember;
     const label = isRefund ? "member refundMinor" : "member expenseMinor";
-    bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, transaction.amountMinor, label));
+    bucket.set(memberId, addMinor(bucket.get(memberId) ?? 0, baseMinor, label));
     countByMember.set(memberId, (countByMember.get(memberId) ?? 0) + 1);
   }
 
@@ -631,6 +1115,65 @@ export function calculateMemberExpenses(
   };
 }
 
+/**
+ * The budget by tag: for each tag, the incomes, expenses and refunds of the window that carry it,
+ * in the base currency, the way {@link calculateBudget} counts them.
+ *
+ * An operation with two tags counts in both, so the tags do not add up to the budget, and an
+ * operation with none counts in none. Archived tags are listed like the others: archiving takes a
+ * tag off the list of new choices, not off the history. Transfers, goal contributions and debt
+ * movements may carry tags and are not counted: none of them is an income or an expense.
+ *
+ * Every transaction is validated whatever its status and window, as in
+ * {@link calculateMemberExpenses}, so the breakdown is never computed on a state the main
+ * calculation refuses.
+ */
+export function calculateTagExpenses(
+  state: BudgetState,
+  budgetId: string = state.activeBudgetId,
+): TagBreakdown {
+  const index = indexState(state);
+  const budget = requireEntity(index.budgets, budgetId, "calculateTagExpenses");
+  assertLocalDate(budget.startDate, `budget ${budget.id} startDate`);
+  assertLocalDate(budget.endDate, `budget ${budget.id} endDate`);
+
+  interface Totals { income: MinorUnits; expense: MinorUnits; refund: MinorUnits; count: number }
+  const totals = new Map<TagId, Totals>();
+  for (const tag of index.tags.values()) totals.set(tag.id, { income: 0, expense: 0, refund: 0, count: 0 });
+
+  for (const transaction of state.transactions) {
+    validateTransactionReferences(transaction, index);
+    if (transaction.status !== "posted" || !isWithinBudget(transaction, budget)) continue;
+    if (transaction.kind !== "income" && transaction.kind !== "expense" && transaction.kind !== "refund") continue;
+    const baseMinor = baseAmountOf(transaction);
+    for (const tagId of transaction.tagIds ?? []) {
+      const current = totals.get(tagId)!;
+      totals.set(tagId, {
+        income: transaction.kind === "income" ? addMinor(current.income, baseMinor, "tag incomeMinor") : current.income,
+        expense: transaction.kind === "expense" ? addMinor(current.expense, baseMinor, "tag expenseMinor") : current.expense,
+        refund: transaction.kind === "refund" ? addMinor(current.refund, baseMinor, "tag refundMinor") : current.refund,
+        count: current.count + 1,
+      });
+    }
+  }
+
+  const tags: TagMetrics[] = [];
+  const byTag = createIdRecord<TagId, TagMetrics>();
+  for (const [tagId, value] of totals) {
+    const metrics: TagMetrics = {
+      tagId,
+      incomeMinor: value.income,
+      expenseMinor: value.expense,
+      refundMinor: value.refund,
+      actualMinor: addMinor(value.expense, -value.refund, "tag actualMinor"),
+      transactionCount: value.count,
+    };
+    tags.push(metrics);
+    byTag[tagId] = metrics;
+  }
+  return { budgetId: budget.id, tags, byTag };
+}
+
 function effectiveCommitmentDueIndex(
   item: AnnualCommitment,
   startIndex: number,
@@ -662,12 +1205,14 @@ function validateAnnualCommitment(
   item: AnnualCommitment,
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
+  baseCurrency: CurrencyCode,
 ): void {
   assertEnum(item.recurrence, ["annual", "one_time"], `annual commitment ${item.id} recurrence`);
   assertLocalDate(item.dueDate, `annual commitment ${item.id} dueDate`);
   assertPositiveMinor(item.amountMinor, `annual commitment ${item.id} amountMinor`);
   assertNonNegativeMinor(item.reservedMinor, `annual commitment ${item.id} reservedMinor`);
-  requireEntity(accounts, item.accountId, `annual commitment ${item.id}`);
+  const account = requireEntity(accounts, item.accountId, `annual commitment ${item.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `annual commitment ${item.id}`);
   const category = requireEntity(categories, item.categoryId, `annual commitment ${item.id}`);
   if (category.type !== "expense") {
     throw new Error(`annual commitment ${item.id} must reference an expense category`);
@@ -678,13 +1223,15 @@ function validateScheduledExpense(
   item: ScheduledExpense,
   accounts: ReadonlyMap<StableId, Account>,
   categories: ReadonlyMap<StableId, Category>,
+  baseCurrency: CurrencyCode,
 ): void {
   assertEnum(item.mode, ["monthly", "selected_months"], `scheduled expense ${item.id} mode`);
   assertPositiveMinor(item.amountMinor, `scheduled expense ${item.id} amountMinor`);
   if (!Number.isSafeInteger(item.dueDay) || item.dueDay < 1 || item.dueDay > 31) {
     throw new Error(`scheduled expense ${item.id} dueDay must be from 1 to 31`);
   }
-  requireEntity(accounts, item.accountId, `scheduled expense ${item.id}`);
+  const account = requireEntity(accounts, item.accountId, `scheduled expense ${item.id}`);
+  assertBaseCurrencyAccount(account, baseCurrency, `scheduled expense ${item.id}`);
   const category = requireEntity(categories, item.categoryId, `scheduled expense ${item.id}`);
   if (category.type !== "expense") {
     throw new Error(`scheduled expense ${item.id} must reference an expense category`);
@@ -717,26 +1264,23 @@ export function calculateAnnualPlan(
     throw new Error("planning horizon exceeds supported calendar range");
   }
 
-  const accounts = indexById(state.accounts, "accounts");
-  const categories = indexById(state.categories, "categories");
-  const budgets = indexById(state.budgets, "budgets");
-  const goals = indexById(state.goals, "goals");
-  const transactions = indexById(state.transactions, "transactions");
+  const index = indexState(state);
+  const { accounts, categories, goals } = index;
   const annualCommitments = indexById(state.annualCommitments ?? [], "annualCommitments");
   const scheduledExpenses = indexById(state.scheduledExpenses ?? [], "scheduledExpenses");
-  const budget = requireEntity(budgets, state.activeBudgetId, "calculateAnnualPlan");
+  const budget = requireEntity(index.budgets, state.activeBudgetId, "calculateAnnualPlan");
   for (const account of accounts.values()) validateAccount(account);
   for (const category of categories.values()) validateCategory(category);
   const flexibleByCategory = validateBudget(budget, categories);
 
-  for (const goal of goals.values()) validateGoal(goal, accounts);
-  for (const transaction of transactions.values()) validateTransactionReferences(transaction, accounts, categories, goals, transactions);
+  for (const goal of goals.values()) validateGoal(goal, accounts, index.baseCurrency);
+  for (const transaction of index.transactions.values()) validateTransactionReferences(transaction, index);
 
   for (const item of annualCommitments.values()) {
-    validateAnnualCommitment(item, accounts, categories);
+    validateAnnualCommitment(item, accounts, categories, index.baseCurrency);
   }
   for (const item of scheduledExpenses.values()) {
-    validateScheduledExpense(item, accounts, categories);
+    validateScheduledExpense(item, accounts, categories, index.baseCurrency);
   }
 
   const flexiblePlanMinor = [...flexibleByCategory.values()].reduce(

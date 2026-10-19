@@ -20,7 +20,8 @@
  * не меньше 48 pt её высоты (или вся она, если ниже) были свободны от шапки, навигации, полосы
  * записи и любой плашки — в каком-нибудь из положений прокрутки. Порог — из §9 `DESIGN.md`.
  */
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { makeG002BackupBuffer } from "./canonical-budget";

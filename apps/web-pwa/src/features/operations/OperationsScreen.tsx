@@ -36,7 +36,8 @@ import { groupedCategoryOptions } from "./category-picker";
 import { CategorySheet, CATEGORY_SHEET_ERROR_ID, type CategorySheetDraft } from "./CategorySheet";
 import { editAmount, evaluateAmount, settleAmount, type AmountSelection, type KeypadKey } from "./amount-expression";
 import { Keypad, useKeypadAvailable } from "./Keypad";
-import { kindLabels, rubles } from "./transaction-words";
+import { amountText, draftCurrency, kindLabels, moneyIn, operationLabel, rubles, transactionDetail } from "./transaction-words";
+import { OperationAmount } from "./OperationAmount";
 
 /** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
@@ -76,10 +77,12 @@ interface OperationsScreenProps {
  * называет записанное и показывает число, которое от записи поехало, — одометром, чтобы движение
  * объяснило, что оно изменилось, и на сколько.
  */
-interface SaveReceipt {
+export interface SaveReceipt {
   readonly verb: "Записано" | "Изменено" | "Удалено";
   readonly kind: TransactionKind;
   readonly amountMinor: number;
+  /** Валюта суммы — валюта счёта операции, как в истории; конверты ниже — в рублях бюджета. */
+  readonly currency: string;
   /** Чьё число объявляем; `null` — объявлять нечего, и тогда квитанция называет только запись. */
   readonly target: EffectTarget | null;
   /** Значение до изменения: одометр едет от него, а подпись называет разницу. */
@@ -111,8 +114,16 @@ function spokenAmountText(text: string): string {
 /** Квитанция записи: её же подводят под глаз после сохранения. */
 export const SAVE_RECEIPT_ID = "operation-save-receipt";
 
+/**
+ * Виды, которые записывает эта форма. Долги и операции в другой валюте приходят из копии или от
+ * другого устройства, и форма их не записывает и не правит — у неё нет ни долга, ни курса (план,
+ * §3.4). Поэтому список видов — свой, а не все подписи `kindLabels`.
+ */
+type FormKind = TransactionDraft["kind"];
+const FORM_KINDS: readonly FormKind[] = ["income", "expense", "refund", "transfer", "goal_contribution"];
+
 /** «Записать доход» — глагол и вид операции в винительном падеже. */
-const kindObjects: Record<TransactionKind, string> = {
+const kindObjects: Record<FormKind, string> = {
   income: "доход",
   expense: "покупку",
   refund: "возврат",
@@ -182,7 +193,7 @@ function firstActiveGoal(budget: BudgetState): string {
  * «Жильё» был бы случайной записью не туда, а не подсказкой. Счёт подставляется — он почти
  * всегда один.
  */
-function defaultDraft(kind: TransactionKind, budget: BudgetState, occurredOn: string): TransactionDraft {
+function defaultDraft(kind: FormKind, budget: BudgetState, occurredOn: string): TransactionDraft {
   const accountId = firstActiveAccount(budget);
   const common = { status: "posted" as const, occurredOn, amount: "" };
   switch (kind) {
@@ -206,7 +217,8 @@ function defaultDraft(kind: TransactionKind, budget: BudgetState, occurredOn: st
   }
 }
 
-function draftFromTransaction(transaction: Transaction): TransactionDraft {
+/** Черновик формы по операции — или `null`, если форма такую операцию показать не может (долг). */
+function draftFromTransaction(transaction: Transaction): TransactionDraft | null {
   const common = {
     status: transaction.status,
     occurredOn: transaction.occurredOn,
@@ -223,6 +235,9 @@ function draftFromTransaction(transaction: Transaction): TransactionDraft {
       return { ...common, kind: transaction.kind, fromAccountId: transaction.fromAccountId, toAccountId: transaction.toAccountId };
     case "goal_contribution":
       return { ...common, kind: transaction.kind, fromAccountId: transaction.fromAccountId, toAccountId: transaction.toAccountId, goalId: transaction.goalId };
+    case "debt_out":
+    case "debt_in":
+      return null;
   }
 }
 
@@ -238,6 +253,8 @@ function transactionContext(transaction: Transaction, budget: BudgetState): stri
     case "refund": return `${category(transaction.categoryId)} · возврат расхода · ${account(transaction.accountId)}`;
     case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
     case "goal_contribution": return `${account(transaction.fromAccountId)} → ${goal(transaction.goalId)}`;
+    case "debt_out":
+    case "debt_in": return transactionDetail(transaction, budget);
   }
 }
 
@@ -264,7 +281,7 @@ function FieldError({ message }: { readonly message: string | null }) {
  * Стоит в потоке под карточкой суммы, а не поверх экрана: плавающая плашка накрывает то, что под
  * ней. Квитанция занимает своё место и ничего не закрывает.
  */
-function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceipt; readonly afterMinor: number | null }) {
+export function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceipt; readonly afterMinor: number | null }) {
   const label = receipt.target ? effectLabel(receipt.target) : null;
   const changeMinor = afterMinor === null ? 0 : afterMinor - receipt.beforeMinor;
   const spokenValue = afterMinor === null
@@ -273,7 +290,7 @@ function SaveReceiptView({ receipt, afterMinor }: { readonly receipt: SaveReceip
   return <div className="save-receipt" id={SAVE_RECEIPT_ID} role="status" aria-live="polite" aria-atomic="true">
     <span className="save-receipt-mark" aria-hidden="true"><Icon name="circle-check" size={24} /></span>
     <div className="save-receipt-copy">
-      <strong>{receipt.verb}: {kindLabels[receipt.kind].toLowerCase()} <Money value={receipt.amountMinor} /></strong>
+      <strong>{receipt.verb}: {kindLabels[receipt.kind].toLowerCase()} <OperationAmount value={receipt.amountMinor} currency={receipt.currency} /></strong>
       {label !== null && afterMinor !== null ? <>
         <small>{label}</small>
         <span className="save-receipt-value">
@@ -331,7 +348,7 @@ function TransactionFields({ budget, draft, patch, onCustomCategory }: { budget:
     const derivedCategory = original ? budget.categories.find((item) => item.id === original.categoryId)?.name : undefined;
     return <>
       <AccountSelect id="operation-accountId" label="Счёт возврата" value={draft.accountId} budget={budget} onValue={(value) => patch("accountId", value)} />
-      <div className="field"><label htmlFor="operation-originalTransactionId">Исходный расход</label><select id="operation-originalTransactionId" value={draft.originalTransactionId} onChange={(event) => patch("originalTransactionId", event.target.value)}><option value="">Выберите расход</option>{activeExpenses.map((item) => <option value={item.id} key={item.id}>{item.occurredOn} · {rubles(item.amountMinor)} · {transactionContext(item, budget)}</option>)}</select><small>Категория определяется исходным расходом: {derivedCategory ?? "выберите расход"}.</small></div>
+      <div className="field"><label htmlFor="operation-originalTransactionId">Исходный расход</label><select id="operation-originalTransactionId" value={draft.originalTransactionId} onChange={(event) => patch("originalTransactionId", event.target.value)}><option value="">Выберите расход</option>{activeExpenses.map((item) => <option value={item.id} key={item.id}>{item.occurredOn} · {amountText(item, budget)} · {transactionContext(item, budget)}</option>)}</select><small>Категория определяется исходным расходом: {derivedCategory ?? "выберите расход"}.</small></div>
     </>;
   }
   if (draft.kind === "transfer") return <>
@@ -515,9 +532,26 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const previewApplies = draft.kind === "expense" && editingId === null && amountMinor > 0 && dateInPeriod;
   const detailsOpen = factOpen || draft.kind !== "expense" || editingId !== null;
 
+  // Черновик, ушедший в запись, — уже не несохранённый черновик (третье ревью, e2e b1). Флаг
+  // приложения прежде шёл только через этот пассивный эффект, а черновик оставался «грязным» весь
+  // полёт записи: касание вкладки сразу после «Записать» спрашивало «Несохранённый черновик будет
+  // удалён», хотя покупка уже записывалась. Поэтому запись снимает флаг сама и синхронно, до
+  // первого `await` (`beginSaving`), а неудача возвращает его (`endSaving`).
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
-    onDirtyChange?.(dirty);
+    onDirtyChange?.(dirty && !savingRef.current);
   }, [dirty, onDirtyChange]);
+  const beginSaving = () => {
+    savingRef.current = true;
+    onDirtyChange?.(false);
+  };
+  const endSaving = (failed: boolean) => {
+    if (!savingRef.current) return;
+    savingRef.current = false;
+    if (failed) onDirtyChange?.(dirtyRef.current);
+  };
 
   useEffect(() => () => {
     onDirtyChange?.(false);
@@ -531,7 +565,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     setDraft((current) => patchDraft(current, key, value));
     clearTransient();
   };
-  const chooseKind = (kind: TransactionKind) => {
+  const chooseKind = (kind: FormKind) => {
     setDraft((current) => ({ ...defaultDraft(kind, budget, today), amount: current.amount, occurredOn: current.occurredOn }));
     setEditingId(null);
     setSheet(null);
@@ -544,8 +578,10 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       setError(null);
       try {
         await onChange(change);
+        endSaving(false);
         success();
       } catch (cause) {
+        endSaving(true);
         const view = toOperationsErrorView(cause);
         setError(view.message);
         // Квитанция утверждает, что запись прошла. Рядом с сообщением об ошибке это ложь.
@@ -575,6 +611,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       verb,
       kind: pending.kind,
       amountMinor: pendingMinor,
+      currency: draftCurrency(pending, budget),
       target,
       beforeMinor: target === null ? 0 : effectValueMinor(metrics, target),
     });
@@ -583,7 +620,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     // глаз. Прокрутка мгновенная и уважает `prefers-reduced-motion` по умолчанию платформы.
     window.setTimeout(() => document.getElementById(SAVE_RECEIPT_ID)?.scrollIntoView({ block: "center" }), 0);
   };
-  const reset = (kind: TransactionKind = draft.kind) => {
+  const reset = (kind: FormKind = draft.kind) => {
     setDraft(defaultDraft(kind, budget, today));
     setEditingId(null);
     setConfirmation(null);
@@ -646,7 +683,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   };
   const editingTransaction = editingId === null ? undefined : budget.transactions.find((item) => item.id === editingId);
   const editingLabel = editingTransaction
-    ? `${kindLabels[editingTransaction.kind]} ${rubles(editingTransaction.amountMinor)} от ${editingTransaction.occurredOn}`
+    ? operationLabel(editingTransaction, budget)
     : "";
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -657,25 +694,39 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
       setConfirmation({ type: "edit", id: editingId, draft: pending });
       return;
     }
+    // Записанный черновик сбрасывается: с этого касания он не «несохранённый».
+    beginSaving();
     void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); });
   };
   const confirm = () => {
     if (!confirmation || busy) return;
     if (confirmation.type === "edit") {
       const pending = confirmation;
+      beginSaving();
       void runChange((state) => editTransaction(state, pending.id, pending.draft), () => { recordReceipt("Изменено", pending.draft); reset(pending.draft.kind); });
     } else {
       const pending = confirmation;
       const removed = budget.transactions.find((item) => item.id === pending.id);
+      // Удаление открытой в форме операции сбрасывает форму; удаление другой оставляет черновик.
+      if (editingId === pending.id) beginSaving();
       void runChange((state) => deleteTransaction(state, pending.id), () => {
-        if (removed) recordReceipt("Удалено", draftFromTransaction(removed));
+        const removedDraft = removed === undefined ? null : draftFromTransaction(removed);
+        if (removedDraft !== null) recordReceipt("Удалено", removedDraft);
         setConfirmation(null);
         if (editingId === pending.id) reset();
       });
     }
   };
   const beginEdit = (transaction: Transaction) => {
-    setDraft(draftFromTransaction(transaction));
+    const editable = draftFromTransaction(transaction);
+    if (editable === null) {
+      // Операция по долгу: у формы нет полей долга, и правка ею потеряла бы его. Говорим это, а не
+      // открываем форму, которая записала бы что-то другое.
+      setError("Операцию по долгу эта форма пока не изменяет.");
+      window.setTimeout(() => document.getElementById("operation-form-error")?.focus(), 0);
+      return;
+    }
+    setDraft(editable);
     setEditingId(transaction.id);
     setFactOpen(true);
     // Квитанция отвечала на прошлую запись; над формой, открывшей чужую операцию, она врёт.
@@ -717,7 +768,8 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
     amountRef.current?.setSelectionRange(caret, caret);
   });
   const requestDelete = (transaction: Transaction) => {
-    setConfirmation({ type: "delete", id: transaction.id, label: `${kindLabels[transaction.kind]} ${rubles(transaction.amountMinor)} от ${transaction.occurredOn}` });
+    // В валюте счёта операции, как в истории: «Расход 40 $ от …», а не «40 ₽».
+    setConfirmation({ type: "delete", id: transaction.id, label: operationLabel(transaction, budget) });
     setError(null);
   };
 
@@ -725,7 +777,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
   const submitLabel = editingId
     ? "Проверить изменения"
     : draft.kind === "expense"
-      ? (selectedCategory ? `Записать ${amountMinor > 0 ? rubles(amountMinor) : "покупку"} в «${selectedCategory.name}»` : "Записать покупку")
+      ? (selectedCategory ? `Записать ${amountMinor > 0 ? moneyIn(amountMinor, draftCurrency(draft, budget)) : "покупку"} в «${selectedCategory.name}»` : "Записать покупку")
       : `Записать ${kindObjects[draft.kind]}`;
   const periodMonth = activeBudget ? monthGenitive(activeBudget.startDate) : "";
 
@@ -760,7 +812,7 @@ export function OperationsScreen({ budget, onChange, onDirtyChange, onPlanning, 
           {/* Дата вне месяца плана: конверты покупку не увидят, и табло так и говорит — до записи. */}
           {draft.kind === "expense" && activeBudget && !dateInPeriod ? <p className="field-hint record-outside" role="status">{formatDay(draft.occurredOn)} — вне {periodMonth}, месяца плана. Конверты не изменятся: покупка попадёт только в историю.</p> : null}
           <div id="operation-details" className="record-details" hidden={!detailsOpen}>
-            <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as TransactionKind)}>{Object.entries(kindLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
+            <div className="field"><label htmlFor="operation-kind">Тип</label><select id="operation-kind" value={draft.kind} disabled={Boolean(editingId)} onChange={(event) => chooseKind(event.target.value as FormKind)}>{FORM_KINDS.map((value) => <option value={value} key={value}>{kindLabels[value]}</option>)}</select></div>
             <TransactionFields budget={budget} draft={draft} patch={patch} onCustomCategory={openCategorySheet} />
             <div className="field"><label htmlFor="operation-occurredOn">Дата</label><input id="operation-occurredOn" type="date" value={draft.occurredOn} onChange={(event) => patch("occurredOn", event.target.value)} /></div>
           </div>

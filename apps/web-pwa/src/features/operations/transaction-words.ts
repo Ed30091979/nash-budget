@@ -1,6 +1,13 @@
-import type { BudgetState, Transaction, TransactionKind } from "@family-budget/domain";
+import {
+  currencyExponent,
+  isSupportedCurrency,
+  type BudgetState,
+  type DebtDirection,
+  type Transaction,
+  type TransactionKind,
+} from "@family-budget/domain";
 import type { IconName } from "../../components/Icon";
-import { formatMoney } from "../../money";
+import { formatCurrencyAmount, formatMoney } from "../../money";
 import { plural } from "../../plural";
 
 /**
@@ -15,6 +22,10 @@ export const kindLabels: Record<TransactionKind, string> = {
   refund: "Возврат",
   transfer: "Перевод",
   goal_contribution: "Взнос в цель",
+  // Вид говорит, куда ушли деньги; что это значит — дал или вернул, — говорит направление долга
+  // (`debtVerb`). Подпись вида нужна там, где долга под рукой нет: в списке видов фильтра.
+  debt_out: "Долг: со счёта",
+  debt_in: "Долг: на счёт",
 };
 
 // §6: вид операции рисует тот же глиф, что и на «Сегодня» — один смысл, один глиф.
@@ -25,7 +36,20 @@ export const kindIcons: Record<TransactionKind, IconName> = {
   refund: "rotate-ccw",
   transfer: "arrow-left-right",
   goal_contribution: "target",
+  debt_out: "arrow-up-right",
+  debt_in: "arrow-down-left",
 };
+
+/**
+ * Четыре глагола долга из пары «вид + направление» (D-033): деньги ушли со счёта — «Дал в долг» по
+ * долгу, который должны семье, и «Вернул долг» по долгу семьи; пришли — «Взял в долг» и «Мне вернули
+ * долг». Без долга, которого в бюджете нет, — подпись вида.
+ */
+export function debtVerb(kind: "debt_out" | "debt_in", direction: DebtDirection | undefined): string {
+  if (direction === undefined) return kindLabels[kind];
+  if (kind === "debt_out") return direction === "owed_to_me" ? "Дал в долг" : "Вернул долг";
+  return direction === "i_owe" ? "Взял в долг" : "Мне вернули долг";
+}
 
 /** «1 операция», «2 операции», «5 операций». */
 export function operationsCount(count: number): string {
@@ -36,10 +60,55 @@ export function rubles(minor: number): string {
   return formatMoney(minor);
 }
 
+/**
+ * Валюта, в которой записана сумма операции: валюта счёта, с которого она идёт. Счёт, которого в
+ * бюджете нет, читается рублёвым — так писала каждая версия до валют.
+ */
+export function transactionCurrency(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  const accountId = transaction.kind === "transfer" || transaction.kind === "goal_contribution"
+    ? transaction.fromAccountId
+    : transaction.accountId;
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
+}
+
+/**
+ * Сумма одной операции с её настоящей валютой: «4 000 ₽», а у покупки по счёту в долларах —
+ * «40 $», а не «40 ₽». Рубли — тем же `formatMoney`, что и везде.
+ */
+export function amountText(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  return moneyIn(transaction.amountMinor, transactionCurrency(transaction, budget));
+}
+
+/**
+ * Операция одной строкой — «Расход 40,50 $ от 2026-07-10»: так её называют подтверждение удаления,
+ * правки и подпись строки истории, и сумма везде в валюте её счёта.
+ */
+export function operationLabel(transaction: Transaction, budget: Pick<BudgetState, "accounts">): string {
+  return `${kindLabels[transaction.kind]} ${amountText(transaction, budget)} от ${transaction.occurredOn}`;
+}
+
+/** Сумма в минимальных единицах валюты `currency`, словами экрана: рубли — `formatMoney`, как везде. */
+export function moneyIn(minor: number, currency: string): string {
+  if (currency === "RUB") return formatMoney(minor);
+  return formatCurrencyAmount(minor, currency, isSupportedCurrency(currency) ? currencyExponent(currency) : 2);
+}
+
+/**
+ * Валюта суммы, набранной в форме: валюта счёта, с которого операция идёт, — того же счёта, по
+ * которому {@link transactionCurrency} назовёт её валюту, когда она будет записана.
+ */
+export function draftCurrency(
+  draft: { readonly kind: TransactionKind; readonly accountId?: string; readonly fromAccountId?: string },
+  budget: Pick<BudgetState, "accounts">,
+): string {
+  const accountId = draft.kind === "transfer" || draft.kind === "goal_contribution" ? draft.fromAccountId : draft.accountId;
+  return budget.accounts.find((account) => account.id === accountId)?.currency ?? "RUB";
+}
+
 /** Направление операции в строке: сумма хранится положительной, знак принадлежит строке. */
 export function kindSign(kind: TransactionKind): "+" | "−" | undefined {
-  if (kind === "income" || kind === "refund") return "+";
-  return kind === "expense" ? "−" : undefined;
+  if (kind === "income" || kind === "refund" || kind === "debt_in") return "+";
+  return kind === "expense" || kind === "debt_out" ? "−" : undefined;
 }
 
 /** Категория операции, если она у неё есть. Доход тоже бывает с категорией. */
@@ -57,11 +126,14 @@ export function transactionCategory(transaction: Transaction, budget: BudgetStat
 export function transactionDetail(transaction: Transaction, budget: BudgetState): string {
   const account = (id: string) => budget.accounts.find((item) => item.id === id)?.name ?? "Неизвестный счёт";
   const goal = (id: string) => budget.goals.find((item) => item.id === id)?.name ?? "Неизвестная цель";
+  const counterparty = (id: string) => (budget.debts ?? []).find((item) => item.id === id)?.counterparty ?? "Неизвестный долг";
   switch (transaction.kind) {
     case "income":
     case "expense": return account(transaction.accountId);
     case "refund": return `возврат расхода · ${account(transaction.accountId)}`;
     case "transfer": return `${account(transaction.fromAccountId)} → ${account(transaction.toAccountId)}`;
     case "goal_contribution": return `${account(transaction.fromAccountId)} → ${goal(transaction.goalId)}`;
+    case "debt_out": return `${account(transaction.accountId)} → ${counterparty(transaction.debtId)}`;
+    case "debt_in": return `${counterparty(transaction.debtId)} → ${account(transaction.accountId)}`;
   }
 }

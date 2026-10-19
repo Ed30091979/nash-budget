@@ -6,12 +6,18 @@ import type {
   BudgetLine,
   BudgetState,
   Category,
+  Debt,
+  ExchangeRate,
   Goal,
+  Household,
   Member,
   MemberId,
   MemberRole,
+  RecurringRule,
   ScheduledExpense,
   StableId,
+  Tag,
+  TagId,
   Transaction,
 } from "@family-budget/domain";
 
@@ -33,19 +39,26 @@ export type OpId = string;
  * more. The server decides who may read or write a family, and its decision is the only one
  * that binds.
  */
-export type { Member, MemberId, MemberRole };
+export type { Member, MemberId, MemberRole, Tag, TagId };
+export type { Debt, ExchangeRate, Household, RecurringRule };
 
 /**
- * A {@link BudgetState} whose participants are always present.
+ * A {@link BudgetState} whose participants, tags, exchange rates, debts and recurring rules are
+ * always present.
  *
- * Not redundant now that the domain carries members itself: the domain declares them optional,
- * because every backup and every budget written before participants existed omits them and
- * stays valid. A journal has no such history to honour — it materialises the list on every
- * pass, empty when a family has named nobody — so the state it produces promises the list, and
- * a consumer of this package reads `state.members` without a fallback.
+ * Not redundant now that the domain carries them itself: the domain declares them optional,
+ * because every backup and every budget written before they existed omits them and stays valid.
+ * A journal has no such history to honour — it materialises each list on every pass, empty when a
+ * family has named nobody, tagged nothing and recorded no rate — so the state it produces promises
+ * the lists, and a consumer of this package reads them without a fallback. The household stays
+ * optional: it is one entity, not a list, and a journal without it is counted in roubles.
  */
 export interface SyncedBudgetState extends BudgetState {
   readonly members: readonly Member[];
+  readonly tags: readonly Tag[];
+  readonly exchangeRates: readonly ExchangeRate[];
+  readonly debts: readonly Debt[];
+  readonly recurringRules: readonly RecurringRule[];
 }
 
 /** Omit that keeps a discriminated union discriminated. */
@@ -64,6 +77,13 @@ export type AnnualCommitmentFields = Omit<AnnualCommitment, "id">;
 export type ScheduledExpenseFields = Omit<ScheduledExpense, "id">;
 export type TransactionFields = DistributiveOmit<Transaction, "id">;
 export type MemberFields = Omit<Member, "id">;
+export type TagFields = Omit<Tag, "id">;
+export type ExchangeRateFields = Omit<ExchangeRate, "id">;
+/** The household is always written under `HOUSEHOLD_ID`, so its fields are all there is to it. */
+export type HouseholdFields = Omit<Household, "id">;
+export type DebtFields = Omit<Debt, "id">;
+/** The template is nested and carries no identifier of its own: an occurrence gets one when written. */
+export type RecurringRuleFields = Omit<RecurringRule, "id">;
 
 export interface EntityFieldsByKind {
   readonly account: AccountFields;
@@ -75,6 +95,11 @@ export interface EntityFieldsByKind {
   readonly scheduledExpense: ScheduledExpenseFields;
   readonly transaction: TransactionFields;
   readonly member: MemberFields;
+  readonly tag: TagFields;
+  readonly exchangeRate: ExchangeRateFields;
+  readonly household: HouseholdFields;
+  readonly debt: DebtFields;
+  readonly recurringRule: RecurringRuleFields;
 }
 
 export type EntityKind = keyof EntityFieldsByKind;
@@ -90,6 +115,13 @@ export const ENTITY_KINDS = [
   "scheduledExpense",
   "transaction",
   "member",
+  // New kinds are appended, never inserted: this order sorts the entries of every journal, so a
+  // kind placed in the middle would reorder the canonical listing of journals that never held it.
+  "tag",
+  "exchangeRate",
+  "household",
+  "debt",
+  "recurringRule",
 ] as const satisfies readonly EntityKind[];
 
 export const OPERATION_ACTIONS = ["create", "update", "delete", "activate"] as const;
@@ -198,6 +230,45 @@ export const JOURNAL_PROBLEM_CODES = [
    * snapshot and brought below it.
    */
   "implausible_lamport",
+  /**
+   * The state holds more entities of one kind than a document may — of any kind, from accounts and
+   * budget lines to participants, tags, exchange rates, debts and recurring rules — than
+   * `COLLECTION_LIMITS` in the domain allows. Several devices adding them offline can pass the limit
+   * together, and no one of them did anything wrong, so nothing is withheld and the state stays
+   * ready; the entity names the kind, the identifier is empty. A backup of such a state is refused
+   * until the family brings the count down.
+   */
+  "collection_limit",
+  /**
+   * The currencies of an entity do not fit together: an income, expense or refund on an account in
+   * another currency without its base-currency snapshot (or one in the base currency with one), a
+   * transfer between currencies without the amount that arrived (on an operation or in the template
+   * of a recurring rule), a goal contribution across currencies, or a goal, large payment or
+   * schedule on an account outside the base currency.
+   * Reachable by honest concurrent editing — the account's currency or the household's base
+   * changed on one device while another wrote against the old one — so the entity is withheld and
+   * everything around it stays correct.
+   */
+  "currency_mismatch",
+  /**
+   * The base-currency snapshot of an income, expense or refund is not its amount at its own rate:
+   * `baseAmountMinor !== convertMinor(amountMinor, rate)`. The budget adds the snapshot and a row
+   * shows the amount, so the two would be two different figures for one operation. Written only by
+   * a device that bypassed the domain, which refuses such a snapshot; withheld, and back as soon as
+   * an edit makes the two agree.
+   */
+  "snapshot_mismatch",
+  /**
+   * An identifier that is not a UUID (`isUuid` in the domain). The codec demands one only of the
+   * kinds added in wave 1; an entity of an older kind — an account, a category, a budget or its
+   * line, a goal, a large payment, a schedule, an operation, a participant — under any other
+   * identifier is withheld, because the application refuses a state that holds one, and a state
+   * the journal calls ready but the application refuses would hold every device of the family on
+   * yesterday's budget. A participant label of an operation that is not a UUID is cleared with the
+   * same code, the operation itself kept. Only a device that bypassed the domain writes either:
+   * every identifier the application creates is a UUID.
+   */
+  "invalid_id",
 ] as const;
 
 export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
@@ -220,6 +291,11 @@ export type JournalProblemCode = (typeof JOURNAL_PROBLEM_CODES)[number];
  * - `unknown_active_budget` — an activation whose budget is not in the state, passed over so
  *   that a budget the family can actually see owns the pointer. When *no* activation resolves,
  *   the same code appears as a problem instead, and then the state cannot be shown at all.
+ * - `currency_mismatch` — the currencies of the entity do not fit together; the domain throws on
+ *   such a state, and reachable concurrent edits produce it (see the problem code).
+ * - `snapshot_mismatch` — the snapshot of an operation is not its amount at its rate; the domain
+ *   throws on such a state.
+ * - `invalid_id` — the identifier is not a UUID; the application refuses such a state.
  */
 export const WITHHOLDING_REASONS = [
   "identifier_claimed_twice",
@@ -229,6 +305,9 @@ export const WITHHOLDING_REASONS = [
   "goal_account_mismatch",
   "duplicate_budget_line",
   "unknown_active_budget",
+  "currency_mismatch",
+  "snapshot_mismatch",
+  "invalid_id",
 ] as const satisfies readonly JournalProblemCode[];
 
 export type WithholdingReason = (typeof WITHHOLDING_REASONS)[number];
