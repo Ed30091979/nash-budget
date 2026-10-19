@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { MAX_TAGS_PER_TRANSACTION, NOTE_MAX_LENGTH } from "@family-budget/domain";
 import {
   archiveCategory,
   calculateOperationsMetrics,
   createTransaction,
+  DEBT_EDIT_REFUSAL,
   deleteTransaction,
   editTransaction,
+  missingRateMessage,
   OPERATIONS_LIMITS,
   OperationsValidationError,
+  recreateTransaction,
+  restoreTransaction,
   toOperationsErrorView,
   type TransactionDraft,
 } from "./model";
@@ -463,7 +468,7 @@ describe("правка операции не теряет того, чего ф�
     };
   }
 
-  it("сохраняет участника, заметку и метки, когда правится сумма", () => {
+  it("переносит участника и правило, а заметку и метки берёт из черновика листа", () => {
     const state = labelledState();
     const before = state.transactions.find((item) => item.id === ids.transactions.products)!;
     const edited = editTransaction(state, ids.transactions.products, {
@@ -473,14 +478,25 @@ describe("правка операции не теряет того, чего ф�
       amount: "31000",
       accountId: ids.accounts.main,
       categoryId: ids.categories.products,
+      note: "Пятёрочка у дома",
+      // Метка в архиве остаётся на операции, которая её уже несла.
+      tagIds: [TAG_HOME, TAG_HOLIDAY],
     });
     const after = edited.transactions.find((item) => item.id === ids.transactions.products)!;
 
-    expect(after).toMatchObject({ amountMinor: 3_100_000, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
-    expect(after).toEqual({ ...before, amountMinor: 3_100_000 });
+    // Метки хранятся одним порядком (`normalizeTagIds`): тот же набор — то же поле на любом устройстве.
+    expect(after).toMatchObject({ amountMinor: 3_100_000, memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOME, TAG_HOLIDAY] });
+    expect(after).toEqual({ ...before, amountMinor: 3_100_000, tagIds: [TAG_HOME, TAG_HOLIDAY] });
+    // Лист показывает заметку и метки: стёртые в нём — стёрты и в операции. Участник остаётся.
+    const cleared = editTransaction(state, ids.transactions.products, {
+      kind: "expense", status: "posted", occurredOn: before.occurredOn, amount: "31000", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    }).transactions.find((item) => item.id === ids.transactions.products)!;
+    expect(cleared.memberId).toBe(MEMBER);
+    expect(Object.hasOwn(cleared, "note")).toBe(false);
+    expect(Object.hasOwn(cleared, "tagIds")).toBe(false);
   });
 
-  it("сохраняет их и при смене вида операции, а у непомеченной ничего не появляется", () => {
+  it("сохраняет участника и при смене вида операции, а у непомеченной ничего не появляется", () => {
     const state = labelledState();
     const edited = editTransaction(state, ids.transactions.products, {
       kind: "transfer",
@@ -489,9 +505,11 @@ describe("правка операции не теряет того, чего ф�
       amount: "100",
       fromAccountId: ids.accounts.main,
       toAccountId: ids.accounts.savings,
+      note: "Пятёрочка у дома",
+      tagIds: [TAG_HOME],
     });
     expect(edited.transactions.find((item) => item.id === ids.transactions.products))
-      .toMatchObject({ kind: "transfer", memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOLIDAY, TAG_HOME] });
+      .toMatchObject({ kind: "transfer", memberId: MEMBER, note: "Пятёрочка у дома", tagIds: [TAG_HOME] });
 
     const income = state.transactions.find((item) => item.id === ids.transactions.income)!;
     const plain = editTransaction(state, ids.transactions.income, {
@@ -500,6 +518,38 @@ describe("правка операции не теряет того, чего ф�
     for (const field of ["memberId", "note", "tagIds", "recurringRuleId"]) {
       expect(Object.hasOwn(plain, field), field).toBe(false);
     }
+  });
+
+  it("записывает заметку и метки новой операции по правилу ввода домена", () => {
+    const state = labelledState();
+    const draft: TransactionDraft = {
+      kind: "expense", status: "posted", occurredOn: "2026-07-12", amount: "250", accountId: ids.accounts.main, categoryId: ids.categories.products,
+      note: "  кофе \u0627\u0644\u0642\u0647\u0648\u0629  ", tagIds: [TAG_HOME, TAG_HOME],
+    };
+    const created = createTransaction(state, draft, fixedOperationId).transactions.at(-1)!;
+    // Обрезка краёв, текст справа налево — законный текст; повтор метки свёрнут.
+    expect(created).toMatchObject({ note: "кофе \u0627\u0644\u0642\u0647\u0648\u0629", tagIds: [TAG_HOME] });
+    // Пустая заметка — нет заметки, пустой список меток — нет поля.
+    const bare = createTransaction(state, { ...draft, note: "   ", tagIds: [] }, fixedOperationId).transactions.at(-1)!;
+    expect(Object.hasOwn(bare, "note")).toBe(false);
+    expect(Object.hasOwn(bare, "tagIds")).toBe(false);
+    const refusal = (patch: Partial<TransactionDraft>) => {
+      try {
+        createTransaction(state, { ...draft, ...patch } as TransactionDraft, fixedOperationId);
+      } catch (error) {
+        return error instanceof OperationsValidationError ? `${error.field}: ${error.message}` : String(error);
+      }
+      return "accepted";
+    };
+    expect(refusal({ note: "я".repeat(NOTE_MAX_LENGTH + 1) })).toBe(`note: Комментарий — не больше ${NOTE_MAX_LENGTH} символов.`);
+    expect(refusal({ note: "кофе\u202e" })).toBe("note: Уберите из комментария скрытые или служебные символы.");
+    expect(refusal({ note: "две\nстроки" })).toBe("note: Уберите из комментария скрытые или служебные символы.");
+    expect(refusal({ tagIds: [TAG_HOLIDAY] })).toBe("tagIds: Метка «Отпуск» в архиве.");
+    expect(refusal({ tagIds: ["99000000-0000-4000-8000-0000000000ff"] })).toMatch(/^tagIds: Метка не найдена/u);
+    const many = Array.from({ length: MAX_TAGS_PER_TRANSACTION + 1 }, (_unused, index) => `99000000-0000-4000-8000-0000000001${String(index).padStart(2, "0")}`);
+    const crowded = { ...state, tags: [...state.tags, ...many.map((id, index) => ({ id, name: `Метка ${index}`, active: true }))] };
+    expect(() => createTransaction(crowded, { ...draft, tagIds: many }, fixedOperationId))
+      .toThrow(expect.objectContaining({ field: "tagIds", message: `Не больше ${MAX_TAGS_PER_TRANSACTION} меток на одной операции.` }));
   });
 
   it("не выдумывает меток новой операции и считает метку занятым идентификатором", () => {
@@ -548,26 +598,104 @@ describe("operations in another currency", () => {
     };
   }
 
-  it("refuses to record on a dollar account with words, not a damaged document", () => {
+  const RATE_JULY = { id: "8e100000-0000-4000-8000-0000000000e1", currency: "USD", baseCurrency: "RUB", date: "2026-07-01", rate: { baseMinor: 9_000, quoteMinor: 100 } };
+  const RATE_LATER = { id: "8e100000-0000-4000-8000-0000000000e2", currency: "USD", baseCurrency: "RUB", date: "2026-07-15", rate: { baseMinor: 9_500, quoteMinor: 100 } };
+
+  it("записывает расход по долларовому счёту с курсом дня, а без курса отказывает словами", () => {
     const state = withDollars();
-    const expense: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "10", accountId: DOLLARS, categoryId: ids.categories.products };
+    const expense: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "12,50", accountId: DOLLARS, categoryId: ids.categories.products };
     expect(() => createTransaction(state, expense, fixedOperationId)).toThrow(
-      expect.objectContaining({ field: "accountId", message: "Операции по счёту в другой валюте эта форма пока не записывает." }),
+      expect.objectContaining({ field: "baseAmount", message: missingRateMessage("USD", "RUB", "2026-07-11") }),
     );
-    expect(() => createTransaction(state, { ...transferDraft("100"), toAccountId: DOLLARS }, fixedOperationId)).toThrow(
-      expect.objectContaining({ field: "toAccountId", message: "Перевод между счетами в разных валютах эта форма пока не записывает." }),
-    );
-    // A rouble operation beside it records as before.
-    expect(() => createTransaction(state, transferDraft("100"), fixedOperationId)).not.toThrow();
+    expect(missingRateMessage("USD", "RUB", "2026-07-11")).toBe("Курса USD на 11\u00a0июля нет. Задайте курс или впишите сумму в RUB вручную.");
+    const priced = { ...state, exchangeRates: [RATE_JULY, RATE_LATER] };
+    const written = createTransaction(priced, expense, fixedOperationId).transactions.at(-1)!;
+    expect(written).toMatchObject({ amountMinor: 1_250, baseAmountMinor: 112_500, baseCurrency: "RUB", rate: RATE_JULY.rate });
+    // Позже — курс своего дня.
+    expect(createTransaction(priced, { ...expense, occurredOn: "2026-07-20" }, fixedOperationId).transactions.at(-1))
+      .toMatchObject({ baseAmountMinor: 118_750, rate: RATE_LATER.rate });
+    // A rouble operation beside it records as before, without a snapshot.
+    const rouble = createTransaction(state, transferDraft("100"), fixedOperationId).transactions.at(-1)!;
+    expect(Object.hasOwn(rouble, "baseAmountMinor")).toBe(false);
   });
 
-  it("refuses to edit an operation in another currency rather than lose its rouble value", () => {
+  it("сумма в рублях вручную — точный курс «сумма за сумму», и курс тогда не нужен", () => {
     const state = withDollars();
-    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-10", amount: "50", accountId: ids.accounts.main, categoryId: ids.categories.products };
-    expect(() => editTransaction(state, DOLLAR_EXPENSE, draft)).toThrow(
-      expect.objectContaining({ field: "kind", message: "Операцию в другой валюте эта форма пока не изменяет." }),
+    const expense: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "12,50", accountId: DOLLARS, categoryId: ids.categories.products, baseAmount: "1 157" };
+    const written = createTransaction(state, expense, fixedOperationId).transactions.at(-1)!;
+    expect(written).toMatchObject({ amountMinor: 1_250, baseAmountMinor: 115_700, rate: { baseMinor: 115_700, quoteMinor: 1_250 } });
+    expect(calculateOperationsMetrics(createTransaction(state, expense, fixedOperationId)).categoryMetrics[ids.categories.products]?.expenseMinor)
+      .toBe(calculateOperationsMetrics(state).categoryMetrics[ids.categories.products]!.expenseMinor + 115_700);
+    expect(() => createTransaction(state, { ...expense, baseAmount: "0" }, fixedOperationId)).toThrow(expect.objectContaining({ field: "baseAmount" }));
+    // На рублёвом счёте поле не значит ничего: сумма и есть цифра.
+    const rouble = createTransaction(state, { ...expense, accountId: ids.accounts.main }, fixedOperationId).transactions.at(-1)!;
+    expect(rouble.amountMinor).toBe(1_250);
+    expect(Object.hasOwn(rouble, "rate")).toBe(false);
+  });
+
+  it("перевод между валютами требует суммы зачисления в валюте счёта назначения", () => {
+    const state = withDollars();
+    const transfer: TransactionDraft = { ...transferDraft("9000"), toAccountId: DOLLARS };
+    expect(() => createTransaction(state, transfer, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "toAmount", message: "Впишите, сколько пришло на счёт «Доллары», в USD." }),
     );
-    expect(state.transactions.find((item) => item.id === DOLLAR_EXPENSE)).toMatchObject({ baseAmountMinor: 360_000 });
+    const written = createTransaction(state, { ...transfer, toAmount: "100" }, fixedOperationId).transactions.at(-1)!;
+    expect(written).toMatchObject({ kind: "transfer", amountMinor: 900_000, toAmountMinor: 10_000 });
+    // В одной валюте поле зачисления не пишется.
+    const same = createTransaction(state, { ...transferDraft("100"), toAmount: "5" }, fixedOperationId).transactions.at(-1)!;
+    expect(Object.hasOwn(same, "toAmountMinor")).toBe(false);
+  });
+
+  it("правка операции в другой валюте сохраняет её курс, пока день и счёт те же", () => {
+    const state = { ...withDollars(), exchangeRates: [RATE_LATER] };
+    const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-10", amount: "50", accountId: DOLLARS, categoryId: ids.categories.products, note: "сдача" };
+    const edited = editTransaction(state, DOLLAR_EXPENSE, draft).transactions.find((item) => item.id === DOLLAR_EXPENSE)!;
+    // Записанный курс 90,00, а не курс позднего дня 95,00: правка заметки не переоценивает покупку.
+    expect(edited).toMatchObject({ amountMinor: 5_000, baseAmountMinor: 450_000, rate: { baseMinor: 9_000, quoteMinor: 100 }, note: "сдача" });
+    // Новый день — курс нового дня; дня без курса — отказ словами.
+    expect(editTransaction(state, DOLLAR_EXPENSE, { ...draft, occurredOn: "2026-07-16" }).transactions.find((item) => item.id === DOLLAR_EXPENSE))
+      .toMatchObject({ baseAmountMinor: 475_000, rate: RATE_LATER.rate });
+    expect(() => editTransaction(state, DOLLAR_EXPENSE, { ...draft, occurredOn: "2026-07-12" })).toThrow(expect.objectContaining({ field: "baseAmount" }));
+    // На рублёвый счёт — снимок уходит: сумма снова и есть цифра.
+    const rouble = editTransaction(state, DOLLAR_EXPENSE, { ...draft, accountId: ids.accounts.main }).transactions.find((item) => item.id === DOLLAR_EXPENSE)!;
+    expect(Object.hasOwn(rouble, "baseAmountMinor")).toBe(false);
+  });
+
+  it("сумма у иены целая, у динара — с тремя знаками", () => {
+    const YEN = "8c000000-0000-4000-8000-0000000000a3";
+    const base = withDollars();
+    const state = {
+      ...base,
+      accounts: [...base.accounts, { id: YEN, name: "Иены", type: "cash" as const, currency: "JPY", openingBalanceMinor: 0, active: true }],
+      exchangeRates: [{ id: "8e100000-0000-4000-8000-0000000000e3", currency: "JPY", baseCurrency: "RUB", date: "2026-07-01", rate: { baseMinor: 60, quoteMinor: 1 } }],
+    };
+    const yen: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-11", amount: "1500", accountId: YEN, categoryId: ids.categories.products };
+    expect(createTransaction(state, yen, fixedOperationId).transactions.at(-1)).toMatchObject({ amountMinor: 1_500, baseAmountMinor: 90_000 });
+    expect(() => createTransaction(state, { ...yen, amount: "15,5" }, fixedOperationId)).toThrow(
+      expect.objectContaining({ field: "amount", message: "Введите положительную сумму целым числом." }),
+    );
+  });
+});
+
+describe("отмена из тоста", () => {
+  it("правку отменяет прежняя операция целиком, удаление — та же операция под новым идентификатором", () => {
+    const state = makeG000State();
+    const before = state.transactions.find((item) => item.id === ids.transactions.products)!;
+    const edited = editTransaction(state, before.id, {
+      kind: "expense", status: "posted", occurredOn: before.occurredOn, amount: "1", accountId: ids.accounts.main, categoryId: ids.categories.products,
+    });
+    const restored = restoreTransaction(edited, before);
+    expect(restored.transactions.find((item) => item.id === before.id)).toEqual(before);
+    expect(calculateOperationsMetrics(restored)).toEqual(calculateOperationsMetrics(state));
+
+    const removed = deleteTransaction(state, ids.transactions.housing2);
+    const deleted = state.transactions.find((item) => item.id === ids.transactions.housing2)!;
+    const again = recreateTransaction(removed, deleted, fixedOperationId);
+    expect(again.ids).toHaveLength(1);
+    expect(again.ids[0]).not.toBe(deleted.id);
+    expect(again.state.transactions.at(-1)).toEqual({ ...deleted, id: again.ids[0] });
+    expect(calculateOperationsMetrics(again.state)).toEqual(calculateOperationsMetrics(state));
+    expect(() => restoreTransaction(removed, deleted)).toThrow(expect.objectContaining({ field: "id" }));
   });
 });
 
@@ -588,7 +716,7 @@ describe("operations on a debt", () => {
     const state = withLending();
     const draft: TransactionDraft = { kind: "expense", status: "posted", occurredOn: "2026-07-09", amount: "5000", accountId: ids.accounts.main, categoryId: ids.categories.products };
     expect(() => editTransaction(state, LENT, draft)).toThrow(
-      expect.objectContaining({ field: "kind", message: "Операцию по долгу эта форма пока не изменяет." }),
+      expect.objectContaining({ field: "kind", message: DEBT_EDIT_REFUSAL }),
     );
   });
 

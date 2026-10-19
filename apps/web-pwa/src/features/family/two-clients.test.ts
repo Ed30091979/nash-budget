@@ -22,7 +22,7 @@ import {
   type BudgetState,
   type Transaction,
 } from "@family-budget/domain";
-import { SyncEngine, SyncServerError } from "@family-budget/sync-client";
+import { SyncClientError, SyncEngine, SyncServerError } from "@family-budget/sync-client";
 import type {
   DeliveredEnvelope,
   FetchQuery,
@@ -43,9 +43,12 @@ import {
   createBudgetJournalWriter,
   JOURNAL_ORIGIN_KEY,
   missingLocalMember,
+  pollFamilyRound,
   runSyncRound,
+  type FamilyPollRound,
   type JournalOrigin,
 } from "./controller";
+import type { SyncRoundOutcome } from "./model";
 import { membersById, transactionAuthorLabel } from "./model";
 import { toOperationsErrorView } from "../operations/model";
 import { BudgetWriteRefusal, WRITE_REFUSAL_TEXT } from "../../write-refusal";
@@ -93,6 +96,24 @@ afterEach(async () => {
 class JournalServer implements SyncTransport {
   private readonly envelopes: DeliveredEnvelope[] = [];
   private received = 0;
+  private held: { readonly reached: () => void; readonly released: Promise<void> } | null = null;
+
+  /**
+   * Следующая выборка доходит до сервера и ждёт: `reached` — она в пути, `release` — ответ ушёл.
+   * Отвечает тем, что лежит на сервере в момент ответа, как настоящий сервер.
+   */
+  holdNextFetch(): { readonly reached: Promise<void>; readonly release: () => void } {
+    let reached!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.held = { reached, released };
+    return { reached: arrived, release };
+  }
 
   get stored(): readonly DeliveredEnvelope[] {
     return this.envelopes;
@@ -118,6 +139,12 @@ class JournalServer implements SyncTransport {
 
   async fetch(familyId: string, query: FetchQuery): Promise<FetchResult> {
     if (familyId !== FAMILY_ID) throw new SyncServerError(403, "forbidden");
+    const held = this.held;
+    if (held !== null) {
+      this.held = null;
+      held.reached();
+      await held.released;
+    }
     const matching = this.envelopes
       .filter((envelope) => envelope.keyEpoch === query.keyEpoch && envelope.seq > query.after)
       .sort((left, right) => left.seq - right.seq);
@@ -138,6 +165,15 @@ interface Client {
   readonly drain: () => Promise<void>;
   /** Приём чужих операций и показ того, что они записали, — ровно как это делает оболочка (`app/AppShell.tsx`). */
   readonly receive: () => Promise<{ readonly applied: number; readonly stopped: boolean }>;
+  /** Экран догоняет документ на диске — то, что оболочка делает после каждого круга. */
+  readonly catchUp: () => Promise<boolean>;
+  /** Приложение открыто заново: экран — это документ, прочитанный с диска, и ничего больше. */
+  readonly reopen: () => Promise<void>;
+  /**
+   * Вторая вкладка того же устройства: своя ручка той же базы и свой движок, те же ключ и
+   * устройство. `over` — сеть, через которую она ходит, если не та же, что у первой.
+   */
+  readonly otherTab: (over?: SyncTransport) => Promise<SyncEngine>;
 }
 
 /** Адрес, из которого приложение выводит имя участника (`memberNameFromEmail`): «анна» — «Анна». */
@@ -156,22 +192,26 @@ async function makeClient(
   accepts?: (state: BudgetState) => boolean,
   initial?: BudgetState,
 ): Promise<Client> {
-  const repository = createBudgetRepository({ databaseName: databaseName(label) });
+  const name = databaseName(label);
+  const repository = createBudgetRepository({ databaseName: name });
   const created = await repository.createIfAbsent(prepareBudgetState(initial ?? makeSeedBudget()));
-  const engine = new SyncEngine({
-    repository: repository as never,
-    transport,
-    familyId: FAMILY_ID,
-    deviceId,
-    familyKey,
-    keyEpoch: FIRST_EPOCH,
-    keyDigest: toHex(await familyKeyFingerprint(familyKey)),
-    // The gate the application gives its engine (controller.ts), where a test asks for it — on
-    // top of a rule of the test's own, standing in for an older build that does not open a record.
-    ...(accepts === undefined ? {} : { acceptsState: (state: BudgetState) => acceptsJournalState(state) && accepts(state) }),
-    // As controller.ts: the founder's budget is the family's from the first write.
-    foundedDocument: origin === "local",
-  });
+  const keyDigest = toHex(await familyKeyFingerprint(familyKey));
+  const engineOver = (handle: ReturnType<typeof createBudgetRepository>, via: SyncTransport = transport) =>
+    new SyncEngine({
+      repository: handle as never,
+      transport: via,
+      familyId: FAMILY_ID,
+      deviceId,
+      familyKey,
+      keyEpoch: FIRST_EPOCH,
+      keyDigest,
+      // The gate the application gives its engine (controller.ts), where a test asks for it — on
+      // top of a rule of the test's own, standing in for an older build that does not open a record.
+      ...(accepts === undefined ? {} : { acceptsState: (state: BudgetState) => acceptsJournalState(state) && accepts(state) }),
+      // As controller.ts: the founder's budget is the family's from the first write.
+      foundedDocument: origin === "local",
+    });
+  const engine = engineOver(repository);
   await repository.writeSyncState([{ key: JOURNAL_ORIGIN_KEY, value: origin }]);
 
   const writer = createBudgetJournalWriter({
@@ -208,21 +248,31 @@ async function makeClient(
     throw new Error("the outgoing queue did not drain");
   };
 
+  // Как оболочка: экран догоняет документ на диске по ревизии, в очереди координатора записи.
+  const catchUp = () =>
+    coordinator.catchUp((next, value) => {
+      shown = next;
+      revision = value;
+      return true;
+    });
+
   return {
     repository,
     engine,
     apply: (change) => coordinator.apply(change),
     shown: () => shown,
+    catchUp,
+    reopen: async () => {
+      const stored = await repository.loadVersioned();
+      if (stored === null) throw new Error("the device holds no document to open");
+      shown = prepareBudgetState(stored.value);
+      revision = stored.revision;
+    },
+    otherTab: async (over) => engineOver(createBudgetRepository({ databaseName: name }), over),
     receive: async () => {
       const result = await engine.pull();
-      // Как `useFamily`: показ — когда приём что-то сложил или снял задержку.
-      if ((result.applied > 0 || result.settled) && !coordinator.locked) {
-        const stored = await repository.loadVersioned();
-        if (stored !== null) {
-          shown = prepareBudgetState(stored.value);
-          revision = stored.revision;
-        }
-      }
+      // Как `useFamily`: после каждого круга экран догоняет документ — что бы круг ни сложил.
+      await catchUp();
       // И, как он же, вписывает участника этого устройства, как только документ семьи пришёл, —
       // тем же путём записи, что и всякое изменение, и отправляет, как `afterWrite` приложения.
       const member = missingLocalMember(shown, await engine.documentStatus(), session);
@@ -818,5 +868,108 @@ describe("документ семьи после третьего ревью: э
     await boris.drain();
     await anna.receive();
     expect((await documentOf(anna)).accounts.some((account) => account.id === PERSONAL)).toBe(false);
+  });
+});
+
+/**
+ * Экран догоняет документ, а не сообщение круга.
+ *
+ * Прогон проверки 2b: Борис открыл приложение заново, первый круг принёс покупку Анны, сложил её в
+ * документ одной транзакцией с курсором — и был снят, пока ждал ответа: на старте пришёл список
+ * устройств, и цикл опроса начался заново. Экран узнавал о чужой операции только от того круга,
+ * который её применил, и только если тот доживал до конца; круг нового цикла с курсором уже за
+ * конвертом не находил ничего и молчал. Документ на диске был верным, экран — нет, со
+ * «синхронизировано» в шапке и без семейной новости, до перезапуска. Здесь круг — тот же
+ * `pollFamilyRound`, что крутит `useFamily`, движок и хранилище — настоящие, а порядок событий —
+ * тот, что был в прогоне, и задан явно, а не таймингом.
+ */
+describe("экран догоняет документ на диске, а не сообщение круга", () => {
+  const hasPurchase = (state: BudgetState) => state.transactions.some((entry) => entry.id === TRANSPORT_4000.id);
+
+  function poller(client: Client, cancelled: () => boolean, outcomes: SyncRoundOutcome[], engine = client.engine): FamilyPollRound<SyncEngine> {
+    return {
+      engineFor: async () => engine,
+      acceptIncomingEpoch: async () => false,
+      cancelled,
+      setSyncRound: (outcome) => {
+        outcomes.push(outcome);
+      },
+      refreshSyncState: async () => undefined,
+      showStored: () => client.catchUp(),
+    };
+  }
+
+  async function familyWithPurchase(label: string) {
+    const transport = new JournalServer();
+    const familyKey = await generateFamilyKey();
+    const anna = await makeClient(`anna-${label}`, transport, DEVICE_ANNA, MEMBER_ANNA, familyKey, "local");
+    const boris = await makeClient(`boris-${label}`, transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family");
+    await anna.apply((state) => ({ ...state, members: [{ id: MEMBER_ANNA, name: "Анна", role: "owner", active: true }] }));
+    await anna.drain();
+    await boris.receive();
+    // Борис закрыл приложение. Анна записывает, и запись уходит в журнал семьи.
+    await anna.apply((state) => ({ ...state, transactions: [...state.transactions, TRANSPORT_4000] }));
+    await anna.drain();
+    // Борис открывает приложение: на экране — документ с диска, покупки в нём ещё нет.
+    await boris.reopen();
+    expect(hasPurchase(boris.shown())).toBe(false);
+    return { transport, boris };
+  }
+
+  it("конверт, применённый снятым кругом, доходит до экрана", async () => {
+    const { transport, boris } = await familyWithPurchase("torn");
+    const outcomes: SyncRoundOutcome[] = [];
+
+    // Первый круг уходит за конвертами; пока выборка в пути, эффект снят — пришёл список устройств.
+    const fetch = transport.holdNextFetch();
+    let torn = false;
+    const first = pollFamilyRound(poller(boris, () => torn, outcomes));
+    await fetch.reached;
+    torn = true;
+    fetch.release();
+    await first;
+
+    // Конверт лёг в документ, и курсор ушёл за него: второй раз его никто не принесёт.
+    expect(hasPurchase(await documentOf(boris))).toBe(true);
+    expect((await boris.engine.status()).cursor.seq).toBe(transport.stored.length);
+    // Снятый круг не пишет ни исхода, ни отчёта — они принадлежат новому циклу, — но экран догнал документ.
+    expect(outcomes).toEqual([]);
+    expect(hasPurchase(boris.shown())).toBe(true);
+
+    // Круг нового цикла ничего нового не находит, и экран остаётся на документе.
+    await pollFamilyRound(poller(boris, () => false, outcomes));
+    expect(outcomes).toEqual(["ok"]);
+    expect(hasPurchase(boris.shown())).toBe(true);
+  });
+
+  it("конверт, применённый другой вкладкой, доходит и до этой, хотя её круг ничего не принёс", async () => {
+    const { transport, boris } = await familyWithPurchase("tab");
+    const outcomes: SyncRoundOutcome[] = [];
+
+    // Вторая вкладка того же устройства забирает покупку первой: курсор у вкладок общий, на диске.
+    const tab = await boris.otherTab();
+    expect((await tab.pull()).applied).toBeGreaterThan(0);
+    expect(hasPurchase(await documentOf(boris))).toBe(true);
+    expect((await boris.engine.status()).cursor.seq).toBe(transport.stored.length);
+
+    // Круг этой вкладки не находит ничего нового — а экран всё равно догоняет документ.
+    await pollFamilyRound(poller(boris, () => false, outcomes));
+    expect(outcomes).toEqual(["ok"]);
+    expect(hasPurchase(boris.shown())).toBe(true);
+  });
+
+  it("круг, который не дошёл до сервера, тоже сверяет экран с документом", async () => {
+    const { boris } = await familyWithPurchase("down");
+    const outcomes: SyncRoundOutcome[] = [];
+    await (await boris.otherTab()).pull();
+
+    // Сервер недоступен: круг кончается «unreachable», а показ всё равно догоняет диск.
+    const down = (): never => {
+      throw new SyncClientError("transport_failed", "the sync server could not be reached");
+    };
+    const unreachable = await boris.otherTab({ submit: async () => down(), fetch: async () => down(), keys: async () => down() });
+    await pollFamilyRound(poller(boris, () => false, outcomes, unreachable));
+    expect(outcomes).toEqual(["unreachable"]);
+    expect(hasPurchase(boris.shown())).toBe(true);
   });
 });

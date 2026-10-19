@@ -11,11 +11,11 @@ import { WRITE_REFUSAL_TEXT } from "../write-refusal";
  */
 
 /**
- * The routes whose screen is a form that writes the budget: «+» and its edit, the month plan, the
- * statement — and the entry sheet over any screen, which becomes the record form in 2b.
+ * The routes whose screen is a form that writes the budget: the entry sheet over any screen (a new
+ * operation from «+» or a tile, or an edit from «Операции»), the month plan and the statement.
  */
 export function opensWriteForm(route: Route): boolean {
-  return route.name === "entry" || route.name === "plan-month" || route.name === "import" || route.sheet === "entry";
+  return route.sheet === "entry" || route.name === "plan-month" || route.name === "import";
 }
 
 export interface WriteFormRefusal {

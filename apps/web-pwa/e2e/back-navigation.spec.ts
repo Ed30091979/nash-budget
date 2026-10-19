@@ -10,12 +10,7 @@
 import type { Page } from "@playwright/test";
 import { G002_UPPER_CASE_IDS, makeG002UpperCaseIdsBackupBuffer } from "./canonical-budget";
 import { expect, test } from "./fixtures";
-
-async function loadDemo(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
-}
+import { amountField, entrySheet, loadDemo, submitButton, tile, toast } from "./sheet";
 
 const tab = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
@@ -42,7 +37,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await expect.poll(() => focusedTag(page)).toBe("H1");
 
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Вкладка на вкладку заменяет запись: «Назад» с любой вкладки — на «Обзор», а не по кругу вкладок.
@@ -51,7 +46,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await tab(page, "Ещё").click();
   await expect(page.getByRole("button", { name: /^План месяца/u })).toBeVisible();
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Кнопка «назад» экрана тоже ведёт к родителю и не оставляет в истории дубля.
@@ -60,31 +55,36 @@ test("«Назад» с подэкрана ведёт к его родителю
   await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 });
 
-test("«+» кладётся поверх вкладки, и «Назад» возвращает на неё", async ({ page }) => {
+test("лист «+» кладётся поверх вкладки, и «Назад» возвращает на неё", async ({ page }) => {
   await loadDemo(page);
   await tab(page, "Операции").click();
   await tab(page, "Записать").click();
-  await expect(page.getByLabel("Сумма, ₽")).toBeVisible();
-  expect(await hash(page)).toBe("#/new");
+  await expect(entrySheet(page)).toBeVisible();
+  // Под листом — тот же экран (скрытый от диктора, пока лист открыт): адрес называет его и лист.
+  await expect(page.locator(".history-card")).toBeAttached();
+  expect(await hash(page)).toBe("#/operations?sheet=entry");
   await back(page);
+  await expect(entrySheet(page)).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
   expect(await hash(page)).toBe("#/operations");
+  // Фокус вернулся на «+», которым лист открыли.
+  await expect(tab(page, "Записать")).toBeFocused();
 });
 
 test("несохранённый черновик «Назад» не теряет: адрес на месте, вопрос — диалогом приложения", async ({ page }) => {
   await loadDemo(page);
   await tab(page, "Записать").click();
-  const amount = page.getByLabel("Сумма, ₽");
+  const amount = amountField(page);
   await amount.fill("1234");
 
   await back(page);
   const dialog = page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("Не записано: операция, которую вы набирали.");
-  expect(await hash(page)).toBe("#/new");
+  expect(await hash(page)).toBe("#/?sheet=entry");
   // Фокус в диалоге — на безопасном ответе.
   await expect(dialog.getByRole("button", { name: "Продолжить ввод" })).toBeFocused();
 
@@ -92,10 +92,10 @@ test("несохранённый черновик «Назад» не теряе
   await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(amount).toHaveValue("1234");
-  expect(await hash(page)).toBe("#/new");
+  expect(await hash(page)).toBe("#/?sheet=entry");
 
-  // Вкладка с черновиком спрашивает то же самое; Esc — безопасный ответ.
-  await tab(page, "Отчёты").click();
+  // «Закрыть» листа с черновиком спрашивает то же самое; Esc — безопасный ответ.
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
   await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -105,54 +105,59 @@ test("несохранённый черновик «Назад» не теряе
   await back(page);
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(page.locator(".reach-line")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 });
 
 test("адрес, набранный руками поверх черновика, не расходится с экраном: «Не сохранять» → «Обзор» и в адресе, и после перезагрузки", async ({ page }) => {
   await loadDemo(page);
-  await tab(page, "Записать").click();
-  const amount = page.getByLabel("Сумма, ₽");
+  await tile(page, "Продукты").click();
+  const amount = amountField(page);
   await amount.fill("1234");
+  const sheetAddress = await hash(page);
+  expect(sheetAddress).toMatch(/^#\/\?sheet=entry&op=expense&src=[0-9a-f-]{36}&dst=[0-9a-f-]{36}$/u);
 
   // Набранный адрес — переход по якорю внутри открытой страницы, как из адресной строки.
   await page.goto("/#/reports");
   const dialog = page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
   await expect(dialog).toBeVisible();
-  expect(await hash(page)).toBe("#/new");
+  expect(await hash(page)).toBe(sheetAddress);
   await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(amount).toHaveValue("1234");
 
-  await tab(page, "Обзор").click();
+  await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 
-  // Перезагрузка открывает то, что было на экране, а не «+».
+  // Перезагрузка открывает то, что было на экране, а не лист.
   await page.reload();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   await expect(amount).toHaveCount(0);
   expect(await hash(page)).toBe("#/");
 });
 
-test("адрес, набранный поверх черновика, → «Назад» → «Не сохранять» уводит с «+»", async ({ page }) => {
-  // Ревью 2a, круг 2, LOW 2: копия «+» лежала под экраном, и «Не сохранять» оставлял на «+».
+test("адрес, набранный поверх черновика, → «Назад» → «Не сохранять» закрывает лист", async ({ page }) => {
+  // Ревью 2a, круг 2, LOW 2: копия «+» лежала под экраном, и «Не сохранять» оставлял на «+». Теперь
+  // «+» — лист поверх «Обзора», правило то же.
   await loadDemo(page);
   await tab(page, "Записать").click();
-  await page.getByLabel("Сумма, ₽").fill("1234");
+  await amountField(page).fill("1234");
   // Новая запись истории над «+» — так её кладёт адресная строка; `page.goto` с одной решёткой
   // Chromium ставит на место текущей, и этот путь проверяет тест ниже.
   await page.evaluate(() => { window.location.hash = "#/reports"; });
   const dialog = page.getByRole("alertdialog", { name: "Уйти без сохранения?" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
-  expect(await hash(page)).toBe("#/new");
+  expect(await hash(page)).toBe("#/?sheet=entry");
   await back(page);
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(page.locator(".reach-line")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 });
 
@@ -167,13 +172,13 @@ test("адрес, поставленный на место текущей зап
   await page.getByRole("button", { name: /^План на год/u }).click();
   await expect(page.getByRole("heading", { name: /Плана хватает/u })).toBeVisible();
   await tab(page, "Обзор").click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   expect(page.url()).not.toContain("about:blank");
   expect(await hash(page)).toBe("#/");
   // «Назад» с корня — прочь из приложения, а не на чужую запись внутри него.
   await tab(page, "Отчёты").click();
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 });
 
 test("ссылка на подэкран достраивает историю родителями, мусор в адресе — «Запись не найдена»", async ({ page }) => {
@@ -185,11 +190,11 @@ test("ссылка на подэкран достраивает историю �
   await back(page);
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 
   await page.goto("/#/bogus/route");
   await expect(page.locator(".message-toast")).toContainText("Запись не найдена");
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Перезагрузка оставляет на том же месте: адрес — это маршрут.
@@ -198,11 +203,12 @@ test("ссылка на подэкран достраивает историю �
   await page.reload();
   await expect(page.getByRole("heading", { name: "Отчёты" })).toBeVisible();
   await back(page);
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 });
 
 test("операция с идентификатором в верхнем регистре открывается по адресу и правится", async ({ page }) => {
-  // Ревью 2a, п. 4: адрес пишет UUID строчными, а копия и журнал принимают любой регистр.
+  // Ревью 2a, п. 4: адрес пишет UUID строчными, а копия и журнал принимают любой регистр. С 2b
+  // правка — лист поверх «Операций»: адрес его называет, а перезагрузка лист закрывает.
   await loadDemo(page);
   await tab(page, "Ещё").click();
   await page.locator("#backup-file").setInputFiles({
@@ -213,16 +219,26 @@ test("операция с идентификатором в верхнем ре�
   await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
 
   await tab(page, "Операции").click();
-  await page.locator('button[aria-label^="Изменить операцию «"]').first().click();
-  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
+  const row = page.locator('button[aria-label^="Изменить операцию «Расход"]').first();
+  await row.click();
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
   await expect(page.locator(".message-toast")).toHaveCount(0);
   const address = await hash(page);
-  expect(address).toMatch(/^#\/new\?edit=[0-9a-f-]{36}$/u);
-  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/new?edit=".length));
+  expect(address).toMatch(/^#\/operations\?sheet=entry&edit=[0-9a-f-]{36}$/u);
+  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/operations?sheet=entry&edit=".length));
+  await expect(amountField(page)).not.toHaveValue("");
 
-  // Перезагрузка открывает ту же операцию — по адресу строчными.
+  // Правится: сумма меняется и сохраняется той же операции, найденной без учёта регистра.
+  await amountField(page).fill("4321");
+  await submitButton(page).click();
+  await expect(toast(page, /Изменено: расход 4\s321\s₽/u)).toBeVisible();
+  await expect(page.locator('button[aria-label^="Изменить операцию «Расход 4\u00a0321"]')).toHaveCount(1);
+
+  // Перезагрузка с открытым листом закрывает его: черновика в адресе нет и не было.
+  await page.locator('button[aria-label^="Изменить операцию «Расход"]').first().click();
+  await expect(entrySheet(page)).toBeVisible();
   await page.reload();
-  await expect(page.getByRole("heading", { level: 1, name: "Изменить операцию" })).toBeVisible();
-  await expect(page.locator(".message-toast")).toHaveCount(0);
-  await expect(page.getByLabel("Сумма, ₽")).not.toHaveValue("");
+  await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
+  await expect(entrySheet(page)).toHaveCount(0);
+  expect(await hash(page)).toBe("#/operations");
 });

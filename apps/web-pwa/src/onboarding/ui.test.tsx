@@ -25,7 +25,8 @@ describe("onboarding UI contract", () => {
   it("держит цели нажатия по нормативу и не использует URL, localStorage и logs в onboarding path", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
     const app = readAppSource();
-    const operations = readFileSync(new URL("../features/operations/OperationsScreen.tsx", import.meta.url), "utf8");
+    const operations = readFileSync(new URL("../features/entry/EntrySheet.tsx", import.meta.url), "utf8");
+    const tile = readFileSync(new URL("../components/tiles/CategoryTile.tsx", import.meta.url), "utf8");
     const component = readFileSync(new URL("./Onboarding.tsx", import.meta.url), "utf8");
     const model = readFileSync(new URL("./model.ts", import.meta.url), "utf8");
     // Порог берётся из §9 `DESIGN.md`, а не переписывается сюда числом: переписанное число и
@@ -58,14 +59,16 @@ describe("onboarding UI contract", () => {
     expect(app.match(/result\.status === "existing"/g)).toHaveLength(2);
     // Поле суммы — настоящее поле: с клавиатурой на экране оно просит не поднимать системную
     // (`inputmode="none"`), без неё зовёт десятичную; `readonly` здесь запрещён.
-    expect(operations).toContain('id="operation-amount" inputMode={keypadAvailable ? "none" : "decimal"} maxLength={24}');
+    expect(operations).toContain('inputMode={keypad ? "none" : "decimal"}');
+    expect(operations).toMatch(/id="entry-amount"[\s\S]{0,200}maxLength=\{24\}/u);
     expect(operations).not.toContain("readOnly");
     expect(app).not.toMatch(/\sstyle\s*=/);
     // Полоса лимита раньше была `<progress>` с двумя наборами браузерных псевдоэлементов, и тест
-    // сторожил именно их написание. Сторожить надо не написание, а смысл: полоса объявляет себя
-    // читающему с экрана и получает долю атрибутом, потому что инлайновых стилей у нас нет (CSP).
-    expect(app).toMatch(/role="img" aria-label=\{`\$\{category\.name\}: \$\{reachAnnouncement\(/u);
-    expect(app).toContain("data-spent={line.fill}");
+    // сторожил именно их написание. Сторожить надо не написание, а смысл: доля приходит атрибутом,
+    // потому что инлайновых стилей у нас нет (CSP), а читающему с экрана её называет плитка словами
+    // — «потрачено N из M» в доступном имени, — и сама полоса для него декоративна.
+    expect(tile).toContain('<span className={`tile-bar ${tile.status}`} data-fill={tile.fill} aria-hidden="true" />');
+    expect(tile).toContain("label={categoryTileLabel(tile, currency)}");
     expect(styles).toMatch(/\.limit-bar \{[^}]*linear-gradient/su);
     expect(model).toContain('4: "Повседневные лимиты"');
   });

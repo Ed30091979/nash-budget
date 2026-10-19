@@ -1,16 +1,10 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
-import {
-  calculateAnnualPlan,
-  calculateBudget,
-  makePlanningSeed,
-  type BudgetState,
-} from "@family-budget/domain";
+import { calculateAnnualPlan, makePlanningSeed, type BudgetState } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./features/today/TodayScreen";
-import { MEMBER_FILTER_ALL } from "./features/family";
+import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { periodClock } from "./reach";
 import { readAppSource } from "./app/shell-source";
 
@@ -24,79 +18,70 @@ const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf
  *
  * Каждое из шести требований проверяется тем, что читает человек или что держит код, а не
  * наличием строки в документе: чистая арифметика «что пришло с прошлого раза» проверена в
- * `features/family/news.test.ts`, здесь — как она стоит на экране и как приложение её гасит.
+ * `features/family/news.test.ts`, здесь — как она стоит на «Обзоре» и как приложение её гасит.
  */
-function renderToday(state: BudgetState, today: string, familyNews: readonly string[]): string {
+function renderOverview(state: BudgetState, today: string, familyNews: readonly string[]): string {
   const active = state.budgets.find((budget) => budget.id === state.activeBudgetId)!;
-  const metrics = calculateBudget(state);
   const plan = calculateAnnualPlan(state, active.startDate.slice(0, 7), 24);
-  const planned = new Set(active.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const flexibleRows = state.categories
-    .filter((category) => category.active && category.type === "expense" && planned.has(category.id))
-    .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }));
-  const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   return renderToStaticMarkup(
-    <TodayScreen
+    <OverviewScreen
       budget={state}
-      plan={plan}
-      flexibleRows={flexibleRows}
-      safeToSpendMinor={plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor}
-      flexibleSpentMinor={flexibleSpentMinor}
+      today={today}
+      month={today.slice(0, 7)}
+      onMonth={() => undefined}
       clock={periodClock(active, [], today)}
-      recentTransactions={state.transactions.filter((item) => item.status === "posted").slice(0, 5)}
-      categoryById={new Map(state.categories.map((category) => [category.id, category]))}
-      memberById={new Map()}
-      memberOptions={[]}
-      memberFilter={MEMBER_FILTER_ALL}
-      onMemberFilterChange={() => undefined}
-      hasRecords
-      monthToOpen={null}
-      onAdd={() => undefined}
-      onYear={() => undefined}
-      onPlanning={() => undefined}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
       familyNews={familyNews}
+      monthToOpen={null}
+      openingMonth={false}
+      onOpenMonth={() => undefined}
+      onOpenSheet={() => undefined}
+      onAddCategory={() => undefined}
+      onPlan={() => undefined}
     />,
   );
 }
 
+/** Герой «Обзора»: месяц, итоги и строка «Можно на повседневные» — до конца её карточки. */
 function heroOf(markup: string): string {
-  const start = markup.indexOf('<section class="hero-card');
-  return markup.slice(start, markup.indexOf("</section>", start));
+  const start = markup.indexOf('<header class="overview-head"');
+  return markup.slice(start, markup.indexOf("</section>", markup.indexOf('class="card reach-line', start)));
 }
 
-describe("семейная новость на «Сегодня»", () => {
+describe("семейная новость на «Обзоре»", () => {
   const seed = makePlanningSeed();
   const NEWS = ["Борис: 2 покупки на 4 500 ₽"];
 
   it("срабатывает только при количестве больше нуля", () => {
-    const silent = renderToday(seed, "2026-07-09", []);
+    const silent = renderOverview(seed, "2026-07-09", []);
     expect(silent).not.toContain("family-news");
     expect(silent).not.toContain("Новое с прошлого раза");
-    const spoken = renderToday(seed, "2026-07-09", NEWS);
+    const spoken = renderOverview(seed, "2026-07-09", NEWS);
     expect(spoken).toContain('class="family-news" role="status"');
     expect(spoken).toContain("Борис: 2 покупки на 4 500 ₽");
     expect(spoken).toContain("Новое с прошлого раза");
   });
 
   it("не задерживает появление герой-числа и не двигает его: герой тот же и стоит выше", () => {
-    const silent = renderToday(seed, "2026-07-09", []);
-    const spoken = renderToday(seed, "2026-07-09", NEWS);
+    const silent = renderOverview(seed, "2026-07-09", []);
+    const spoken = renderOverview(seed, "2026-07-09", NEWS);
     // Разметка героя байт в байт одна и та же с новостью и без неё.
     expect(heroOf(spoken)).toBe(heroOf(silent));
     // И герой стоит раньше новости: новость под ним, а не над ним.
-    expect(spoken.indexOf('<section class="hero-card')).toBeLessThan(spoken.indexOf('class="family-news"'));
+    expect(spoken.indexOf('class="card reach-line')).toBeLessThan(spoken.indexOf('class="family-news"'));
     // Новость выводится из состояния синхронизации, а герой — нет: оболочка не ждёт её и
     // не входит в ветку загрузки.
     expect(appSource).not.toMatch(/loadState === "loading"[\s\S]{0,300}familyNews/u);
   });
 
-  it("не повторяет «Последние записи»: итог по видам и суммам, а не строки операций", () => {
-    const spoken = renderToday(seed, "2026-07-09", NEWS);
+  it("не повторяет «Операции»: итог по видам и суммам, а не строки операций и не плитки", () => {
+    const spoken = renderOverview(seed, "2026-07-09", NEWS);
     const news = spoken.slice(spoken.indexOf('class="family-news"'), spoken.indexOf("Новое с прошлого раза"));
     expect(news).not.toContain("transaction-row");
     expect(news).not.toContain("transaction-list");
-    // И список последних записей по-прежнему стоит на экране отдельно.
-    expect(spoken).toContain("Последние записи");
+    expect(news).not.toContain('class="tile');
+    // Плитки категорий по-прежнему стоят на экране отдельно, под новостью.
+    expect(spoken.indexOf('class="tile-grid tile-grid-grid"')).toBeGreaterThan(spoken.indexOf('class="family-news"'));
   });
 
   it("стоит в потоке и ничего не накрывает: у плашки нет положения над содержимым", () => {
@@ -128,15 +113,17 @@ describe("семейная новость на «Сегодня»", () => {
     // …и на момент, когда новость стояла на экране: человек ушёл с «Обзора» или свернул приложение.
     expect(appSource).toContain('const newsOnScreen = route.name === "overview" && familyNews.length > 0;');
     expect(appSource).toContain("if (newsOnScreen) markNewsSeen();");
-    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла.
-    expect(appSource).toMatch(/onLeave: \(key\) => \{[\s\S]{0,120}leaving\.current\(\);/u);
+    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла. Лист
+    // поверх «Обзора» и другой месяц — не уход: новость остаётся на экране под ними.
+    expect(appSource).toMatch(/onLeave: \(key, next\) => \{[\s\S]{0,300}leaving\.current\(\);/u);
+    expect(appSource).toContain("if (screen === screenKey(parseRoute(next).route)) return;");
     expect(appSource).toMatch(/visibilityState !== "hidden"[\s\S]{0,200}setSeenTransactionIds\(transactionIds\(current\)\)[\s\S]{0,200}addEventListener\("visibilitychange"/u);
     // Нового хранилища нет: память сессии, а на следующем открытии — бюджет с диска.
     expect(appSource).not.toMatch(/seen-transactions|family-news-seen|writeSyncState\(\[\{ key: "news/u);
   });
 
   it("тон: сообщить, а не поздравить, — ни восклицаний, ни похвалы", () => {
-    const spoken = renderToday(seed, "2026-07-09", NEWS);
+    const spoken = renderOverview(seed, "2026-07-09", NEWS);
     const news = spoken.slice(spoken.indexOf('class="family-news"'), spoken.indexOf("</div></div>", spoken.indexOf('class="family-news"')));
     expect(news).not.toMatch(/!/u);
     expect(news).not.toMatch(/молодц|отличн|поздравл|ура|супер|здорово/iu);
@@ -148,8 +135,8 @@ describe("моменты на входе имеют потолок", () => {
   it("плашка внизу одна: сообщение приложения прячет плашку обновления, а не встаёт на неё", () => {
     expect(appSource.match(/<UpdatePrompt /gu)).toHaveLength(1);
     expect(appSource).toContain("suppressed={messageShown}");
-    expect(appSource).toContain("messageShown={message !== null}");
-    // Семейная новость — вторая и последняя: в потоке и только на «Сегодня».
+    expect(appSource).toContain("messageShown={toast !== null}");
+    // Семейная новость — вторая и последняя: в потоке и только на «Обзоре».
     expect(appSource.match(/familyNews=\{familyNewsText\}/gu)).toHaveLength(1);
     expect(design).toMatch(/число моментов[^\n]*потолок|потолок[^\n]*момент/iu);
   });

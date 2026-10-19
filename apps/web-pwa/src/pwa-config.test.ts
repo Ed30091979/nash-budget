@@ -170,7 +170,7 @@ describe("service worker registration coverage", () => {
     expect(appSource).toMatch(/function AppFrame\([\s\S]*?<UpdatePrompt drafts=\{drafts\} suppressed=\{messageShown\} \/>/u);
     // Плашка читает тот же реестр черновиков, что и переход: один на всё время жизни приложения.
     expect(appSource).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
-    expect(appSource).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
+    expect(appSource).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
   });
 });
 

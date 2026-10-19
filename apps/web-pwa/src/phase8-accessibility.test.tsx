@@ -65,11 +65,14 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(source).toMatch(/id=\{MAIN_CONTENT_ID\} tabIndex=\{-1\}/);
     expect(source).toContain('data-layout-contract="no-action-overflow"');
     expect(source).toContain('data-screen={route.name}');
+    // Фокус и прокрутка — по экрану: лист поверх экрана и другой месяц «Обзора» экран не меняют,
+    // и фокус там ведут лист (возвращает на плитку) и стрелки месяца.
     expect(source).toMatch(
-      /useEffect\(\(\) => \{\s*if \(previousRouteKeyRef\.current === currentRouteKey\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[currentRouteKey\]\);/,
+      /useEffect\(\(\) => \{\s*if \(previousScreenKeyRef\.current === currentScreenKey\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[currentScreenKey\]\);/,
     );
-    // Прокрутка возвращается по ключу маршрута, а ссылка обхода не трогает адрес: решётка — роутера.
-    expect(source).toContain("window.scrollTo(0, scrollPositions.current.get(currentRouteKey) ?? 0);");
+    expect(source).toContain("const currentScreenKey = screenKey(route);");
+    // Прокрутка возвращается по ключу экрана, а ссылка обхода не трогает адрес: решётка — роутера.
+    expect(source).toContain("window.scrollTo(0, scrollPositions.current.get(currentScreenKey) ?? 0);");
     expect(source).toMatch(/const skip = \(event: MouseEvent<HTMLAnchorElement>\) => \{\s*event\.preventDefault\(\);\s*document\.getElementById\(MAIN_CONTENT_ID\)\?\.focus\(\);/u);
     expect(source).not.toMatch(/focusRouteHeading[\s\S]{0,100}\[(?:budget|message|loadState)\]/);
   });

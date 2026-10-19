@@ -76,6 +76,26 @@ describe("реестр черновиков", () => {
     expect(registry.hasUnsavedDrafts()).toBe(false);
   });
 
+  it("лист поверх экрана: уход с листа спрашивает только о листе, «Не сохранять» забывает только его (ревью 2b, MEDIUM-4)", () => {
+    const registry = createDraftRegistry();
+    const plan = draft("крупный платёж в плане");
+    const sheet = draft("операция, которую вы набирали", { layer: "sheet" });
+    registry.register(plan.entry);
+    registry.register(sheet.entry);
+    plan.setDirty(true);
+    // Лист открыт и не тронут: закрыть его — не уход с плана.
+    expect(registry.hasUnsavedDrafts("navigation", "sheet")).toBe(false);
+    sheet.setDirty(true);
+    expect(registry.dirtyLabels("navigation", "sheet")).toEqual(["операция, которую вы набирали"]);
+    registry.discardAll("navigation", "sheet");
+    expect(sheet.discard).toHaveBeenCalledOnce();
+    expect(plan.discard).not.toHaveBeenCalled();
+    // Уход с экрана — обо всём, что на нём и над ним.
+    sheet.setDirty(true);
+    expect(registry.dirtyLabels("navigation", "screen")).toEqual(["крупный платёж в плане", "операция, которую вы набирали"]);
+    expect(registry.dirtyLabels("navigation")).toEqual(registry.dirtyLabels("navigation", "screen"));
+  });
+
   it("сообщает подписчикам, только когда ответ для ухода со страницы изменился", () => {
     const registry = createDraftRegistry();
     const listener = vi.fn();
@@ -274,8 +294,9 @@ describe("оболочка спрашивает реестр", () => {
   it("переход спрашивает реестр в момент нажатия и задаёт вопрос своим диалогом", () => {
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
     // Роутер спрашивает реестр и на нажатии, и на системном «Назад»; вопрос — диалог приложения.
-    expect(source).toMatch(/guard: \{\s*blocks: \(\) => drafts\.hasUnsavedDrafts\("navigation"\),\s*confirm: \(proceed\) => setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation"\), proceed \}\),\s*\}/u);
-    expect(source).toMatch(/onConfirm=\{\(\) => \{\s*setLeaveRequest\(null\);\s*drafts\.discardAll\("navigation"\);\s*leaveRequest\.proceed\(\);/u);
+    // С 2b — о том, что переход оставляет позади: лист поверх экрана экран не покидает (MEDIUM-4).
+    expect(source).toMatch(/guard: \{\s*blocks: \(from, to\) => \{\s*const leaving = leftBehind\(from, to\);\s*return leaving !== null && drafts\.hasUnsavedDrafts\("navigation", leaving\);\s*\},\s*confirm: \(proceed, from, to\) => \{\s*const leaving = leftBehind\(from, to\) \?\? "screen";\s*setLeaveRequest\(\{ labels: drafts\.dirtyLabels\("navigation", leaving\), leaving, proceed \}\);/u);
+    expect(source).toMatch(/onConfirm=\{\(\) => \{\s*setLeaveRequest\(null\);\s*drafts\.discardAll\("navigation", leaveRequest\.leaving\);\s*leaveRequest\.proceed\(\);/u);
     expect(source).toContain("onCancel={() => setLeaveRequest(null)}");
     expect(source).not.toMatch(/onDirtyChange|DraftDirty|const hasUnsavedDraft\b/u);
   });
@@ -294,7 +315,6 @@ describe("оболочка спрашивает реестр", () => {
 
   it("каждый экран с черновиком регистрирует его, и только через реестр", () => {
     for (const file of [
-      "./features/operations/OperationsScreen.tsx",
       "./features/planning/PlanningScreen.tsx",
       "./features/import/ImportScreen.tsx",
     ]) {
@@ -303,6 +323,12 @@ describe("оболочка спрашивает реестр", () => {
       expect(screen, file).toContain("createDraftSaving");
       expect(screen, file).not.toContain("onDirtyChange");
     }
+    // Лист ввода регистрирует черновик, пока открыт; защёлка записи — у хранилища черновика,
+    // которое переживает лист (`app/entry-draft-store.ts`).
+    const sheet = readFileSync(new URL("./features/entry/EntrySheet.tsx", import.meta.url), "utf8");
+    expect(sheet).toContain("useDraftGuard(");
+    expect(sheet).not.toContain("onDirtyChange");
+    expect(readFileSync(new URL("./app/entry-draft-store.ts", import.meta.url), "utf8")).toContain("createDraftSaving");
   });
 
   it("protects browser unload only while a draft is dirty", () => {
@@ -333,13 +359,13 @@ describe("оболочка спрашивает реестр", () => {
     expect(shell.indexOf("<BottomNav ")).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));
     expect(source).toContain('onTab={(tab) => navigate({ name: tab })}');
     expect(source).toMatch(/<nav ref=\{navRef\} className="bottom-nav" aria-label="Основные разделы">/u);
-    // Каждый маршрут подсвечивает свою вкладку или ни одной — у «+» своё место.
+    // Каждый маршрут подсвечивает свою вкладку; лист — вкладку под собой (а лист «+» — сам «+», см. BottomNav.test).
     const routes: readonly Route[] = [
-      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" }, { name: "entry" },
-      { name: "plan-month" }, { name: "plan-year" }, { name: "family" }, { name: "import" },
+      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" }, { name: "overview", sheet: "entry" },
+      { name: "plan-month" }, { name: "plan-year" }, { name: "family" }, { name: "import" }, { name: "overview", month: "2026-08" },
     ];
     expect(routes.map((route) => activeTab(route))).toEqual([
-      "overview", "operations", "reports", "more", null, "more", "more", "more", "more",
+      "overview", "operations", "reports", "more", "overview", "more", "more", "more", "more", "overview",
     ]);
     // И с любого маршрута одно нажатие на «Обзор» туда и ведёт — без вопроса, пока черновика нет.
     for (const route of routes) {
@@ -359,8 +385,15 @@ describe("оболочка спрашивает реестр", () => {
 
   it("routes every internal unmounting control through the shared guard", () => {
     // Каждая дверь между экранами — переход роутера, а значит, вопрос реестру; своего пути у неё нет.
-    expect(source).toContain('onAdd={() => navigate({ name: "entry" })}');
-    expect(source).toContain('onYear={() => navigate({ name: "plan-year" })}');
+    // «+» и строки «Операций» открывают лист ввода тем же переходом — `openSheet` зовёт `navigate`.
+    expect(source).toContain("onAdd={() => openSheet({})}");
+    expect(source).toContain("onEdit={openEdit}");
+    expect(source).toContain('const destination = { ...withoutSheet(route), sheet: "entry", ...opening } as Route;');
+    expect(source).toMatch(/setReplaceFailed\(\{ proceed: \(\) => \{ entryStore\.discardFailed\(\); navigate\(destination\); \} \}\);\s*return;\s*\}\s*navigate\(destination\);/u);
+    // Не записанный черновик ждёт «Вернуться к черновику» и не держит переход; перезагрузку — держит.
+    expect(source).toContain('const failedEntry = useRef<DraftEntry>({ label: "операция, которая не записалась", isDirty: () => entryStore.failed() !== null, guardsNavigation: false });');
+    expect(source).toContain('onPlan={() => navigate({ name: "plan-month" })}');
+    expect(source).toContain('onPlanYear={() => navigate({ name: "plan-year" })}');
     expect(source).toContain('onPlanning={() => navigate({ name: "plan-month" })}');
     expect(source).toContain('onFamily={() => navigate({ name: "family" })}');
     expect(source).toContain('onImportStatement={() => navigate({ name: "import" })}');

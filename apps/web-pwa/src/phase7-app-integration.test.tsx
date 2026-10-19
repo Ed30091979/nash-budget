@@ -23,7 +23,9 @@ import {
   DashboardScreen,
   searchOperations,
 } from "./features/dashboard";
-import { HistoryScreen, OperationsScreen } from "./features/operations";
+import { HistoryScreen } from "./features/operations";
+import { blankEntryDraft } from "./features/entry/entry-model";
+import { EntrySheet } from "./features/entry/EntrySheet";
 import {
   makeG000State,
   OPERATIONS_TEST_IDS,
@@ -121,7 +123,29 @@ describe("phase 7 App composition", () => {
     const dashboard = renderToStaticMarkup(
       <DashboardScreen budget={makePlanningSeed()} startMonth="2026-07" onPlanning={() => undefined} />,
     ).replaceAll("\u00a0", " ");
-    const operations = renderToStaticMarkup(<OperationsScreen budget={sixOperationState()} onChange={async () => undefined} />);
+    const sheetBudget = sixOperationState();
+    const operations = renderToStaticMarkup(
+      <EntrySheet
+        budget={sheetBudget}
+        draft={blankEntryDraft(sheetBudget, "expense", "2026-07-13")}
+        today="2026-07-13"
+        balances={{}}
+        modeSwitch
+        failure={null}
+        writeRefusal={null}
+        editing={null}
+        onChange={() => undefined}
+        onRefund={() => undefined}
+        onClose={() => undefined}
+        onSubmit={() => null}
+        onDelete={async () => null}
+        onSaveRate={async () => null}
+        onCategoryChange={async () => undefined}
+        isDirty={() => false}
+        onDiscard={() => undefined}
+        fallbackFocus={() => undefined}
+      />,
+    );
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);
     const twentyFour = createDashboardModel(makePlanningSeed(), "2026-07", 24);
 
@@ -130,9 +154,9 @@ describe("phase 7 App composition", () => {
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
     // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на вкладке
-    // «Операции», а не отдельным вторым списком и не на плане года. Экран записи («+») истории
-    // не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
-    expect(source).toMatch(/route\.name === "entry" \? <OperationsScreen budget=\{budget\}/);
+    // «Операции», а не отдельным вторым списком и не на плане года. Лист записи («+») истории
+    // не несёт: он поверх экрана, и под ним — тот экран, с которого его открыли.
+    expect(source).toMatch(/\{route\.sheet === "entry" \? \(\s*<EntrySheetHost\s/u);
     expect(source).toMatch(/route\.name === "operations" \? <HistoryScreen budget=\{budget\}/);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
@@ -157,6 +181,7 @@ describe("phase 7 App composition", () => {
     expect(dashboard).not.toContain("Доход, факт");
     expect(dashboard).not.toContain("Капитал");
     expect(textOf(operations)).not.toContain("Показано");
+    expect(operations).not.toContain("operation-history-search");
     const history = renderToStaticMarkup(<HistoryScreen budget={sixOperationState()} onEdit={() => undefined} onAdd={() => undefined} onBack={() => undefined} />);
     expect(textOf(history)).toContain("Показано 6 из 6");
   });

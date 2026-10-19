@@ -125,13 +125,14 @@ describe("таблица стилей считает от измеренного
     expect(token("--header-space")).toBe("calc(56px + env(safe-area-inset-top))");
   });
 
-  it("ставит оболочку, полосу записи и тост на измеренную навигацию", () => {
+  it("ставит оболочку, полосу действия выписки и тост на измеренную навигацию", () => {
     // Дефект: полоса стояла на `--nav-height`, панель при ×2.7 занимала 150–188 pt вместо 56,
-    // и кнопка «Записать покупку» оказывалась под навигацией — в режиме для плохо видящих.
+    // и кнопка записи оказывалась под навигацией — в режиме для плохо видящих. С 2b липкая полоса
+    // над навигацией одна — у выписки (`.import-action`); лист ввода стоит над всем экраном.
     const shell = rulesFor(".app-shell").flatMap((rule) => rule.declarations);
     expect(shell).toContain("padding-bottom: calc(var(--nav-space) + 24px)");
 
-    const bar = rulesFor(".record-action").flatMap((rule) => rule.declarations);
+    const bar = rulesFor(".import-action").flatMap((rule) => rule.declarations);
     expect(bar).toContain("bottom: var(--nav-space)");
 
     const toast = rulesFor(".app-shell > .update-toast").flatMap((rule) => rule.declarations);
@@ -167,10 +168,10 @@ describe("таблица стилей считает от измеренного
     expect(new Set(consumers)).toEqual(new Set([":root", ".bottom-nav"]));
   });
 
-  it("на коротком экране при крупном шрифте полоса записи встаёт в поток", () => {
+  it("на коротком экране при крупном шрифте полоса действия выписки встаёт в поток", () => {
     // 320×568 при ×2.7: шапка 79 + полоса 178 + навигация 188 = 445 из 568 — под прилипшей
-    // полосой не поместился бы ни один конверт. Высота экрана считается в кеглях, как ширина в §5.
+    // полосой не поместилась бы ни одна строка. Высота экрана считается в кеглях, как ширина в §5.
     const short = styles.match(/@media \(max-width: 18em\) and \(max-height: 16em\) \{([\s\S]*?)\n\}/u)?.[1] ?? "";
-    expect(short).toContain(".record-action { position: static; }");
+    expect(short).toContain(".import-action { position: static; }");
   });
 });

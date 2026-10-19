@@ -1,11 +1,9 @@
 import { indexState, validateTransactionReferences } from "./calculate.js";
 import { addDays, dayIndex, MAX_LOCAL_DATE, monthIndex, monthOfDate, shiftDate } from "./calendar.js";
-import { convertMinor, type RateIndex } from "./currency.js";
 import { documentIds, recurringOccurrenceId } from "./identity.js";
-import { MAX_MONEY_MINOR } from "./limits.js";
+import { baseSnapshot } from "./rates.js";
 import type {
   BudgetState,
-  ExchangeRate,
   LocalDate,
   RecurringRule,
   RecurringRuleId,
@@ -166,27 +164,6 @@ export function occurrenceDates(
   return dates;
 }
 
-/** The base-currency snapshot of an occurrence on a foreign account, or null without a usable rate. */
-function snapshotFor(
-  amountMinor: number,
-  currency: string,
-  baseCurrency: string,
-  rates: RateIndex,
-  date: LocalDate,
-): { readonly baseAmountMinor: number; readonly baseCurrency: string; readonly rate: ExchangeRate["rate"] } | null {
-  const rate = rates.find(currency, baseCurrency, date);
-  if (rate === undefined) return null;
-  let baseAmountMinor: number;
-  try {
-    baseAmountMinor = convertMinor(amountMinor, rate.rate);
-  } catch {
-    return null;
-  }
-  // A rate that values the amount at nothing, or past a field's ceiling, is no usable rate either.
-  if (baseAmountMinor < 1 || baseAmountMinor > MAX_MONEY_MINOR) return null;
-  return { baseAmountMinor, baseCurrency, rate: rate.rate };
-}
-
 /**
  * Writes every occurrence of every active rule up to `through`, and moves each rule's watermark.
  *
@@ -322,7 +299,7 @@ export function materializeRecurring(
         const currency = index.accounts.get(template.accountId)!.currency;
         let snapshot = {};
         if (currency !== index.baseCurrency) {
-          const value = snapshotFor(template.amountMinor, currency, index.baseCurrency, rates, date);
+          const value = baseSnapshot(template.amountMinor, currency, index.baseCurrency, rates, date);
           if (value === null) {
             skip(rule.id, date, "missing_rate");
             watermark = addDays(date, -1);

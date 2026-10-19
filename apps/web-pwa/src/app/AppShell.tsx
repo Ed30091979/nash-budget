@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from "react";
 import {
+  baseCurrencyOf,
   calculateAnnualPlan,
   calculateBudget,
   carryBudgetForward,
@@ -13,6 +14,8 @@ import {
 } from "@family-budget/storage";
 import { Icon, IconSprite } from "../components/Icon";
 import { BottomNav } from "../components/BottomNav";
+import { Toast, type ToastMessage } from "../components/Toast";
+import { BaseCurrencyProvider } from "../components/Money";
 import { observeLayoutSpace } from "../layout-space";
 import { UpdatePrompt } from "../components/UpdatePrompt";
 import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
@@ -26,7 +29,6 @@ import {
   showsFamilyHoldScreen,
   familyNewsLines,
   familyNewsSince,
-  filterTransactionsByMember,
   memberFilterOptions,
   membersById,
   resolveSyncServerUrl,
@@ -57,10 +59,15 @@ import { ReadOnlyBanner } from "../components/ReadOnlyBanner";
 import { WriteRefusalNotice } from "../components/WriteRefusalNotice";
 import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
-import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftRegistry } from "../navigation/draft-guard";
+import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
-import { createRouter, memoryRouterWindow, type NavigateOptions } from "../navigation/router";
-import { resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, type Route } from "../navigation/routes";
+import { createRouter, memoryRouterWindow } from "../navigation/router";
+import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, screenKey, withoutSheet, type Route } from "../navigation/routes";
+import { EntrySheetHost } from "../features/entry/EntrySheetHost";
+import { sheetEditOf, type SheetOpening } from "../features/entry/sheet-address";
+import { blankEntryDraft, carriedDraft, draftSummary, EDIT_VANISHED_TEXT, type EntryDraft } from "../features/entry/entry-model";
+import { createEntryController } from "./entry-controller";
+import { createEntryDraftStore } from "./entry-draft-store";
 
 type LoadState = "loading" | "empty" | "ready" | "error";
 
@@ -118,9 +125,10 @@ function AppFrame({ className, drafts, messageShown, children }: { className: st
   return <div className={className}><DraftRegistryProvider registry={drafts}>{children}</DraftRegistryProvider><UpdatePrompt drafts={drafts} suppressed={messageShown} /></div>;
 }
 
-/** Вопрос о несохранённом черновике: что потеряется и что сделать, если человек решил уйти. */
+/** Вопрос о несохранённом черновике: что потеряется, что переход оставляет и что сделать, если человек решил уйти. */
 interface LeaveRequest {
   readonly labels: readonly string[];
+  readonly leaving: DraftLayer;
   readonly proceed: () => void;
 }
 
@@ -147,15 +155,27 @@ export default function App() {
   const [headerScrolled, setHeaderScrolled] = useState(false);
   const [storageHealth, setStorageHealth] = useState<StorageHealth | null>(null);
   const [lastSuccessfulBackup, setLastSuccessfulBackup] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  // Сообщение, которое ведёт в «Семью» (отказ открыть форму записи при задержке): кнопка стоит
-  // только у этого текста, и любое другое сообщение, вставшее на его место, её не наследует.
-  const [messageToFamily, setMessageToFamily] = useState<string | null>(null);
+  // Сообщение приложения — одно за раз (`components/Toast.tsx`): новое сменяет прежнее вместе с его
+  // действием, и кнопка «Подробнее в «Семье»» или «Отменить» не переходит к чужому тексту.
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const toastCount = useRef(0);
+  const showToast = useCallback((next: Omit<ToastMessage, "key">) => {
+    toastCount.current += 1;
+    setToast({ ...next, key: toastCount.current });
+  }, []);
+  const setMessage = useCallback((text: string | null) => {
+    if (text === null) setToast(null);
+    else showToast({ text });
+  }, [showToast]);
+  // Переход оболочки собирается ниже, после ранних возвратов; действия тостов и записи зовут его отсюда.
+  const shellNavigate = useRef<(route: Route) => void>(() => undefined);
   const [openingMonth, setOpeningMonth] = useState(false);
   // Реестр несохранённых черновиков: экраны регистрируют свои, а переход, `beforeunload` и плашка
   // обновления спрашивают их синхронно — в момент нажатия, а не по флагу, отставшему на отрисовку.
   const drafts = useMemo(() => createDraftRegistry(), []);
   const [leaveRequest, setLeaveRequest] = useState<LeaveRequest | null>(null);
+  // Новый лист ввода поверх не записанного черновика: что сделать, если человек начнёт новую операцию.
+  const [replaceFailed, setReplaceFailed] = useState<{ readonly proceed: () => void } | null>(null);
   const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
   // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
@@ -169,20 +189,32 @@ export default function App() {
   const leaving = useRef<() => void>(() => undefined);
   const router = useMemo(() => createRouter({
     window: typeof window === "undefined" ? memoryRouterWindow() : window,
+    // Лист, открытый поверх экрана, экран не покидает: о его черновике не спрашивают; закрытие
+    // листа спрашивает только о листе (ревью 2b, MEDIUM-4).
     guard: {
-      blocks: () => drafts.hasUnsavedDrafts("navigation"),
-      confirm: (proceed) => setLeaveRequest({ labels: drafts.dirtyLabels("navigation"), proceed }),
+      blocks: (from, to) => {
+        const leaving = leftBehind(from, to);
+        return leaving !== null && drafts.hasUnsavedDrafts("navigation", leaving);
+      },
+      confirm: (proceed, from, to) => {
+        const leaving = leftBehind(from, to) ?? "screen";
+        setLeaveRequest({ labels: drafts.dirtyLabels("navigation", leaving), leaving, proceed });
+      },
     },
-    onLeave: (key) => {
-      scrollPositions.current.set(key, window.scrollY);
+    // Лист поверх экрана и смена месяца «Обзора» — тот же экран: прокрутка и «ушли» — только при смене экрана.
+    onLeave: (key, next) => {
+      const screen = screenKey(parseRoute(key).route);
+      if (screen === screenKey(parseRoute(next).route)) return;
+      scrollPositions.current.set(screen, window.scrollY);
       leaving.current();
     },
     onNotFound: () => setMessage(ROUTE_NOT_FOUND_MESSAGE),
-  }), [drafts]);
+  }), [drafts, setMessage]);
   useLayoutEffect(() => router.start(), [router]);
   const route = useSyncExternalStore(router.subscribe, router.current, router.current);
   const currentRouteKey = routeKey(route);
-  const previousRouteKeyRef = useRef(currentRouteKey);
+  const currentScreenKey = screenKey(route);
+  const previousScreenKeyRef = useRef(currentScreenKey);
   // Место под шапку и навигацию снимается с разметки, а не берётся из числа: панель растёт с
   // системным шрифтом, и полоса записи обязана стоять на настоящей панели (`layout-space.ts`).
   // Оболочка появляется вместе с готовым бюджетом, поэтому наблюдение привязано к состоянию
@@ -200,7 +232,7 @@ export default function App() {
   // кладётся сюда и читается на каждом сохранении, поэтому семья, созданная посреди сессии,
   // начинает вести журнал сразу, без перезагрузки.
   const journalWriteRef = useRef<BudgetJournalWrite | null>(null);
-  // Семья ли сейчас на устройстве — для приёма документа на экране ожидания (см. publishRemoteBudget).
+  // Семья ли сейчас на устройстве — для приёма документа на экране ожидания (см. showStoredBudget).
   const inFamilyRef = useRef(false);
 
   const budgetSave = useMemo(() => createAppBudgetSaveCoordinator({
@@ -237,29 +269,25 @@ export default function App() {
       }), { silent: true });
     },
     // Чужие операции уже записаны в документ одной транзакцией с курсором; здесь они попадают на
-    // экран. Пока идёт собственная запись, показ откладывается: её сравнение ревизии — источник
-    // истины, и подменять состояние у неё под руками нельзя.
-    publishRemoteBudget: (value, revision) => {
+    // экран — после каждого круга, по ревизии документа, а не по тому, что круг успел сообщить.
+    // Сверка стоит в очереди координатора: собственную запись, начатую раньше, она ждёт и читает
+    // диск после неё — её сравнение ревизии остаётся источником истины, а показ не пропадает.
+    showStoredBudget: () => budgetSave.catchUp((next, revision) => {
       // Обновляется тот бюджет, который экран показывает. Без бюджета приложение стоит на онбординге
       // — подменять его состоянием из журнала означало бы онбординг поверх готового бюджета, — или,
       // в семье, на экране ожидания (`FamilyHoldScreen`), и тогда пришедший документ семьи и есть
       // то, чего он ждал.
-      if (budgetSave.locked) return;
       const waiting = budgetRef.current === null && loadStateRef.current === "empty" && inFamilyRef.current;
-      if (budgetRef.current === null && !waiting) return;
-      try {
-        const next = prepareBudgetState(value);
-        budgetRef.current = next;
-        revisionRef.current = revision;
-        setBudget(next);
-        if (waiting) {
-          setSeenTransactionIds(transactionIds(next));
-          setLoadState("ready");
-        }
-      } catch {
-        // Пришедшее состояние не собирается в показуемый бюджет — экран остаётся на прежнем.
+      if (budgetRef.current === null && !waiting) return false;
+      budgetRef.current = next;
+      revisionRef.current = revision;
+      setBudget(next);
+      if (waiting) {
+        setSeenTransactionIds(transactionIds(next));
+        setLoadState("ready");
       }
-    },
+      return true;
+    }),
   });
   journalWriteRef.current = family.writeBudget;
   // Задержка документа семьи: устройство только читает, и форма записи не открывается (ревью 2a, п. 6).
@@ -268,10 +296,26 @@ export default function App() {
   holdRef.current = hold;
   const holdKnown = family.inFamily && family.status !== null;
   const [holdGate] = useState(createHoldGate);
+  // Отказ открыть форму записи при задержке ведёт в «Семью», где задержка объяснена.
   const refuseWriteForm = useCallback((text: string) => {
-    setMessage(text);
-    setMessageToFamily(text);
-  }, []);
+    showToast({ text, action: { label: HOLD_DETAILS_LABEL, run: () => shellNavigate.current({ name: "family" }) } });
+  }, [showToast]);
+  // Черновик листа ввода живёт вне листа: переживает закрытие, переход и неудачную запись (план волны 2, §2.2).
+  const entryStore = useMemo(() => createEntryDraftStore(), []);
+  const entryController = useMemo(() => createEntryController({
+    store: entryStore,
+    write,
+    current: () => budgetRef.current,
+    route: () => router.current(),
+    redirect: (destination) => router.redirect(destination),
+    navigate: (destination) => shellNavigate.current(destination),
+    showToast,
+    today: () => localToday(new Date()),
+  }), [entryStore, write, router, showToast]);
+  // Не записанный черновик ждёт «Вернуться к черновику» и переход ему не мешает; перезагрузка его потеряет.
+  const failedEntry = useRef<DraftEntry>({ label: "операция, которая не записалась", isDirty: () => entryStore.failed() !== null, guardsNavigation: false });
+  useEffect(() => drafts.register(failedEntry), [drafts]);
+  useEffect(() => entryStore.subscribe(() => drafts.refresh()), [drafts, entryStore]);
   inFamilyRef.current = family.inFamily;
 
   useEffect(() => {
@@ -337,24 +381,19 @@ export default function App() {
     drafts.refresh();
   }, [drafts, awaitingLoginCode]);
 
+  // После перехода на другой экран: прокрутка — та, на которой его оставили (или начало), фокус —
+  // на `h1` экрана, чтобы читающий с экрана услышал, куда попал. Лист поверх экрана и смена месяца
+  // «Обзора» экран не меняют: фокус там ведут лист (и возвращает на плитку) и стрелки месяца.
   useEffect(() => {
-    if (!message) return;
-    const timeout = window.setTimeout(() => setMessage(null), 6000);
-    return () => window.clearTimeout(timeout);
-  }, [message]);
-
-  // После перехода: прокрутка — та, на которой маршрут оставили (или начало), фокус — на `h1`
-  // маршрута, чтобы читающий с экрана услышал, куда попал.
-  useEffect(() => {
-    if (previousRouteKeyRef.current === currentRouteKey) return;
-    previousRouteKeyRef.current = currentRouteKey;
-    window.scrollTo(0, scrollPositions.current.get(currentRouteKey) ?? 0);
+    if (previousScreenKeyRef.current === currentScreenKey) return;
+    previousScreenKeyRef.current = currentScreenKey;
+    window.scrollTo(0, scrollPositions.current.get(currentScreenKey) ?? 0);
     focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
-  }, [currentRouteKey]);
+  }, [currentScreenKey]);
 
-  // Операция из адреса (`#/new?edit=…`), которой в бюджете нет, — «Запись не найдена» и возврат к
-  // «Операциям». Проверяется по приходу на адрес, а не на каждой правке бюджета: удаление открытой
-  // операции само сменяет адрес и не должно называться ненайденной записью.
+  // Операция из адреса листа (`?sheet=entry&edit=…`), которой в бюджете нет, — «Запись не найдена»,
+  // и лист не открывается. Проверяется по приходу на адрес, а не на каждой правке бюджета: удаление
+  // открытой операции само закрывает лист и не должно называться ненайденной записью.
   const budgetReady = budget !== null;
   useEffect(() => {
     const current = budgetRef.current;
@@ -434,7 +473,7 @@ export default function App() {
     () => familyNewsLines(familyNews, memberById, budget ?? {}),
     [familyNews, memberById, budget],
   );
-  // Новость увидена, когда человек ушёл с «Сегодня» или свернул приложение, пока она там стояла:
+  // Новость увидена, когда человек ушёл с «Обзора» или свернул приложение, пока она там стояла:
   // «прошлый раз» становится нынешним состоянием, и за тем же она не возвращается.
   const newsOnScreen = route.name === "overview" && familyNews.length > 0;
   const markNewsSeen = () => {
@@ -566,18 +605,10 @@ export default function App() {
   if (!budget || !metrics || !plan) return <AppFrame className="loading-route" drafts={drafts} messageShown={false}><SkipLink /><main id={MAIN_CONTENT_ID} tabIndex={-1} className="loading-state" role="alert"><p>Бюджет не удалось подготовить к показу.</p></main></AppFrame>;
 
   const activeBudget = budget.budgets.find((item) => item.id === budget.activeBudgetId)!;
-  const flexibleIds = new Set(activeBudget.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const activeExpenseCategories = budget.categories.filter((category) => category.active && category.type === "expense");
-  const flexibleRows = activeExpenseCategories
-    .filter((category) => category.active && flexibleIds.has(category.id))
-    .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }))
-    .filter((row) => row.metric);
-  const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
-  const safeToSpendMinor = plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor;
   // §6, часы периода. «Сегодня» берётся по календарю семьи, а не по UTC: последний день месяца в
   // UTC уже первый день следующего, и насечка прыгнула бы в начало полосы. Дата следующей выплаты
   // выводится из дат уже записанных доходов — в слое представления, как иконки и тона категорий.
-  // Часы одни на все экраны: «Сегодня», «Записать» и «Год» считают от одного и того же дня.
+  // Часы одни на все экраны: «Обзор», лист ввода и «Год» считают от одного и того же дня.
   const today = localToday(new Date());
   const incomeDates = budget.transactions
     .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
@@ -600,7 +631,7 @@ export default function App() {
       const opened = findBudgetForMonth(budget, month) === undefined;
       await write.run((state) => carryBudgetForward(state, month).state);
       setMessage(opened
-        ? `${monthNominative(month)} открыт: лимиты перенесены, остатки конвертов легли в них сверху. Всё это можно поправить в плане.`
+        ? `${monthNominative(month)} открыт: лимиты перенесены, остатки прошлого месяца легли в них сверху. Всё это можно поправить в плане.`
         : `${monthNominative(month)} уже был в плане — открыли его.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Не удалось открыть месяц.");
@@ -608,11 +639,7 @@ export default function App() {
       setOpeningMonth(false);
     }
   };
-  const postedTransactions = [...budget.transactions]
-    .filter((transaction) => transaction.status === "posted")
-    .sort((left, right) => right.occurredOn.localeCompare(left.occurredOn));
-  const recentTransactions = filterTransactionsByMember(postedTransactions, memberFilter).slice(0, 5);
-  const memberOptions = memberFilterOptions(budget);
+  const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
@@ -627,7 +654,7 @@ export default function App() {
    * окно: «Продолжить ввод» оставляет всё как было, «Не сохранять» забывает черновики и переходит.
    */
   const navigate = (destination: Route) => {
-    // «+», «План месяца», «Выписка» и правка операции при задержке не открываются: отказ — сразу.
+    // Лист ввода, «План месяца» и «Выписка» при задержке не открываются: отказ — сразу.
     const refusal = writeFormRefusal(hold, destination);
     if (refusal !== null) {
       refuseWriteForm(refusal.message);
@@ -635,16 +662,73 @@ export default function App() {
     }
     router.navigate(destination);
   };
+  shellNavigate.current = navigate;
   const back = () => router.back();
-  const redirect = (destination: Route, options?: NavigateOptions) => router.redirect(destination, options);
+  /**
+   * Лист ввода поверх экрана, на котором стоишь: с плиток — вид и плитки, с «+» — ничего, из
+   * «Операций» — операция. В адрес — только эти закрытые ключи (SECURITY §7.3).
+   */
+  const openSheet = (opening: SheetOpening) => {
+    const destination = { ...withoutSheet(route), sheet: "entry", ...opening } as Route;
+    // Не записанный черновик молча не пропадает: новое открытие сначала спрашивает о нём.
+    const failed = entryStore.failed();
+    if (failed !== null && failed.key !== routeKey(destination) && writeFormRefusal(hold, destination) === null) {
+      setReplaceFailed({ proceed: () => { entryStore.discardFailed(); navigate(destination); } });
+      return;
+    }
+    navigate(destination);
+  };
+  /**
+   * Операцию, открытую в листе, удалили на другом устройстве (ревью 2b, LOW-6): лист закрывается,
+   * `edit=` уходит из адреса, фокус — на заголовок экрана, и это сказано словами. Набранное не
+   * пропадает: оно ждёт как не записанное под адресом «+» этого экрана, и «Записать как новую»
+   * открывает его — тем же путём, что и «Вернуться к черновику».
+   */
+  const editVanished = (typed: EntryDraft | null) => {
+    const screen = withoutSheet(router.current());
+    router.redirect(screen);
+    if (typed === null) {
+      entryStore.clear();
+      showToast({ text: EDIT_VANISHED_TEXT });
+      return;
+    }
+    const carried = carriedDraft(typed);
+    const plus = { ...screen, sheet: "entry" } as Route;
+    const words = draftSummary(budget, carried);
+    entryStore.adoptFailed(routeKey(plus), carried, blankEntryDraft(budget, carried.mode === "refund" ? "expense" : carried.mode, today), `${EDIT_VANISHED_TEXT} Набранное — ${words} — можно записать новой операцией.`);
+    showToast({ text: `${EDIT_VANISHED_TEXT} Набранное: ${words}.`, action: { label: "Записать как новую", run: entryController.returnToDraft } });
+  };
+  const fallbackFocus = () => focusRouteHeading(document.getElementById(MAIN_CONTENT_ID));
+  const openEdit = (transaction: BudgetState["transactions"][number]) => {
+    const opening = sheetEditOf(transaction);
+    if (opening === null) setMessage(ROUTE_NOT_FOUND_MESSAGE);
+    else openSheet(opening);
+  };
   const leaveQuestion = leaveRequest === null ? null : (
     <ConfirmDialog
       {...draftLeaveQuestion(leaveRequest.labels)}
       onCancel={() => setLeaveRequest(null)}
       onConfirm={() => {
         setLeaveRequest(null);
-        drafts.discardAll("navigation");
+        drafts.discardAll("navigation", leaveRequest.leaving);
         leaveRequest.proceed();
+      }}
+    />
+  );
+
+  const replaceFailedQuestion = replaceFailed === null ? null : (
+    <ConfirmDialog
+      title="Прошлая операция не записана"
+      description="Её черновик ждёт. Если начать новую операцию, он пропадёт."
+      cancelLabel="Вернуться к черновику"
+      confirmLabel="Начать новую"
+      onCancel={() => {
+        setReplaceFailed(null);
+        entryController.returnToDraft();
+      }}
+      onConfirm={() => {
+        setReplaceFailed(null);
+        replaceFailed.proceed();
       }}
     />
   );
@@ -663,16 +747,17 @@ export default function App() {
     setLoadState("empty");
   };
   const routeContext: AppRouteContext = {
-    budget, plan, metrics, clock, paydays, flexibleRows, safeToSpendMinor, flexibleSpentMinor, postedTransactions,
-    recentTransactions, categoryById, memberById, memberOptions, memberFilter, setMemberFilter, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, redirect, write, budgetRef,
+    budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
+    openingMonth, openMonth, familyNewsText, navigate, back, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
   };
 
   return (
-    <AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>
+    <AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>
+      {/* Суммы без своей валюты — итоги, лимиты, траты по категориям — набираются в базовой валюте семьи. */}
+      <BaseCurrencyProvider currency={baseCurrencyOf(budget)}>
       <IconSprite />
       <SkipLink />
       <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
@@ -685,7 +770,7 @@ export default function App() {
         {syncIndicator.state === "local" ? null : <div className="header-badges"><span className={syncIndicator.className} role="status" aria-label={syncIndicator.ariaLabel}>{syncIndicator.text}</span></div>}
       </header>
 
-      <BottomNav navRef={navRef} route={route} onTab={(tab) => navigate({ name: tab })} onAdd={() => navigate({ name: "entry" })} />
+      <BottomNav navRef={navRef} route={route} onTab={(tab) => navigate({ name: tab })} onAdd={() => openSheet({})} />
 
       <main id={MAIN_CONTENT_ID} tabIndex={-1} className="content" data-layout-contract="no-action-overflow">
         <div className="route-screen" data-screen={route.name}>
@@ -709,11 +794,34 @@ export default function App() {
         </div>
       </main>
 
-      {message ? <aside className="message-toast" role="status"><p>{message}</p>{messageToFamily === message ? <>
-        <button className="primary-button" type="button" onClick={() => { setMessage(null); navigate({ name: "family" }); }}>{HOLD_DETAILS_LABEL}</button>
-        <button className="quiet-button" type="button" onClick={() => setMessage(null)}>Закрыть</button>
-      </> : <button className="primary-button" type="button" onClick={() => setMessage(null)}>Закрыть</button>}</aside> : null}
+      {/* Лист ввода — поверх экрана и рядом с ним в оболочке: пока он открыт, всё остальное выключено. */}
+      {route.sheet === "entry" ? (
+        <EntrySheetHost
+          route={route}
+          budget={budget}
+          today={today}
+          store={entryStore}
+          controller={entryController}
+          writeRefusal={hold === null ? null : WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}
+          onClose={back}
+          onVanished={editVanished}
+          fallbackFocus={fallbackFocus}
+        />
+      ) : null}
+      {/* Тост гасится своим таймером (`components/Toast.tsx`), и время его стоит, пока на нём
+          фокус или указатель и пока поверх любой модальный диалог — лист или вопрос: тогда он под
+          затемнением. Какой диалог открыт, тост узнаёт у документа сам (`modal-presence.ts`). */}
+      {toast !== null ? (
+        <Toast
+          key={toast.key}
+          toast={toast}
+          onClose={() => setToast(null)}
+          fallbackFocus={fallbackFocus}
+        />
+      ) : null}
       {leaveQuestion}
+      {replaceFailedQuestion}
+      </BaseCurrencyProvider>
     </AppFrame>
   );
 }

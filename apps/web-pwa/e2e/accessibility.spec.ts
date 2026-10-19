@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { applyFontScale, FONT_SCALES } from "./font-scale";
+import { amountField, entrySheet, leaveDialog, measureSheetTargets, tile } from "./sheet";
 
 interface ViewportContract {
   readonly name: string;
@@ -27,7 +28,30 @@ async function loadDemo(page: Page) {
     page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
+}
+
+/** Лист ввода поверх «Обзора»: цели не меньше норматива, каждая доматывается и ничем не накрыта. */
+async function expectSheetContract(page: Page, label: string) {
+  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM);
+  expect(geometry.targets, `${label}: цели листа найдены`).toBeGreaterThan(5);
+  expect(geometry.scrollWidth, `${label} must not introduce page-level horizontal overflow`).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.undersized, `${label}: every sheet target at least ${TOUCH_TARGET_MINIMUM} CSS px`).toEqual([]);
+  expect(geometry.unreachable, `${label}: every sheet target reachable inside the sheet and uncovered`).toEqual([]);
+}
+
+/** С «Обзора» открыть лист плиткой «Продукты» и набрать сумму — самый высокий вариант листа. */
+async function openSheetWithDraft(page: Page) {
+  await expect(page.locator(".overview-screen")).toBeVisible();
+  await tile(page, "Продукты").click();
+  await expect(entrySheet(page)).toBeVisible();
+  await amountField(page).fill("1234");
+}
+
+async function discardSheet(page: Page) {
+  await page.keyboard.press("Escape");
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
 }
 
 async function expectFocusedRouteHeading(page: Page, navigationName: string) {
@@ -179,6 +203,26 @@ async function expectCompactTabletLandscapeNavigation(page: Page) {
         rect.top < innerHeight;
     });
 
+    const nameOf = (element: HTMLElement) => (
+      element.getAttribute("aria-label") ??
+      element.textContent ??
+      element.id
+    ).trim().slice(0, 80);
+    const underNavigation = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      const nav = navigation.getBoundingClientRect();
+      return rect.bottom > nav.top && rect.top < nav.bottom;
+    };
+    // Липкая панель наверху: под ней проезжает поток, и цель под ней в конце прокрутки — не
+    // спрятанная, если её можно вывести из-под панели. Спрятанная навсегда — та, что и по центру
+    // окна остаётся под панелью: её не домотать.
+    const overlapping = visibleControls.filter(underNavigation);
+    const hiddenForGood = overlapping.filter((element) => {
+      element.scrollIntoView({ block: "center", behavior: "instant" });
+      return underNavigation(element);
+    }).map(nameOf);
+    window.scrollTo(0, document.documentElement.scrollHeight);
+
     return {
       navigation: {
         bottom: navigationRect.bottom,
@@ -186,16 +230,7 @@ async function expectCompactTabletLandscapeNavigation(page: Page) {
         position: navigationStyle.position,
         top: navigationRect.top,
       },
-      overlappingControls: visibleControls
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return rect.bottom > navigationRect.top && rect.top < navigationRect.bottom;
-        })
-        .map((element) => (
-          element.getAttribute("aria-label") ??
-          element.textContent ??
-          element.id
-        ).trim().slice(0, 80)),
+      hiddenForGood,
       viewportHeight: innerHeight,
     };
   });
@@ -204,7 +239,7 @@ async function expectCompactTabletLandscapeNavigation(page: Page) {
   expect(geometry.navigation.top).toBe(0);
   expect(geometry.navigation.bottom).toBeLessThanOrEqual(geometry.viewportHeight);
   expect(geometry.navigation.height).toBeLessThanOrEqual(100);
-  expect(geometry.overlappingControls).toEqual([]);
+  expect(geometry.hiddenForGood).toEqual([]);
 }
 
 test("keyboard navigation exposes the skip link and route focus without stealing form focus", async ({
@@ -212,7 +247,7 @@ test("keyboard navigation exposes the skip link and route focus without stealing
 }) => {
   await loadDemo(page);
   await page.reload();
-  await expect(page.locator(".hero-card")).toBeVisible();
+  await expect(page.locator(".reach-line")).toBeVisible();
 
   await page.keyboard.press("Tab");
   await expect(page.locator(".skip-link")).toBeFocused();
@@ -221,22 +256,29 @@ test("keyboard navigation exposes the skip link and route focus without stealing
   await expect(page.locator("#main-content")).toHaveJSProperty("tagName", "MAIN");
 
   await expectFocusedRouteHeading(page, "Операции");
-  await expectFocusedRouteHeading(page, "Записать");
 
-  const amount = page.getByLabel("Сумма, ₽");
+  // «+» открывает лист поверх вкладки и сам ставит фокус в поле суммы — не на заголовок экрана.
+  await page.getByRole("button", { name: "Записать", exact: true }).click();
+  const amount = amountField(page);
+  await expect(amount).toBeFocused();
   await amount.fill("1234");
   await expect(amount).toBeFocused();
   await expect(amount).toHaveValue("1234");
-  await expect(page.getByRole("button", { name: "Очистить черновик" })).toBeVisible();
 
-  // Конверт — кнопка выбора с доступным именем, которое говорит, что в нём станет после этой
-  // покупки и что в нём сейчас. Раньше здесь стояло «в конверте»: демо было привязано к июлю
-  // 2026, месяц плана был давно закрыт, дата покупки лежала вне периода — и предпросмотр не
-  // применялся вовсе. Демо теперь всегда открывает текущий месяц, поэтому сумма, введённая
-  // выше, доходит до конвертов, и имя кнопки называет именно это.
-  await expect(
-    page.getByRole("button", { name: /^Продукты: останется .*, сейчас /u }),
-  ).toBeVisible();
+  // Категория выбирается в листе: плитка «куда» называет сторону и выбранное; выбор — плитками,
+  // после него фокус возвращается на плитку стороны, а строка под суммой говорит, что останется.
+  // Демо всегда открывает текущий месяц, поэтому сумма доходит до лимита категории.
+  await entrySheet(page).getByRole("button", { name: "В категорию: категория не выбрана. Изменить" }).click();
+  await expect(entrySheet(page).getByRole("button", { name: "Продукты", exact: true })).toBeVisible();
+  await entrySheet(page).getByRole("button", { name: "Продукты", exact: true }).click();
+  await expect(entrySheet(page).getByRole("button", { name: "В категорию: Продукты. Изменить" })).toBeFocused();
+  await expect(page.locator(".entry-effect")).toContainText(/^В категории «Продукты» (?:останется|будет перелимит)/u);
+
+  // Esc с набранным — вопрос приложения; «Не сохранять» закрывает лист, и фокус — на «+».
+  await page.keyboard.press("Escape");
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Записать", exact: true })).toBeFocused();
   // Состояния сети в дереве доступности больше нет — и требовать его незачем: без
   // синхронизации приложение к сети не обращается, и слово «в сети» было бы сведением ни о чём.
   // О сети говорит только индикатор синхронизации, а он появляется после входа в семью.
@@ -256,11 +298,14 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
     await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
     await expectGeometryContract(page, viewport);
 
-    // Пять мест навигации — каждое со своим экраном и своими целями; «История» теперь вкладка.
-    for (const route of ["Записать", "Операции", "Отчёты", "Ещё", "Обзор"]) {
+    // Четыре вкладки — каждая со своим экраном и своими целями; «+» — лист поверх «Обзора».
+    for (const route of ["Операции", "Отчёты", "Ещё", "Обзор"]) {
       await expectFocusedRouteHeading(page, route);
       await expectGeometryContract(page, viewport);
     }
+    await openSheetWithDraft(page);
+    await expectSheetContract(page, `${viewport.name} лист ввода`);
+    await discardSheet(page);
 
     if (viewport.name === "phone-landscape") {
       await expectCompactPhoneLandscapeNavigation(page);
@@ -276,9 +321,10 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
  *
  * Панель навигации растёт вместе со шрифтом: при ×2.7 подписи вкладок переносятся, и на 320 pt
  * панель занимает 188 pt вместо проектных 56, на 390 — 150. Всё, что считалось от токена, —
- * отступ оболочки, полоса записи, тост — вставало на 56 и уходило под панель: кнопка «Записать
- * покупку» была недоступна ровно в режиме, который включают ради читаемости. На широком экране
- * навигация липла под воображаемую шапку в 56 pt, а настоящая при ×2.7 — 79.
+ * отступ оболочки, липкая полоса, тост — вставало на 56 и уходило под панель: кнопка записи была
+ * недоступна ровно в режиме, который включают ради читаемости. На широком экране навигация липла
+ * под воображаемую шапку в 56 pt, а настоящая при ×2.7 — 79. Лист ввода стоит поверх всего этого,
+ * и его цели меряются внутри него: доматываются и ничем не накрыты.
  *
  * Здесь перекрытие меряется пересечением прямоугольников, а не выводится из чисел: на четырёх
  * ширинах телефона и двух широких, при обычном шрифте и при ×2.7, на всех семи экранах, в
@@ -332,7 +378,7 @@ async function measureNavigationClearance(page: Page): Promise<NavigationClearan
     const header = document.querySelector<HTMLElement>(".app-header");
     const shell = document.querySelector<HTMLElement>(".app-shell");
     if (!nav || !header || !shell) throw new Error("Application chrome is missing.");
-    const bar = document.querySelector<HTMLElement>(".record-action");
+    const bar = document.querySelector<HTMLElement>(".import-action");
     const rectOf = (element: Element) => element.getBoundingClientRect();
     const intersects = (a: DOMRect, b: DOMRect) =>
       a.bottom > b.top + 0.5 && a.top < b.bottom - 0.5 && a.right > b.left + 0.5 && a.left < b.right - 0.5;
@@ -364,7 +410,7 @@ async function measureNavigationClearance(page: Page): Promise<NavigationClearan
       const navRect = rectOf(nav);
       const headerRect = rectOf(header);
       for (const target of targets()) {
-        const holder = target.closest<HTMLElement>(".record-action, .message-toast, .update-toast");
+        const holder = target.closest<HTMLElement>(".import-action, .message-toast, .update-toast");
         if (holder && pinnedAtBottom(holder) && intersects(rectOf(target), navRect)) {
           stuckUnderNavigation.push(`${nameOf(target)} @${Math.round(scrollY)}`);
         }
@@ -458,7 +504,7 @@ for (const scale of FONT_SCALES) {
     await loadDemo(page);
     await page.reload();
     await applyFontScale(page, scale);
-    await expect(page.locator(".hero-card")).toBeVisible();
+    await expect(page.locator(".reach-line")).toBeVisible();
 
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       const layout = viewport.width >= 760 ? "wide" : "phone";
@@ -477,16 +523,13 @@ for (const scale of FONT_SCALES) {
       await expectFocusedRouteHeading(page, "Отчёты");
       await expectNavigationClearance(page, label("Отчёты"), layout);
 
-      // «Записать» с черновиком: в полосе две кнопки — самый высокий её вариант.
-      await expectFocusedRouteHeading(page, "Записать");
-      await page.getByLabel("Сумма, ₽").fill("1234");
-      await expect(page.getByRole("button", { name: "Очистить черновик" })).toBeVisible();
-      await expectNavigationClearance(page, label("Записать"), layout);
-      await page.getByRole("button", { name: "Очистить черновик" }).click();
-      await expect(page.getByRole("button", { name: "Очистить черновик" })).toHaveCount(0);
-
       await expectFocusedRouteHeading(page, "Обзор");
       await expectNavigationClearance(page, label("Обзор"), layout);
+
+      // Лист ввода с черновиком — поверх навигации и экрана: его цели меряются внутри него.
+      await openSheetWithDraft(page);
+      await expectSheetContract(page, label("Лист ввода"));
+      await discardSheet(page);
     }
   });
 }

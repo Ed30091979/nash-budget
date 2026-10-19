@@ -7,59 +7,50 @@ import {
   type BudgetState,
 } from "@family-budget/domain";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./features/today/TodayScreen";
-import { MEMBER_FILTER_ALL } from "./features/family";
-import { OperationsScreen } from "./features/operations";
+import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { periodClock, reach } from "./reach";
-import { readAppSource } from "./app/shell-source";
 
 const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf8");
+const reachLineSource = readFileSync(new URL("./features/overview/ReachLine.tsx", import.meta.url), "utf8");
 
 /**
  * Голос о нехватке — факт и путь (§6 `DESIGN.md`).
  *
  * Нехватка никогда не называется без числа, которым её закрывают: «до 20-го не дотягивает» и
- * сразу «чтобы дотянуть — 2 077 ₽ в день». Код это соблюдал на герое и молчал на строке лимита и
- * на конверте; правило теперь записано, и эта проверка держит его на всех трёх местах.
+ * сразу «чтобы дотянуть — 2 077 ₽ в день». Прежде это держали герой «Сегодня», строка лимита и
+ * конверт табло; с 2b нехватку называет одна строка «Можно на повседневные» на «Обзоре», а плитки
+ * говорят состояние лимита словом и числами — и проверка держит правило на всём экране.
  */
 function textOf(markup: string): string {
-  return markup.replace(/<[^>]*>/gu, " ").replaceAll(" ", " ").replace(/\s+/gu, " ").trim();
+  return markup.replace(/<[^>]*>/gu, " ").replace(/[\u00a0\u202f]/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-/** 13 июля внутри июльского плана: «Транспорт» из образца — 10 000 плана, 5 000 факта — не дотягивает. */
+/**
+ * 13 июля внутри июльского плана: «Транспорт» из образца — 10 000 плана, 5 000 факта — не
+ * дотягивает, и повседневные лимиты в целом — тоже (3 500 ₽ на 18 дней при нынешнем темпе).
+ */
 const TODAY = "2026-07-13";
 
-function renderToday(state: BudgetState): string {
+function renderOverview(state: BudgetState): string {
   const active = state.budgets.find((budget) => budget.id === state.activeBudgetId)!;
-  const metrics = calculateBudget(state);
   const plan = calculateAnnualPlan(state, active.startDate.slice(0, 7), 24);
-  const planned = new Set(active.lines.filter((line) => line.active !== false).map((line) => line.categoryId));
-  const flexibleRows = state.categories
-    .filter((category) => category.active && category.type === "expense" && planned.has(category.id))
-    .map((category) => ({ category, metric: metrics.categoryMetrics[category.id] }));
-  const flexibleSpentMinor = flexibleRows.reduce((total, row) => total + (row.metric?.actualMinor ?? 0), 0);
   return renderToStaticMarkup(
-    <TodayScreen
+    <OverviewScreen
       budget={state}
-      plan={plan}
-      flexibleRows={flexibleRows}
-      safeToSpendMinor={plan.currentMonth.flexiblePlanMinor - flexibleSpentMinor}
-      flexibleSpentMinor={flexibleSpentMinor}
+      today={TODAY}
+      month={TODAY.slice(0, 7)}
+      onMonth={() => undefined}
       clock={periodClock(active, [], TODAY)}
-      recentTransactions={[]}
-      categoryById={new Map(state.categories.map((category) => [category.id, category]))}
-      memberById={new Map()}
-      memberOptions={[]}
-      memberFilter={MEMBER_FILTER_ALL}
-      onMemberFilterChange={() => undefined}
-      hasRecords
-      monthToOpen={null}
-      onAdd={() => undefined}
-      onYear={() => undefined}
-      onPlanning={() => undefined}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
       familyNews={[]}
+      monthToOpen={null}
+      openingMonth={false}
+      onOpenMonth={() => undefined}
+      onOpenSheet={() => undefined}
+      onAddCategory={() => undefined}
+      onPlan={() => undefined}
     />,
   );
 }
@@ -76,37 +67,32 @@ describe("голос о нехватке: факт и путь", () => {
     expect(line.state).toBe("short");
   });
 
-  it("строка лимита: за «до …» сразу идёт «чтобы дотянуть — N ₽ в день»", () => {
-    const markup = renderToday(seed);
-    // Сумма внутри строки — собственный `<span>`, поэтому строка берётся до конца своего блока.
-    const shortRows = [...markup.matchAll(/<span class="short">(.*?)<\/div>/gu)].map((match) => textOf(match[1] ?? ""));
-    expect(shortRows.length).toBeGreaterThan(0);
-    for (const row of shortRows) {
-      expect(row).toMatch(/^до \S+ \S+ · чтобы дотянуть — \d[\d ]* ₽ в день$/u);
+  it("строка «Можно на повседневные»: за «не дотягивает» сразу идёт «чтобы дотянуть — N ₽ в день»", () => {
+    const markup = renderOverview(makeSeedBudget());
+    const line = markup.slice(markup.indexOf('<section class="card reach-line'), markup.indexOf("</section>", markup.indexOf('<section class="card reach-line')));
+    expect(line).toContain('class="card reach-line short"');
+    expect(textOf(line)).toMatch(/хватает до \S+ \S+, а до \S+ \S+ не дотягивает · чтобы дотянуть — \d[\d ]* ₽ в день/u);
+    // Правило держится на самой строке, а не на удаче образца.
+    expect(reachLineSource).toContain("а до {until} не дотягивает · чтобы дотянуть — <Money value={needPerDay} /> в день");
+  });
+
+  it("на всём «Обзоре» — тексте и доступных именах — нехватка не стоит без пути", () => {
+    for (const state of [makeSeedBudget(), { ...makeSeedBudget(), transactions: [] }]) {
+      const markup = renderOverview(state);
+      const spoken = [textOf(markup), ...[...markup.matchAll(/aria-label="([^"]*)"/gu)].map((match) => match[1] ?? "")];
+      for (const phrase of spoken) {
+        for (const shortfall of phrase.matchAll(/не дотян[а-я]*/gu)) {
+          expect(phrase.slice(shortfall.index ?? 0), phrase).toMatch(/^не дотян[а-я]* · чтобы дотянуть — \d[\d\u00a0 ]* ₽ в день/u);
+        }
+      }
     }
   });
 
-  it("герой: «не дотягивает» никогда не стоит без «чтобы дотянуть»", () => {
-    const text = textOf(renderToday(seed));
-    if (text.includes("не дотягивает")) {
-      expect(text).toMatch(/не дотягивает\.\s*Тратим \d[\d ]* ₽ в день; чтобы дотянуть — \d[\d ]* ₽ в день\./u);
-    }
-    // Правило держится на самой строке героя, а не на удаче образца.
-    const source = readAppSource();
-    expect(source).toMatch(/не дотягивает\.<\/b> Тратим <Money value=\{rate\} \/> в день; чтобы дотянуть — <Money value=\{needPerDay\} \/> в день\./u);
-  });
-
-  it("конверт на табло: «не дотянет» сразу с «чтобы дотянуть — N ₽ в день»", () => {
-    const clock = periodClock(seed.budgets[0]!, [], TODAY);
-    const markup = renderToStaticMarkup(<OperationsScreen budget={seed} clock={clock} onChange={vi.fn(async () => undefined)} />);
-    const feet = [...markup.matchAll(/<span class="envelope-foot">(.*?)<\/span><\/button>/gu)].map((match) => textOf(match[1] ?? ""));
-    const short = feet.filter((foot) => foot.includes("не дотянет"));
-    expect(short.length).toBeGreaterThan(0);
-    for (const foot of short) {
-      expect(foot).toMatch(/не дотянет · чтобы дотянуть — \d[\d ]* ₽ в день/u);
-    }
-    // Тот же путь — и в произносимом имени конверта.
-    expect(markup).toMatch(/aria-label="[^"]*не дотянет · чтобы дотянуть — [^"]* в день/u);
+  it("плитка категории называет состояние лимита словом и числами, а не одним цветом", () => {
+    const markup = renderOverview(makeSeedBudget());
+    const labels = [...markup.matchAll(/<button class="tile tile-expense[^"]*"[^>]*aria-label="([^"]*)"/gu)].map((match) => match[1] ?? "");
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) expect(label).toMatch(/: потрачено \d/u);
   });
 
   it("правило записано в документе дизайна", () => {

@@ -38,6 +38,7 @@ const OVERFLOW = "Сумма превышает максимально допу�
 const NOT_POSITIVE = "Сумма должна быть больше нуля.";
 const MALFORMED = "Введите положительную сумму, не более двух знаков после запятой.";
 const DIVISION_BY_ZERO = "На ноль делить нельзя.";
+const WHOLE_ONLY = "Введите положительную сумму целым числом.";
 const MAX_SAFE_MINOR = BigInt(Number.MAX_SAFE_INTEGER);
 const OPERATOR = /[+−÷×]/u;
 const OPERATOR_AT_END = /[+−÷×]$/u;
@@ -69,16 +70,17 @@ interface Term {
 
 type ParsedTerms = { readonly terms: readonly Term[] } | { readonly message: string };
 
-function parseTerms(text: string): ParsedTerms {
+function parseTerms(text: string, exponent: number): ParsedTerms {
+  const scale = 10n ** BigInt(exponent);
   const terms: Term[] = [];
   let pending: Operator | null = null;
   let index = 0;
   while (index < text.length) {
     const token = NUMBER_TOKEN.exec(text.slice(index));
     if (token === null) return { message: MALFORMED };
-    const [rubles = "0", kopecks = ""] = token[0].split(",");
-    if (kopecks.length > 2) return { message: MALFORMED };
-    terms.push({ operator: pending, minor: BigInt(rubles) * 100n + BigInt(kopecks.padEnd(2, "0") || "0") });
+    const [whole = "0", fraction = ""] = token[0].split(",");
+    if (fraction.length > exponent) return { message: exponent === 0 ? WHOLE_ONLY : MALFORMED };
+    terms.push({ operator: pending, minor: BigInt(whole) * scale + BigInt(fraction.padEnd(exponent, "0") || "0") });
     pending = null;
     index += token[0].length;
     if (index === text.length) break;
@@ -91,11 +93,16 @@ function parseTerms(text: string): ParsedTerms {
   return { terms };
 }
 
-export function evaluateAmount(rawText: string): AmountEvaluation {
+/**
+ * Итог выражения в минимальных единицах. `exponent` — знаки дробной части у валюты суммы: 2 у рубля
+ * и доллара (по умолчанию), 0 у иены, 3 у динара; множитель и делитель — числа той же записи.
+ */
+export function evaluateAmount(rawText: string, exponent = 2): AmountEvaluation {
   const text = normalizeAmountText(rawText);
   if (text === "") return { kind: "empty" };
   if (rawText.length > AMOUNT_MAX_LENGTH) return { kind: "error", message: OVERFLOW };
-  const parsed = parseTerms(text);
+  const scale = 10n ** BigInt(exponent);
+  const parsed = parseTerms(text, exponent);
   if ("message" in parsed) return { kind: "error", message: parsed.message };
   const [first, ...rest] = parsed.terms;
   if (first === undefined) return { kind: "error", message: MALFORMED };
@@ -104,10 +111,10 @@ export function evaluateAmount(rawText: string): AmountEvaluation {
     switch (term.operator) {
       case "+": total += term.minor; break;
       case "−": total -= term.minor; break;
-      case "×": total = roundedDivision(total * term.minor, 100n); break;
+      case "×": total = roundedDivision(total * term.minor, scale); break;
       case "÷":
         if (term.minor === 0n) return { kind: "error", message: DIVISION_BY_ZERO };
-        total = roundedDivision(total * 100n, term.minor);
+        total = roundedDivision(total * scale, term.minor);
         break;
       case null: return { kind: "error", message: MALFORMED };
     }
@@ -118,16 +125,17 @@ export function evaluateAmount(rawText: string): AmountEvaluation {
 }
 
 /** Число так, как его принимает поле: «1550» или «1550,50» — запятая, без отбивки разрядов (§7). */
-export function amountText(minor: number): string {
-  const rubles = Math.floor(minor / 100);
-  const kopecks = minor % 100;
-  return kopecks === 0 ? String(rubles) : `${rubles},${String(kopecks).padStart(2, "0")}`;
+export function amountText(minor: number, exponent = 2): string {
+  const scale = 10 ** exponent;
+  const whole = Math.floor(minor / scale);
+  const fraction = minor % scale;
+  return exponent === 0 || fraction === 0 ? String(whole) : `${whole},${String(fraction).padStart(exponent, "0")}`;
 }
 
 /** Выражение — в число перед записью. Что не разобралось, остаётся как есть: ошибку назовёт домен. */
-export function settleAmount(text: string): string {
-  const result = evaluateAmount(text);
-  return result.kind === "value" ? amountText(result.minor) : text;
+export function settleAmount(text: string, exponent = 2): string {
+  const result = evaluateAmount(text, exponent);
+  return result.kind === "value" ? amountText(result.minor, exponent) : text;
 }
 
 /**
@@ -137,7 +145,7 @@ export function settleAmount(text: string): string {
  * Третьей копейки нет, второй запятой в одном числе нет, знак после знака заменяет его, знак
  * после незакрытой запятой её снимает: клавиатура не даёт набрать то, чего разбор не примет.
  */
-export function editAmount(text: string, key: KeypadKey, selection: AmountSelection | null): AmountEdit {
+export function editAmount(text: string, key: KeypadKey, selection: AmountSelection | null, exponent = 2): AmountEdit {
   const start = selection ? Math.min(selection.start, selection.end) : text.length;
   const end = selection ? Math.max(selection.start, selection.end) : text.length;
   const before = text.slice(0, start);
@@ -154,14 +162,15 @@ export function editAmount(text: string, key: KeypadKey, selection: AmountSelect
   let head = before;
   let insert: string;
   if (key === ",") {
-    if (operand.includes(",")) return unchanged;
+    // У валюты без дробной части запятой нет вовсе: иену не делят на сотые.
+    if (exponent === 0 || operand.includes(",")) return unchanged;
     insert = operand === "" ? "0," : ",";
   } else if (key === "+" || key === "−" || key === "÷") {
     if (before === "") return unchanged;
     if (OPERATOR_AT_END.test(before) || before.endsWith(",")) head = before.slice(0, -1);
     insert = key;
   } else {
-    if (/,\d{2}$/u.test(operand)) return unchanged;
+    if (exponent > 0 && new RegExp(`,\\d{${exponent}}$`, "u").test(operand)) return unchanged;
     insert = key;
   }
   const next = head + insert + after;

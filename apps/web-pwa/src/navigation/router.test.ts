@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { createRouter } from "./router";
-import { formatRoute } from "./routes";
+import { formatRoute, routeKey, type Route } from "./routes";
 import { draftGuard, expectHonestHistory, FakeBrowser, go, settle, started } from "./test-fixture";
 
 const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+const CATEGORY = "73333333-3333-4333-8333-333333333335";
+/** Лист ввода с «+» поверх «Обзора» и поверх «Операций», и правка операции из «Операций». */
+const ADD = { name: "overview", sheet: "entry" } as const;
+const ADD_OVER_OPERATIONS = { name: "operations", sheet: "entry" } as const;
+const EDIT = { name: "operations", sheet: "entry", edit: OPERATION } as const;
 
 describe("история: «Обзор» — корень, вкладка на вкладку — замена", () => {
   it("первое открытие ставит «Обзор» в адрес и не плодит записей", () => {
@@ -98,26 +103,53 @@ describe("история: «Обзор» — корень, вкладка на �
     expect(router.current()).toEqual({ name: "overview" });
   });
 
-  it("«+» кладётся поверх вкладки, с которой его нажали, и «Назад» возвращает на неё", async () => {
+  it("лист «+» кладётся поверх вкладки, с которой его нажали, и «Назад» возвращает на неё", async () => {
     const { frame, router } = started();
     await go(router, { name: "operations" });
-    await go(router, { name: "entry" });
-    expect(frame.hashes).toEqual(["#/", "#/operations", "#/new"]);
-    await go(router, { name: "entry" });
-    expect(frame.hashes).toEqual(["#/", "#/operations", "#/new"]);
+    await go(router, ADD_OVER_OPERATIONS);
+    expect(frame.hashes).toEqual(["#/", "#/operations", "#/operations?sheet=entry"]);
+    await go(router, ADD_OVER_OPERATIONS);
+    expect(frame.hashes).toEqual(["#/", "#/operations", "#/operations?sheet=entry"]);
     await frame.press(-1);
     expect(router.current()).toEqual({ name: "operations" });
   });
 
-  it("правка операции — над «Операциями»; «назад» экрана закрывает её без лишней записи", async () => {
+  it("лист с плиток «Обзора» — поверх «Обзора»; «Закрыть» возвращает на него без лишней записи", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "overview", sheet: "entry", op: "expense", dst: CATEGORY });
+    expect(frame.hashes).toEqual(["#/", `#/?sheet=entry&op=expense&dst=${CATEGORY}`]);
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "overview" });
+    expect(frame.index).toBe(0);
+  });
+
+  it("правка операции — лист над «Операциями»; «назад» экрана закрывает его без лишней записи", async () => {
     const { frame, router } = started();
     await go(router, { name: "operations" });
-    await go(router, { name: "entry", edit: OPERATION });
-    expect(frame.hashes).toEqual(["#/", "#/operations", `#/new?edit=${OPERATION}`]);
+    await go(router, EDIT);
+    expect(frame.hashes).toEqual(["#/", "#/operations", `#/operations?sheet=entry&edit=${OPERATION}`]);
     router.back();
     await settle();
     expect(router.current()).toEqual({ name: "operations" });
     expect(frame.index).toBe(1);
+  });
+
+  it("другой месяц «Обзора» — как вкладка: месяц на месяц не копит записи, «Назад» — к текущему месяцу", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "overview", month: "2026-08" });
+    expect(frame.hashes).toEqual(["#/", "#/?month=2026-08"]);
+    await go(router, { name: "overview", month: "2026-09" });
+    expect(frame.hashes).toEqual(["#/", "#/?month=2026-09"]);
+    // Лист над другим месяцем закрывается на этот же месяц.
+    await go(router, { name: "overview", month: "2026-09", sheet: "entry", op: "expense", dst: CATEGORY });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "overview", month: "2026-09" });
+    await frame.press(-1);
+    expect(router.current()).toEqual({ name: "overview" });
+    expect(frame.index).toBe(0);
+    expectHonestHistory(frame);
   });
 
   it("замена по просьбе меняет текущую запись и не трогает ту, что под ней", async () => {
@@ -128,13 +160,16 @@ describe("история: «Обзор» — корень, вкладка на �
     expect(frame.hashes).toEqual(["#/", "#/more", "#/more/import"]);
   });
 
-  it("перед сменой маршрута называет ключ того, с которого уходят — для прокрутки", async () => {
+  it("перед сменой маршрута называет ключ того, с которого уходят, и того, куда приходят", async () => {
     const onLeave = vi.fn();
     const { frame, router } = started("", null, { onLeave });
     await go(router, { name: "operations" });
-    expect(onLeave).toHaveBeenLastCalledWith("#/");
+    expect(onLeave).toHaveBeenLastCalledWith("#/", "#/operations");
     await frame.press(-1);
-    expect(onLeave).toHaveBeenLastCalledWith("#/operations");
+    expect(onLeave).toHaveBeenLastCalledWith("#/operations", "#/");
+    // Лист поверх экрана — тоже смена маршрута: оболочка по двум ключам видит, что экран тот же.
+    await go(router, ADD);
+    expect(onLeave).toHaveBeenLastCalledWith("#/", "#/?sheet=entry");
   });
 
   it("подписчик узнаёт о каждом новом маршруте, и только о нём", async () => {
@@ -236,15 +271,34 @@ describe("переход по якорю", () => {
 });
 
 describe("черновик и переходы", () => {
+  it("защиту спрашивают, откуда и куда переход: нажатие, «Назад» листа и системное «Назад» (ревью 2b, MEDIUM-4)", async () => {
+    const asked: string[] = [];
+    const record = (from: Route, to: Route) => { asked.push(`${routeKey(from)} → ${routeKey(to)}`); };
+    const { frame, router } = started("", null, { guard: { blocks: (from, to) => { record(from, to); return false; }, confirm: () => undefined } });
+    await go(router, { name: "plan-month" });
+    await go(router, { name: "plan-month", sheet: "entry" });
+    router.back();
+    await settle();
+    await go(router, { name: "plan-month", sheet: "entry" });
+    await frame.press(-1);
+    expect(asked).toEqual([
+      "#/ → #/more/plan-month",
+      "#/more/plan-month → #/more/plan-month?sheet=entry",
+      "#/more/plan-month?sheet=entry → #/more/plan-month",
+      "#/more/plan-month → #/more/plan-month?sheet=entry",
+      "#/more/plan-month?sheet=entry → #/more/plan-month",
+    ]);
+  });
+
   it("с грязным черновиком переход спрашивает и ничего не меняет до ответа", async () => {
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });
-    await go(router, { name: "entry" });
+    await go(router, ADD);
     drafts.setDirty(true);
     await go(router, { name: "more" });
     expect(drafts.asked).toHaveLength(1);
-    expect(router.current()).toEqual({ name: "entry" });
-    expect(frame.hashes).toEqual(["#/", "#/new"]);
+    expect(router.current()).toEqual(ADD);
+    expect(frame.hashes).toEqual(["#/", "#/?sheet=entry"]);
     // «Не сохранять»: переход идёт, и черновик, ещё не убранный с экрана, его не останавливает.
     drafts.asked[0]?.();
     await settle();
@@ -256,17 +310,17 @@ describe("черновик и переходы", () => {
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });
     await go(router, { name: "operations" });
-    await go(router, { name: "entry" });
+    await go(router, ADD_OVER_OPERATIONS);
     drafts.setDirty(true);
     await frame.press(-1);
     expect(drafts.asked).toHaveLength(1);
-    expect(router.current()).toEqual({ name: "entry" });
-    expect(frame.hash).toBe("#/new");
-    expect(frame.hashes).toEqual(["#/", "#/operations", "#/new"]);
+    expect(router.current()).toEqual(ADD_OVER_OPERATIONS);
+    expect(frame.hash).toBe("#/operations?sheet=entry");
+    expect(frame.hashes).toEqual(["#/", "#/operations", "#/operations?sheet=entry"]);
     // «Продолжить ввод»: ничего не происходит, и следующее «Назад» снова спрашивает.
     await frame.press(-1);
     expect(drafts.asked).toHaveLength(2);
-    expect(frame.hash).toBe("#/new");
+    expect(frame.hash).toBe("#/operations?sheet=entry");
     // «Не сохранять»: туда, куда человек шёл.
     drafts.asked[1]?.();
     await settle();
@@ -281,7 +335,7 @@ describe("черновик и переходы", () => {
     const drafts = draftGuard();
     const { router } = started("", null, { guard: drafts.guard });
     await go(router, { name: "operations" });
-    await go(router, { name: "entry", edit: OPERATION });
+    await go(router, EDIT);
     drafts.setDirty(true);
     router.redirect({ name: "operations" });
     await settle();
@@ -303,12 +357,12 @@ describe("ключи истории", () => {
   it("каждая запись истории несёт свою цепочку от корня — и только адреса маршрутов", async () => {
     const { frame, router } = started();
     await go(router, { name: "operations" });
-    await go(router, { name: "entry", edit: OPERATION });
+    await go(router, EDIT);
     const states = frame.entries.map((entry) => entry.state as { stack: string[] });
     expect(states.map((state) => state.stack)).toEqual([
       ["#/"],
       ["#/", "#/operations"],
-      ["#/", "#/operations", formatRoute({ name: "entry", edit: OPERATION })],
+      ["#/", "#/operations", formatRoute(EDIT)],
     ]);
   });
 });
@@ -342,18 +396,18 @@ describe("история остаётся правдой и впереди, и �
     expectHonestHistory(frame);
   });
 
-  it("черновик на «+», адрес набран руками → «Продолжить ввод» → «Обзор» → «Не сохранять»: и экран, и адрес — «Обзор»", async () => {
+  it("черновик в листе «+», адрес набран руками → «Продолжить ввод» → «Обзор» → «Не сохранять»: и экран, и адрес — «Обзор»", async () => {
     const drafts = draftGuard();
     const { frame, router, stop } = started("", null, { guard: drafts.guard });
-    await go(router, { name: "entry" });
+    await go(router, ADD);
     drafts.setDirty(true);
     await frame.type("#/reports");
-    // Набранная запись стала правдивой копией «+», и роутер вернулся на шаг — на сам «+»: копия
-    // лежит впереди, а не под экраном (ревью 2a, круг 2, LOW 2). Адрес — снова «+».
+    // Набранная запись стала правдивой копией листа, и роутер вернулся на шаг — на сам лист: копия
+    // лежит впереди, а не под экраном (ревью 2a, круг 2, LOW 2). Адрес — снова лист.
     expect(drafts.asked).toHaveLength(1);
-    expect(router.current()).toEqual({ name: "entry" });
-    expect(frame.hash).toBe("#/new");
-    expect(frame.hashes).toEqual(["#/", "#/new", "#/new"]);
+    expect(router.current()).toEqual(ADD);
+    expect(frame.hash).toBe("#/?sheet=entry");
+    expect(frame.hashes).toEqual(["#/", "#/?sheet=entry", "#/?sheet=entry"]);
     expect(frame.index).toBe(1);
     expectHonestHistory(frame);
     // «Продолжить ввод» — ничего; затем «Обзор» и «Не сохранять».
@@ -366,25 +420,25 @@ describe("история остаётся правдой и впереди, и �
     expect(router.current()).toEqual({ name: "overview" });
     expect(frame.hash).toBe("#/");
     expectHonestHistory(frame);
-    // Перезагрузка открывает то, что на экране, а не «+».
+    // Перезагрузка открывает то, что на экране, а не лист.
     stop();
     const reloaded = createRouter({ window: frame, guard: drafts.guard });
     reloaded.start();
     expect(reloaded.current()).toEqual({ name: "overview" });
   });
 
-  it("адрес, набранный поверх черновика, → системное «Назад» → «Не сохранять» уводит с «+», а не оставляет на копии", async () => {
+  it("адрес, набранный поверх черновика, → системное «Назад» → «Не сохранять» закрывает лист, а не оставляет на копии", async () => {
     // Ревью 2a, круг 2, LOW 2: история была [#/, #/new, #/new] с позицией на копии, и «Назад» с
-    // «Не сохранять» стирал черновик, оставляя человека на «+».
+    // «Не сохранять» стирал черновик, оставляя человека на «+». Теперь «+» — лист, правило то же.
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });
-    await go(router, { name: "entry" });
+    await go(router, ADD);
     drafts.setDirty(true);
     await frame.type("#/reports");
     expect(drafts.asked).toHaveLength(1);
     await frame.press(-1);
     expect(drafts.asked).toHaveLength(2);
-    expect(router.current()).toEqual({ name: "entry" });
+    expect(router.current()).toEqual(ADD);
     drafts.setDirty(false);
     drafts.asked[1]?.();
     await settle();
@@ -417,11 +471,11 @@ describe("история остаётся правдой и впереди, и �
     const drafts = draftGuard();
     const guarded = started("", null, { guard: drafts.guard });
     await go(guarded.router, { name: "operations" });
-    await go(guarded.router, { name: "entry" });
+    await go(guarded.router, ADD_OVER_OPERATIONS);
     drafts.setDirty(true);
     await guarded.frame.typeReplacing("#/more/family");
     expect(drafts.asked).toHaveLength(1);
-    expect(guarded.frame.hashes).toEqual(["#/", "#/operations", "#/new"]);
+    expect(guarded.frame.hashes).toEqual(["#/", "#/operations", "#/operations?sheet=entry"]);
     expect(guarded.frame.index).toBe(2);
     expectHonestHistory(guarded.frame);
     drafts.setDirty(false);
@@ -458,10 +512,10 @@ describe("история остаётся правдой и впереди, и �
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });
     await go(router, { name: "operations" });
-    await go(router, { name: "entry" });
+    await go(router, ADD_OVER_OPERATIONS);
     drafts.setDirty(true);
     await frame.type("#/more/family");
-    expect(frame.hash).toBe("#/new");
+    expect(frame.hash).toBe("#/operations?sheet=entry");
     // «Не сохранять» убирает черновик.
     drafts.setDirty(false);
     drafts.asked[0]?.();
@@ -477,10 +531,11 @@ describe("история остаётся правдой и впереди, и �
   it("сотня случайных шагов — история правдива, адрес совпадает с экраном", async () => {
     const routes = [
       { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" },
-      { name: "entry" }, { name: "entry", edit: OPERATION }, { name: "plan-month" }, { name: "plan-year" },
-      { name: "family" }, { name: "import" }, { name: "operations", sheet: "entry" },
+      ADD, EDIT, { name: "plan-month" }, { name: "plan-year" },
+      { name: "family" }, { name: "import" }, ADD_OVER_OPERATIONS,
+      { name: "overview", month: "2026-08" }, { name: "overview", month: "2026-08", sheet: "entry", op: "expense", dst: CATEGORY },
     ] as const;
-    const typed = ["#/reports", "#/more/family", "#/bogus", "#/new?edit=1200", "#/more", "#/"] as const;
+    const typed = ["#/reports", "#/more/family", "#/bogus", "#/operations?sheet=entry&edit=1200", "#/?month=2026-09", "#/new", "#/more", "#/"] as const;
     for (const seed of [1, 7, 42]) {
       let value = seed;
       const random = (limit: number) => {

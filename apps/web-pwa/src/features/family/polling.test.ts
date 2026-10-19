@@ -13,7 +13,14 @@ import { describe, expect, it } from "vitest";
 
 import { SyncClientError, SyncServerError } from "@family-budget/sync-client";
 
-import { runSyncRound, startVisibilityAwarePolling, type VisibilityAwarePoll } from "./controller";
+import {
+  pollFamilyRound,
+  runSyncRound,
+  startVisibilityAwarePolling,
+  type FamilyPollRound,
+  type SyncRoundEngine,
+  type VisibilityAwarePoll,
+} from "./controller";
 
 function harness(startsHidden = false) {
   let hidden = startsHidden;
@@ -215,6 +222,78 @@ describe("исход круга синхронизации не пропадае
   });
 });
 
+describe("круг опроса: экран догоняет диск в каждом круге, и раньше отчёта", () => {
+  const ok: SyncRoundEngine = { settleDocument: async () => false, sync: async () => ({ pull: { applied: 0 } }) };
+
+  function round(overrides: Partial<FamilyPollRound<SyncRoundEngine>> = {}) {
+    const log: string[] = [];
+    const poll: FamilyPollRound<SyncRoundEngine> = {
+      engineFor: async () => ok,
+      acceptIncomingEpoch: async () => false,
+      cancelled: () => false,
+      setSyncRound: (outcome) => {
+        log.push(`исход ${outcome}`);
+      },
+      refreshSyncState: async () => {
+        log.push("отчёт");
+      },
+      showStored: async (complete) => {
+        log.push(complete ? "экран" : "экран снятого");
+      },
+      ...overrides,
+    };
+    return { log, run: () => pollFamilyRound(poll) };
+  }
+
+  it("удачный круг: исход, экран, отчёт — экран раньше отчёта", async () => {
+    // Отчёт вписывает участника этого устройства записью из показанного бюджета: бюджет, отставший
+    // от диска, дал бы ей конфликт, и участник появлялся бы у семьи на круг позже своей покупки.
+    const test = round();
+    await test.run();
+    expect(test.log).toEqual(["исход ok", "экран", "отчёт"]);
+  });
+
+  it("снятый круг не пишет ни исхода, ни отчёта — но экран догоняет диск", async () => {
+    let torn = false;
+    const test = round({
+      engineFor: async () => ({ settleDocument: async () => false, sync: async () => { torn = true; return { pull: { applied: 1 } }; } }),
+      cancelled: () => torn,
+    });
+    await test.run();
+    expect(test.log).toEqual(["экран снятого"]);
+  });
+
+  it("круг без движка и круг, снятый до начала, тоже сверяют экран", async () => {
+    const none = round({ engineFor: async () => null });
+    await none.run();
+    expect(none.log).toEqual(["экран снятого"]);
+    const early = round({ cancelled: () => true });
+    await early.run();
+    expect(early.log).toEqual(["экран снятого"]);
+  });
+
+  it("смена эпохи после отказа: второй круг, экран, отчёт о нём", async () => {
+    const refused: SyncRoundEngine = { settleDocument: async () => false, sync: async () => { throw new SyncServerError(409, "epoch_mismatch"); } };
+    let engines = 0;
+    const test = round({
+      engineFor: async () => (engines++ === 0 ? refused : ok),
+      acceptIncomingEpoch: async () => true,
+    });
+    await test.run();
+    expect(test.log).toEqual(["исход ok", "экран", "отчёт"]);
+  });
+
+  it("упавшая сверка не роняет круг, а упавший отчёт не отменяет сверку", async () => {
+    const failing = round({ showStored: async () => { throw new Error("диск не прочитался"); } });
+    await expect(failing.run()).resolves.toBeUndefined();
+    expect(failing.log).toEqual(["исход ok", "отчёт"]);
+    const log: string[] = [];
+    const broken = round({ refreshSyncState: async () => { throw new Error("отчёт не собрался"); }, showStored: async (complete) => { log.push(complete ? "экран" : "экран снятого"); } });
+    await expect(broken.run()).rejects.toThrow("отчёт не собрался");
+    expect(log).toEqual(["экран"]);
+  });
+});
+
 describe("цикл синхронизации подключён к видимости, а не к голому интервалу", () => {
   const source = readFileSync(new URL("./controller.ts", import.meta.url), "utf8");
 
@@ -228,6 +307,20 @@ describe("цикл синхронизации подключён к видимо
     expect(source.match(/window\.setInterval\(/gu)).toHaveLength(1);
     expect(source).toContain("setInterval: (callback, ms) => window.setInterval(callback, ms),");
     expect(source).toContain("timer = poll.setInterval(() => poll.run(), poll.intervalMs);");
+  });
+
+  it("круг опроса хука — тот самый `pollFamilyRound`, который проверяют без React", () => {
+    // `two-clients.test.ts` проверяет круг поведением: снятый круг и пустой круг всё равно
+    // сверяют экран с документом. Это верно о хуке, только если хук крутит тот же круг, а не свой.
+    expect(source.match(/await pollFamilyRound\(\{/gu)).toHaveLength(1);
+    expect(source).toContain("showStored: (complete) => showStored(familyId, complete),");
+    // Документ и журнал при нём показываются вместе, журнал — после документа: семейная новость —
+    // это операция бюджета и её автор из журнала, и авторы на экране не старше бюджета.
+    const showStored = source.slice(source.indexOf("const showStored = useCallback("), source.indexOf("const acceptIncomingEpoch = useCallback("));
+    expect(showStored).toMatch(/const adopted = \(await showStoredBudgetRef\.current\?\.\(\)\) === true;\s*if \(!always && !adopted\) return;[\s\S]*restoreJournal\(journal\)[\s\S]*setTransactionAuthors\(authorsOfTransactions\(snapshot\.entries\)\);/u);
+    expect(source.match(/restoreJournal\(journal\)/gu)).toHaveLength(1);
+    // Сверка экрана с диском — в каждом круге: в удачном до отчёта, в снятом и упавшем — на выходе.
+    expect(source).toMatch(/await show\(true\);\s*await poll\.refreshSyncState\(engine\);\s*\} finally \{[\s\S]{0,300}if \(!shown\) await show\(false\);/u);
   });
 
   it("каждый круг записывает свой исход, и пустых «поймали и забыли» в файле нет", () => {

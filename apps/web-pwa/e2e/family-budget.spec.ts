@@ -4,10 +4,11 @@ import {
   G002_INITIAL_OPERATION_COUNT,
   makeG002BackupBuffer,
 } from "./canonical-budget";
+import { amountField, entrySheet, leaveDialog, reachAmount, recordExpense, tile } from "./sheet";
 
 const INITIAL_FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const UPDATED_FLEXIBLE_REMAINING = /18\s*000\s*₽/u;
-const PRODUCTS_OVER_LIMIT = /Продукты:\s*\+1\s*000\s*₽/u;
+const PRODUCTS_OVER_LIMIT = /^Продукты: потрачено 31\s000\s₽ из 30\s000\s₽, перелимит 1\s000\s₽\. Записать расход$/u;
 const TIGHTEST_MONTH_FREE = /13\s*191\s*₽/u;
 
 function expectNavigationSecurityHeaders(response: Response | null) {
@@ -37,8 +38,9 @@ async function expectBudgetSnapshot(
   operationCount: number,
 ) {
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
-  // Герой называет остаток месяца плана независимо от того, идёт этот месяц сейчас или уже закрыт.
-  await expect(page.locator(".hero-card > strong")).toHaveText(remaining);
+  // Строка «Можно на повседневные» называет остаток месяца плана независимо от того, идёт этот
+  // месяц сейчас или уже закрыт.
+  await expect(reachAmount(page)).toHaveText(remaining);
 
   await openHistory(page);
   await expect(
@@ -87,16 +89,10 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
     .toBeVisible();
   await expectBudgetSnapshot(page, INITIAL_FLEXIBLE_REMAINING, G002_INITIAL_OPERATION_COUNT);
 
-  // Покупка: сумма, конверт на табло, дата под «Изменить» — и отдельная кнопка, которая называет
-  // действие словами. Касание конверта его только выбирает.
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
-  await page.getByRole("button", { name: "Изменить", exact: true }).click();
-  await page.getByLabel("Дата").fill("2026-07-18");
-  await page.getByLabel("Сумма, ₽").fill("9000");
-  await page.getByRole("button", { name: /^Продукты:/u }).click();
-  await expect(page.getByRole("button", { name: /^Продукты:/u })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: /^Записать 9\s000\s₽ в «Продукты»$/u }).click();
-  await expect(page.getByRole("status").filter({ hasText: /Записано: расход 9\s000\s₽/u })).toBeVisible();
+  // Покупка: плитка категории открывает лист, дата — «Другой день», сумма — и кнопка, которая
+  // называет действие и сумму словами.
+  await recordExpense(page, { category: "Продукты", amount: "9000", date: "2026-07-18" });
+  await expect(page.locator(".message-toast")).toContainText(/Записано: расход 9\s000\s₽/u);
   await openHistory(page);
   await expect(
     page.getByRole("status").filter({
@@ -106,8 +102,12 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expectAddedExpense(page);
 
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
-  await expect(page.locator(".hero-card > strong")).toHaveText(UPDATED_FLEXIBLE_REMAINING);
-  await expect(page.getByRole("alert")).toContainText(PRODUCTS_OVER_LIMIT);
+  await expect(reachAmount(page)).toHaveText(UPDATED_FLEXIBLE_REMAINING);
+  // Перелимит июля — на плитке «Продуктов» в июле: глиф на плитке, слово и сумма — в её имени.
+  await page.goto("/#/?month=2026-07");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Июль 2026$/u);
+  await expect(tile(page, "Продукты")).toHaveAttribute("aria-label", PRODUCTS_OVER_LIMIT);
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
 
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
@@ -147,8 +147,10 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   await expectAddedExpense(page);
 
   await context.setOffline(false);
-  await page.getByRole("button", { name: "Записать", exact: true }).click();
-  await page.getByLabel("Сумма, ₽").fill("1234");
+  // Лист ввода с черновиком: новая версия не прерывает набор — её плашка ждёт под затемнением.
+  await page.getByRole("button", { name: "Обзор", exact: true }).click();
+  await tile(page, "Продукты").click();
+  await amountField(page).fill("1234");
 
   const switchResponse = await request.post(`${baseURL}/__e2e__/switch-build`, {
     headers: { Origin: baseURL },
@@ -160,8 +162,8 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   });
 
   const updateButton = page.getByRole("button", { name: "Обновить сейчас" });
-  await expect(updateButton).toBeVisible();
-  await expect(page.getByLabel("Сумма, ₽")).toHaveValue("1234");
+  await expect(updateButton).toBeAttached();
+  await expect(amountField(page)).toHaveValue("1234");
 
   // Считаются перезагрузки документа, а не смены адреса: переходы внутри приложения меняют
   // решётку адреса (тоже `framenavigated`), но страницу не перезагружают и черновик не теряют.
@@ -169,17 +171,21 @@ test("G-002 survives restore, offline nested navigation, and an explicit A to B 
   page.on("load", () => {
     mainFrameNavigations += 1;
   });
-  await updateButton.click();
-  await expect(
-    page.getByRole("alert").filter({
-      hasText: "Несохранённый ввод останется в форме до сохранения или очистки.",
-    }),
-  ).toBeVisible();
-  await expect(page.getByLabel("Сумма, ₽")).toHaveValue("1234");
+  // Пока лист открыт, плашка под затемнением: нажать её нельзя, и черновик никуда не делся.
+  const covering = await updateButton.evaluate((button) => {
+    const rect = button.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return hit !== null && !button.contains(hit);
+  });
+  expect(covering, "плашка обновления не стоит поверх листа ввода").toBe(true);
+  await expect(amountField(page)).toHaveValue("1234");
   expect(mainFrameNavigations).toBe(0);
 
-  await page.getByRole("button", { name: "Очистить черновик" }).click();
-  await expect(page.getByLabel("Сумма, ₽")).toHaveValue("");
+  // «Не сохранять» закрывает лист — и плашка снова на виду.
+  await page.keyboard.press("Escape");
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(updateButton).toBeVisible();
   await expect(page.locator("#update-blocked")).toBeHidden();
 
   await openYearPlan(page);

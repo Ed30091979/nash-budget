@@ -12,6 +12,12 @@ export interface BudgetWriteOptions {
    * синхронизацией): её неудача не объявляется, она повторится сама на следующем круге.
    */
   readonly silent?: boolean;
+  /**
+   * Неудачу показывает тот, кто начал запись, своими словами и со своим выходом: лист ввода
+   * закрывается в момент нажатия, и «Не записано: … [Вернуться к черновику]» говорит оболочка через
+   * его черновик. Общая тревога о неудаче, которой некому показать, тогда была бы второй.
+   */
+  readonly ownsFailure?: boolean;
 }
 
 /** Единственный путь, которым экраны и оболочка пишут бюджет (план волны 2, §2.3). */
@@ -59,7 +65,7 @@ export function createBudgetWriter(options: BudgetWriterOptions): BudgetWriter {
       try {
         return await options.coordinator.apply(change);
       } catch (error) {
-        if (runOptions.silent !== true && options.place() !== startedAt) {
+        if (runOptions.silent !== true && runOptions.ownsFailure !== true && options.place() !== startedAt) {
           options.onUnseenFailure({ message: writeFailureText(error), refusal: error instanceof BudgetWriteRefusal });
         }
         throw error;
