@@ -547,3 +547,35 @@ test("фокус после действий на месте — на том, ч
   await expect(page.locator(".manage-status")).toContainText("удалён");
   await expect.poll(() => focused(page)).toBe("h2: USD Доллар США");
 });
+
+test("отказ записи оставляет черновик формы несохранённым: уход спрашивает (счёт и категория)", async ({ page }) => {
+  // Ревью 2c, LOW-3: без `saving.fail(ticket)` отказ домена в записи оставлял форму «записывается»,
+  // и уход с набранным больше не спрашивал. Отказ здесь — внутри записи, а не до неё: имя занято.
+  await loadDemo(page);
+  const asksAbout = async (label: string) => {
+    await page.getByRole("button", { name: "Обзор", exact: true }).click();
+    const dialog = leaveDialog(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(label);
+    await dialog.getByRole("button", { name: "Продолжить ввод" }).click();
+    await expect(dialog).toHaveCount(0);
+  };
+
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: "Новый счёт" }).click();
+  await page.getByLabel("Название").fill("Основной");
+  await page.getByRole("button", { name: "Завести счёт" }).click();
+  await expect(page.getByText("Активный счёт с таким названием уже есть.")).toBeVisible();
+  await asksAbout("новый счёт");
+  await expect(page.getByLabel("Название")).toHaveValue("Основной");
+
+  await page.getByRole("button", { name: "Ещё", exact: true }).click();
+  await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
+  await page.getByRole("button", { name: /^Категории и доходы/u }).click();
+  await page.getByRole("button", { name: /^Продукты: /u }).click();
+  await page.getByLabel("Название").fill("Транспорт");
+  await page.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(page.getByText("Активная категория с таким названием уже существует.")).toBeVisible();
+  await asksAbout("правка категории «Продукты»");
+  await expect(page.getByLabel("Название")).toHaveValue("Транспорт");
+});
