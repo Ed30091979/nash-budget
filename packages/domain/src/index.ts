@@ -1,4 +1,28 @@
 export {
+  ACCOUNT_NAME_MAX_LENGTH,
+  ACCOUNT_TYPES,
+  accountReferences,
+  accountReferenceWords,
+  accountsInOrder,
+  AccountValidationError,
+  archiveAccount,
+  createAccount,
+  holdsPlans,
+  moveAccount,
+  normalizeAccountName,
+  restoreAccount,
+  updateAccount,
+} from "./accounts.js";
+export type {
+  AccountCreation,
+  AccountDraft,
+  AccountErrorCode,
+  AccountField,
+  AccountPatch,
+  AccountReference,
+  MoveDirection,
+} from "./accounts.js";
+export {
   CATEGORY_GROUPS,
   CATEGORY_NAME_MAX_LENGTH,
   CATEGORY_SUGGESTIONS,
@@ -68,6 +92,13 @@ export {
 } from "./debts.js";
 export type { DebtCreation, DebtDraft, DebtErrorCode } from "./debts.js";
 export { calculateHoldings } from "./holdings.js";
+export {
+  BASE_CURRENCY_LOCK_WORDS,
+  baseCurrencyLock,
+  BaseCurrencyValidationError,
+  setBaseCurrency,
+} from "./household.js";
+export type { BaseCurrencyErrorCode, BaseCurrencyLock } from "./household.js";
 export type { HoldingsOptions } from "./holdings.js";
 export { carriedId, documentIds, HOUSEHOLD_ID, isUuid, recurringOccurrenceId } from "./identity.js";
 export { COLLECTION_LIMITS, MAX_MONEY_MINOR, MAX_RECURRENCE_INTERVAL, MAX_SORT_ORDER } from "./limits.js";
