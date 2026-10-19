@@ -77,6 +77,22 @@ describe("planning CRUD", () => {
     expect(restoredAfterExplicitEdit.budgets[0]?.lines.find((item) => item.id === lineId)).toMatchObject({ id: lineId, plannedMinor: 1_300_000, active: true });
   });
 
+  it("a limit's name is unique among expense categories only: an income source of the same name does not block it", () => {
+    // Ревью 2c, LOW-2: лимит «Продуктов» не сохранялся, пока был источник дохода «Продукты» — имя
+    // сравнивалось с категориями обоих видов, а домен различает их по виду.
+    const original = makePlanningTestState();
+    const food = original.categories.find((item) => item.id === TEST_IDS.categories.food)!;
+    const state = { ...original, categories: [...original.categories, { id: "70000000-0000-4000-8000-000000000001", name: food.name, type: "income" as const, group: "income" as const, active: true, sortOrder: 900 }] };
+    const line = state.budgets[0]!.lines.find((item) => item.categoryId === food.id)!;
+    const edited = editFlexibleLine(state, line.id, { name: food.name, amount: "40000" });
+    expect(edited.budgets[0]?.lines.find((item) => item.id === line.id)?.plannedMinor).toBe(4_000_000);
+    const restored = reactivateFlexibleLine(archiveFlexibleLine(state, line.id), line.id);
+    expect(restored.budgets[0]?.lines.find((item) => item.id === line.id)?.active).toBe(true);
+    // Тёзка среди расходов по-прежнему отказ.
+    const children = state.budgets[0]!.lines.find((item) => item.categoryId === TEST_IDS.categories.children)!;
+    expect(() => editFlexibleLine(state, children.id, { name: food.name, amount: "100" })).toThrow("Активная категория с таким названием уже существует.");
+  });
+
   it("archives the shared Children flexible line without affecting camp or seasonal schedules", () => {
     const original = makeCanonicalPlanningState();
     const childrenLine = original.budgets[0]!.lines.find((line) => line.categoryId === TEST_IDS.categories.children)!;

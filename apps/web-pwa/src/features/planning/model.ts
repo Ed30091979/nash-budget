@@ -204,9 +204,13 @@ function validateResult(state: BudgetState): BudgetState {
   return state;
 }
 
+/**
+ * Имя лимита — имя категории расходов: единственно среди активных расходов, как у домена
+ * (`updateCategory`). Источник дохода с тем же именем — другой список и не тёзка (ревью 2c, LOW-2).
+ */
 function uniqueActiveName(state: BudgetState, name: string, exceptCategoryId?: string): void {
   const key = normalizedComparison(name);
-  if (state.categories.some((item) => item.id !== exceptCategoryId && item.active && normalizedComparison(item.name) === key)) {
+  if (state.categories.some((item) => item.id !== exceptCategoryId && item.active && item.type === "expense" && normalizedComparison(item.name) === key)) {
     fail("name", "Активная категория с таким названием уже существует.");
   }
 }
