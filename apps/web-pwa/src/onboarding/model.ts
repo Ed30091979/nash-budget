@@ -154,9 +154,14 @@ export function buildOnboardingBudgetState({ today, currency = DEFAULT_BASE_CURR
   }));
   const budgetId = id();
   const preset = new Set([...PRESET_EXPENSES, PRESET_INCOME].map(categoryNameKey));
-  const categories: Category[] = makeDefaultCategories(id).map((category) => (
-    preset.has(categoryNameKey(category.name)) ? category : { ...category, active: false }
-  ));
+  // Порядок внутри группы — порядок набора (D-041): «Продукты», «Кафе и доставка», «Транспорт»,
+  // «Дом и хозяйство»… Стартовые в архиве встают следом: вернувшись, они не обгоняют выбранные.
+  const presetOrder = (name: string) => PRESET_EXPENSES.findIndex((item) => categoryNameKey(item) === categoryNameKey(name));
+  const categories: Category[] = makeDefaultCategories(id).map((category, index) => {
+    const order = category.type === "expense" ? presetOrder(category.name) : -1;
+    const sortOrder = category.type !== "expense" ? category.sortOrder : order === -1 ? (PRESET_EXPENSES.length + index + 1) * 10 : (order + 1) * 10;
+    return preset.has(categoryNameKey(category.name)) ? { ...category, sortOrder } : { ...category, sortOrder, active: false };
+  });
   const month = monthOfDate(today);
 
   const state: BudgetState = {

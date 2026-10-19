@@ -1,4 +1,5 @@
 import {
+  categoriesInListOrder,
   baseCurrencyOf,
   calculateAnnualPlan,
   calculateBudget,
@@ -75,10 +76,24 @@ describe("набор первого запуска (DIRECTION §e, п. 2)", () =
     expect(plan.months).toHaveLength(12);
     expect(calculateBudget(state)).toMatchObject({ incomeMinor: 0, expensesMinor: 0, capitalMinor: 0 });
     const picker = categoryPickerView(state, "expense");
-    expect(picker.groups.map((group) => group.title)).toEqual(["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]);
+    expect(picker.groups.map((group) => group.title)).toEqual(["Каждый день", "Обязательные платежи", "Личное и досуг", "Прочее"]);
     expect(picker.status).toBe("Найдено 12 категорий");
     // Тот же шлюз, что у восстановленной копии.
     expect(prepareBudgetState(JSON.parse(JSON.stringify(state)) as unknown)).toEqual(state);
+  });
+
+  it("плитки набора — «Каждый день» первым, внутри групп — порядок набора: от «Продуктов» (D-041)", () => {
+    const state = preset();
+    expect(categoriesInListOrder(state.categories, "expense").map((item) => item.name)).toEqual([
+      "Продукты", "Транспорт", "Дом и хозяйство", "Здоровье и аптека",
+      "Жильё", "ЖКХ", "Связь и подписки",
+      "Кафе и доставка", "Одежда и обувь", "Развлечения и хобби", "Подарки и праздники",
+      "Прочее",
+    ]);
+    // Возвращённая из архива стартовая встаёт в конец своей группы, а не перед выбранными.
+    const kids = state.categories.find((item) => item.name === "Дети")!;
+    const restored = { ...state, categories: state.categories.map((item) => (item.id === kids.id ? { ...item, active: true } : item)) };
+    expect(categoriesInListOrder(restored.categories, "expense").map((item) => item.name).slice(0, 5)).toEqual(["Продукты", "Транспорт", "Дом и хозяйство", "Здоровье и аптека", "Дети"]);
   });
 
   it("каждый идентификатор уникален, а повтор UUID — отказ, а не тихий дубль", () => {

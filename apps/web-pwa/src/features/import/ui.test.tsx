@@ -92,7 +92,7 @@ describe("экран выписки", () => {
     // Незнакомое — списком продавцов, по одному полю на продавца, с категориями по группам.
     expect(text).toContain("Не узнали: 2 продавца");
     expect(text).toContain("ООО \"Ромашка\" 2 операции · списание 4 189,90 ₽ · 5 августа и 6 августа");
-    expect(html).toMatch(/<select id="import-merchant-0"[^>]*><option value="" selected="">Выберите категорию<\/option><optgroup label="Обязательные платежи">/u);
+    expect(html).toMatch(/<select id="import-merchant-0"[^>]*><option value="" selected="">Выберите категорию<\/option><optgroup label="Каждый день">/u);
     expect(html).toContain('<option value="#skip">Пропустить — не добавлять</option>');
     // «Прочее» доступно только как явный выбор человека, не как умолчание.
     expect(html).toMatch(/<option value="[^"#]+">Прочее<\/option>/u);

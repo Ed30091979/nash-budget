@@ -50,7 +50,8 @@ describe("подсказка на первую трату (05)", () => {
     const state = preset();
     expect(state.categories.find((item) => item.id === coachCategoryId(state))?.name).toBe("Продукты");
     const without = { ...state, categories: state.categories.map((item) => (item.name === "Продукты" ? { ...item, active: false } : item)) };
-    expect(without.categories.find((item) => item.id === coachCategoryId(without))?.name).toBe("Жильё");
+    // Без «Продуктов» первая плитка — «Транспорт»: «Каждый день» стоит первым (D-041).
+    expect(without.categories.find((item) => item.id === coachCategoryId(without))?.name).toBe("Транспорт");
   });
 
   it("стоит, пока нет ни одной записи и ни одного вопроса; первая запись или «Понятно» снимают её навсегда", () => {
