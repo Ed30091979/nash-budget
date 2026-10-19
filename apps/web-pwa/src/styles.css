@@ -1192,6 +1192,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tile-account .endpoint-word, .tile-account .endpoint-balance { color: var(--on-tile-account-muted); }
 .endpoint-name { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: auto; }
 .endpoint-balance { font-size: inherit; }
+/* The amount sticks to the edge of the scrolling body: on a short screen, typing never pushes it out of sight. */
+.entry-amount-field { position: sticky; top: 0; bottom: 0; z-index: 1; background: var(--surface); }
 .entry-amount-field input { min-height: 68px; padding: 8px 12px; font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; }
 .entry-amount-field input::placeholder { font-weight: 400; }
 .entry-amount-field .amount-total { text-align: center; }
