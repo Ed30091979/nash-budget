@@ -1,0 +1,11 @@
+# script-src 'wasm-unsafe-eval': Argon2id приглашений — это WebAssembly (hash-wasm).
+# Разрешает только компиляцию модулей WebAssembly; eval и new Function остаются запрещены.
+# Обоснование целиком — vite.config.ts, META_CSP.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
