@@ -6,6 +6,7 @@ import {
   type CategoryType,
 } from "@family-budget/domain";
 import { handleDialogKeyboard } from "../data-management/dialog-accessibility";
+import { plainInputValue } from "../../plain-text";
 import { currencySign } from "../rates/RateQuickSheet";
 import {
   categoryNameOutcome,
@@ -106,7 +107,7 @@ export function CategorySheet({
             value={draft.name}
             aria-invalid={blocked ? true : undefined}
             aria-describedby={outcome.kind === "free" ? undefined : "category-sheet-name-hint"}
-            onChange={(event) => onPatch({ name: event.target.value })}
+            onChange={(event) => onPatch({ name: plainInputValue(event.currentTarget) })}
           />
           {outcome.kind === "free" ? null : (
             <p className="sheet-hint" id="category-sheet-name-hint" role="status">
