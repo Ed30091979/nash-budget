@@ -11,6 +11,7 @@ import { readAppSource } from "./app/shell-source";
 import { prepareBudgetState } from "./backup";
 import { ConfirmDialog, draftLeaveQuestion } from "./components/ConfirmDialog";
 import { makeG000State } from "./features/operations/test-fixture";
+import { createOperationsSubmissionGate } from "./features/operations/form-state";
 import { createDraftRegistry, createDraftSaving, type DraftEntry } from "./navigation/draft-guard";
 import { createRouter, memoryRouterWindow } from "./navigation/router";
 import { formatRoute, type Route } from "./navigation/routes";
@@ -125,6 +126,36 @@ describe("черновик, отправленный в запись", () => {
     expect(saving.saving).toBe(false);
     saving.settle(true);
     expect(saving.saving).toBe(false);
+  });
+
+  it("билет берётся внутри шлюза записи: запись, которую шлюз не пустил, защёлку не оставляет висеть", async () => {
+    // Ревью 2a, круг 2, п. 5: билет брали до шлюза, и второе касание, которое шлюз отклонял
+    // (`ignored`), оставляло последним билет, на который никто не ответит.
+    const gate = createOperationsSubmissionGate();
+    const saving = createDraftSaving();
+    let finish: () => void = () => undefined;
+    const write = () => new Promise<void>((resolve) => { finish = resolve; });
+    const run = (submitsDraft: boolean) => gate.run(async () => {
+      const ticket = submitsDraft ? saving.begin() : null;
+      await write();
+      if (ticket !== null) saving.succeed(ticket);
+    });
+    const first = run(true);
+    expect(saving.saving).toBe(true);
+    const second = run(true);
+    await expect(second).resolves.toEqual({ status: "ignored" });
+    finish();
+    await first;
+    saving.settle(false);
+    expect(saving.saving).toBe(false);
+
+    // Так было: билет второго касания взят до шлюза — последним, и первая запись его уже не снимет.
+    const before = createDraftSaving();
+    const firstTicket = before.begin();
+    before.begin();
+    before.succeed(firstTicket);
+    before.settle(false);
+    expect(before.saving).toBe(true);
   });
 
   it("отвечает только последняя запись: опоздавший ответ прежней ничего не снимает и не возвращает", () => {

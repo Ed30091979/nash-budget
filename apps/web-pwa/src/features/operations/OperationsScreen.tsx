@@ -544,12 +544,11 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
 
   // Черновик, ушедший в запись, — уже не несохранённый черновик (третье ревью, e2e b1). Реестр
   // черновиков спрашивает `isDirty` синхронно в момент нажатия, поэтому запись переводит черновик в
-  // «записывается» сама и до первого `await` (`beginSaving`). Неудача возвращает его: содержимое
-  // формы никуда не делось. Удача держит «записывается», пока сброшенная форма не нарисована: между
-  // ответом координатора и этой отрисовкой старая, грязная отрисовка ответила бы реестру неправду.
-  // Каждая запись — свой билет: отвечает только последняя (ревью 2a, п. 2).
+  // «записывается» сама и до первого `await` (`runChange` берёт билет). Неудача возвращает его:
+  // содержимое формы никуда не делось. Удача держит «записывается», пока сброшенная форма не
+  // нарисована: между ответом координатора и этой отрисовкой старая, грязная отрисовка ответила бы
+  // реестру неправду. Каждая запись — свой билет: отвечает только последняя (ревью 2a, п. 2).
   const [saving] = useState(createDraftSaving);
-  const beginSaving = () => saving.begin();
   useLayoutEffect(() => {
     saving.settle(dirty);
   });
@@ -576,8 +575,14 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
     setSheetError(null);
     clearTransient();
   };
-  const runChange = async (change: (current: BudgetState) => BudgetState, success: () => void, ticket: number | null) => {
+  /**
+   * `submitsDraft` — запись уносит черновик формы. Билет берётся внутри шлюза, синхронно, до первого
+   * `await`: запись, которую шлюз не пустил (второе касание, пока идёт первое), билета не берёт и
+   * защёлку не оставляет висеть (ревью 2a, круг 2, п. 5).
+   */
+  const runChange = async (change: (current: BudgetState) => BudgetState, success: () => void, submitsDraft: boolean) => {
     await gate.current.run(async () => {
+      const ticket = submitsDraft ? saving.begin() : null;
       setBusy(true);
       setError(null);
       try {
@@ -708,26 +713,23 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
       return;
     }
     // Записанный черновик сбрасывается: с этого касания он не «несохранённый».
-    const ticket = beginSaving();
-    void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); }, ticket);
+    void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); }, true);
   };
   const confirm = () => {
     if (!confirmation || busy) return;
     if (confirmation.type === "edit") {
       const pending = confirmation;
-      const ticket = beginSaving();
-      void runChange((state) => editTransaction(state, pending.id, pending.draft), () => { recordReceipt("Изменено", pending.draft); reset(pending.draft.kind); }, ticket);
+      void runChange((state) => editTransaction(state, pending.id, pending.draft), () => { recordReceipt("Изменено", pending.draft); reset(pending.draft.kind); }, true);
     } else {
       const pending = confirmation;
       const removed = budget.transactions.find((item) => item.id === pending.id);
       // Удаление открытой в форме операции сбрасывает форму; удаление другой оставляет черновик.
-      const ticket = editingId === pending.id ? beginSaving() : null;
       void runChange((state) => deleteTransaction(state, pending.id), () => {
         const removedDraft = removed === undefined ? null : draftFromTransaction(removed);
         if (removedDraft !== null) recordReceipt("Удалено", removedDraft);
         setConfirmation(null);
         if (editingId === pending.id) reset();
-      }, ticket);
+      }, editingId === pending.id);
     }
   };
   const beginEdit = (transaction: Transaction) => {
@@ -869,7 +871,7 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
           {archivable.length ? <details className="row-disclosure">
             <summary>Убрать категорию из списка</summary>
             <p className="field-hint">Архив прячет категорию из новых операций и сохраняет её в истории и расчётах.</p>
-            <ul className="chip-list">{archivable.map((category) => <li key={category.id}><button className="secondary-button" type="button" disabled={busy} aria-label={`Архивировать использованную категорию «${category.name}»`} onClick={() => void runChange((state) => archiveCategory(state, category.id), () => undefined, null)}>{category.name}</button></li>)}</ul>
+            <ul className="chip-list">{archivable.map((category) => <li key={category.id}><button className="secondary-button" type="button" disabled={busy} aria-label={`Архивировать использованную категорию «${category.name}»`} onClick={() => void runChange((state) => archiveCategory(state, category.id), () => undefined, false)}>{category.name}</button></li>)}</ul>
           </details> : null}
         </details>
       </> : null}

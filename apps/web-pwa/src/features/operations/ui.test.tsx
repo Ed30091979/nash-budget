@@ -129,12 +129,15 @@ describe("operations UI", () => {
     // будет удалён», потому что флаг доходил до приложения только пассивным эффектом.
     const source = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
     const submit = source.slice(source.indexOf("const submit = (event: FormEvent<HTMLFormElement>) => {"), source.indexOf("const confirm = () => {"));
-    expect(submit.indexOf("beginSaving();")).toBeGreaterThan(0);
-    expect(submit.indexOf("beginSaving();")).toBeLessThan(submit.indexOf("void runChange((state) => createTransaction(state, pending)"));
+    // «Записать» уносит черновик: билет берёт `runChange` внутри шлюза, синхронно, до первого
+    // ожидания; запись, которую шлюз не пустил, билета не берёт (ревью 2a, круг 2, п. 5).
+    expect(submit).toContain('void runChange((state) => createTransaction(state, pending), () => { recordReceipt("Записано", pending); reset(pending.kind); }, true);');
+    expect(source).toMatch(/const runChange = async \(change: \(current: BudgetState\) => BudgetState, success: \(\) => void, submitsDraft: boolean\) => \{\s*await gate\.current\.run\(async \(\) => \{\s*const ticket = submitsDraft \? saving\.begin\(\) : null;\s*setBusy\(true\);/u);
+    expect(source).not.toMatch(/saving\.begin\(\)(?![^\n]*: null;)/u);
+    expect(source.match(/saving\.begin\(\)/gu)).toHaveLength(1);
     // Реестр черновиков читает `isDirty` в момент нажатия; пассивного флага больше нет.
     expect(source).not.toContain("onDirtyChange");
     expect(source).toContain("isDirty: () => dirty && !saving.saving,");
-    expect(source).toContain("const beginSaving = () => saving.begin();");
     // Неудача возвращает черновик в несохранённые; удача держит «записывается» до отрисовки сброса.
     expect(source).toMatch(/await onChange\(change\);\s*if \(ticket !== null\) saving\.succeed\(ticket\);\s*success\(\);\s*\} catch \(cause\) \{\s*\/\/[^\n]*\n\s*if \(ticket !== null\) saving\.fail\(ticket\);/u);
     expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*saving\.settle\(dirty\);\s*\}\);/u);
