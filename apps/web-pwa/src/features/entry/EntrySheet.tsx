@@ -121,6 +121,9 @@ export function EntrySheet(props: EntrySheetProps) {
   const [busy, setBusy] = useState(false);
   const [spoken, setSpoken] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // «Оформить возврат» над тронутой правкой — вопросом: правка пропадёт (ревью 2b, MEDIUM-6).
+  const [confirmRefund, setConfirmRefund] = useState(false);
+  const focusRefund = useRef(false);
   const [creating, setCreating] = useState<{ readonly side: EndpointSide; readonly type: "expense" | "income" } | null>(null);
   const shownPicker = useRef<EndpointSide | null>(null);
 
@@ -149,6 +152,15 @@ export function EntrySheet(props: EntrySheetProps) {
     shownPicker.current = picker;
     if (picker === null && closed !== null) sheetRef.current?.querySelector<HTMLElement>(`[data-side="${closed}"]`)?.focus();
   }, [picker]);
+
+  // Возврат оформлен: кнопки, на которой был фокус, больше нет — фокус в сумму возврата, и Esc
+  // по-прежнему закрывает лист. Пассивным эффектом: вопрос о правке держит корень приложения
+  // `inert`, пока его собственная уборка не прошла, а в `inert` фокус не ставится.
+  useEffect(() => {
+    if (!focusRefund.current || draft.mode !== "refund") return;
+    focusRefund.current = false;
+    amountRef.current?.focus({ preventScroll: true });
+  });
 
   useLayoutEffect(() => {
     const caret = caretRef.current;
@@ -212,6 +224,12 @@ export function EntrySheet(props: EntrySheetProps) {
       else if (rating) setRating(false);
       else onClose();
     });
+  };
+
+  const startRefund = (expense: Extract<Transaction, { readonly kind: "expense" }>) => {
+    setConfirmRefund(false);
+    focusRefund.current = true;
+    onRefund(expense);
   };
 
   const remove = async () => {
@@ -348,7 +366,7 @@ export function EntrySheet(props: EntrySheetProps) {
 
               {editing !== null && draft.editId === editing.id ? (
                 <div className="entry-edit-actions">
-                  {editing.kind === "expense" && draft.mode === "expense" ? <button className="secondary-button" type="button" disabled={busy} onClick={() => onRefund(editing)}>Оформить возврат</button> : null}
+                  {editing.kind === "expense" && draft.mode === "expense" ? <button className="secondary-button" type="button" disabled={busy} onClick={() => (props.isDirty() ? setConfirmRefund(true) : startRefund(editing))}>Оформить возврат</button> : null}
                   <button className="secondary-button danger-button" type="button" disabled={busy} onClick={() => setConfirmDelete(true)}>Удалить</button>
                 </div>
               ) : null}
@@ -372,6 +390,16 @@ export function EntrySheet(props: EntrySheetProps) {
           onDone={(categoryId) => choose(categoryId)}
           onChoose={(categoryId) => choose(categoryId)}
           onClose={() => setCreating(null)}
+        />
+      ) : null}
+      {confirmRefund && editing !== null && editing.kind === "expense" ? (
+        <ConfirmDialog
+          title="Оформить возврат без сохранения?"
+          description="Изменения в этой операции не сохранятся: лист перейдёт к возврату покупки."
+          cancelLabel="Продолжить правку"
+          confirmLabel="Оформить возврат"
+          onCancel={() => setConfirmRefund(false)}
+          onConfirm={() => startRefund(editing)}
         />
       ) : null}
       {confirmDelete && editing !== null ? (

@@ -324,6 +324,55 @@ test("тост «Записано» называет то же число, чт�
   await expect(receipt).toHaveText(`Остаток на счёте «Основной»: ${balance}, больше на 100\u00a0₽`);
 });
 
+/** Табом до кнопки или поля, чьё доступное имя — `name`; не дальше шестидесяти шагов. */
+async function tabToName(page: Page, name: string): Promise<void> {
+  for (let step = 0; step < 60; step += 1) {
+    await page.keyboard.press("Tab");
+    const current = await page.evaluate(() => {
+      const active = document.activeElement;
+      if (!(active instanceof HTMLElement)) return "";
+      const label = active.id ? document.querySelector(`label[for="${active.id}"]`)?.textContent : null;
+      return (active.getAttribute("aria-label") ?? label ?? active.textContent ?? "").trim();
+    });
+    if (current === name) return;
+  }
+  throw new Error(`«${name}» не достижим табом.`);
+}
+
+test("«Оформить возврат» над тронутой правкой спрашивает, а после — фокус в сумме возврата, и Esc закрывает", async ({ page }) => {
+  // Ревью 2b, MEDIUM-6: набранное в правке пропадало молча, а фокус падал на тело страницы, откуда
+  // Esc лист уже не закрывал. Весь путь — одной клавиатурой.
+  await loadDemo(page);
+  const { row } = await firstExpenseRow(page);
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(amountField(page)).toBeFocused();
+  await tabToName(page, "Комментарий");
+  await page.keyboard.type("сверено");
+  await tabToName(page, "Оформить возврат");
+  await page.keyboard.press("Enter");
+  const question = page.getByRole("alertdialog", { name: "Оформить возврат без сохранения?" });
+  await expect(question).toBeVisible();
+  await expect(question.getByRole("button", { name: "Продолжить правку" })).toBeFocused();
+  // «Продолжить правку» — набранное на месте, фокус на «Оформить возврат».
+  await page.keyboard.press("Enter");
+  await expect(question).toHaveCount(0);
+  await expect(entrySheet(page).getByRole("textbox", { name: "Комментарий" })).toHaveValue("сверено");
+  await expect(entrySheet(page).getByRole("button", { name: "Оформить возврат" })).toBeFocused();
+  // Ещё раз — и «Оформить возврат»: лист возврата, фокус в его сумме.
+  await page.keyboard.press("Enter");
+  await expect(question).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(question.getByRole("button", { name: "Оформить возврат" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(entrySheet(page)).toHaveAccessibleName(/^Возврат: /u);
+  await expect(amountField(page)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(leaveDialog(page)).toHaveCount(0);
+  await expect(row).toBeFocused();
+});
+
 test("лист держит фокус: Tab ходит внутри, Esc с набранным спрашивает, без набранного — закрывает", async ({ page }) => {
   await loadDemo(page);
   await page.setViewportSize({ width: 390, height: 844 });
