@@ -906,6 +906,7 @@ export function OperationsScreen({ budget, onChange, onPlanning, clock: givenClo
     {sheet ? <CategorySheet
       budget={budget}
       draft={sheet}
+      description="Сумма, дата и счёт в форме останутся на месте. После сохранения категория сразу будет выбрана."
       busy={busy}
       error={sheetError}
       onPatch={(patch) => setSheet((current) => current ? { ...current, ...patch } : current)}

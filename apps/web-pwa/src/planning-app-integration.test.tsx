@@ -92,15 +92,15 @@ describe("planning app integration", () => {
 
     // План месяца и план на год — подэкраны «Ещё» со своими адресами и кнопкой «назад».
     const routes = readFileSync(new URL("./navigation/routes.ts", import.meta.url), "utf8");
-    expect(routes).toContain('| { readonly name: "plan-month"; readonly sheet?: SheetName }');
-    expect(routes).toContain('| { readonly name: "plan-year"; readonly sheet?: SheetName }');
+    expect(routes).toContain('| ({ readonly name: "plan-month" } & SheetFields)');
+    expect(routes).toContain('| ({ readonly name: "plan-year" } & SheetFields)');
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     expect(source).toContain('{route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}');
     expect(source).toContain('<BackButton label="К разделу «Ещё»" onClick={onBack} />');
     expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => write.run(change)} />');
     // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
-    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
+    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     // На подэкранах плана подсвечена вкладка «Ещё»: план живёт под ней.
     expect(source).toMatch(/case "plan-month":\s*case "plan-year":\s*case "family":\s*case "import":\s*return "more";/u);

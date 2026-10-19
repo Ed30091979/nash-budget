@@ -102,14 +102,20 @@ describe("operations app integration", () => {
     const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
-    expect(source).toMatch(/import \{[^}]*\bOperationsScreen\b[^}]*\} from "\.\.\/features\/operations"/u);
+    // Операцию с 2b записывает лист ввода поверх экрана: его запись — через тот же писатель оболочки.
+    expect(source).toContain('import { EntrySheetHost } from "../features/entry/EntrySheetHost";');
+    expect(source).toMatch(/const entryController = useMemo\(\(\) => createEntryController\(\{\s*store: entryStore,\s*write,/u);
+    expect(source).toMatch(/await options\.write\.run\(\(state\) => \{\s*const result = writeEntry\(state, draft, makeId\);/u);
+    expect(source).not.toMatch(/repository\.(?:save|saveVersioned)\(/u);
+    expect(readFileSync(new URL("./features/entry/EntrySheet.tsx", import.meta.url), "utf8"), "лист ввода обязан держать несохранённый черновик в реестре")
+      .toContain("useDraftGuard(");
     // Смысл, а не буква разметки. Прежде здесь стояли две строки с полным перечнем свойств: они
     // ломались от любого нового свойства и при этом ничего не утверждали о том, куда идёт запись.
     // Утверждение одно: экран, меняющий бюджет, пишет через общий долговечный координатор и
     // держит несохранённый черновик в реестре — а собственного пути в хранилище у него нет.
     for (const [screen, file] of [
-      ["OperationsScreen", "./features/operations/OperationsScreen.tsx"],
       ["PlanningScreen", "./features/planning/PlanningScreen.tsx"],
+      ["ImportScreen", "./features/import/ImportScreen.tsx"],
     ] as const) {
       const start = source.indexOf(`<${screen} `);
       expect(start, `${screen} нет в разметке приложения`).toBeGreaterThan(-1);
@@ -121,7 +127,7 @@ describe("operations app integration", () => {
     }
     // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
     expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
-    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
+    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={toast !== null}>');
     expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
     expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");

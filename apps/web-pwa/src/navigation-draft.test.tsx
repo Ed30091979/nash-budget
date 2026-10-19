@@ -333,13 +333,13 @@ describe("оболочка спрашивает реестр", () => {
     expect(shell.indexOf("<BottomNav ")).toBeLessThan(shell.indexOf("<main id={MAIN_CONTENT_ID}"));
     expect(source).toContain('onTab={(tab) => navigate({ name: tab })}');
     expect(source).toMatch(/<nav ref=\{navRef\} className="bottom-nav" aria-label="Основные разделы">/u);
-    // Каждый маршрут подсвечивает свою вкладку или ни одной — у «+» своё место.
+    // Каждый маршрут подсвечивает свою вкладку; лист — вкладку под собой (а лист «+» — сам «+», см. BottomNav.test).
     const routes: readonly Route[] = [
-      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" }, { name: "entry" },
-      { name: "plan-month" }, { name: "plan-year" }, { name: "family" }, { name: "import" },
+      { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" }, { name: "overview", sheet: "entry" },
+      { name: "plan-month" }, { name: "plan-year" }, { name: "family" }, { name: "import" }, { name: "overview", month: "2026-08" },
     ];
     expect(routes.map((route) => activeTab(route))).toEqual([
-      "overview", "operations", "reports", "more", null, "more", "more", "more", "more",
+      "overview", "operations", "reports", "more", "overview", "more", "more", "more", "more", "overview",
     ]);
     // И с любого маршрута одно нажатие на «Обзор» туда и ведёт — без вопроса, пока черновика нет.
     for (const route of routes) {
@@ -359,8 +359,15 @@ describe("оболочка спрашивает реестр", () => {
 
   it("routes every internal unmounting control through the shared guard", () => {
     // Каждая дверь между экранами — переход роутера, а значит, вопрос реестру; своего пути у неё нет.
-    expect(source).toContain('onAdd={() => navigate({ name: "entry" })}');
-    expect(source).toContain('onYear={() => navigate({ name: "plan-year" })}');
+    // «+» и строки «Операций» открывают лист ввода тем же переходом — `openSheet` зовёт `navigate`.
+    expect(source).toContain("onAdd={() => openSheet({})}");
+    expect(source).toContain("onEdit={openEdit}");
+    expect(source).toContain('const destination = { ...withoutSheet(route), sheet: "entry", ...opening } as Route;');
+    expect(source).toMatch(/setReplaceFailed\(\{ proceed: \(\) => \{ entryStore\.discardFailed\(\); navigate\(destination\); \} \}\);\s*return;\s*\}\s*navigate\(destination\);/u);
+    // Не записанный черновик ждёт «Вернуться к черновику» и не держит переход; перезагрузку — держит.
+    expect(source).toContain('const failedEntry = useRef<DraftEntry>({ label: "операция, которая не записалась", isDirty: () => entryStore.failed() !== null, guardsNavigation: false });');
+    expect(source).toContain('onPlan={() => navigate({ name: "plan-month" })}');
+    expect(source).toContain('onPlanYear={() => navigate({ name: "plan-year" })}');
     expect(source).toContain('onPlanning={() => navigate({ name: "plan-month" })}');
     expect(source).toContain('onFamily={() => navigate({ name: "family" })}');
     expect(source).toContain('onImportStatement={() => navigate({ name: "import" })}');

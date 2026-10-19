@@ -9,6 +9,7 @@ import {
   ALL_ROUTE_FIXTURES,
   draftGuard,
   expectHonestHistory,
+  CATEGORY,
   FakeBrowser,
   go,
   OPERATION,
@@ -163,14 +164,16 @@ describe("адрес — только маршрут: исходники", () =>
     expect(touching).toEqual([]);
   });
 
-  it("каждый обход повторного ревью 2a отвергается, вставленный в экран операции", () => {
-    const screen = sources().find(({ path }) => path === "web/features/operations/OperationsScreen.tsx");
+  it("каждый обход повторного ревью 2a отвергается, вставленный в лист ввода операции", () => {
+    // С 2b операцию записывает лист ввода: сумма, комментарий и метки черновика — у него в руках.
+    const sheet = "web/features/entry/EntrySheet.tsx";
+    const screen = sources().find(({ path }) => path === sheet);
     expect(screen).toBeDefined();
     const at = screen?.text.indexOf("    if (busy) return;") ?? -1;
     expect(at).toBeGreaterThan(0);
     for (const [label, snippet] of REVIEW_BYPASSES) {
       const patched = `${screen?.text.slice(0, at) ?? ""}    ${snippet}\n${screen?.text.slice(at) ?? ""}`;
-      expect(violations("web/features/operations/OperationsScreen.tsx", patched), label).not.toEqual([]);
+      expect(violations(sheet, patched), label).not.toEqual([]);
     }
   });
 
@@ -260,7 +263,7 @@ function hostileValues(random: ReturnType<typeof generator>): unknown[] {
   return [
     "", "кофе", "1200", "Продукты 1 250 ₽", OPERATION.toUpperCase(), `${OPERATION} `, ` ${OPERATION}`,
     `${OPERATION}&note=кофе`, `${OPERATION}#/spent`, OPERATION.replace(/-/gu, ""), "00000000-0000-0000-0000-000000000000",
-    "entry", "ENTRY", "entry&amount=1200", "2026-10-19", "2026-10", "12", 1200, -1, 0.5, Number.NaN, null, true, {}, [], ["entry"],
+    "entry", "ENTRY", "entry&amount=1200", "expense", "income&note=кофе", "2026-10-19", "2026-10", "12", 1200, -1, 0.5, Number.NaN, null, true, {}, [], ["entry"],
     random_text(), random_text(), random_text(),
   ];
 }
@@ -282,19 +285,26 @@ describe("адрес — только маршрут: грамматика", () 
       expect(parseRoute(address), address).toEqual({ route, notFound: false });
     }
     // UUID принимается в любом регистре и пишется строчными.
-    expect(formatRoute({ name: "entry", edit: OPERATION.toUpperCase() })).toBe(`#/new?edit=${OPERATION}`);
-    expect(parseRoute(`#/new?edit=${OPERATION.toUpperCase()}`).route).toEqual({ name: "entry", edit: OPERATION });
+    expect(formatRoute({ name: "operations", sheet: "entry", edit: OPERATION.toUpperCase() })).toBe(`#/operations?sheet=entry&edit=${OPERATION}`);
+    expect(parseRoute(`#/operations?sheet=entry&edit=${OPERATION.toUpperCase()}`).route).toEqual({ name: "operations", sheet: "entry", edit: OPERATION });
+    expect(formatRoute({ name: "overview", sheet: "entry", op: "expense", dst: CATEGORY.toUpperCase() })).toBe(`#/?sheet=entry&op=expense&dst=${CATEGORY}`);
   });
 
   it("всё вне грамматики — ошибка программы, и в адрес оно не попадёт", () => {
     const outside = [
-      { name: "entry", edit: "Продукты 1 250 ₽" },
-      { name: "entry", edit: "1250" },
+      { name: "operations", sheet: "entry", edit: "Продукты 1 250 ₽" },
+      { name: "operations", sheet: "entry", edit: "1250" },
       { name: "operations", q: "кофе" },
       { name: "operations", note: "кофе" },
-      { name: "entry", edit: OPERATION, amount: 1200 },
+      { name: "operations", sheet: "entry", edit: OPERATION, amount: 1200 },
       { name: "overview", sheet: "кофе" },
+      { name: "overview", sheet: "entry", op: "expense", dst: "Продукты" },
+      { name: "overview", sheet: "entry", op: "кофе" },
+      { name: "overview", sheet: "entry", op: "expense", note: "кофе" },
+      { name: "overview", month: "июль" },
       { name: "reports", edit: OPERATION },
+      { name: "reports", month: "2026-08" },
+      { name: "entry" },
       { name: "spent" },
       { name: "more", sheet: "entry", from: "2026-10-01" },
     ];
@@ -332,7 +342,7 @@ describe("адрес — только маршрут: грамматика", () 
   it("перебор адресов: что бы ни пришло в решётке, прочитанный маршрут пишется языком адреса", () => {
     const random = generator(19);
     const heads = ["#/", "#/new", "#/operations", "#/more/plan-month", "#/reports", "#/spent", "#/more"];
-    const keys = ["edit", "sheet", "q", "note", "amount", "EDIT", "edit[]", ""];
+    const keys = ["edit", "sheet", "op", "src", "dst", "month", "q", "note", "amount", "EDIT", "edit[]", ""];
     for (let attempt = 0; attempt < 2000; attempt += 1) {
       const values = hostileValues(random).map((value) => (typeof value === "string" ? value : JSON.stringify(value) ?? ""));
       const query = Array.from({ length: random.next(4) }, () => `${random.pick(keys)}=${random.pick(values)}`).join("&");
@@ -360,7 +370,7 @@ describe("адрес — только маршрут: история, котор
     const drafts = draftGuard();
     const { frame, router } = started("", null, { guard: drafts.guard });
     await go(router, { name: "operations" });
-    await go(router, { name: "entry" });
+    await go(router, { name: "operations", sheet: "entry" });
     drafts.setDirty(true);
     await frame.press(-1);
     expect(drafts.asked).toHaveLength(1);
@@ -371,7 +381,7 @@ describe("адрес — только маршрут: история, котор
     await settle();
     expectHonestHistory(frame);
     // Уход без вопроса: операции больше нет.
-    await go(router, { name: "entry", edit: OPERATION });
+    await go(router, { name: "operations", sheet: "entry", edit: OPERATION });
     drafts.setDirty(true);
     router.redirect({ name: "operations" });
     await settle();
@@ -383,7 +393,10 @@ describe("адрес — только маршрут: история, котор
       "#/operations?q=%D0%BA%D0%BE%D1%84%D0%B5&amount=1200",
       "#/spent?amount=1200&note=кофе",
       "#/new?edit=1200",
-      `#/new?edit=${OPERATION.toUpperCase()}`,
+      `#/operations?sheet=entry&edit=${OPERATION.toUpperCase()}`,
+      "#/operations?sheet=entry&edit=1200",
+      "#/?sheet=entry&op=expense&dst=Продукты&amount=1200",
+      "#/?month=2026-08&note=кофе",
     ]) {
       await frame.type(typed);
       await settle();
@@ -420,6 +433,7 @@ describe("адрес — только маршрут: история, котор
       ["#/more/import", null],
       ["#/?amount=1200", null],
       ["#/new?edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/new?edit=not-a-uuid"] }],
+      ["#/operations?sheet=entry&edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/", "#/operations?sheet=entry&edit=not-a-uuid"] }],
       ["#/reports", { mark: "nash-budget/route", stack: ["#/", "#/reports"], note: "кофе" }],
       ["#/operations", { mark: "nash-budget/route", stack: ["#/", "#/operations?q=кофе"] }],
     ] as const) {

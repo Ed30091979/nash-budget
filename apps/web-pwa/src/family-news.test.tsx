@@ -128,8 +128,10 @@ describe("семейная новость на «Сегодня»", () => {
     // …и на момент, когда новость стояла на экране: человек ушёл с «Обзора» или свернул приложение.
     expect(appSource).toContain('const newsOnScreen = route.name === "overview" && familyNews.length > 0;');
     expect(appSource).toContain("if (newsOnScreen) markNewsSeen();");
-    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла.
-    expect(appSource).toMatch(/onLeave: \(key\) => \{[\s\S]{0,120}leaving\.current\(\);/u);
+    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла. Лист
+    // поверх «Обзора» и другой месяц — не уход: новость остаётся на экране под ними.
+    expect(appSource).toMatch(/onLeave: \(key, next\) => \{[\s\S]{0,300}leaving\.current\(\);/u);
+    expect(appSource).toContain("if (screen === screenKey(parseRoute(next).route)) return;");
     expect(appSource).toMatch(/visibilityState !== "hidden"[\s\S]{0,200}setSeenTransactionIds\(transactionIds\(current\)\)[\s\S]{0,200}addEventListener\("visibilitychange"/u);
     // Нового хранилища нет: память сессии, а на следующем открытии — бюджет с диска.
     expect(appSource).not.toMatch(/seen-transactions|family-news-seen|writeSyncState\(\[\{ key: "news/u);
@@ -148,7 +150,7 @@ describe("моменты на входе имеют потолок", () => {
   it("плашка внизу одна: сообщение приложения прячет плашку обновления, а не встаёт на неё", () => {
     expect(appSource.match(/<UpdatePrompt /gu)).toHaveLength(1);
     expect(appSource).toContain("suppressed={messageShown}");
-    expect(appSource).toContain("messageShown={message !== null}");
+    expect(appSource).toContain("messageShown={toast !== null}");
     // Семейная новость — вторая и последняя: в потоке и только на «Сегодня».
     expect(appSource.match(/familyNews=\{familyNewsText\}/gu)).toHaveLength(1);
     expect(design).toMatch(/число моментов[^\n]*потолок|потолок[^\n]*момент/iu);

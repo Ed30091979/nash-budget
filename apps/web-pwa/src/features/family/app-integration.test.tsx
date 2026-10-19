@@ -56,7 +56,7 @@ describe("приложение с экраном семьи", () => {
 
   it("экран семьи добавлен как маршрут и не трогает нижнюю навигацию", () => {
     const routes = readFileSync(new URL("../../navigation/routes.ts", import.meta.url), "utf8");
-    expect(routes).toContain('| { readonly name: "family"; readonly sheet?: SheetName }');
+    expect(routes).toContain('| ({ readonly name: "family" } & SheetFields)');
     // Один и тот же экран «Семья» — маршрут оболочки (`#/more/family`) и дверь с экрана ожидания.
     expect(source).toContain('{route.name === "family" ? familyScreen(back) : null}');
     expect(source).toContain("const familyScreen = (onBack: () => void) => (\n    <FamilyScreen");
@@ -86,8 +86,8 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain("const keyAlarm = syncAlarm(family.status?.stop ?? null);");
     expect(source).toContain('<section className="key-alarm" role="alert"');
     // Тост гасится таймером; тревога в него не попадает ни на одном пути.
-    expect(source).toMatch(/setTimeout\(\(\) => setMessage\(null\), 6000\)/u);
-    expect(source).not.toMatch(/setMessage\([^)]*keyAlarm/u);
+    expect(source).toMatch(/setTimeout\(\(\) => setToast\(null\), toastDuration\(toast\)\)/u);
+    expect(source).not.toMatch(/(?:setMessage|showToast)\([^)]*keyAlarm/u);
     const banner = source.slice(source.indexOf('className="key-alarm"'), source.indexOf("<RouteView "));
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });

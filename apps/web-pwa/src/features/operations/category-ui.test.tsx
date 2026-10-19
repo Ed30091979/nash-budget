@@ -118,6 +118,7 @@ function sheetMarkup(draft: CategorySheetDraft, state: BudgetState = fullCatalog
     <CategorySheet
       budget={state}
       draft={draft}
+      description="Сумма, дата и счёт в форме останутся на месте. После сохранения категория сразу будет выбрана."
       busy={false}
       error={null}
       onPatch={vi.fn()}

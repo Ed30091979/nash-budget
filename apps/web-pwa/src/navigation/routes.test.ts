@@ -13,25 +13,36 @@ import {
   routeKey,
   ROUTE_NOT_FOUND_MESSAGE,
   sameRecordId,
+  screenKey,
+  withoutSheet,
   type Route,
 } from "./routes";
 
 const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+const ACCOUNT = "22222222-2222-4222-8222-222222222221";
+const RESERVE = "22222222-2222-4222-8222-222222222222";
+const CATEGORY = "73333333-3333-4333-8333-333333333335";
 
-/** Все маршруты 2a — по одному на каждую форму адреса. */
+/** Все маршруты 2b — по одному на каждую форму адреса. */
 const ROUTES: readonly Route[] = [
   { name: "overview" },
+  { name: "overview", month: "2026-08" },
   { name: "operations" },
   { name: "reports" },
   { name: "more" },
-  { name: "entry" },
-  { name: "entry", edit: OPERATION },
   { name: "plan-month" },
   { name: "plan-year" },
   { name: "family" },
   { name: "import" },
   { name: "overview", sheet: "entry" },
+  { name: "overview", sheet: "entry", op: "expense", dst: CATEGORY },
+  { name: "overview", month: "2026-08", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+  { name: "overview", sheet: "entry", op: "income", dst: ACCOUNT },
+  { name: "overview", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+  { name: "overview", sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
   { name: "operations", sheet: "entry" },
+  { name: "operations", sheet: "entry", edit: OPERATION },
+  { name: "more", sheet: "entry" },
 ];
 
 describe("адреса маршрутов", () => {
@@ -42,11 +53,20 @@ describe("адреса маршрутов", () => {
     }
     expect(formatRoute({ name: "overview" })).toBe("#/");
     expect(formatRoute({ name: "operations" })).toBe("#/operations");
-    expect(formatRoute({ name: "entry" })).toBe("#/new");
-    expect(formatRoute({ name: "entry", edit: OPERATION })).toBe(`#/new?edit=${OPERATION}`);
+    expect(formatRoute({ name: "overview", month: "2026-08" })).toBe("#/?month=2026-08");
     expect(formatRoute({ name: "plan-month" })).toBe("#/more/plan-month");
     expect(formatRoute({ name: "plan-year" })).toBe("#/more/plan-year");
     expect(formatRoute({ name: "overview", sheet: "entry" })).toBe("#/?sheet=entry");
+    // Ключи — в каноническом порядке грамматики, как бы их ни перечислили.
+    expect(formatRoute({ dst: CATEGORY, src: ACCOUNT, op: "expense", sheet: "entry", month: "2026-08", name: "overview" }))
+      .toBe(`#/?month=2026-08&sheet=entry&op=expense&src=${ACCOUNT}&dst=${CATEGORY}`);
+    expect(formatRoute({ name: "operations", sheet: "entry", edit: OPERATION })).toBe(`#/operations?sheet=entry&edit=${OPERATION}`);
+  });
+
+  it("адрес «+» подволны 2a — «Обзор»: запись теперь лист, и по старой ссылке он не открывается", () => {
+    expect(parseRoute("#/new")).toEqual({ route: ROOT_ROUTE, notFound: false });
+    expect(parseRoute(`#/new?edit=${OPERATION}`)).toEqual({ route: ROOT_ROUTE, notFound: false });
+    expect(parseRoute("#/new?sheet=entry")).toEqual({ route: { name: "overview", sheet: "entry" }, notFound: false });
   });
 
   it("пустой адрес, «#» и «#/» — «Обзор», и это не ошибка", () => {
@@ -63,17 +83,25 @@ describe("адреса маршрутов", () => {
       ["#/reports/x/y", { name: "reports" }],
       ["#/new/x", { name: "overview" }],
       ["#//more", { name: "overview" }],
-      ["#/new?edit=not-a-uuid", { name: "operations" }],
-      ["#/new?edit=1250", { name: "operations" }],
-      [`#/new?edit=${OPERATION}&edit=${OPERATION}`, { name: "operations" }],
+      // Операция, которой не может быть, — листа нет: экран под ним и «Запись не найдена».
+      ["#/operations?sheet=entry&edit=not-a-uuid", { name: "operations" }],
+      ["#/operations?sheet=entry&edit=1250", { name: "operations" }],
+      [`#/operations?sheet=entry&edit=${OPERATION}&edit=${OPERATION}`, { name: "operations" }],
+      ["#/?month=2026-08&sheet=entry&edit=Продукты", { name: "overview", month: "2026-08" }],
       ["#/?sheet=unknown", { name: "overview" }],
+      ["#/?month=2026-13", { name: "overview" }],
+      ["#/?month=август", { name: "overview" }],
       ["#/operations?sheet=entry&sheet=entry", { name: "operations" }],
+      // Вид не из перечня и плитка не UUID — ключ отброшен, лист без него, и это тоже «не найдена».
+      ["#/?sheet=entry&op=coffee", { name: "overview", sheet: "entry" }],
+      ["#/?sheet=entry&op=expense&dst=1250", { name: "overview", sheet: "entry", op: "expense" }],
+      [`#/?sheet=entry&op=expense&src=${ACCOUNT}&src=${ACCOUNT}`, { name: "overview", sheet: "entry", op: "expense" }],
       [`#/${"x".repeat(600)}`, { name: "overview" }],
       // Значения читаются как есть: каноническое значение не кодируется, и `%…` — не наше.
       ["#/?sheet=%65ntry", { name: "overview" }],
-      [`#/new?edit=${OPERATION.replace("-", "%2D")}`, { name: "operations" }],
-      ["#/new?edit", { name: "operations" }],
-      ["#/new?edit=", { name: "operations" }],
+      [`#/operations?sheet=entry&edit=${OPERATION.replace("-", "%2D")}`, { name: "operations" }],
+      ["#/operations?sheet=entry&edit", { name: "operations" }],
+      ["#/operations?sheet=entry&edit=", { name: "operations" }],
       ["#/more/family?sheet=entry+", { name: "family" }],
     ];
     for (const [hash, route] of cases) {
@@ -87,14 +115,30 @@ describe("адреса маршрутов", () => {
     expect(parseRoute("#/more/")).toEqual({ route: { name: "more" }, notFound: false });
     // Ключ записи истории — только канонический адрес: лишнее не переживает ни одного перехода.
     expect(routeKey(parseRoute("#/operations?utm=1").route)).toBe("#/operations");
-    expect(parseRoute(`#/new?edit=${OPERATION.toUpperCase()}`).route).toEqual({ name: "entry", edit: OPERATION });
-    // `edit` принадлежит только записи; у других маршрутов он — лишний ключ.
+    expect(parseRoute(`#/operations?sheet=entry&edit=${OPERATION.toUpperCase()}`).route).toEqual({ name: "operations", sheet: "entry", edit: OPERATION });
+    // Ключи листа без листа — лишние, как чужие: экран открывается без них.
     expect(parseRoute(`#/operations?edit=${OPERATION}`)).toEqual({ route: { name: "operations" }, notFound: false });
+    expect(parseRoute(`#/?op=expense&dst=${CATEGORY}`)).toEqual({ route: ROOT_ROUTE, notFound: false });
+    // Плитки без вида и вид рядом с правкой — тоже лишние: такой лист не открывают.
+    expect(parseRoute(`#/?sheet=entry&src=${ACCOUNT}`)).toEqual({ route: { name: "overview", sheet: "entry" }, notFound: false });
+    expect(parseRoute(`#/operations?sheet=entry&edit=${OPERATION}&op=expense&dst=${CATEGORY}`))
+      .toEqual({ route: { name: "operations", sheet: "entry", edit: OPERATION }, notFound: false });
+    // Порядок ключей в набранном адресе — любой; ключ записи истории — канонический.
+    expect(routeKey(parseRoute(`#/?dst=${CATEGORY.toUpperCase()}&op=expense&sheet=entry`).route)).toBe(`#/?sheet=entry&op=expense&dst=${CATEGORY}`);
+    // `month` — только у «Обзора».
+    expect(parseRoute("#/operations?month=2026-08")).toEqual({ route: { name: "operations" }, notFound: false });
   });
 
   it("в адресе только непрозрачные идентификаторы и ключи — ни сумм, ни заметок, ни имён", () => {
-    expect(() => formatRoute({ name: "entry", edit: "Продукты 1 250 ₽" })).toThrow();
-    expect(() => formatRoute({ name: "entry", edit: "1250" })).toThrow();
+    expect(() => formatRoute({ name: "operations", sheet: "entry", edit: "Продукты 1 250 ₽" })).toThrow();
+    expect(() => formatRoute({ name: "operations", sheet: "entry", edit: "1250" })).toThrow();
+    expect(() => formatRoute({ name: "overview", sheet: "entry", op: "expense", dst: "Продукты" })).toThrow();
+    expect(() => formatRoute({ name: "overview", month: "август" })).toThrow();
+    // Ключи между собой: листа нет — нет и его ключей; плитки — только с видом; правка — без вида.
+    expect(() => formatRoute({ name: "operations", edit: OPERATION })).toThrow();
+    expect(() => formatRoute({ name: "overview", op: "expense" })).toThrow();
+    expect(() => formatRoute({ name: "overview", sheet: "entry", src: ACCOUNT })).toThrow();
+    expect(() => formatRoute({ name: "operations", sheet: "entry", edit: OPERATION, op: "expense" })).toThrow();
     for (const route of ROUTES) {
       expect(formatRoute(route)).toMatch(/^#\/[a-z/-]*(?:\?[a-z]+=[0-9a-z-]+(?:&[a-z]+=[0-9a-z-]+)*)?$/u);
     }
@@ -143,14 +187,17 @@ describe("родители маршрутов", () => {
     }
   });
 
-  it("вкладки и «+» — дети «Обзора», подэкраны «Ещё» — дети «Ещё», правка — дитя «Операций»", () => {
+  it("вкладки и другой месяц — дети «Обзора», подэкраны «Ещё» — дети «Ещё», лист — дитя экрана под ним", () => {
     for (const name of ["operations", "reports", "more"] as const) {
       expect(isTab({ name })).toBe(true);
       expect(parentRoute({ name })).toEqual(ROOT_ROUTE);
     }
-    expect(isTab({ name: "entry" })).toBe(false);
-    expect(parentRoute({ name: "entry" })).toEqual(ROOT_ROUTE);
-    expect(parentRoute({ name: "entry", edit: OPERATION })).toEqual({ name: "operations" });
+    expect(isRoot({ name: "overview", month: "2026-08" })).toBe(false);
+    // Другой месяц — та же вкладка: шаг между месяцами не копит записи истории, «Назад» — к текущему.
+    expect(isTab({ name: "overview", month: "2026-08" })).toBe(true);
+    expect(parentRoute({ name: "overview", month: "2026-08" })).toEqual(ROOT_ROUTE);
+    expect(parentRoute({ name: "operations", sheet: "entry", edit: OPERATION })).toEqual({ name: "operations" });
+    expect(parentRoute({ name: "overview", month: "2026-08", sheet: "entry", op: "expense", dst: CATEGORY })).toEqual({ name: "overview", month: "2026-08" });
     for (const name of ["plan-month", "plan-year", "family", "import"] as const) {
       expect(parentRoute({ name })).toEqual({ name: "more" });
     }
@@ -163,6 +210,16 @@ describe("родители маршрутов", () => {
     expect(parentRoute(sheet)).toEqual({ name: "operations" });
     expect(forReload(sheet)).toEqual({ name: "operations" });
     expect(forReload({ name: "plan-month" })).toEqual({ name: "plan-month" });
+    // Вместе с листом уходит всё, с чем его открыли: плитки и правка по ссылке не оживают.
+    expect(forReload({ name: "overview", month: "2026-08", sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE })).toEqual({ name: "overview", month: "2026-08" });
+    expect(withoutSheet({ name: "operations", sheet: "entry", edit: OPERATION })).toEqual({ name: "operations" });
+  });
+
+  it("экран маршрута — без листа и без месяца «Обзора»: по нему помнится прокрутка и ставится фокус", () => {
+    expect(screenKey({ name: "overview" })).toBe("#/");
+    expect(screenKey({ name: "overview", month: "2026-08", sheet: "entry", op: "expense", dst: CATEGORY })).toBe("#/");
+    expect(screenKey({ name: "operations", sheet: "entry", edit: OPERATION })).toBe("#/operations");
+    expect(screenKey({ name: "plan-year", sheet: "entry" })).toBe("#/more/plan-year");
   });
 
   it("идентификатор из адреса находит операцию, записанную в любом регистре (ревью 2a, п. 4)", () => {
@@ -171,15 +228,16 @@ describe("родители маршрутов", () => {
     expect(sameRecordId(OPERATION, OPERATION.replace("7f1d", "7f1e"))).toBe(false);
     // Адрес — всегда строчными; хранимое — как пришло, и `resolveRoute` с этим сравнением его находит.
     const stored = [{ id: OPERATION.toUpperCase() }];
-    const route = parseRoute(`#/new?edit=${OPERATION.toUpperCase()}`).route;
-    expect(route).toEqual({ name: "entry", edit: OPERATION });
+    const route = parseRoute(`#/operations?sheet=entry&edit=${OPERATION.toUpperCase()}`).route;
+    expect(route).toEqual({ name: "operations", sheet: "entry", edit: OPERATION });
     expect(resolveRoute(route, { transaction: (id) => stored.some((item) => sameRecordId(item.id, id)) })).toEqual({ route, notFound: false });
   });
 
-  it("операция, которой в бюджете нет, — «Запись не найдена» и возврат к «Операциям»", () => {
-    const route: Route = { name: "entry", edit: OPERATION };
+  it("операция, которой в бюджете нет, — «Запись не найдена», и лист не открывается над «Операциями»", () => {
+    const route: Route = { name: "operations", sheet: "entry", edit: OPERATION };
     expect(resolveRoute(route, { transaction: () => true })).toEqual({ route, notFound: false });
     expect(resolveRoute(route, { transaction: () => false })).toEqual({ route: { name: "operations" }, notFound: true });
-    expect(resolveRoute({ name: "entry" }, { transaction: () => false })).toEqual({ route: { name: "entry" }, notFound: false });
+    const blank: Route = { name: "overview", sheet: "entry" };
+    expect(resolveRoute(blank, { transaction: () => false })).toEqual({ route: blank, notFound: false });
   });
 });

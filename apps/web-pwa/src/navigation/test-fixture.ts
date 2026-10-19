@@ -8,41 +8,84 @@ import { formatRoute, parseRoute, type Route, type RouteName } from "./routes";
  */
 
 export const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+export const ACCOUNT = "22222222-2222-4222-8222-222222222221";
+export const RESERVE = "22222222-2222-4222-8222-222222222222";
+export const CATEGORY = "73333333-3333-4333-8333-333333333335";
 
 /**
  * Every address form, per route. The type makes a route without fixtures a compile error; the
  * privacy test makes a query key without a fixture a test failure.
  */
 export const ROUTE_FIXTURES = {
-  overview: [{ name: "overview" }, { name: "overview", sheet: "entry" }],
-  operations: [{ name: "operations" }, { name: "operations", sheet: "entry" }],
-  reports: [{ name: "reports" }, { name: "reports", sheet: "entry" }],
-  more: [{ name: "more" }, { name: "more", sheet: "entry" }],
-  entry: [
-    { name: "entry" },
-    { name: "entry", edit: OPERATION },
-    { name: "entry", sheet: "entry" },
-    { name: "entry", edit: OPERATION, sheet: "entry" },
+  overview: [
+    { name: "overview" },
+    { name: "overview", month: "2026-08" },
+    { name: "overview", sheet: "entry" },
+    { name: "overview", sheet: "entry", op: "expense", dst: CATEGORY },
+    { name: "overview", month: "2026-08", sheet: "entry", op: "expense", src: ACCOUNT, dst: CATEGORY },
+    { name: "overview", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "overview", sheet: "entry", op: "transfer", src: ACCOUNT, dst: RESERVE },
+    { name: "overview", sheet: "entry", edit: OPERATION },
   ],
-  "plan-month": [{ name: "plan-month" }, { name: "plan-month", sheet: "entry" }],
-  "plan-year": [{ name: "plan-year" }, { name: "plan-year", sheet: "entry" }],
-  family: [{ name: "family" }, { name: "family", sheet: "entry" }],
-  import: [{ name: "import" }, { name: "import", sheet: "entry" }],
+  operations: [
+    { name: "operations" },
+    { name: "operations", sheet: "entry" },
+    { name: "operations", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "operations", sheet: "entry", edit: OPERATION },
+  ],
+  reports: [
+    { name: "reports" },
+    { name: "reports", sheet: "entry" },
+    { name: "reports", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "reports", sheet: "entry", edit: OPERATION },
+  ],
+  more: [
+    { name: "more" },
+    { name: "more", sheet: "entry" },
+    { name: "more", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "more", sheet: "entry", edit: OPERATION },
+  ],
+  "plan-month": [
+    { name: "plan-month" },
+    { name: "plan-month", sheet: "entry" },
+    { name: "plan-month", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "plan-month", sheet: "entry", edit: OPERATION },
+  ],
+  "plan-year": [
+    { name: "plan-year" },
+    { name: "plan-year", sheet: "entry" },
+    { name: "plan-year", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "plan-year", sheet: "entry", edit: OPERATION },
+  ],
+  family: [
+    { name: "family" },
+    { name: "family", sheet: "entry" },
+    { name: "family", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "family", sheet: "entry", edit: OPERATION },
+  ],
+  import: [
+    { name: "import" },
+    { name: "import", sheet: "entry" },
+    { name: "import", sheet: "entry", op: "income", src: CATEGORY, dst: ACCOUNT },
+    { name: "import", sheet: "entry", edit: OPERATION },
+  ],
 } as const satisfies { readonly [N in RouteName]: readonly Extract<Route, { readonly name: N }>[] };
 
 export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
-const SHEET = "sheet=entry";
+const MONTH = "\\d{4}-(?:0[1-9]|1[0-2])";
+/** The sheet and what it was opened with: a kind from the list and tile UUIDs, or an operation's UUID. */
+const SHEET = `sheet=entry(?:&op=(?:expense|income|transfer)(?:&src=${UUID})?(?:&dst=${UUID})?|&edit=${UUID})?`;
 
 /**
  * The whole address language, written out by hand rather than derived from the grammar it checks:
- * a path, then only closed-type values — a lowercase UUID, a sheet name. No free text fits. A new
- * query key is a deliberate edit here.
+ * a path, then only closed-type values — a lowercase UUID, a sheet name, a kind, a month. No free
+ * text fits. A new query key is a deliberate edit here.
  */
 export const ROUTE_FRAGMENT = new RegExp(
-  `^#/(?:(?:|operations|reports|more|more/(?:plan-month|plan-year|family|import))(?:\\?${SHEET})?` +
-    `|new(?:\\?(?:edit=${UUID}(?:&${SHEET})?|${SHEET}))?)$`,
+  `^#/(?:(?:\\?(?:month=${MONTH}(?:&${SHEET})?|${SHEET}))?` +
+    `|(?:operations|reports|more|more/(?:plan-month|plan-year|family|import))(?:\\?${SHEET})?)$`,
   "u",
 );
 

@@ -18,7 +18,6 @@ import { readAppSource } from "../../app/shell-source";
 
 const appSource = readAppSource();
 const historySource = readFileSync(new URL("./HistoryScreen.tsx", import.meta.url), "utf8");
-const operationsSource = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
 const reportsSource = readFileSync(new URL("../reports/ReportsScreen.tsx", import.meta.url), "utf8");
 
 const extraIds = {
@@ -88,17 +87,16 @@ describe("история — вкладка «Операции»", () => {
     expect(text).toContain("Поиск по категории, счёту или сумме");
   });
 
-  it("— вкладка навигации, и её строка открывает операцию в форме записи по адресу правки", () => {
+  it("— вкладка навигации, и её строка открывает операцию в листе ввода по адресу правки", () => {
     // Вкладка «Операции» нижней навигации — второе место из пяти; на «Ещё» второй двери нет.
     expect(appSource).toContain('{ tab: "operations", label: "Операции", icon: "history" },');
-    expect(appSource).toContain('{route.name === "operations" ? <HistoryScreen budget={budget} onEdit={(transaction) => navigate({ name: "entry", edit: transaction.id })} onAdd={() => navigate({ name: "entry" })} /> : null}');
+    expect(appSource).toContain('{route.name === "operations" ? <HistoryScreen budget={budget} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}');
     expect(appSource).not.toContain("Вся история</strong>");
-    // Строка просит экран записи открыть операцию адресом `#/new?edit=<id>`: просьба одна на адрес,
-    // а кончившаяся правка сменяет адрес на адрес записи.
-    expect(appSource).toContain("const editRequest = useMemo<EditRequest | null>(() => editId === null ? null : { id: editId, nonce: 0 }, [editId]);");
-    expect(appSource).toContain('editRequest={editRequest} onEditFinished={() => redirect({ name: "entry" }, { replace: true })}');
-    expect(operationsSource).toMatch(/if \(transaction\) beginEdit\(transaction\);\s*onEditRequestHandled\?\.\(\);/u);
-    expect(operationsSource).toMatch(/const reset = \(kind: FormKind = draft\.kind\) => \{\s*if \(editingId !== null\) onEditFinished\?\.\(\);/u);
+    // Строка открывает лист поверх «Операций» адресом `#/operations?sheet=entry&edit=<id>`: в адрес
+    // идёт только UUID операции, а лист находит её в бюджете в любом регистре.
+    expect(appSource).toContain("const opening = sheetEditOf(transaction);");
+    expect(appSource).toContain("budget.transactions.find((item) => sameRecordId(item.id, editId))");
+    expect(appSource).toContain("const opening = useMemo(() => editing === null ? null : draftFromTransaction(budget, editing), [budget, editing]);");
     // Строка — одна цель нажатия с именем операции; удаление живёт в форме, а не в строке.
     const markup = historyMarkup(withAllFlows());
     expect(markup).toMatch(/<button class="row-open" type="button" aria-label="Изменить операцию «Возврат 1 500 ₽ от 2026-07-07»"/u);

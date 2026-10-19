@@ -105,8 +105,11 @@ export interface NavigationGuard {
 export interface RouterOptions {
   readonly window: RouterWindow;
   readonly guard?: NavigationGuard;
-  /** Перед сменой маршрута — с ключом того, с которого уходят: оболочка запоминает прокрутку. */
-  readonly onLeave?: (key: string) => void;
+  /**
+   * Перед сменой маршрута — с ключом того, с которого уходят, и того, куда приходят: оболочка
+   * запоминает прокрутку и отличает уход с экрана от листа, открытого поверх него.
+   */
+  readonly onLeave?: (key: string, next: string) => void;
   /** Адрес назвал то, чего нет: маршрут уже ушёл к родителю, человеку надо сказать «Запись не найдена». */
   readonly onNotFound?: () => void;
 }
@@ -137,9 +140,9 @@ function commonPrefix(left: readonly string[], right: readonly string[]): number
   return length;
 }
 
-/** Маршрут, который кладётся поверх того, на котором стоишь: запись «+» и всякий лист. */
+/** Маршрут, который кладётся поверх того, на котором стоишь: всякий лист, и лист ввода тоже. */
 function stacksOnTop(route: Route): boolean {
-  return route.sheet !== undefined || (route.name === "entry" && route.edit === undefined);
+  return route.sheet !== undefined;
 }
 
 /**
@@ -203,7 +206,7 @@ export function createRouter(options: RouterOptions): Router {
     const next = parseRoute(key).route;
     stack = chain;
     if (sameRoute(next, route)) return;
-    options.onLeave?.(routeKey(route));
+    options.onLeave?.(routeKey(route), routeKey(next));
     route = next;
     notify();
   };

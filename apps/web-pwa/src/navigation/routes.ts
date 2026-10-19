@@ -19,17 +19,41 @@ import { isUuid } from "@family-budget/domain";
 export const SHEET_NAMES = ["entry"] as const;
 export type SheetName = (typeof SHEET_NAMES)[number];
 
+/** Что лист ввода открыт записать — с плиток «Обзора»; «+» открывает его без вида. */
+export const ENTRY_SHEET_OPS = ["expense", "income", "transfer"] as const;
+export type EntrySheetOp = (typeof ENTRY_SHEET_OPS)[number];
+
+/**
+ * Лист поверх экрана и то, с чем его открыли, — только закрытые типы: вид из перечня и непрозрачные
+ * идентификаторы плиток. Сумма, дата, комментарий и метки — черновик (`app/entry-draft-store.ts`),
+ * и в адрес он не попадает. Ключи названы не `from`/`to`/`kind`: у «Операций» эти имена займут
+ * фильтры подволны 2d — даты и вид операции, другие типы под теми же именами.
+ */
+export interface SheetFields {
+  readonly sheet?: SheetName;
+  /** Вид записи: расход, доход, перевод. */
+  readonly op?: EntrySheetOp;
+  /** «Откуда»: счёт расхода и перевода, источник дохода. */
+  readonly src?: string;
+  /** «Куда»: категория расхода, счёт дохода и перевода. */
+  readonly dst?: string;
+  /** Операция, открытая в листе для правки. */
+  readonly edit?: string;
+}
+
+/** Ключи, которые бывают только у открытого листа. */
+const SHEET_ONLY_KEYS = ["op", "src", "dst", "edit"] as const satisfies readonly (keyof SheetFields)[];
+
 export type Route =
-  | { readonly name: "overview"; readonly sheet?: SheetName }
-  | { readonly name: "operations"; readonly sheet?: SheetName }
-  | { readonly name: "reports"; readonly sheet?: SheetName }
-  | { readonly name: "more"; readonly sheet?: SheetName }
-  /** «+»: запись операции; `edit` — операция, открытая из «Операций». */
-  | { readonly name: "entry"; readonly edit?: string; readonly sheet?: SheetName }
-  | { readonly name: "plan-month"; readonly sheet?: SheetName }
-  | { readonly name: "plan-year"; readonly sheet?: SheetName }
-  | { readonly name: "family"; readonly sheet?: SheetName }
-  | { readonly name: "import"; readonly sheet?: SheetName };
+  /** «Обзор»; `month` — месяц плиток, `ГГГГ-ММ`, без него — текущий. */
+  | ({ readonly name: "overview"; readonly month?: string } & SheetFields)
+  | ({ readonly name: "operations" } & SheetFields)
+  | ({ readonly name: "reports" } & SheetFields)
+  | ({ readonly name: "more" } & SheetFields)
+  | ({ readonly name: "plan-month" } & SheetFields)
+  | ({ readonly name: "plan-year" } & SheetFields)
+  | ({ readonly name: "family" } & SheetFields)
+  | ({ readonly name: "import" } & SheetFields);
 
 export type RouteName = Route["name"];
 
@@ -51,7 +75,7 @@ export function isTab(route: Route): boolean {
 }
 
 export function isRoot(route: Route): boolean {
-  return route.name === "overview" && route.sheet === undefined;
+  return route.name === "overview" && route.sheet === undefined && route.month === undefined;
 }
 
 /**
@@ -62,13 +86,12 @@ export function parentRoute(route: Route): Route | null {
   if (route.sheet !== undefined) return withoutSheet(route);
   switch (route.name) {
     case "overview":
-      return null;
+      // Другой месяц «Обзора» — шаг от текущего: «Назад» возвращает к сегодняшнему месяцу.
+      return route.month === undefined ? null : ROOT_ROUTE;
     case "operations":
     case "reports":
     case "more":
       return ROOT_ROUTE;
-    case "entry":
-      return route.edit === undefined ? ROOT_ROUTE : { name: "operations" };
     case "plan-month":
     case "plan-year":
     case "family":
@@ -77,9 +100,10 @@ export function parentRoute(route: Route): Route | null {
   }
 }
 
+/** Экран под листом: без листа и без того, с чем лист открыли. */
 export function withoutSheet(route: Route): Route {
-  if (route.sheet === undefined) return route;
-  const { sheet: _sheet, ...rest } = route;
+  if (route.sheet === undefined && !SHEET_ONLY_KEYS.some((key) => key in route)) return route;
+  const { sheet: _sheet, op: _op, src: _src, dst: _dst, edit: _edit, ...rest } = route;
   return rest;
 }
 
@@ -98,8 +122,6 @@ function pathOf(route: Route): string {
       return "#/reports";
     case "more":
       return "#/more";
-    case "entry":
-      return "#/new";
     case "plan-month":
     case "plan-year":
     case "family":
@@ -124,10 +146,11 @@ export type QueryValue =
 
 export type QuerySpec = QueryValue & {
   /**
-   * Where an invalid value leads. Without it the key is dropped and the route stays; with it —
-   * an identifier naming a record that cannot exist — the route goes to the record's list.
+   * Where an invalid value leads. Without it the key is dropped and the route stays; with
+   * `"close-sheet"` — an identifier naming a record that cannot exist — the sheet does not open and
+   * the route stays on the screen under it.
    */
-  readonly invalid?: Route;
+  readonly invalid?: "close-sheet";
 };
 
 type QueryKeysOf<N extends RouteName> = Exclude<keyof Extract<Route, { readonly name: N }>, "name">;
@@ -135,23 +158,44 @@ type QueryKeysOf<N extends RouteName> = Exclude<keyof Extract<Route, { readonly 
 /** Every optional field of every route has exactly one spec: a new field without one does not compile. */
 type QueryGrammar = { readonly [N in RouteName]: { readonly [K in QueryKeysOf<N>]-?: QuerySpec } };
 
-const SHEET_SPEC: QuerySpec = { kind: "enum", values: SHEET_NAMES };
+/**
+ * The sheet's keys, the same on every screen, in their canonical order. `edit` names an operation:
+ * one that cannot exist means there is no sheet to open, so the sheet closes — see `parseRoute`.
+ */
+const SHEET_GRAMMAR = {
+  sheet: { kind: "enum", values: SHEET_NAMES },
+  op: { kind: "enum", values: ENTRY_SHEET_OPS },
+  src: { kind: "uuid" },
+  dst: { kind: "uuid" },
+  edit: { kind: "uuid", invalid: "close-sheet" },
+} as const satisfies { readonly [K in keyof SheetFields]-?: QuerySpec };
 
 /**
  * The address grammar: per route, the query keys it may carry, in their canonical order. Adding a
  * key is adding a line here — and in the fragment pattern of `address-privacy.test.ts`, on purpose.
  */
 export const QUERY_GRAMMAR = {
-  overview: { sheet: SHEET_SPEC },
-  operations: { sheet: SHEET_SPEC },
-  reports: { sheet: SHEET_SPEC },
-  more: { sheet: SHEET_SPEC },
-  entry: { edit: { kind: "uuid", invalid: { name: "operations" } }, sheet: SHEET_SPEC },
-  "plan-month": { sheet: SHEET_SPEC },
-  "plan-year": { sheet: SHEET_SPEC },
-  family: { sheet: SHEET_SPEC },
-  import: { sheet: SHEET_SPEC },
+  overview: { month: { kind: "month" }, ...SHEET_GRAMMAR },
+  operations: SHEET_GRAMMAR,
+  reports: SHEET_GRAMMAR,
+  more: SHEET_GRAMMAR,
+  "plan-month": SHEET_GRAMMAR,
+  "plan-year": SHEET_GRAMMAR,
+  family: SHEET_GRAMMAR,
+  import: SHEET_GRAMMAR,
 } as const satisfies QueryGrammar;
+
+/**
+ * The rules between keys, which a per-key grammar cannot say: the sheet's keys exist only with an
+ * open sheet, tiles only with the kind they were tapped for, and a sheet edits an operation or
+ * writes a new one between two tiles — never both.
+ */
+function sheetFieldsCoherent(fields: Readonly<Record<string, unknown>>): boolean {
+  const open = fields.sheet !== undefined;
+  if (!open && SHEET_ONLY_KEYS.some((key) => fields[key] !== undefined)) return false;
+  if (fields.op === undefined && (fields.src !== undefined || fields.dst !== undefined)) return false;
+  return !(fields.edit !== undefined && fields.op !== undefined);
+}
 
 const DAY_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/u;
 const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
@@ -213,6 +257,7 @@ export function formatRoute(route: Route): string {
     if (text === null) throw new Error("A route value is outside the address grammar.");
     pairs.push(`${key}=${text}`);
   }
+  if (!sheetFieldsCoherent(fields)) throw new Error("A sheet key is outside an open sheet, or an edit names tiles too.");
   const path = pathOf(route);
   return pairs.length === 0 ? path : `${path}?${pairs.join("&")}`;
 }
@@ -259,8 +304,9 @@ function routeOfPath(segments: readonly string[]): ParsedRoute {
       return tail ? notFound({ name: "operations" }) : found({ name: "operations" });
     case "reports":
       return tail ? notFound({ name: "reports" }) : found({ name: "reports" });
+    // Адрес «+» подволны 2a: записи теперь — лист поверх экрана, и по ссылке он не открывается.
     case "new":
-      return tail ? notFound(ROOT_ROUTE) : found({ name: "entry" });
+      return tail ? notFound(ROOT_ROUTE) : found(ROOT_ROUTE);
     case "more": {
       if (!tail) return found({ name: "more" });
       const child = (MORE_CHILDREN as readonly string[]).includes(second) ? second as MoreChild : null;
@@ -295,7 +341,7 @@ export function parseRoute(hash: string): ParsedRoute {
   const fields: Record<string, unknown> = { ...base.route };
   const seen = new Set<string>();
   let rejected = false;
-  let fallback: Route | null = null;
+  let closeSheet = false;
   for (const part of search === "" ? [] : search.split("&")) {
     const at = part.indexOf("=");
     const key = at === -1 ? part : part.slice(0, at);
@@ -307,13 +353,18 @@ export function parseRoute(hash: string): ParsedRoute {
     if (text === null) {
       // Повтор ключа или значение не своего типа: такой записи нет.
       rejected = true;
-      fallback ??= spec.invalid ?? null;
+      if (spec.invalid === "close-sheet") closeSheet = true;
       delete fields[key];
       continue;
     }
     fields[key] = fieldValue(spec, text);
   }
-  if (fallback !== null) return notFound(fallback);
+  if (closeSheet) return notFound(withoutSheet(fields as unknown as Route));
+  // Ключи листа без листа — отбросить молча, как чужие; плитки без вида и плитки рядом с правкой —
+  // тоже лишние: такой лист не открывают, и в адрес они больше не вернутся.
+  if (fields.sheet === undefined) for (const key of SHEET_ONLY_KEYS) delete fields[key];
+  if (fields.edit !== undefined) delete fields.op;
+  if (fields.op === undefined) for (const key of ["src", "dst"] as const) delete fields[key];
   const route = fields as unknown as Route;
   try {
     formatRoute(route);
@@ -337,10 +388,20 @@ export function sameRecordId(stored: string, routed: string): boolean {
  * устройстве), — тоже «Запись не найдена», и маршрут уходит к родителю.
  */
 export function resolveRoute(route: Route, exists: { readonly transaction: (id: string) => boolean }): ParsedRoute {
-  if (route.name === "entry" && route.edit !== undefined && !exists.transaction(route.edit)) {
-    return notFound(parentRoute(route) ?? ROOT_ROUTE);
+  if (route.sheet !== undefined && route.edit !== undefined && !exists.transaction(route.edit)) {
+    return notFound(withoutSheet(route));
   }
   return found(route);
+}
+
+/**
+ * Экран маршрута: без листа и без месяца «Обзора». По нему помнится прокрутка и ставится фокус на
+ * заголовок: открытый лист и смена месяца — тот же экран, и фокус там ведут лист и стрелки.
+ */
+export function screenKey(route: Route): string {
+  const screen = withoutSheet(route);
+  if (screen.name === "overview" && screen.month !== undefined) return routeKey(ROOT_ROUTE);
+  return routeKey(screen);
 }
 
 /**

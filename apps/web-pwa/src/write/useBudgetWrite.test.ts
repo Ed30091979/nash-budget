@@ -54,6 +54,17 @@ describe("единственный путь записи", () => {
     expect(unseen).toEqual([]);
   });
 
+  it("неудачу, которую показывает тот, кто начал запись, оболочка не дублирует и после ухода", async () => {
+    // Лист ввода закрывается в момент нажатия, и «Не записано: … [Вернуться к черновику]» — его тост.
+    let fail!: (reason: unknown) => void;
+    const { write, unseen, moveTo } = writer(() => new Promise<BudgetState>((_resolve, reject) => { fail = reject; }));
+    const pending = write.run((current) => current, { ownsFailure: true });
+    moveTo("#/#4");
+    fail(new BudgetWriteRefusal("held"));
+    await expect(pending).rejects.toBeInstanceOf(BudgetWriteRefusal);
+    expect(unseen).toEqual([]);
+  });
+
   it("называет неудачу словами для человека: отказ, конфликт вкладок, всё прочее — общей фразой", () => {
     for (const reason of Object.keys(WRITE_REFUSAL_TEXT) as (keyof typeof WRITE_REFUSAL_TEXT)[]) {
       expect(writeFailureText(new BudgetWriteRefusal(reason))).toBe(WRITE_REFUSAL_TEXT[reason]);

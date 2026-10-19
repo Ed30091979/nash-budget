@@ -1,0 +1,197 @@
+import {
+  addExchangeRate,
+  baseCurrencyOf,
+  calculateBudget,
+  RateValidationError,
+  TagValidationError,
+  type BudgetState,
+  type ExchangeRateDraft,
+  type Transaction,
+} from "@family-budget/domain";
+import type { ToastMessage } from "../components/Toast";
+import { EntryReceipt } from "../features/entry/EntryReceipt";
+import { toTransactionDraft, writeEntry, type EntryDraft } from "../features/entry/entry-model";
+import {
+  deleteTransaction,
+  OperationsValidationError,
+  recreateTransaction,
+  restoreTransaction,
+} from "../features/operations/model";
+import { effectLabel, effectTarget, effectValueMinor } from "../features/operations/save-receipt";
+import { createOperationsSubmissionGate } from "../features/operations/form-state";
+import { kindLabels, transactionCurrency } from "../features/operations/transaction-words";
+import { formatMoney } from "../money";
+import { parseRoute, withoutSheet, type Route } from "../navigation/routes";
+import { writeFailureText, type BudgetWriter } from "../write/useBudgetWrite";
+import type { EntryDraftStore } from "./entry-draft-store";
+
+/**
+ * Запись из листа ввода — то, что делает оболочка, когда лист уже закрыт (план волны 2, §2.4).
+ *
+ * «Записать» проверяет черновик по нынешнему бюджету синхронно: отказ домена — в листе, и лист
+ * остаётся. Прошедший — уходит в запись: черновик с этого касания «записывается» (билет защёлки —
+ * внутри шлюза, до первого `await`), лист закрывается сразу, а запись доводит координатор. Итог —
+ * тост: «Записано» с числом, которое сдвинулось, и «Отменить»; неудача — «Не записано: … [Вернуться
+ * к черновику]», и черновик ждёт в своём хранилище.
+ */
+export interface EntryController {
+  /** Слова отказа — лист показывает их и остаётся; `null` — запись ушла, лист закрыт. */
+  submit(draft: EntryDraft): string | null;
+  remove(transaction: Transaction): Promise<string | null>;
+  saveRate(draft: ExchangeRateDraft): Promise<string | null>;
+  /** Открыть не записанный черновик там, откуда его записывали. */
+  returnToDraft(): void;
+}
+
+export interface EntryControllerOptions {
+  readonly store: EntryDraftStore;
+  readonly write: BudgetWriter;
+  readonly current: () => BudgetState | null;
+  /** Маршрут сейчас — лист открыт поверх него. */
+  readonly route: () => Route;
+  /** Переход без вопроса: лист закрывается после «Записать» — черновик уже не «несохранённый». */
+  readonly redirect: (route: Route) => void;
+  /** Переход с проверками оболочки (задержка семьи): «Вернуться к черновику». */
+  readonly navigate: (route: Route) => void;
+  readonly showToast: (toast: Omit<ToastMessage, "key">) => void;
+  readonly makeId?: () => string;
+}
+
+/** Отказ словами поля или общей фразой — текст произвольной ошибки на экран не попадает. */
+export function entryErrorText(error: unknown): string {
+  if (error instanceof OperationsValidationError || error instanceof RateValidationError || error instanceof TagValidationError) return error.message;
+  return writeFailureText(error);
+}
+
+/** «Записано: расход 1 250 ₽» — вид и сумма в валюте счёта операции. */
+function operationWords(verb: string, transaction: Transaction, state: BudgetState): string {
+  return `${verb}: ${kindLabels[transaction.kind].toLowerCase()} ${formatMoney(transaction.amountMinor, transactionCurrency(transaction, state))}`;
+}
+
+/** Число, которое сдвинула запись: остаток лимита категории или остаток счёта — до и после. */
+function receiptDetail(before: BudgetState, after: BudgetState, draft: EntryDraft) {
+  try {
+    const beforeMetrics = calculateBudget(before);
+    const target = effectTarget(before, beforeMetrics, toTransactionDraft(before, draft));
+    if (target === null) return undefined;
+    const currency = target.kind === "category"
+      ? baseCurrencyOf(after)
+      : after.accounts.find((account) => account.id === target.id)?.currency ?? baseCurrencyOf(after);
+    return <EntryReceipt value={{
+      label: effectLabel(target),
+      beforeMinor: effectValueMinor(beforeMetrics, target),
+      afterMinor: effectValueMinor(calculateBudget(after), target),
+      currency,
+    }} />;
+  } catch {
+    return undefined;
+  }
+}
+
+export function createEntryController(options: EntryControllerOptions): EntryController {
+  const gate = createOperationsSubmissionGate();
+  const makeId = options.makeId ?? (() => crypto.randomUUID());
+
+  const undo = (label: string, change: (state: BudgetState) => BudgetState) => {
+    void options.write.run(change, { ownsFailure: true })
+      .then(() => options.showToast({ text: `Отменено: ${label}` }))
+      .catch((error: unknown) => options.showToast({ text: `Не отменено: ${entryErrorText(error)}` }));
+  };
+
+  const returnToDraft = () => {
+    const failed = options.store.failed();
+    if (failed !== null) options.navigate(parseRoute(failed.key).route);
+  };
+
+  return {
+    submit(draft) {
+      if (gate.locked) return null;
+      const before = options.current();
+      if (before === null) return null;
+      try {
+        writeEntry(before, draft, makeId);
+      } catch (error) {
+        return entryErrorText(error);
+      }
+      const opened = options.route();
+      void gate.run(async () => {
+        const ticket = options.store.beginSaving();
+        options.redirect(withoutSheet(opened));
+        let transactionId = "";
+        try {
+          const after = await options.write.run((state) => {
+            const result = writeEntry(state, draft, makeId);
+            transactionId = result.transactionId;
+            return result.state;
+          }, { ownsFailure: true });
+          options.store.succeed(ticket);
+          const written = after.transactions.find((item) => item.id === transactionId);
+          if (written === undefined) return;
+          const previous = draft.editId === null ? undefined : before.transactions.find((item) => item.id === draft.editId);
+          const label = operationWords(draft.editId === null ? "Записано" : "Изменено", written, after);
+          options.showToast({
+            text: label,
+            detail: receiptDetail(before, after, draft),
+            action: {
+              label: "Отменить",
+              run: () => undo(label.slice(label.indexOf(":") + 2), previous === undefined
+                ? (state) => deleteTransaction(state, transactionId)
+                : (state) => restoreTransaction(state, previous)),
+            },
+          });
+        } catch (error) {
+          const text = entryErrorText(error);
+          options.store.fail(ticket, text);
+          options.showToast({ text: `Не записано: ${text}`, action: { label: "Вернуться к черновику", run: returnToDraft } });
+        }
+      });
+      return null;
+    },
+
+    async remove(transaction) {
+      const before = options.current();
+      if (before === null || gate.locked) return null;
+      try {
+        deleteTransaction(before, transaction.id);
+      } catch (error) {
+        return entryErrorText(error);
+      }
+      const opened = options.route();
+      let refusal: string | null = null;
+      await gate.run(async () => {
+        try {
+          await options.write.run((state) => deleteTransaction(state, transaction.id), { ownsFailure: true });
+        } catch (error) {
+          refusal = entryErrorText(error);
+          return;
+        }
+        options.store.clear();
+        options.redirect(withoutSheet(opened));
+        const label = operationWords("Удалено", transaction, before);
+        options.showToast({
+          text: label,
+          action: { label: "Отменить", run: () => undo(label.slice(label.indexOf(":") + 2), (state) => recreateTransaction(state, transaction, makeId).state) },
+        });
+      });
+      return refusal;
+    },
+
+    async saveRate(draft) {
+      const before = options.current();
+      if (before === null) return null;
+      try {
+        addExchangeRate(before, draft, makeId);
+      } catch (error) {
+        return entryErrorText(error);
+      }
+      try {
+        await options.write.run((state) => addExchangeRate(state, draft, makeId).state, { ownsFailure: true });
+        return null;
+      } catch (error) {
+        return entryErrorText(error);
+      }
+    },
+
+    returnToDraft,
+  };
+}

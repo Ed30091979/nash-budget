@@ -24,18 +24,18 @@ function expected(hold: DocumentHold | null, route: Route): WriteFormRefusal | n
 }
 
 describe("задержка документа: форма записи не открывается (ревью 2a, п. 6; круг 2, LOW 4)", () => {
-  it("форма записи — «+» и правка, «План месяца», «Выписка» и лист записи поверх любого экрана", () => {
+  it("форма записи — лист ввода поверх любого экрана («+», плитки, правка), «План месяца» и «Выписка»", () => {
     const writing = ALL_ROUTE_FIXTURES.filter(opensWriteForm).map(formatRoute);
-    expect(writing).toEqual([
-      "#/?sheet=entry", "#/operations?sheet=entry", "#/reports?sheet=entry", "#/more?sheet=entry",
-      "#/new", "#/new?edit=7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", "#/new?sheet=entry",
-      "#/new?edit=7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b&sheet=entry",
-      "#/more/plan-month", "#/more/plan-month?sheet=entry",
-      "#/more/plan-year?sheet=entry", "#/more/family?sheet=entry",
-      "#/more/import", "#/more/import?sheet=entry",
+    // Экраны-формы — два; всё остальное, что пишет бюджет, — лист ввода, с чем бы его ни открыли.
+    expect(writing.filter((key) => !key.includes("sheet=entry"))).toEqual(["#/more/plan-month", "#/more/import"]);
+    expect(writing.filter((key) => key.includes("sheet=entry"))).toEqual(ALL_ROUTE_FIXTURES.filter((route) => route.sheet === "entry").map(formatRoute));
+    expect(ALL_ROUTE_FIXTURES.filter((route) => !opensWriteForm(route)).map(formatRoute)).toEqual([
+      "#/", "#/?month=2026-08", "#/operations", "#/reports", "#/more", "#/more/plan-year", "#/more/family",
     ]);
     // Лист записи закрывается на экран под ним: туда и уходит отказ.
     expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "reports", sheet: "entry" })?.fallback).toEqual({ name: "reports" });
+    expect(writeFormRefusal({ reason: "rejected_by_app", document: "kept" }, { name: "overview", month: "2026-08", sheet: "entry", op: "expense" })?.fallback).toEqual({ name: "overview", month: "2026-08" });
+    expect(writeFormRefusal({ reason: "journal_not_ready", document: "kept" }, { name: "operations", sheet: "entry", edit: "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b" })?.fallback).toEqual({ name: "operations" });
   });
 
   it("маршруты × состояния задержки × порядок прихода статуса: форма не открывается, начатый черновик остаётся", () => {

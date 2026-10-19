@@ -1,10 +1,12 @@
 import { type KeyboardEvent, useEffect, useRef } from "react";
 import {
+  baseCurrencyOf,
   type BudgetState,
   type CategoryGroup,
   type CategoryType,
 } from "@family-budget/domain";
 import { handleDialogKeyboard } from "../data-management/dialog-accessibility";
+import { currencySign } from "../rates/RateQuickSheet";
 import {
   categoryNameOutcome,
   categorySuggestions,
@@ -28,6 +30,8 @@ const VISIBLE_SUGGESTIONS = 8;
 export interface CategorySheetProps {
   readonly budget: BudgetState;
   readonly draft: CategorySheetDraft;
+  /** Что станет после сохранения: над формой операции — одно, над плитками «Обзора» — другое. */
+  readonly description: string;
   readonly busy: boolean;
   readonly error: string | null;
   readonly onPatch: (patch: Partial<CategorySheetDraft>) => void;
@@ -52,6 +56,7 @@ export interface CategorySheetProps {
 export function CategorySheet({
   budget,
   draft,
+  description,
   busy,
   error,
   onPatch,
@@ -88,10 +93,7 @@ export function CategorySheet({
         }}
       >
         <h3 id={CATEGORY_SHEET_TITLE_ID}>Своя категория</h3>
-        <p id="category-sheet-description">
-          Сумма, дата и счёт в форме останутся на месте. После сохранения категория сразу будет
-          выбрана.
-        </p>
+        <p id="category-sheet-description">{description}</p>
 
         <div className="field">
           <label htmlFor="category-sheet-name">Название</label>
@@ -149,7 +151,7 @@ export function CategorySheet({
 
         {draft.type === "expense" ? (
           <div className="field">
-            <label htmlFor="category-sheet-limit">Месячный лимит, ₽ — не обязательно</label>
+            <label htmlFor="category-sheet-limit">Месячный лимит, {currencySign(baseCurrencyOf(budget))} — не обязательно</label>
             <input
               id="category-sheet-limit"
               inputMode="decimal"

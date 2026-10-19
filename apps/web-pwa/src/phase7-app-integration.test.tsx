@@ -130,9 +130,9 @@ describe("phase 7 App composition", () => {
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
     // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на вкладке
-    // «Операции», а не отдельным вторым списком и не на плане года. Экран записи («+») истории
-    // не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
-    expect(source).toMatch(/route\.name === "entry" \? <OperationsScreen budget=\{budget\}/);
+    // «Операции», а не отдельным вторым списком и не на плане года. Лист записи («+») истории
+    // не несёт: он поверх экрана, и под ним — тот экран, с которого его открыли.
+    expect(source).toMatch(/\{route\.sheet === "entry" \? \(\s*<EntrySheetHost\s/u);
     expect(source).toMatch(/route\.name === "operations" \? <HistoryScreen budget=\{budget\}/);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);

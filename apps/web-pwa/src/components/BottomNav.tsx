@@ -30,8 +30,6 @@ export function activeTab(route: Route): TabName | null {
     case "family":
     case "import":
       return "more";
-    case "entry":
-      return null;
   }
 }
 
@@ -43,8 +41,9 @@ export interface BottomNavProps {
 }
 
 export function BottomNav({ route, onTab, onAdd, navRef }: BottomNavProps) {
-  const active = activeTab(route);
-  const adding = route.name === "entry";
+  // «+» открыл лист ввода без вида: лист стоит поверх вкладки, и «вы здесь» — «+», а не она.
+  const adding = route.sheet === "entry" && route.op === undefined && route.edit === undefined;
+  const active = adding ? null : activeTab(route);
   const tab = ({ tab: name, label, icon }: (typeof TABS)[number]) => (
     <button key={name} className={`nav-button${active === name ? " active" : ""}`} type="button" onClick={() => onTab(name)} aria-current={active === name ? "page" : undefined}>
       <span className="nav-icon"><Icon name={icon} size={24} /></span><span>{label}</span>
