@@ -4,6 +4,8 @@ import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { accountIcon, categoryVisual } from "../../category-visual";
 import { AddTile } from "../../components/tiles/AddTile";
+import { softHyphenate } from "../../hyphenation";
+import { formatMoney } from "../../money";
 import { UNCATEGORIZED_INCOME_NAME } from "../overview/overview-model";
 import type { EntryDraft } from "./entry-model";
 import type { EndpointSide } from "./FromToTiles";
@@ -36,6 +38,14 @@ export function pickOptions(budget: BudgetState, draft: EntryDraft, side: Endpoi
     case "transfer": return side === "from" ? accounts(draft.toAccountId) : accounts(draft.accountId);
     case "refund": return side === "to" ? accounts("") : [];
   }
+}
+
+/**
+ * Доступное имя плитки выбора: имя целиком, у счёта — и остаток, как на «Обзоре». Имя на самой
+ * плитке — с мягкими переносами и скрыто от диктора: в доступное имя U+00AD не попадает.
+ */
+export function pickOptionLabel(option: PickOption): string {
+  return option.balance === undefined ? option.name : `${option.name}: остаток ${formatMoney(option.balance.minor, option.balance.currency)}`;
 }
 
 /** Какую категорию можно завести прямо из выбора стороны: расходную — «куда», источник дохода — «откуда». */
@@ -101,12 +111,14 @@ export function TargetPicker({ budget, draft, side, balances, onPick, onBack, on
                 ref={index === 0 ? first : undefined}
                 className={`tile pick-option ${option.tone}${option.id === current ? " picked" : ""}`}
                 type="button"
+                aria-label={pickOptionLabel(option)}
                 aria-pressed={option.id === current}
                 onClick={() => onPick(option.id)}
               >
                 <span className="tile-top"><span className="tile-glyph" aria-hidden="true"><Icon name={option.icon} size={20} /></span></span>
-                <span className="tile-name"><bdi dir="auto">{option.name}</bdi></span>
-                {option.balance ? <span className="tile-sum"><Money value={option.balance.minor} currency={option.balance.currency} /></span> : null}
+                {/* Ревью 2b, раунд 3, NEW-2: имя в выборе — с теми же мягкими переносами, что и на «Обзоре». */}
+                <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(option.name)}</bdi></span>
+                {option.balance ? <span className="tile-sum" aria-hidden="true"><Money value={option.balance.minor} currency={option.balance.currency} /></span> : null}
                 {option.id === current ? <span className="tile-check" aria-hidden="true"><Icon name="check" size={20} /></span> : null}
               </button>
             </li>

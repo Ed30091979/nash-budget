@@ -6,6 +6,8 @@ import { handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import { RateQuickSheet } from "../rates/RateQuickSheet";
 import { EntrySheet, isolateSiblings, RefusedEntrySheet, type EntrySheetProps } from "./EntrySheet";
 import { blankEntryDraft, draftFromTransaction, newEntryDraft, submitCheck, type EntryDraft } from "./entry-model";
+import { FromToTiles } from "./FromToTiles";
+import { TargetPicker } from "./TargetPicker";
 
 const MAIN = SEED_IDS.accounts.main;
 const DOLLARS = "e2000000-0000-4000-8000-0000000000d1";
@@ -136,6 +138,42 @@ describe("лист ввода: разметка", () => {
     expect(markup).toContain('role="dialog" aria-modal="true"');
     expect(plain(markup)).toContain("Операцию по долгу этот лист пока не изменяет. Удалить её можно.");
     expect(markup).not.toContain('id="entry-amount"');
+  });
+});
+
+describe("имена на плитках листа (ревью 2b, раунд 3, NEW-2)", () => {
+  const SOFT = "\u00ad";
+  const labels = (markup: string) => [...markup.matchAll(/aria-label="([^"]*)"/gu)].map((match) => match[1]!);
+  const names = (markup: string, className: string) => [...markup.matchAll(new RegExp(`<span class="${className}"( aria-hidden="true")?><bdi dir="auto">([^<]*)</bdi>`, "gu"))]
+    .map((match) => ({ hidden: match[1] !== undefined, text: match[2]! }));
+
+  it("выбор стороны: имя с мягкими переносами и скрыто от диктора, доступное имя — целое", () => {
+    const budget = state();
+    const categories = renderToStaticMarkup(<TargetPicker budget={budget} draft={blankEntryDraft(budget, "expense", TODAY)} side="to" balances={{}} onPick={vi.fn()} onBack={vi.fn()} onCreate={vi.fn()} />);
+    const shown = names(categories, "tile-name");
+    expect(shown.length).toBeGreaterThan(5);
+    expect(shown.every((name) => name.hidden)).toBe(true);
+    expect(shown.find((name) => name.text.replaceAll(SOFT, "") === "Транспорт")?.text).toBe(`Тра${SOFT}н${SOFT}с${SOFT}порт`);
+    expect(labels(categories)).toContain("Транспорт");
+    expect(labels(categories).filter((label) => label.includes(SOFT))).toEqual([]);
+
+    const accounts = renderToStaticMarkup(<TargetPicker budget={budget} draft={blankEntryDraft(budget, "expense", TODAY)} side="from" balances={{ [MAIN]: 10_900_000 }} onPick={vi.fn()} onBack={vi.fn()} />);
+    expect(labels(accounts).map((label) => label.replace(/[\u00a0\u202f]/gu, " "))).toContain("Основной: остаток 109 000 ₽");
+    expect(names(accounts, "tile-name").every((name) => name.hidden)).toBe(true);
+    expect(accounts).toMatch(/<span class="tile-sum" aria-hidden="true">/u);
+  });
+
+  it("«откуда → куда»: имя с мягкими переносами только для глаза; у возврата — группа с целым именем", () => {
+    const budget = state();
+    const tiles = renderToStaticMarkup(<FromToTiles budget={budget} draft={food()} balances={{ [MAIN]: 10_900_000 }} onPick={vi.fn()} />);
+    expect(names(tiles, "endpoint-name")).toEqual([{ hidden: true, text: `Ос${SOFT}но${SOFT}в${SOFT}ной` }, { hidden: true, text: `Про${SOFT}ду${SOFT}к${SOFT}ты` }]);
+    expect(labels(tiles)).toEqual(["Со счёта: Основной. Изменить", "В категорию: Продукты. Изменить"]);
+    const expense = budget.transactions.find((item) => item.kind === "expense" && item.categoryId === PLANNING_IDS.categories.food);
+    if (expense === undefined || expense.kind !== "expense") throw new Error("the seed has a food expense");
+    const refund = renderToStaticMarkup(<FromToTiles budget={budget} draft={{ ...food(), mode: "refund", originalTransactionId: expense.id }} balances={{}} onPick={vi.fn()} />);
+    expect(refund).toContain('<div class="endpoint fixed tone-');
+    expect(refund).toMatch(/role="group" aria-label="Возврат из категории: Продукты"/u);
+    expect(labels(refund).filter((label) => label.includes(SOFT))).toEqual([]);
   });
 });
 

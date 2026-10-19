@@ -1030,7 +1030,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tile.endpoint { min-height: 64px; justify-content: flex-start; gap: 2px; }
 .endpoint-word { color: var(--ink-muted); }
 .tile-account .endpoint-word, .tile-account .endpoint-balance { color: var(--on-tile-account-muted); }
-.endpoint-name { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: auto; }
+.endpoint-name { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: manual; }
 .endpoint-balance { font-size: inherit; }
 /* The amount sticks to the edge of the scrolling body: on a short screen, typing never pushes it out of sight. */
 .entry-amount-field { position: sticky; top: 0; bottom: 0; z-index: 1; background: var(--surface); }
