@@ -2,6 +2,7 @@ import { createContext, useContext, useSyncExternalStore } from "react";
 import {
   forReload,
   isRoot,
+  isRouteKey,
   isTab,
   parentRoute,
   parseRoute,
@@ -51,8 +52,12 @@ interface EntryState {
 function entryState(value: unknown): EntryState | null {
   if (typeof value !== "object" || value === null) return null;
   const candidate = value as { readonly mark?: unknown; readonly stack?: unknown };
+  // Ровно два поля: запись, где есть что-то ещё, писал не роутер, и её не продолжают.
+  if (Object.keys(candidate).length !== 2) return null;
   if (candidate.mark !== STATE_MARK || !Array.isArray(candidate.stack) || candidate.stack.length === 0) return null;
-  if (!candidate.stack.every((key): key is string => typeof key === "string")) return null;
+  // Каждый ключ — канонический адрес маршрута: ключи цепочки снова уходят в адрес, и то, что
+  // записала другая сборка или чужой код, туда не попадёт.
+  if (!candidate.stack.every((key): key is string => typeof key === "string" && isRouteKey(key))) return null;
   // Цепочка начинается с корня — иначе это не наша запись, а подделка под неё.
   if (candidate.stack[0] !== ROOT_KEY) return null;
   return { mark: STATE_MARK, stack: candidate.stack };

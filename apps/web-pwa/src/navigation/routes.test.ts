@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canonicalValue,
   forReload,
   formatRoute,
   isRoot,
@@ -67,6 +68,12 @@ describe("адреса маршрутов", () => {
       ["#/?sheet=unknown", { name: "overview" }],
       ["#/operations?sheet=entry&sheet=entry", { name: "operations" }],
       [`#/${"x".repeat(600)}`, { name: "overview" }],
+      // Значения читаются как есть: каноническое значение не кодируется, и `%…` — не наше.
+      ["#/?sheet=%65ntry", { name: "overview" }],
+      [`#/new?edit=${OPERATION.replace("-", "%2D")}`, { name: "operations" }],
+      ["#/new?edit", { name: "operations" }],
+      ["#/new?edit=", { name: "operations" }],
+      ["#/more/family?sheet=entry+", { name: "family" }],
     ];
     for (const [hash, route] of cases) {
       expect(parseRoute(hash), hash).toEqual({ route, notFound: true });
@@ -90,6 +97,37 @@ describe("адреса маршрутов", () => {
     for (const route of ROUTES) {
       expect(formatRoute(route)).toMatch(/^#\/[a-z/-]*(?:\?[a-z]+=[0-9a-z-]+(?:&[a-z]+=[0-9a-z-]+)*)?$/u);
     }
+  });
+});
+
+describe("значения закрытых типов", () => {
+  it("UUID — в любом регистре на входе, строчными на выходе; не UUID — нет", () => {
+    expect(canonicalValue({ kind: "uuid" }, OPERATION.toUpperCase())).toBe(OPERATION);
+    for (const value of ["1200", `${OPERATION} `, OPERATION.replace(/-/gu, ""), "00000000-0000-0000-0000-000000000000", 1200, null]) {
+      expect(canonicalValue({ kind: "uuid" }, value), String(value)).toBeNull();
+    }
+  });
+
+  it("перечень — только свои значения, с точностью до регистра", () => {
+    const spec = { kind: "enum", values: ["expense", "income"] } as const;
+    expect(canonicalValue(spec, "income")).toBe("income");
+    for (const value of ["Income", "кофе", "", "income ", 1]) expect(canonicalValue(spec, value), String(value)).toBeNull();
+  });
+
+  it("дата — настоящий день календаря, месяц — настоящий месяц", () => {
+    for (const day of ["2026-10-19", "2024-02-29", "2026-12-31"]) expect(canonicalValue({ kind: "day" }, day)).toBe(day);
+    for (const day of ["2026-02-29", "2026-13-01", "2026-10-32", "2026-1-19", "19.10.2026", "2026-10-19T00:00", 20261019]) {
+      expect(canonicalValue({ kind: "day" }, day), String(day)).toBeNull();
+    }
+    for (const month of ["2026-10", "2026-01"]) expect(canonicalValue({ kind: "month" }, month)).toBe(month);
+    for (const month of ["2026-13", "2026-1", "2026-10-01", "октябрь"]) expect(canonicalValue({ kind: "month" }, month), month).toBeNull();
+  });
+
+  it("число — небольшое целое без знака и лишних нулей, не больше предела", () => {
+    const spec = { kind: "count", max: 50 } as const;
+    expect(canonicalValue(spec, 0)).toBe("0");
+    expect(canonicalValue(spec, "50")).toBe("50");
+    for (const value of [51, -1, 1.5, "07", "1e1", " 5", "1200", Number.NaN, "5 ₽"]) expect(canonicalValue(spec, value), String(value)).toBeNull();
   });
 });
 

@@ -1,11 +1,50 @@
 import { expect } from "vitest";
 import { createRouter, type NavigationGuard, type RouterOptions, type RouterWindow } from "./router";
-import { formatRoute, parseRoute, type Route } from "./routes";
+import { formatRoute, parseRoute, type Route, type RouteName } from "./routes";
 
 /**
  * Test support for the router: a browser-like history and the facts every history entry must keep.
  * Imported by tests only — never by the app (`address-privacy.test.ts` checks it).
  */
+
+export const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+
+/**
+ * Every address form, per route. The type makes a route without fixtures a compile error; the
+ * privacy test makes a query key without a fixture a test failure.
+ */
+export const ROUTE_FIXTURES = {
+  overview: [{ name: "overview" }, { name: "overview", sheet: "entry" }],
+  operations: [{ name: "operations" }, { name: "operations", sheet: "entry" }],
+  reports: [{ name: "reports" }, { name: "reports", sheet: "entry" }],
+  more: [{ name: "more" }, { name: "more", sheet: "entry" }],
+  entry: [
+    { name: "entry" },
+    { name: "entry", edit: OPERATION },
+    { name: "entry", sheet: "entry" },
+    { name: "entry", edit: OPERATION, sheet: "entry" },
+  ],
+  "plan-month": [{ name: "plan-month" }, { name: "plan-month", sheet: "entry" }],
+  "plan-year": [{ name: "plan-year" }, { name: "plan-year", sheet: "entry" }],
+  family: [{ name: "family" }, { name: "family", sheet: "entry" }],
+  import: [{ name: "import" }, { name: "import", sheet: "entry" }],
+} as const satisfies { readonly [N in RouteName]: readonly Extract<Route, { readonly name: N }>[] };
+
+export const ALL_ROUTE_FIXTURES: readonly Route[] = Object.values(ROUTE_FIXTURES).flat();
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const SHEET = "sheet=entry";
+
+/**
+ * The whole address language, written out by hand rather than derived from the grammar it checks:
+ * a path, then only closed-type values — a lowercase UUID, a sheet name. No free text fits. A new
+ * query key is a deliberate edit here.
+ */
+export const ROUTE_FRAGMENT = new RegExp(
+  `^#/(?:(?:|operations|reports|more|more/(?:plan-month|plan-year|family|import))(?:\\?${SHEET})?` +
+    `|new(?:\\?(?:edit=${UUID}(?:&${SHEET})?|${SHEET}))?)$`,
+  "u",
+);
 
 /**
  * A browser history in miniature: entries, a position, and `go` that arrives later as `popstate`,
@@ -100,10 +139,10 @@ export const go = async (router: ReturnType<typeof createRouter>, route: Route, 
   await settle();
 };
 
-/** A key the router may write: a canonical route address and nothing else. */
+/** A key the router may write: a canonical route address in the address language, nothing else. */
 export function isCanonicalKey(key: string): boolean {
   const parsed = parseRoute(key);
-  return !parsed.notFound && formatRoute(parsed.route) === key;
+  return ROUTE_FRAGMENT.test(key) && !parsed.notFound && formatRoute(parsed.route) === key;
 }
 
 /**

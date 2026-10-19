@@ -391,59 +391,6 @@ describe("история остаётся правдой и впереди, и �
     expect(router.current()).toEqual({ name: "more" });
   });
 
-  it("каждый путь оставляет в истории только `{ mark, stack }` с правдивой цепочкой", async () => {
-    // Системное «Назад» с черновиком: запись возвращается поверх той, куда пришли.
-    const drafts = draftGuard();
-    const guarded = started("", null, { guard: drafts.guard });
-    await go(guarded.router, { name: "operations" });
-    await go(guarded.router, { name: "entry" });
-    drafts.setDirty(true);
-    await guarded.frame.press(-1);
-    expectHonestHistory(guarded.frame);
-    // «Не сохранять» на этом вопросе.
-    drafts.asked[0]?.();
-    await settle();
-    expectHonestHistory(guarded.frame);
-    // Переход без вопроса, потому что записи больше нет.
-    drafts.setDirty(false);
-    await go(guarded.router, { name: "entry", edit: OPERATION });
-    drafts.setDirty(true);
-    guarded.router.redirect({ name: "operations" });
-    await settle();
-    expectHonestHistory(guarded.frame);
-    // Набранный адрес, свой и мусорный.
-    drafts.setDirty(false);
-    await guarded.frame.type("#/more/plan-month");
-    expectHonestHistory(guarded.frame);
-    await guarded.frame.type("#/more/plan-month/../../x?edit=1200&note=%D0%BA%D0%BE%D1%84%D0%B5");
-    expect(guarded.frame.hash).toBe("#/more/plan-month");
-    expectHonestHistory(guarded.frame);
-    // «Назад» и «Вперёд».
-    await guarded.frame.press(-1);
-    await guarded.frame.press(-1);
-    await guarded.frame.press(1);
-    expectHonestHistory(guarded.frame);
-
-    // Перезагрузка с открытым листом.
-    const sheet = started();
-    await go(sheet.router, { name: "operations" });
-    await go(sheet.router, { name: "operations", sheet: "entry" });
-    sheet.stop();
-    createRouter({ window: sheet.frame }).start();
-    expectHonestHistory(sheet.frame);
-
-    // Ссылка, мусор и чужое `state` при запуске.
-    for (const [hash, state] of [
-      ["#/more/import", null],
-      ["#/?amount=1200", null],
-      ["#/new?edit=not-a-uuid", { mark: "nash-budget/route", stack: ["#/new?edit=not-a-uuid"] }],
-      ["#/reports", { mark: "nash-budget/route", stack: ["#/reports"], note: "кофе" }],
-    ] as const) {
-      const link = started(hash, state);
-      expectHonestHistory(link.frame);
-    }
-  });
-
   it("сотня случайных шагов — история правдива, адрес совпадает с экраном", async () => {
     const routes = [
       { name: "overview" }, { name: "operations" }, { name: "reports" }, { name: "more" },

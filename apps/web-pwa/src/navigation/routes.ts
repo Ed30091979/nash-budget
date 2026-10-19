@@ -4,9 +4,13 @@ import { isUuid } from "@family-budget/domain";
  * Маршруты приложения и их адреса (план волны 2, §2.1).
  *
  * Адрес — решётка (`#/operations`): статический хостинг, Capacitor и сервис-воркер отдают одну и ту
- * же страницу, и переписывать пути не нужно никому. В адрес попадают только непрозрачные
- * идентификаторы (UUID) и ключи фильтров — ни сумм, ни заметок, ни имён: адрес видят история
- * браузера, снимки экрана и системный переключатель приложений.
+ * же страницу, и переписывать пути не нужно никому. Адрес видят история браузера, снимки экрана и
+ * системный переключатель приложений, поэтому в него попадает только то, что разрешает грамматика
+ * ниже (`QUERY_GRAMMAR`): у каждого маршрута — свой закрытый список ключей, у каждого ключа —
+ * значение закрытого типа (UUID, значение из перечня, дата, месяц, небольшое число). Свободного
+ * текста — сумм, заметок, имён, строки поиска — в адресе нет и не может быть: `formatRoute`
+ * бросает на всём, что вне грамматики, а `parseRoute` читает по той же грамматике
+ * (docs/SECURITY.md, «Адрес приложения»).
  *
  * У каждого маршрута есть родитель — туда ведут «назад» и всякий мусор в адресе.
  */
@@ -101,27 +105,130 @@ function pathOf(route: Route): string {
     case "family":
     case "import":
       return `#/more/${route.name}`;
+    default:
+      // A route object built around the type system (a cast, a stale build) has no address.
+      throw new Error("Unknown route.");
   }
 }
 
 /**
- * Адрес маршрута. Идентификатор, который не UUID, — ошибка программы, а не данных: в адрес он не
- * попадёт ни при каких условиях.
+ * The closed types a query value may have. There is deliberately no free-text kind: a value either
+ * names something opaque (a UUID), picks from a fixed list, or is a date, a month or a small count.
+ */
+export type QueryValue =
+  | { readonly kind: "uuid" }
+  | { readonly kind: "enum"; readonly values: readonly string[] }
+  | { readonly kind: "day" }
+  | { readonly kind: "month" }
+  | { readonly kind: "count"; readonly max: number };
+
+export type QuerySpec = QueryValue & {
+  /**
+   * Where an invalid value leads. Without it the key is dropped and the route stays; with it —
+   * an identifier naming a record that cannot exist — the route goes to the record's list.
+   */
+  readonly invalid?: Route;
+};
+
+type QueryKeysOf<N extends RouteName> = Exclude<keyof Extract<Route, { readonly name: N }>, "name">;
+
+/** Every optional field of every route has exactly one spec: a new field without one does not compile. */
+type QueryGrammar = { readonly [N in RouteName]: { readonly [K in QueryKeysOf<N>]-?: QuerySpec } };
+
+const SHEET_SPEC: QuerySpec = { kind: "enum", values: SHEET_NAMES };
+
+/**
+ * The address grammar: per route, the query keys it may carry, in their canonical order. Adding a
+ * key is adding a line here — and in the fragment pattern of `address-privacy.test.ts`, on purpose.
+ */
+export const QUERY_GRAMMAR = {
+  overview: { sheet: SHEET_SPEC },
+  operations: { sheet: SHEET_SPEC },
+  reports: { sheet: SHEET_SPEC },
+  more: { sheet: SHEET_SPEC },
+  entry: { edit: { kind: "uuid", invalid: { name: "operations" } }, sheet: SHEET_SPEC },
+  "plan-month": { sheet: SHEET_SPEC },
+  "plan-year": { sheet: SHEET_SPEC },
+  family: { sheet: SHEET_SPEC },
+  import: { sheet: SHEET_SPEC },
+} as const satisfies QueryGrammar;
+
+const DAY_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/u;
+const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/u;
+const COUNT_PATTERN = /^(?:0|[1-9]\d{0,5})$/u;
+
+function isCalendarDay(text: string): boolean {
+  const match = DAY_PATTERN.exec(text);
+  if (match === null) return false;
+  const [, year, month, day] = match.map(Number);
+  if (year === undefined || month === undefined || day === undefined) return false;
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** The canonical text of a valid value, or `null`. One check for writing and for reading. */
+export function canonicalValue(spec: QueryValue, value: unknown): string | null {
+  switch (spec.kind) {
+    case "uuid":
+      return isUuid(value) ? value.toLowerCase() : null;
+    case "enum":
+      return typeof value === "string" && spec.values.includes(value) ? value : null;
+    case "day":
+      return typeof value === "string" && isCalendarDay(value) ? value : null;
+    case "month":
+      return typeof value === "string" && MONTH_PATTERN.test(value) ? value : null;
+    case "count": {
+      const text = typeof value === "number" ? String(value) : value;
+      return typeof text === "string" && COUNT_PATTERN.test(text) && Number(text) <= spec.max ? text : null;
+    }
+  }
+}
+
+/** The value a route field holds for a canonical text (a count is a number, the rest are text). */
+function fieldValue(spec: QueryValue, text: string): string | number {
+  return spec.kind === "count" ? Number(text) : text;
+}
+
+function grammarOf(name: unknown): Readonly<Record<string, QuerySpec>> | null {
+  if (typeof name !== "string" || !Object.hasOwn(QUERY_GRAMMAR, name)) return null;
+  return QUERY_GRAMMAR[name as RouteName];
+}
+
+/**
+ * Адрес маршрута — единственное место, где он строится. Ключ вне грамматики маршрута, значение
+ * не своего типа, неизвестный маршрут — ошибка программы, а не данных: в адрес такое не попадёт ни
+ * при каких условиях. Порядок ключей и вид значений канонические: UUID пишется строчными.
  */
 export function formatRoute(route: Route): string {
-  const query = new URLSearchParams();
-  if (route.name === "entry" && route.edit !== undefined) {
-    if (!isUuid(route.edit)) throw new Error("A route identifier must be a UUID.");
-    query.set("edit", route.edit.toLowerCase());
+  const grammar = grammarOf(route.name);
+  if (grammar === null) throw new Error("Unknown route.");
+  const fields = route as unknown as Readonly<Record<string, unknown>>;
+  for (const key of Object.keys(fields)) {
+    if (key !== "name" && !Object.hasOwn(grammar, key)) throw new Error("A route field is outside the address grammar.");
   }
-  if (route.sheet !== undefined) query.set("sheet", route.sheet);
-  const search = query.toString();
-  return search === "" ? pathOf(route) : `${pathOf(route)}?${search}`;
+  const pairs: string[] = [];
+  for (const [key, spec] of Object.entries(grammar)) {
+    const value = fields[key];
+    if (value === undefined) continue;
+    const text = canonicalValue(spec, value);
+    if (text === null) throw new Error("A route value is outside the address grammar.");
+    pairs.push(`${key}=${text}`);
+  }
+  const path = pathOf(route);
+  return pairs.length === 0 ? path : `${path}?${pairs.join("&")}`;
 }
 
 /** Ключ маршрута — его адрес: по нему помнится прокрутка и сравниваются записи истории. */
 export function routeKey(route: Route): string {
   return formatRoute(route);
+}
+
+/**
+ * Is `key` exactly what `formatRoute` writes for some route? Keys the router reads back from a
+ * history entry pass this before it writes them into the address again.
+ */
+export function isRouteKey(key: string): boolean {
+  const parsed = parseRoute(key);
+  return !parsed.notFound && formatRoute(parsed.route) === key;
 }
 
 export function sameRoute(left: Route, right: Route): boolean {
@@ -131,9 +238,10 @@ export function sameRoute(left: Route, right: Route): boolean {
 export interface ParsedRoute {
   readonly route: Route;
   /**
-   * В адресе было то, чего в приложении нет: неизвестный путь, мусор вместо идентификатора,
-   * неизвестный лист. Маршрут тогда — ближайший родитель, а человеку говорят «Запись не найдена».
-   * Лишние ключи запроса сюда не относятся: они просто отбрасываются.
+   * В адресе было то, чего в приложении нет: неизвестный путь, значение не своего типа, повтор
+   * ключа. Маршрут тогда — ближайший родитель (или экран без этого ключа), а человеку говорят
+   * «Запись не найдена». Ключ, которого в грамматике маршрута нет, сюда не относится: он просто
+   * отбрасывается и в адрес больше не вернётся.
    */
   readonly notFound: boolean;
 }
@@ -165,8 +273,11 @@ function routeOfPath(segments: readonly string[]): ParsedRoute {
 }
 
 /**
- * Маршрут по решётке адреса. Пустая решётка и `#/` — «Обзор». Всё, что не разобралось, ведёт к
- * родителю с `notFound`; ничто из адреса не попадает в маршрут без проверки.
+ * Маршрут по решётке адреса — по той же грамматике, что пишет `formatRoute`. Пустая решётка и
+ * `#/` — «Обзор». Значения читаются как есть, без раскодирования: каноническое значение в
+ * кодировании не нуждается, поэтому `%…` и `+` — не наше. Всё, что не разобралось, ведёт к
+ * родителю с `notFound`; ничто из адреса не попадает в маршрут без проверки, и всякий
+ * прочитанный маршрут снова пишется `formatRoute` без ошибки.
  */
 export function parseRoute(hash: string): ParsedRoute {
   if (hash === "" || hash === "#" || hash === "#/") return found(ROOT_ROUTE);
@@ -180,27 +291,36 @@ export function parseRoute(hash: string): ParsedRoute {
   const base = routeOfPath(segments);
   if (base.notFound) return base;
 
-  let query: URLSearchParams;
+  const grammar = grammarOf(base.route.name) ?? {};
+  const fields: Record<string, unknown> = { ...base.route };
+  const seen = new Set<string>();
+  let rejected = false;
+  let fallback: Route | null = null;
+  for (const part of search === "" ? [] : search.split("&")) {
+    const at = part.indexOf("=");
+    const key = at === -1 ? part : part.slice(0, at);
+    const spec = Object.hasOwn(grammar, key) ? grammar[key] : undefined;
+    // Ключа нет в грамматике маршрута — отбросить молча (`utm`, `edit` у «Операций»).
+    if (spec === undefined) continue;
+    const text = at === -1 || seen.has(key) ? null : canonicalValue(spec, part.slice(at + 1));
+    seen.add(key);
+    if (text === null) {
+      // Повтор ключа или значение не своего типа: такой записи нет.
+      rejected = true;
+      fallback ??= spec.invalid ?? null;
+      delete fields[key];
+      continue;
+    }
+    fields[key] = fieldValue(spec, text);
+  }
+  if (fallback !== null) return notFound(fallback);
+  const route = fields as unknown as Route;
   try {
-    query = new URLSearchParams(search);
+    formatRoute(route);
   } catch {
-    return notFound(parentRoute(base.route) ?? ROOT_ROUTE);
+    return notFound(base.route);
   }
-  let route = base.route;
-  const edits = query.getAll("edit");
-  if (route.name === "entry" && edits.length > 0) {
-    const edit = edits[0] ?? "";
-    // Два `edit` или не UUID — это не операция, которую можно открыть.
-    if (edits.length > 1 || !isUuid(edit)) return notFound({ name: "operations" });
-    route = { name: "entry", edit: edit.toLowerCase() };
-  }
-  const sheets = query.getAll("sheet");
-  if (sheets.length > 0) {
-    const sheet = sheets[0] ?? "";
-    if (sheets.length > 1 || !(SHEET_NAMES as readonly string[]).includes(sheet)) return notFound(route);
-    route = { ...route, sheet: sheet as SheetName };
-  }
-  return found(route);
+  return rejected ? notFound(route) : found(route);
 }
 
 /**
