@@ -6,7 +6,10 @@
  */
 import { expect, test } from "./fixtures";
 import type { Page } from "@playwright/test";
+import type { BudgetState } from "@family-budget/domain";
+import { demoBudget, restoreBudget } from "./budgets";
 import { applyFontScale } from "./font-scale";
+import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { amountField, entrySheet, goToOverview, leaveDialog, loadDemo, recordExpense, submitButton, tile, toast } from "./sheet";
 
 const TOUCH_TARGET_MINIMUM = 48;
@@ -262,4 +265,59 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
     }
   }
   await applyFontScale(page, 1);
+});
+
+/** Демо, где три расходные категории и источник дохода названы длинно — как их и заводят семьи. */
+function withLongCategoryNames(state: BudgetState): BudgetState {
+  const names = ["Благотворительность", "Сверхъестественный", "Strengths"];
+  const expense = state.categories.filter((item) => item.type === "expense" && item.active).slice(0, names.length);
+  const income = state.categories.find((item) => item.type === "income" && item.active);
+  const renamed = new Map<string, string>([...expense.map((item, index) => [item.id, names[index]!] as const), ...(income ? [[income.id, "Дивиденды по иностранным акциям"] as const] : [])]);
+  return { ...state, categories: state.categories.map((item) => (renamed.has(item.id) ? { ...item, name: renamed.get(item.id)! } : item)) };
+}
+
+test("имена на плитках справочника и на плитке-образце не рвутся посреди слова, а доступные имена — без мягких переносов", async ({ page }) => {
+  // Контракт переносов 2b (раунд 3): видимое имя плитки — с мягкими переносами и скрыто от
+  // читающих с экрана, доступное имя — чистое. Здесь — сетка «Категорий и доходов» и образец над
+  // формой категории.
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  await restoreBudget(page, withLongCategoryNames(demoBudget()));
+  await openMore(page, "Категории и доходы");
+  await expect(page.getByRole("button", { name: /^Strengths: /u })).toBeVisible();
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await nameSplits(page, ".categories-screen .tile-name"), `расходы ${width} pt ×${scale}`).toEqual([]);
+  }
+  await applyFontScale(page, 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await softHyphenedNames(page), "расходы").toEqual([]);
+
+  await page.getByRole("button", { name: "Доходы", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Дивиденды по иностранным акциям. Изменить" })).toBeVisible();
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await nameSplits(page, ".categories-screen .tile-name"), `доходы ${width} pt ×${scale}`).toEqual([]);
+  }
+  await applyFontScale(page, 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await softHyphenedNames(page), "доходы").toEqual([]);
+
+  await page.getByRole("button", { name: "Расходы", exact: true }).click();
+  await page.getByRole("button", { name: /^Благотворительность: /u }).click();
+  // Образец набран с мягкими переносами — и скрыт от читающих с экрана; имя без них — то же.
+  const preview = await page.locator(".manage-preview .tile-name").evaluate((name) => name.textContent ?? "");
+  expect(preview).toContain("\u00ad");
+  expect(preview.replace(/\u00ad/gu, "")).toBe("Благотворительность");
+  await expect(page.locator(".manage-preview")).toHaveAttribute("aria-hidden", "true");
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await nameSplits(page, ".manage-preview .tile-name"), `образец ${width} pt ×${scale}`).toEqual([]);
+  }
+  await applyFontScale(page, 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await softHyphenedNames(page), "форма категории").toEqual([]);
 });
