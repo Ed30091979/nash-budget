@@ -88,6 +88,15 @@ export type {
   RecurringSkipReason,
 } from "./recurring.js";
 export {
+  addExchangeRate,
+  baseSnapshot,
+  deleteExchangeRate,
+  manualSnapshot,
+  RateValidationError,
+  snapshotAt,
+} from "./rates.js";
+export type { BaseSnapshot, ExchangeRateCreation, ExchangeRateDraft, RateErrorCode } from "./rates.js";
+export {
   budgetMonth,
   carriedBudgetId,
   carriedBudgetLineId,
