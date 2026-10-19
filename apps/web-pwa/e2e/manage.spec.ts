@@ -579,3 +579,30 @@ test("отказ записи оставляет черновик формы н�
   await asksAbout("правка категории «Продукты»");
   await expect(page.getByLabel("Название")).toHaveValue("Транспорт");
 });
+
+test("набранный курс не пропадает молча: другая «Добавить курс» сначала спрашивает", async ({ page }) => {
+  // Ревью 2c, LOW-8: из группы «Новый курс» сверху касание «Добавить курс USD» в карточке
+  // открывало другую группу, и набранное число пропадало без слова.
+  await loadDemo(page);
+  await restoreBudget(page, withDollarAccount(demoBudget()));
+  await openMore(page, "Курсы валют");
+  await page.locator("#rates-add-top").click();
+  const top = page.locator(".rate-quick").first();
+  await top.getByRole("textbox", { name: /^Сколько ₽ за / }).fill("91,00");
+  const usd = page.locator("section.rate-card", { has: page.getByRole("heading", { name: /^USD/u }) });
+  await usd.getByRole("button", { name: "Добавить курс USD" }).click();
+  const question = page.getByRole("alertdialog", { name: "Не записывать набранный курс?" });
+  await expect(question).toBeVisible();
+  await question.getByRole("button", { name: "Продолжить ввод" }).click();
+  await expect(question).toHaveCount(0);
+  await expect(top.getByRole("textbox", { name: /^Сколько ₽ за / })).toHaveValue("91,00");
+  await usd.getByRole("button", { name: "Добавить курс USD" }).click();
+  await question.getByRole("button", { name: "Не записывать" }).click();
+  await expect(usd.locator(".rate-quick")).toBeVisible();
+  await expect(page.locator("#rates-add-top")).toBeVisible();
+  await expect(usd.getByRole("textbox", { name: "Сколько ₽ за 1 USD" })).toHaveValue("");
+  // Пустая группа не спрашивает: другая открывается сразу.
+  await page.locator("#rates-add-top").click();
+  await expect(question).toHaveCount(0);
+  await expect(usd.locator(".rate-quick")).toHaveCount(0);
+});

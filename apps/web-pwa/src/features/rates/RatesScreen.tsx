@@ -45,6 +45,17 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
   const cards = useMemo(() => currencyRates(budget, today), [budget, today]);
   const preferred = useMemo(() => familyCurrencies(budget), [budget]);
   const [adding, setAdding] = useState<Adding>(null);
+  // Набранное в открытой группе число: другая «Добавить курс» сначала спрашивает (ревью 2c, LOW-8) —
+  // иначе группа сменялась, и число пропадало без слова.
+  const [panelDirty, setPanelDirty] = useState(false);
+  const [switching, setSwitching] = useState<Adding>(null);
+  const open = (next: Adding) => {
+    if (adding !== null && panelDirty) {
+      setSwitching(next);
+      return;
+    }
+    setAdding(next);
+  };
   const [removing, setRemoving] = useState<ExchangeRate | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +104,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
       currency={currency}
       baseCurrency={base.currency}
       date={today}
-      screen={{ preferred, draftLabel: "курс, который не записан" }}
+      screen={{ preferred, draftLabel: "курс, который не записан", onDirtyChange: setPanelDirty }}
       onSave={saveRate}
       onCancel={cancel}
     />
@@ -113,7 +124,7 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}
 
       {adding?.where === "top" ? panel("top", adding.currency) : (
-        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => setAdding({ where: "top", currency: firstForeign })}>
+        <button id={addButtonId("top")} className="primary-button manage-add" type="button" onClick={() => open({ where: "top", currency: firstForeign })}>
           <span className="icon-label"><Icon name="plus" size={20} />Добавить курс</span>
         </button>
       )}
@@ -126,10 +137,26 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
           card={card}
           adding={adding?.where === card.currency}
           panel={panel(card.currency, card.currency)}
-          onAdd={() => setAdding({ where: card.currency, currency: card.currency })}
+          onAdd={() => open({ where: card.currency, currency: card.currency })}
           onRemove={setRemoving}
         />
       ))}
+
+      {switching === null ? null : (
+        <ConfirmDialog
+          title="Не записывать набранный курс?"
+          description={`Курс, который вы набирали, не записан. Открыть «Добавить курс${switching.where === "top" ? "" : ` ${switching.currency}`}» — значит его не записывать.`}
+          cancelLabel="Продолжить ввод"
+          confirmLabel="Не записывать"
+          onCancel={() => setSwitching(null)}
+          onConfirm={() => {
+            const next = switching;
+            setSwitching(null);
+            setPanelDirty(false);
+            setAdding(next);
+          }}
+        />
+      )}
 
       {removing === null ? null : (
         <ConfirmDialog

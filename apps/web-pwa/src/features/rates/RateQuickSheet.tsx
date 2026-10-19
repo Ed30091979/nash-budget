@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useState, type KeyboardEvent } from "react";
 import { isWithinDateWindow, type CurrencyCode, type ExchangeRateDraft } from "@family-budget/domain";
 import { CurrencySelect } from "../../components/CurrencySelect";
 import { formatDay } from "../../date-words";
@@ -19,7 +19,12 @@ export interface RateQuickSheetProps {
    * даты, а набранный курс — черновик экрана: уход с ним спрашивает диалог приложения. Без этого —
    * лист ввода: валюта и день — операции, черновик — листа.
    */
-  readonly screen?: { readonly preferred: readonly CurrencyCode[]; readonly draftLabel: string };
+  readonly screen?: {
+    readonly preferred: readonly CurrencyCode[];
+    readonly draftLabel: string;
+    /** Набрано ли число: экран спрашивает, прежде чем открыть другую группу на месте этой. */
+    readonly onDirtyChange?: (dirty: boolean) => void;
+  };
 }
 
 /** Знак валюты так, как его набирает `Money`: «₽», «$», «KZT». */
@@ -49,7 +54,13 @@ export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel,
   const [busy, setBusy] = useState(false);
   // В листе ввода черновик курса — часть листа, и реестр его не знает; на экране курсов набранное
   // число — черновик экрана.
-  const saving = useFormDraft({ label: screen?.draftLabel ?? "курс", dirty: screen !== undefined && text.trim() !== "", discard: () => setText("") });
+  const dirty = screen !== undefined && text.trim() !== "";
+  const saving = useFormDraft({ label: screen?.draftLabel ?? "курс", dirty, discard: () => setText("") });
+  const onDirtyChange = screen?.onDirtyChange;
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const save = async () => {
     if (busy) return;
     if (screen !== undefined && !isWithinDateWindow(day)) {
