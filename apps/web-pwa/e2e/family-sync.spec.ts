@@ -19,7 +19,7 @@ import {
   makeG002BackupBuffer,
 } from "./canonical-budget";
 import { helloShot } from "./hello-shot";
-import { entrySheet, recordExpense as recordOnSheet, reachAmount } from "./sheet";
+import { entrySheet, recordExpense as recordOnSheet, reachAmount, startDemo } from "./sheet";
 
 const FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const FLEXIBLE_AFTER_TRANSPORT = /23\s*000\s*₽/u;
@@ -66,7 +66,7 @@ function flexibleRemaining(page: Page): Locator {
 
 async function restoreCanonicalBudget(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await startDemo(page);
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await page.locator("#backup-file").setInputFiles({
     name: "family-budget-g002.json",
@@ -340,7 +340,7 @@ test("два клиента одной семьи сходятся до копе
 
     // Второе устройство вступает по коду и получает журнал семьи целиком.
     await boris.goto("/");
-    await boris.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+    await startDemo(boris);
     await signIn(boris, baseURL, "boris-two@example.org");
     await expect(boris.getByRole("heading", { name: "Вступить по коду" })).toBeVisible({
       timeout: 20_000,
@@ -440,7 +440,7 @@ async function formFamily(
   expect(code).toHaveLength(12);
 
   await boris.goto("/");
-  await boris.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await startDemo(boris);
   await signIn(boris, baseURL, emails.boris);
   await expect(boris.getByRole("heading", { name: "Вступить по коду" })).toBeVisible({ timeout: 20_000 });
   await boris.getByLabel("Код приглашения").fill(code);

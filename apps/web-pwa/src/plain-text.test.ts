@@ -53,7 +53,7 @@ describe("мягкие переносы не уходят из приложен�
   });
 
   it("поля имён и комментария снимают мягкие переносы — каждое", () => {
-    // Имя категории, метки, обязательства, платежа, лимита, семьи, счёта и категорий первого запуска;
+    // Имя категории, метки, обязательства, платежа, лимита, семьи и счёта (у первого запуска полей нет);
     // комментарий операции; поиск по операциям; справочники 2c — счёт, категория, новая метка и
     // переименование метки.
     const fields: readonly (readonly [string, string])[] = [
@@ -68,10 +68,6 @@ describe("мягкие переносы не уходят из приложен�
       ["features/planning/PlanningScreen.tsx", 'id="commitment-name"'],
       ["features/planning/PlanningScreen.tsx", 'id="schedule-name"'],
       ["features/planning/PlanningScreen.tsx", 'id="flexible-name"'],
-      ["onboarding/Onboarding.tsx", 'id="householdLabel"'],
-      ["onboarding/Onboarding.tsx", 'id="accountLabel"'],
-      ["onboarding/Onboarding.tsx", 'id="mandatoryName"'],
-      ["onboarding/Onboarding.tsx", "id={nameId}"],
     ];
     for (const [file, id] of fields) {
       const source = readFileSync(new URL(file, import.meta.url), "utf8");

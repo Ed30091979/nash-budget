@@ -100,8 +100,9 @@ describe("пустые состояния", () => {
     // Внутри готового бюджета второй выход невозможен: демо не перезаписывает чужие данные.
     const onboarding = readFileSync(new URL("./onboarding/Onboarding.tsx", import.meta.url), "utf8");
 
-    expect(onboarding).toContain("Загрузить демонстрационный бюджет");
-    expect(onboarding).toContain("Хотите сначала посмотреть?");
+    // С v5 — тихая кнопка последнего слайда, под главной «Начать» (DIRECTION §e, п. 1).
+    expect(onboarding).toContain(">Посмотреть на примере</button>");
+    expect(onboarding.indexOf(">Начать</button>")).toBeLessThan(onboarding.indexOf(">Посмотреть на примере</button>"));
   });
 
   it("на «Обзоре», в «Операциях» и на «Годе» пустые списки тоже говорят и ведут, а не молчат пустой карточкой", () => {

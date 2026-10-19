@@ -2,12 +2,12 @@ import { expect, type Page } from "@playwright/test";
 import { addDays, PLANNING_IDS, type BudgetState } from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
 import { prepareBudgetState } from "../src/backup";
-import { buildDemoBudgetState } from "../src/onboarding/demo";
+import { buildDemoBudgetState, DEMO_IDS } from "../src/onboarding/demo";
 import { localToday } from "../src/reach";
 
 /**
  * Бюджеты прогона, которых нет в демо: счёт в долларах без курса, операция «в ожидании». Они
- * собираются из того же демо, что и кнопка «Загрузить демонстрационный бюджет», и приходят в
+ * собираются из того же демо, что и кнопка «Посмотреть на примере», и приходят в
  * приложение тем же путём, что и у семьи, — резервной копией на экране «Ещё».
  */
 
@@ -15,9 +15,19 @@ import { localToday } from "../src/reach";
 export const DOLLARS_ID = "e2b00000-0000-4000-8000-0000000000d1";
 export const DOLLARS_NAME = "Доллары";
 
-/** Демо на сегодняшний день прогона — тот же, что видит браузер. */
+/**
+ * Демо на сегодняшний день прогона — без своих долларов: счёт «Доллары», курсы USD и покупка
+ * долларов с карты убраны. Прогоны про счёт в другой валюте и про отсутствующий курс заводят их
+ * сами (`withDollarAccount`), а у демо макетов v5 и счёт, и курс уже есть.
+ */
 export function demoBudget(): BudgetState {
-  return buildDemoBudgetState();
+  const { exchangeRates: _rates, ...demo } = buildDemoBudgetState();
+  const dollars = DEMO_IDS.accounts.dollars;
+  return {
+    ...demo,
+    accounts: demo.accounts.filter((account) => account.id !== dollars),
+    transactions: demo.transactions.filter((item) => !(item.kind === "transfer" && item.toAccountId === dollars)),
+  };
 }
 
 /** Демо со счётом «Доллары» — 500 $, курса нет. */

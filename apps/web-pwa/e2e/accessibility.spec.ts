@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { applyFontScale, FONT_SCALES } from "./font-scale";
-import { amountField, entrySheet, leaveDialog, measureSheetTargets, tile } from "./sheet";
+import { amountField, entrySheet, leaveDialog, measureSheetTargets, startDemo, tile } from "./sheet";
 
 interface ViewportContract {
   readonly name: string;
@@ -24,10 +24,8 @@ const VIEWPORTS: readonly ViewportContract[] = [
 
 async function loadDemo(page: Page) {
   await page.goto("/");
-  await expect(
-    page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /^Записать трату/u })).toBeVisible();
+  await startDemo(page);
   await expect(page.locator(".reach-line")).toBeVisible();
 }
 

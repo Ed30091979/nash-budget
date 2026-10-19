@@ -142,9 +142,9 @@ describe("форма", () => {
   /** Поверхности 3.0, которые остаются прямыми, пока их экран не переписан (§5: роли — с компонентами). */
   const surfaces = [
     ".section-card, .entry-card", ".quick-card",
-    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
+    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".horizon-card",
     ".list-card", ".explain-card", ".invite-code",
-    ".limit-bar", ".dialog-aside", ".step-progress-bar", ".month-shape, .ladder-block",
+    ".limit-bar", ".dialog-aside", ".month-shape, .ladder-block",
     ".pay-row", ".import-action", ".family-news",
   ];
 

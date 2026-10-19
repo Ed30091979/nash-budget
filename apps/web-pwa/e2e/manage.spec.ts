@@ -29,6 +29,9 @@ async function totalMinor(page: Page): Promise<number> {
 
 test("счёт в долларах заведён в «Ещё», курс задан на экране курсов, расход в $: плитка — в $, итог — в ₽", async ({ page }) => {
   await loadDemo(page);
+  // Демо без своего счёта в долларах и без курсов USD: счёт и курс здесь заводятся с нуля.
+  await restoreBudget(page, demoBudget());
+  await goToOverview(page);
   const before = await totalMinor(page);
 
   await openMore(page, "Счета");
@@ -202,10 +205,10 @@ test("форма счёта только с клавиатуры: поля, ра
 test("набранная форма при уходе спрашивает диалогом приложения: «Продолжить ввод» оставляет, «Не сохранять» уводит", async ({ page }) => {
   await loadDemo(page);
   await openMore(page, "Счета");
-  await page.getByRole("button", { name: /^Основной: /u }).click();
+  await page.getByRole("button", { name: /^Карта: /u }).click();
   await page.getByLabel("Название").fill("Зарплатная");
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
-  await expect(leaveDialog(page)).toContainText("правка счёта «Основной»");
+  await expect(leaveDialog(page)).toContainText("правка счёта «Карта»");
   await leaveDialog(page).getByRole("button", { name: "Продолжить ввод" }).click();
   await expect(page.getByLabel("Название")).toHaveValue("Зарплатная");
   // Системное «Назад» — тот же вопрос.
@@ -213,7 +216,7 @@ test("набранная форма при уходе спрашивает ди�
   await expect(leaveDialog(page)).toBeVisible();
   await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Основной: /u })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Карта: /u })).toBeVisible();
 });
 
 test("на 320 pt и при ×2.7 справочники не выезжают за экран, а их цели — не меньше 48", async ({ page }) => {
@@ -228,7 +231,7 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
   await expect(page.locator(".tag-row")).toHaveCount(1);
   await openMore(page, "Счета");
   const mainId = await (async () => {
-    await page.getByRole("button", { name: /^Основной: /u }).click();
+    await page.getByRole("button", { name: /^Карта: /u }).click();
     const hash = await page.evaluate(() => window.location.hash);
     expect(hash).toMatch(/^#\/more\/accounts\/[0-9a-f-]{36}$/u);
     return hash;
@@ -563,11 +566,11 @@ test("отказ записи оставляет черновик формы н�
 
   await openMore(page, "Счета");
   await page.getByRole("button", { name: "Новый счёт" }).click();
-  await page.getByLabel("Название").fill("Основной");
+  await page.getByLabel("Название").fill("Карта");
   await page.getByRole("button", { name: "Завести счёт" }).click();
   await expect(page.getByText("Активный счёт с таким названием уже есть.")).toBeVisible();
   await asksAbout("новый счёт");
-  await expect(page.getByLabel("Название")).toHaveValue("Основной");
+  await expect(page.getByLabel("Название")).toHaveValue("Карта");
 
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();

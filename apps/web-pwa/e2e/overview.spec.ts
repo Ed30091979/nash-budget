@@ -35,7 +35,7 @@ test("четыре последовательности касаний — че�
   // 1. Категория — расход с основного счёта.
   await tile(page, "Продукты").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=expense&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Расход: Основной → Продукты$/u);
+  await expectSheet(page, /^Расход: Карта → Продукты$/u);
 
   // 2. Счёт, затем категория — расход с этого счёта.
   await tile(page, "Резерв платежей").click();
@@ -49,24 +49,24 @@ test("четыре последовательности касаний — че�
   await tile(page, "Зарплата").click();
   await expect(tile(page, "Зарплата")).toHaveAttribute("aria-pressed", "true");
   await expect(hint(page)).toHaveText(/^Выбран доход «Зарплата»/u);
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=income&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Доход: Зарплата → Основной$/u);
+  await expectSheet(page, /^Доход: Зарплата → Карта$/u);
 
   // 4. Счёт, затем другой счёт — перевод.
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await tile(page, "Резерв платежей").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=transfer&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Перевод: Основной → Резерв платежей$/u);
+  await expectSheet(page, /^Перевод: Карта → Резерв платежей$/u);
 
   // Тот же счёт ещё раз — снять выбор; Esc — тоже.
-  await tile(page, "Основной").click();
-  await tile(page, "Основной").click();
-  await expect(tile(page, "Основной")).toHaveAttribute("aria-pressed", "false");
+  await tile(page, "Карта").click();
+  await tile(page, "Карта").click();
+  await expect(tile(page, "Карта")).toHaveAttribute("aria-pressed", "false");
   await expect(hint(page)).toHaveText(/^Коснитесь категории/u);
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await page.keyboard.press("Escape");
-  await expect(tile(page, "Основной")).toHaveAttribute("aria-pressed", "false");
+  await expect(tile(page, "Карта")).toHaveAttribute("aria-pressed", "false");
   expect(await hash(page)).toBe("#/");
 });
 
@@ -96,10 +96,10 @@ test("перетаскивание мышью — те же переходы, ч
 
   await drag(page, tile(page, "Резерв платежей"), tile(page, "Продукты"));
   await expectSheet(page, /^Расход: Резерв платежей → Продукты$/u);
-  await drag(page, tile(page, "Зарплата"), tile(page, "Основной"));
-  await expectSheet(page, /^Доход: Зарплата → Основной$/u);
-  await drag(page, tile(page, "Основной"), tile(page, "Резерв платежей"));
-  await expectSheet(page, /^Перевод: Основной → Резерв платежей$/u);
+  await drag(page, tile(page, "Зарплата"), tile(page, "Карта"));
+  await expectSheet(page, /^Доход: Зарплата → Карта$/u);
+  await drag(page, tile(page, "Карта"), tile(page, "Резерв платежей"));
+  await expectSheet(page, /^Перевод: Карта → Резерв платежей$/u);
   // Категорию не берут: она — только цель.
   await expect(tile(page, "Продукты")).not.toHaveAttribute("draggable", "true");
 });

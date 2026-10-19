@@ -165,7 +165,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-.segmented label:has(input:focus-visible), .composition-options label:has(input:focus-visible),
+.segmented label:has(input:focus-visible),
 .month-checkboxes label:has(input:focus-visible), .file-button:focus-within {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -512,69 +512,17 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .storage-error-state h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
 .storage-error-state p { margin: 12px 0 20px; color: var(--ink-muted); font-weight: 400; }
 
-/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: карточка и плашка
-   сервис-воркера стоят в ней друг под другом и центрируются вместе. Пока высоту экрана держала
-   сама оболочка, плашка оказывалась вне потока карточки и накрывала её поля. */
+/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: слайды и плашка
+   сервис-воркера стоят в ней друг под другом. Пока высоту экрана держала сама оболочка, плашка
+   оказывалась вне потока и накрывала цели первого экрана. Слайды — в блоке R2 в конце файла. */
 .onboarding-route { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100dvh; align-content: center; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--canvas); }
-/* Колонки онбординга объявлены с нулевым минимумом — те же грабли, что у `.field`: у поля ввода
-   есть собственная ширина (`size=20`, при ×2.7 — 440 pt), неявная колонка `auto` растягивалась
-   под неё, и вся карточка при ×2.7 на 320 pt была шире экрана: `width: min(680px, 100%)`
-   считался от колонки, а не от экрана. Найдено измерением сообщений на онбординге. */
-.onboarding-shell { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; }
-/* §1 «ничего не обрезается» — и на первом экране тоже. Правила переноса маршрута (`.route-screen`)
-   на онбординг не распространяются, и при ×2.7 на 320 pt «демонстрационный» в текстовой кнопке
-   был шире экрана на полсотни пунктов: страница получала горизонтальную прокрутку — у новичка,
-   на первом шаге, в режиме, который включают ради читаемости. Найдено измерением сообщений. */
-.onboarding-shell button, .onboarding-shell label, .onboarding-shell strong, .onboarding-shell span, .onboarding-shell legend { overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-card { width: min(680px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.onboarding-heading { display: flex; gap: 12px; align-items: center; }
-.onboarding-heading .brand-mark { flex: none; color: var(--ink); background: var(--surface-sunken); }
-.onboarding-heading h1, .onboarding-heading p { margin: 0; }
-/* Текстовый блок шапки шага — flex-элемент, и без нулевого минимума он не ужимается ниже
-   самого длинного слова: «Повседневные» при ×2.7 на 320 pt — 300 pt, и заголовок выносил всю
-   карточку за экран. Слово переносится по слогам (§1), а не выталкивает край. */
-.onboarding-heading > div { min-width: 0; }
-.onboarding-heading h1 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-kicker { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.step-progress { margin: 20px 0; }
-.step-progress ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 0; margin: 0; list-style: none; }
-.step-progress-step { display: grid; width: 100%; min-height: 48px; gap: 8px; align-content: center; padding: 8px 4px; background: transparent; border: 0; border-radius: var(--radius-control); }
-.step-progress-step:disabled { cursor: default; }
-.step-progress-bar { display: block; height: 8px; background: var(--surface-sunken); }
-.step-progress-step.done .step-progress-bar { background: var(--ink-muted); }
-.step-progress-step.current .step-progress-bar { background: var(--ink); }
-.step-progress-number { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
-.step-progress-step.done .step-progress-number { color: var(--ink); }
-.step-progress-step.current .step-progress-number { color: var(--ink); }
-.onboarding-form { display: grid; gap: 16px; }
-.onboarding-fields { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; padding: 0; margin: 0; border: 0; }
-.onboarding-help { margin: 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
-.composition-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 12px; margin: 0; background: var(--canvas); border: 1px solid var(--border); }
-.composition-options legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.composition-options label { display: flex; min-height: 48px; gap: 8px; align-items: center; justify-content: center; padding: 13px 8px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
-.composition-options label:has(input:checked) { color: var(--ink); background: var(--surface-sunken); border-color: var(--ink); }
-.composition-options .field-error { grid-column: 1 / -1; }
-.onboarding-form .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .field-error { color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.onboarding-form input[aria-invalid="true"] { border-color: var(--red-ink); }
-.onboarding-form input[readonly] { color: var(--ink-muted); background: var(--surface-sunken); }
-.onboarding-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 4px; }
-.onboarding-actions button { min-width: 116px; }
 .primary-button:disabled, .secondary-button:disabled, .text-button:disabled, .quiet-button:disabled { cursor: wait; opacity: .62; }
 /* Кнопка, которая во время записи молчит, а не выключается (`aria-disabled`): выключенная теряет
    фокус, и он падал на <body> (ревью 2c, MEDIUM-3). Выглядит так же, как выключенная. */
 .primary-button[aria-disabled="true"], .secondary-button[aria-disabled="true"], .quiet-button[aria-disabled="true"] { cursor: default; opacity: .62; }
 .primary-button[aria-disabled="true"][aria-busy="true"] { cursor: wait; }
-.demo-option { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.demo-option p strong { color: var(--ink); }
 .text-button { min-height: 48px; padding: 13px 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
-.category-edit-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.category-edit-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); }
-.category-edit-row legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.remove-category { width: fit-content; min-height: 48px; color: var(--red-ink); font-size: var(--size-caption); }
-.onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; }
-#categories:focus-visible, #composition:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
 .planning-toolbar { display: flex; margin-bottom: 16px; }
 .planning-screen { min-width: 0; }
@@ -1279,9 +1227,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
   .app-shell > .update-toast, .app-shell > .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
-  .onboarding-card { padding: 32px; }
-  .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
-  .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
   .import-action { bottom: 0; padding-bottom: 16px; }
   /* Справочники: на широком экране «Выше / Ниже» встают в строку справа от записи. */
   .manage-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -1291,7 +1236,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .screen-heading { align-items: flex-start; flex-direction: column; }
   .plan-row { grid-template-columns: 40px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
-  .composition-options { grid-template-columns: 1fr; }
   .planning-screen .section-card > form > fieldset { grid-template-columns: 1fr; padding: 12px; }
   .planning-screen .section-card > form > fieldset > .field-error, .planning-screen #schedule-months { grid-column: 1; }
   .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1417,3 +1361,30 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* ═════════════ R2: первый запуск, вопросы, пустые состояния ═════════════
+   Дизайн v5, DIRECTION §e и §f. Блок пользуется токенами `:root` и не объявляет своих: значения
+   токенов меняет волна R1. Размер `display` (22/28) выведен из ступени заголовка — пока своей
+   ступени у шкалы нет, — поэтому вместе со шкалой растёт и при системном крупном шрифте. */
+
+/* Слайды первого запуска (01, 02, 02b): марка и «Пропустить», иллюстрация, точки, заголовок,
+   строка и одна главная кнопка. Колонка во всю высоту экрана; при крупном шрифте слайд
+   прокручивается, а кнопка стоит в потоке, а не прилипает поверх текста. */
+.intro { display: flex; flex-direction: column; width: min(480px, 100%); min-height: calc(100dvh - 40px); margin: 0 auto; }
+.intro-top { display: flex; min-height: 56px; gap: 8px; align-items: center; justify-content: space-between; }
+.intro-brand { display: inline-flex; min-width: 0; gap: 8px; align-items: center; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.intro-brand-mark { flex: none; }
+.intro-skip { min-height: 48px; padding: 0 12px; margin-right: -12px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; background: transparent; border: 0; }
+button.intro-skip { border-radius: var(--radius-control); }
+.intro-slide { display: flex; flex: 1; flex-direction: column; min-height: 0; animation: route-fade var(--motion-screen) var(--ease-enter); }
+.intro-art { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: 8px 0; }
+.intro-art svg { width: 100%; max-width: 330px; height: auto; max-height: 42dvh; }
+.intro-dots { display: flex; gap: 8px; justify-content: center; margin: 8px 0 28px; }
+.intro-dots span { display: block; }
+.intro-dots span::before { content: ""; display: block; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--line); }
+.intro-dots span.current::before { width: 24px; background: var(--ink); }
+.intro-slide h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; text-align: center; text-wrap: balance; }
+.intro-text { margin: 10px 0 0; color: var(--ink-muted); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: center; text-wrap: pretty; }
+.intro-actions { display: grid; gap: 8px; margin: 28px 0 8px; }
+.intro-error { margin: 8px 0 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); }
+.hyphenated { hyphens: manual; overflow-wrap: normal; }

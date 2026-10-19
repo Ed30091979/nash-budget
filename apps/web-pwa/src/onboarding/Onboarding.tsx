@@ -1,252 +1,181 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentType, type KeyboardEvent, type PointerEvent, type SVGProps } from "react";
 import { type BudgetState } from "@family-budget/domain";
-import { Icon } from "../components/Icon";
-import { plainInputValue } from "../plain-text";
+import { Hyphenated } from "../components/Hyphenated";
+import { PrivateIllustration } from "../components/illustrations/PrivateIllustration";
+import { ReachIllustration } from "../components/illustrations/ReachIllustration";
+import { TapIllustration } from "../components/illustrations/TapIllustration";
+import { EMPTY_FIRST_RUN, firstRunStore, type FirstRunStore } from "../features/onboarding-questions/memory";
+import { beginFirstRun } from "../features/onboarding-questions/questions-model";
+import { localToday } from "../reach";
 import {
-  advanceOnboardingStep,
   buildOnboardingBudgetState,
   createAsyncOperationLock,
-  createInitialOnboardingNavigation,
-  HOUSEHOLD_COMPOSITION_LABELS,
-  MAX_ONBOARDING_PERIOD_START,
-  type EverydayCategoryDraft,
-  type HouseholdComposition,
-  moveOnboardingStep,
+  currencyForLocale,
+  deviceLanguage,
   onboardingFailureMessage,
-  type OnboardingDraft,
-  type OnboardingStep,
-  onboardingStepButtonLabel,
-  onboardingStepState,
-  ONBOARDING_STEP_TITLES,
-  ONBOARDING_STEPS,
-  returnToOnboardingStep,
-  validateOnboardingStep,
 } from "./model";
+
+export interface IntroSlide {
+  readonly key: string;
+  readonly title: string;
+  readonly text: string;
+  readonly Illustration: ComponentType<SVGProps<SVGSVGElement>>;
+}
+
+/**
+ * Три слайда первого запуска (дизайн v5, 01 → 02 → 02b): каждый — про настоящую функцию, а не про
+ * «гибкость и надёжность». Неразрывный пробел держит тире и короткие слова со своей строкой.
+ */
+export const INTRO_SLIDES: readonly IntroSlide[] = [
+  { key: "tap", title: "Записать трату\u00a0— два шага", text: "Коснитесь категории и наберите сумму. Без форм и лишних полей.", Illustration: TapIllustration },
+  { key: "reach", title: "Видно, хватит ли до\u00a0зарплаты", text: "Приложение считает, сколько можно тратить каждый день до следующей выплаты.", Illustration: ReachIllustration },
+  { key: "private", title: "Начните без регистрации", text: "Бесплатно. Без подписок и рекламы. Данные только на\u00a0этом телефоне.", Illustration: PrivateIllustration },
+];
+
+/** Обещание бесплатности — одной строкой и один раз, на последнем слайде (DIRECTION, п. 10). */
+export const FREE_PROMISE = INTRO_SLIDES[2]!.text;
+
+/** Сдвиг пальца по горизонтали, после которого слайд перелистывается. */
+const SWIPE_DISTANCE = 56;
 
 interface OnboardingProps {
   readonly onComplete: (state: BudgetState) => Promise<void>;
   readonly onDemo: () => Promise<void>;
+  /** Память первого запуска этого устройства (по умолчанию — общая на вкладку). */
+  readonly firstRun?: FirstRunStore;
+  /** Сегодня по календарю семьи; подменяется проверками. */
+  readonly today?: () => string;
+  /** Тег языка устройства для валюты набора; подменяется проверками. */
+  readonly language?: () => string | null;
+  /** С какого слайда начать — для проверок разметки второго и третьего. */
+  readonly initialSlide?: number;
 }
 
-function ErrorText({ id, message }: { id: string; message?: string }) {
-  return message ? <span className="field-error" id={`${id}-error`}>{message}</span> : null;
+/** Марка на слайдах: полоса с насечкой — знак приложения. Рядом стоит название, поэтому картинка декоративна. */
+function BrandMark() {
+  return (
+    <svg className="intro-brand-mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true" focusable="false">
+      <rect width="28" height="28" rx="8" fill="#EFE8DC" />
+      <rect x="5" y="12" width="18" height="4" rx="2" fill="#171410" />
+      <rect x="17" y="10" width="2.5" height="8" fill="#EFE8DC" />
+      <rect x="17.6" y="8" width="1.6" height="12" rx=".8" fill="#B8471A" />
+    </svg>
+  );
 }
 
-function fieldA11y(id: string, error?: string) {
-  return {
-    "aria-invalid": error ? true as const : undefined,
-    "aria-describedby": error ? `${id}-error` : undefined,
-  };
-}
-
-function firstErrorId(errors: Readonly<Record<string, string>>): string | undefined {
-  return Object.keys(errors)[0];
-}
-
-export function Onboarding({ onComplete, onDemo }: OnboardingProps) {
-  const [navigation, setNavigation] = useState(createInitialOnboardingNavigation);
-  const { draft, step } = navigation;
-  const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
+/**
+ * Первый запуск: три слайда и сразу «Обзор» (DIRECTION §e).
+ *
+ * Слайды — настоящая последовательность: один на экране, «Шаг N из 3» словами, фокус на заголовке
+ * каждого. «Дальше» листает вперёд, стрелки клавиатуры и взмах пальцем — в обе стороны.
+ * «Пропустить» на первых двух и Esc ведут туда же, куда «Начать»: молча создаётся набор
+ * (`buildOnboardingBudgetState`), и вопросы задаются уже поверх «Обзора». «Посмотреть на примере» —
+ * демо, тихой кнопкой под главной. Ни одного поля и ни одного вопроса «для кого план».
+ */
+export function Onboarding({ onComplete, onDemo, firstRun = firstRunStore(), today = () => localToday(new Date()), language = deviceLanguage, initialSlide = 0 }: OnboardingProps) {
+  const [index, setIndex] = useState(() => Math.min(Math.max(0, Math.trunc(initialSlide)), INTRO_SLIDES.length - 1));
   const [busy, setBusy] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const operationLock = useRef(createAsyncOperationLock());
+  const swipe = useRef<{ readonly x: number; readonly y: number } | null>(null);
+  const slide = INTRO_SLIDES[index]!;
+  const last = index === INTRO_SLIDES.length - 1;
 
   useEffect(() => {
-    titleRef.current?.focus();
-  }, [step]);
+    titleRef.current?.focus({ preventScroll: true });
+  }, [index]);
 
-  const patchDraft = <K extends keyof OnboardingDraft>(key: K, value: OnboardingDraft[K]) => {
-    setNavigation((current) => ({ ...current, draft: { ...current.draft, [key]: value } }));
-    setErrors({});
-    setSaveError(null);
+  const go = (next: number) => {
+    if (busy || next < 0 || next >= INTRO_SLIDES.length || next === index) return;
+    setError(null);
+    setIndex(next);
   };
 
-  // Возврат по индикатору и кнопка «Назад» — одна и та же дорога: черновик остаётся, ошибки
-  // прошлой проверки снимаются, а вперёд отсюда не уехать — это решает модель, не разметка.
-  const goToStep = (target: OnboardingStep) => {
-    setNavigation((current) => returnToOnboardingStep(current, target));
-    setErrors({});
-    setSaveError(null);
-  };
-
-  const patchCategory = (index: number, patch: Partial<EverydayCategoryDraft>) => {
-    patchDraft("categories", draft.categories.map((category, categoryIndex) => (
-      categoryIndex === index ? { ...category, ...patch } : category
-    )));
-  };
-
-  const focusError = (id: string | undefined) => {
-    if (!id) return;
-    window.setTimeout(() => document.getElementById(id)?.focus(), 0);
-  };
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const validation = validateOnboardingStep(draft, step);
-    setErrors(validation.errors);
-    if (!validation.valid) {
-      focusError(firstErrorId(validation.errors));
-      return;
-    }
-    if (step < 4) {
-      setNavigation(advanceOnboardingStep);
-      setErrors({});
-      return;
-    }
-
+  const start = async () => {
     if (operationLock.current.locked) return;
     setBusy(true);
-    setSaveError(null);
+    setError(null);
     try {
       await operationLock.current.run(async () => {
-        await onComplete(buildOnboardingBudgetState(draft));
+        const day = today();
+        const state = buildOnboardingBudgetState({ today: day, currency: currencyForLocale(language()) });
+        // Память первого запуска — до публикации бюджета: «Обзор» спрашивает её в первом же кадре.
+        // Сбой памяти набору не мешает — вопросы тогда просто не зададутся.
+        await firstRun.replace(beginFirstRun(day)).catch(() => undefined);
+        await onComplete(state);
       });
     } catch {
-      setSaveError(onboardingFailureMessage("save"));
+      setError(onboardingFailureMessage("save"));
     } finally {
       setBusy(false);
     }
   };
 
-  const startDemo = async () => {
+  const demo = async () => {
     if (operationLock.current.locked) return;
     setBusy(true);
-    setSaveError(null);
+    setError(null);
     try {
-      await operationLock.current.run(onDemo);
+      await operationLock.current.run(async () => {
+        // Пример — не первый запуск: вопросов и подсказки на первую трату у него нет.
+        await firstRun.replace(EMPTY_FIRST_RUN).catch(() => undefined);
+        await onDemo();
+      });
     } catch {
-      setSaveError(onboardingFailureMessage("demo"));
+      setError(onboardingFailureMessage("demo"));
     } finally {
       setBusy(false);
     }
   };
 
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape" && !last) {
+      event.preventDefault();
+      void start();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      go(index + 1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      go(index - 1);
+    }
+  };
+  const onPointerDown = (event: PointerEvent<HTMLElement>) => {
+    swipe.current = event.pointerType === "mouse" ? null : { x: event.clientX, y: event.clientY };
+  };
+  const onPointerUp = (event: PointerEvent<HTMLElement>) => {
+    const from = swipe.current;
+    swipe.current = null;
+    if (from === null) return;
+    const dx = event.clientX - from.x;
+    if (Math.abs(dx) < SWIPE_DISTANCE || Math.abs(event.clientY - from.y) > Math.abs(dx)) return;
+    go(dx < 0 ? index + 1 : index - 1);
+  };
+
+  const titleId = `intro-title-${slide.key}`;
   return (
-    <main className="onboarding-shell">
-      <section className="onboarding-card" aria-labelledby="onboarding-title">
-        <header className="onboarding-heading">
-          <span className="brand-mark"><Icon name="piggy-bank" size={24} /></span>
-          <div>
-            <p className="onboarding-kicker">Шаг {step} из 4</p>
-            <h1 id="onboarding-title" ref={titleRef} tabIndex={-1}>{ONBOARDING_STEP_TITLES[step]}</h1>
-          </div>
-        </header>
-        <nav className="step-progress" aria-label="Шаги настройки">
-          <ol>
-            {ONBOARDING_STEPS.map((value) => {
-              const state = onboardingStepState(value, step);
-              return <li key={value}>
-                <button
-                  className={`step-progress-step ${state}`}
-                  type="button"
-                  aria-current={state === "current" ? "step" : undefined}
-                  aria-label={onboardingStepButtonLabel(value, step)}
-                  disabled={state !== "done" || busy}
-                  onClick={() => goToStep(value)}
-                >
-                  <span className="step-progress-bar" aria-hidden="true" />
-                  <span className="step-progress-number" aria-hidden="true">{value}</span>
-                </button>
-              </li>;
-            })}
-          </ol>
-        </nav>
-
-        <form className="onboarding-form" aria-busy={busy} onSubmit={(event) => void submit(event)} noValidate>
-          <fieldset className="onboarding-fields" disabled={busy}>
-            <legend className="sr-only">Настройка семейного бюджета</legend>
-          {step === 1 ? <>
-            <p className="onboarding-help">Только локальные подписи: имена и личные данные не нужны.</p>
-            <fieldset className="composition-options" id="composition" tabIndex={-1} {...fieldA11y("composition", errors.composition)}>
-              <legend>Для кого этот план</legend>
-              {(Object.entries(HOUSEHOLD_COMPOSITION_LABELS) as [HouseholdComposition, string][]).map(([value, label]) => <label key={value}><input type="radio" name="composition" value={value} checked={draft.composition === value} onChange={() => patchDraft("composition", value)} />{label}</label>)}
-              <ErrorText id="composition" message={errors.composition} />
-            </fieldset>
-            <div className="field">
-              <label htmlFor="householdLabel">Название плана</label>
-              <input id="householdLabel" autoComplete="off" maxLength={80} value={draft.householdLabel} onChange={(event) => patchDraft("householdLabel", plainInputValue(event.currentTarget))} {...fieldA11y("householdLabel", errors.householdLabel)} />
-              <ErrorText id="householdLabel" message={errors.householdLabel} />
-            </div>
-            <div className="field">
-              <label htmlFor="accountLabel">Как назвать основной счёт</label>
-              <input id="accountLabel" autoComplete="off" maxLength={80} value={draft.accountLabel} onChange={(event) => patchDraft("accountLabel", plainInputValue(event.currentTarget))} {...fieldA11y("accountLabel", errors.accountLabel)} />
-              <ErrorText id="accountLabel" message={errors.accountLabel} />
-            </div>
-          </> : null}
-
-          {step === 2 ? <>
-            <p className="onboarding-help">Первый план охватит один месяц. Горизонт на 12–24 месяца появится сразу после настройки.</p>
-            <div className="field">
-              <label htmlFor="currency">Валюта</label>
-              <input id="currency" value="Российский рубль (RUB)" readOnly aria-readonly="true" {...fieldA11y("currency", errors.currency)} />
-              <ErrorText id="currency" message={errors.currency} />
-            </div>
-            <div className="field">
-              <label htmlFor="periodStart">Начало бюджетного периода</label>
-              <input id="periodStart" type="date" max={MAX_ONBOARDING_PERIOD_START} value={draft.periodStart} onChange={(event) => patchDraft("periodStart", event.target.value)} {...fieldA11y("periodStart", errors.periodStart)} />
-              <small>Выберите первое число месяца.</small>
-              <ErrorText id="periodStart" message={errors.periodStart} />
-            </div>
-          </> : null}
-
-          {step === 3 ? <>
-            <p className="onboarding-help">Доход — это план, не запись о фактическом поступлении. Обязательный платёж будет повторяться ежемесячно.</p>
-            <div className="amount-field">
-              <label htmlFor="monthlyIncome">Доход в месяц, ₽</label>
-              <input id="monthlyIncome" inputMode="decimal" maxLength={24} placeholder="180 000" value={draft.monthlyIncome} onChange={(event) => patchDraft("monthlyIncome", event.target.value)} {...fieldA11y("monthlyIncome", errors.monthlyIncome)} />
-              <ErrorText id="monthlyIncome" message={errors.monthlyIncome} />
-            </div>
-            <div className="field">
-              <label htmlFor="mandatoryName">Обязательный ежемесячный платёж</label>
-              <input id="mandatoryName" maxLength={80} value={draft.mandatoryName} onChange={(event) => patchDraft("mandatoryName", plainInputValue(event.currentTarget))} {...fieldA11y("mandatoryName", errors.mandatoryName)} />
-              <ErrorText id="mandatoryName" message={errors.mandatoryName} />
-            </div>
-            <div className="field">
-              <label htmlFor="mandatoryAmount">Сумма платежа, ₽</label>
-              <input id="mandatoryAmount" inputMode="decimal" maxLength={24} placeholder="53 000" value={draft.mandatoryAmount} onChange={(event) => patchDraft("mandatoryAmount", event.target.value)} {...fieldA11y("mandatoryAmount", errors.mandatoryAmount)} />
-              <ErrorText id="mandatoryAmount" message={errors.mandatoryAmount} />
-            </div>
-          </> : null}
-
-          {step === 4 ? <>
-            <p className="onboarding-help">Полный набор категорий уже создан — двадцать три, от «Продуктов» до «Зарплаты». Здесь только лимиты: задайте 3–5 сумм на мелкие покупки, остальное можно будет добавить позже.</p>
-            <div id="categories" tabIndex={-1}><ErrorText id="categories" message={errors.categories} /></div>
-            <div className="category-edit-list">
-              {draft.categories.map((category, index) => {
-                const nameId = `category-${index}-name`;
-                const limitId = `category-${index}-limit`;
-                return <fieldset className="category-edit-row" key={category.key}>
-                  <legend>Категория {index + 1}</legend>
-                  <div className="field">
-                    <label htmlFor={nameId}>Название</label>
-                    <input id={nameId} maxLength={80} value={category.name} onChange={(event) => patchCategory(index, { name: plainInputValue(event.currentTarget) })} {...fieldA11y(nameId, errors[nameId])} />
-                    <ErrorText id={nameId} message={errors[nameId]} />
-                  </div>
-                  <div className="field">
-                    <label htmlFor={limitId}>Лимит, ₽</label>
-                    <input id={limitId} inputMode="decimal" maxLength={24} placeholder="0" value={category.limit} onChange={(event) => patchCategory(index, { limit: event.target.value })} {...fieldA11y(limitId, errors[limitId])} />
-                    <ErrorText id={limitId} message={errors[limitId]} />
-                  </div>
-                  {draft.categories.length > 3 ? <button className="text-button remove-category" type="button" onClick={() => patchDraft("categories", draft.categories.filter((_, categoryIndex) => categoryIndex !== index))}>Удалить категорию</button> : null}
-                </fieldset>;
-              })}
-            </div>
-            {draft.categories.length < 5 ? <button className="secondary-button wide icon-label" type="button" onClick={() => patchDraft("categories", [...draft.categories, { key: crypto.randomUUID(), name: "", limit: "" }])}><Icon name="plus" size={20} />Добавить категорию</button> : null}
-          </> : null}
-
-          {saveError ? <p className="onboarding-save-error" role="alert">{saveError} Данные не были опубликованы.</p> : null}
-          <div className="onboarding-actions">
-            {step > 1 ? <button className="secondary-button" type="button" onClick={() => goToStep(moveOnboardingStep(step, "back"))}>Назад</button> : <span />}
-            <button className="primary-button" type="submit">{busy ? "Сохраняем…" : step === 4 ? "Создать бюджет" : "Далее"}</button>
-          </div>
-          </fieldset>
-        </form>
-
-        {step === 1 ? <aside className="demo-option">
-          <p><strong>Хотите сначала посмотреть?</strong><br />Демо создаст в этом браузере вымышленный пример. Это не ваши данные.</p>
-          <button className="text-button" type="button" disabled={busy} onClick={() => void startDemo()}>Загрузить демонстрационный бюджет</button>
-        </aside> : null}
+    <main className="intro" aria-labelledby={titleId} aria-busy={busy} onKeyDown={onKeyDown}>
+      <header className="intro-top">
+        <span className="intro-brand"><BrandMark />Наш бюджет</span>
+        {last ? null : <button className="intro-skip" type="button" aria-disabled={busy || undefined} onClick={() => void start()}>Пропустить</button>}
+      </header>
+      <section className="intro-slide" key={slide.key} aria-roledescription="слайд" aria-label={`${index + 1} из ${INTRO_SLIDES.length}`} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+        <div className="intro-art"><slide.Illustration /></div>
+        <p className="intro-dots" role="img" aria-label={`Шаг ${index + 1} из ${INTRO_SLIDES.length}`}>
+          {INTRO_SLIDES.map((item, dot) => <span key={item.key} className={dot === index ? "current" : undefined} />)}
+        </p>
+        <h1 id={titleId} ref={titleRef} tabIndex={-1}><Hyphenated text={slide.title} /></h1>
+        <p className="intro-text"><Hyphenated text={slide.text} /></p>
+        <div className="intro-actions">
+          {last ? <>
+            <button className="primary-button wide" type="button" aria-disabled={busy || undefined} aria-busy={busy} onClick={() => void start()}>Начать</button>
+            <button className="quiet-button wide" type="button" aria-disabled={busy || undefined} onClick={() => void demo()}>Посмотреть на примере</button>
+          </> : (
+            <button className="primary-button wide" type="button" aria-disabled={busy || undefined} onClick={() => go(index + 1)}>Дальше</button>
+          )}
+        </div>
+        {error === null ? null : <p className="intro-error" role="alert">{error} Попробуйте ещё раз.</p>}
       </section>
     </main>
   );
