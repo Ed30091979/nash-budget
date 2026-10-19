@@ -41,12 +41,15 @@ export function monthNote(budget: BudgetState, paydays: readonly number[]): stri
   return parts.join(" · ");
 }
 
-/** «15 категорий расходов · 8 источников дохода» — подпись строки «Категории и доходы». */
+/**
+ * «15 расходов · 8 доходов» — подпись строки «Категории и доходы»: коротко, в одну строку на телефоне
+ * (макет v5 10); что это категории и источники, сказано названием строки.
+ */
 export function categoriesNote(budget: BudgetState): string {
   const active = budget.categories.filter((category) => category.active);
   const expense = active.filter((category) => category.type === "expense").length;
   const income = active.length - expense;
-  return `${plural(expense, ["категория расходов", "категории расходов", "категорий расходов"])} · ${plural(income, ["источник дохода", "источника дохода", "источников дохода"])}`;
+  return `${plural(expense, ["расход", "расхода", "расходов"])} · ${plural(income, ["доход", "дохода", "доходов"])}`;
 }
 
 /** «5 меток · 1 в архиве» — подпись строки «Метки». */
@@ -109,30 +112,25 @@ export function MoreScreen(props: {
 }) {
   return <>
     <LargeTitle title="Ещё" />
-    {/* «Учёт» — справочники, на которых стоят «Обзор» и лист ввода: счета, категории, метки, курсы. */}
+    {/* «Деньги» — справочники, на которых стоят «Обзор» и лист ввода (строки «Учёта» 2c): счета,
+        категории, метки, курсы. Подложка строки — тон сущности, как плитка «Обзора». */}
     <section className="list-group" aria-labelledby="more-ledger-title">
-      <h2 id="more-ledger-title" className="list-kicker">Учёт</h2>
+      <h2 id="more-ledger-title" className="list-kicker">Деньги</h2>
       <ul className="list-card">
-        <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onTags}><span className="list-icon"><Icon name="hash" size={24} /></span><span className="list-copy"><strong>Метки</strong><small>{props.tagsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon account"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon tone-mint"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onTags}><span className="list-icon tone-peach"><Icon name="hash" size={24} /></span><span className="list-copy"><strong>Метки</strong><small>{props.tagsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon tone-amber"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 
-    <section className="list-group" aria-labelledby="more-family-title">
-      <h2 id="more-family-title" className="list-kicker">Семья</h2>
-      <ul className="list-card">
-        <li><button className="list-row" type="button" onClick={props.onFamily}><span className="list-icon"><Icon name="users" size={24} /></span><span className="list-copy"><strong>Семья и синхронизация</strong><small>{props.familyNote}</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-      </ul>
-    </section>
-
+    {/* «Планы»: строй месяца одной строкой — то, на чём стоят «Обзор» и план на год, — и дверь туда,
+        где это правят. Регулярные, цели и долги встанут сюда с подволной 2e. */}
     <section className="list-group" aria-labelledby="more-plan-title">
-      <h2 id="more-plan-title" className="list-kicker">План</h2>
+      <h2 id="more-plan-title" className="list-kicker">Планы</h2>
       <ul className="list-card">
-        {/* Строй месяца одной строкой: то, на чём стоят «Обзор» и план на год, и дверь туда, где это правят. */}
-        <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>Горизонт 12–24 месяцев: сезонные расходы, обучение, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon tone-lilac"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon tone-sage"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>12–24 месяца вперёд: сезонные и годовые расходы</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 
@@ -147,6 +145,13 @@ export function MoreScreen(props: {
       onPublishEmpty={props.onPublishEmpty}
       onImportStatement={props.onImportStatement}
     />
+
+    <section className="list-group" aria-labelledby="more-family-title">
+      <h2 id="more-family-title" className="list-kicker">Семья</h2>
+      <ul className="list-card">
+        <li><button className="list-row" type="button" onClick={props.onFamily}><span className="list-icon tone-coral"><Icon name="users" size={24} /></span><span className="list-copy"><strong>Семья и синхронизация</strong><small>{props.familyNote}</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+      </ul>
+    </section>
 
     <section className="list-group" aria-labelledby="more-about-title">
       <h2 id="more-about-title" className="list-kicker">О приложении</h2>

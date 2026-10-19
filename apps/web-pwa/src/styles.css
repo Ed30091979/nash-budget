@@ -806,6 +806,25 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .list-fact[open] > summary .row-chevron { transform: rotate(90deg); }
 .list-fact > p { margin: 0 0 12px 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .list-fact > p:last-child { margin-bottom: 16px; }
+
+/* ── Дизайн 5.0, R1: «Ещё» (макет 10). Экран переписан, и его карточки скруглены ролью карточки;
+   у строки — подложка 36 с глифом 20: тон сущности (как квадрат плитки «Обзора»), графит счёта
+   или углублённая поверхность у служебных строк «Данных» и «О приложении». Кикер группы — 13/18
+   полужирный. Списки других экранов остаются прямыми, пока их экраны не перепишут (§5). */
+.route-screen[data-screen="more"] .list-group { margin-top: 16px; }
+.route-screen[data-screen="more"] .list-kicker { margin: 0 0 6px 20px; font-weight: 700; }
+.route-screen[data-screen="more"] .list-card { overflow: hidden; border-radius: var(--radius-card); }
+.route-screen[data-screen="more"] .list-card > li + li { border-top: 0; background: linear-gradient(var(--border), var(--border)) 48px 0 / calc(100% - 48px) 1px no-repeat; }
+.route-screen[data-screen="more"] .list-row, .route-screen[data-screen="more"] .list-fact > summary { grid-template-columns: 36px minmax(0, 1fr) auto; }
+.route-screen[data-screen="more"] .list-icon { width: 36px; height: 36px; border-radius: var(--radius-plate); }
+.route-screen[data-screen="more"] .list-icon:not(.account, [class*="tone-"]) { background: var(--surface-sunken); }
+.route-screen[data-screen="more"] .list-icon.account { color: var(--on-tile-account); background: var(--tile-account); }
+.route-screen[data-screen="more"] .list-row.danger .list-icon { background: var(--red-soft); }
+.route-screen[data-screen="more"] .list-icon > svg { width: 20px; height: 20px; }
+.route-screen[data-screen="more"] .list-fact > p { margin-left: 48px; }
+@media (max-width: 18em) {
+  .route-screen[data-screen="more"] .list-row, .route-screen[data-screen="more"] .list-fact > summary { grid-template-columns: 36px minmax(0, 1fr); }
+}
 /* Выбор файла — та же строка списка; поле файла спрятано, кольцо фокуса рисует строка. */
 .file-button { position: relative; overflow: hidden; cursor: pointer; }
 .file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }

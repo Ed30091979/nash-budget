@@ -134,7 +134,7 @@ describe("форма", () => {
       owns: (selector) => addressesTouchTarget(selector) || pillLabels.has(selector) || controlHousings.has(selector),
     },
     "--radius-tile": { px: "16px", owns: (selector) => /\.(?:tile|add-tile|tile-square)(?![\w-])/u.test(selector) },
-    "--radius-card": { px: "20px", owns: (selector) => /\.(?:card|tile-card)(?![\w-])/u.test(selector) },
+    "--radius-card": { px: "20px", owns: (selector) => /\.(?:card|tile-card)(?![\w-])|\[data-screen="more"\] \.list-card$/u.test(selector) },
     "--radius-sheet": { px: "24px", owns: (selector) => /\.(?:sheet|sheet-frame)(?![\w-])/u.test(selector) },
     "--radius-plate": { px: "10px", owns: (selector) => /\.(?:icon-plate|reach-plate|list-icon|endpoint-plate)(?![\w-])/u.test(selector) },
     "--radius-fab": { px: "18px", owns: (selector) => /\.nav-fab(?![\w-])/u.test(selector) },
