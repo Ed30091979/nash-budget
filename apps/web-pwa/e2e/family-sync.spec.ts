@@ -458,28 +458,44 @@ interface InterruptedDelivery {
   readonly dropped: number;
 }
 
+interface HeldDelivery {
+  /** Первая выборка дошла до перехвата и ждёт. */
+  readonly held: Promise<void>;
+  /** Сколько выборок оборвано, пока первая ждала: каждая — круг, начатый мимо неё. */
+  dropped(): number;
+  /**
+   * Отпускает первую выборку на первой оборванной — круге нового цикла, — а если её нет за `ms`,
+   * то по времени: тогда `dropped` останется нулём, и тест скажет, что цикл не начался заново.
+   */
+  releaseWithin(ms: number): Promise<InterruptedDelivery>;
+}
+
 /**
  * Первая выборка конвертов после открытия приложения придержана, пока круг, который её начал, не
  * снят.
  *
- * Снимает его то, что снимает его в жизни: на старте приходит список устройств семьи, и цикл опроса
- * начинается заново. Список устройств придерживается, пока первая выборка не ушла, и отпускается
- * сразу после неё, — так круг с приёмом в руках оказывается снятым всегда, а не тогда, когда сеть
- * так легла. Выборка нового круга, пока первая придержана, обрывается — обычный сбой сети: иначе
- * новый круг сам принёс бы тот же конверт и показал его, и прогон ничего бы не проверил. Первая
- * выборка уходит на сервер, когда новый круг уже начался (или через две секунды, если его нет), и
- * отдаёт приложению ответ сервера как есть — её конверт ложится в документ кругом, которого больше
- * нет.
+ * Снимает его тест, действием на экране, — не старт. Список устройств придерживается, пока первая
+ * выборка не ушла, и отпускается сразу после неё: так он и пин, который из него выводится (6.4),
+ * приходят ровно тогда, когда круг ждёт, — раньше это и начинало цикл заново. Теперь не начинает,
+ * и это проверяется здесь же счётчиком оборванных выборок. Любая другая выборка, пока первая
+ * придержана, обрывается — обычный сбой сети: иначе новый круг сам принёс бы тот же конверт и
+ * показал его, и прогон ничего бы не проверил. Первая выборка уходит на сервер, когда новый круг
+ * уже начался, и отдаёт приложению ответ сервера как есть — её конверт ложится в документ кругом,
+ * которого больше нет.
  */
-function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: string): Promise<InterruptedDelivery> {
+function holdFirstDelivery(context: BrowserContext, syncOrigin: string): HeldDelivery {
   const origin = syncOrigin.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const envelopes = new RegExp(`^${origin}/v1/families/[^/]+/envelopes\\?`, "u");
   const devices = new RegExp(`^${origin}/v1/families/[^/]+/devices$`, "u");
   let first: Route | null = null;
   let firstReleased = false;
-  let devicesReleased = false;
+  let releaseOnDrop = false;
   let dropped = 0;
   const heldDevices: Route[] = [];
+  let reached!: () => void;
+  const held = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
   let finish!: (delivery: InterruptedDelivery) => void;
   let fail!: (reason: unknown) => void;
   const done = new Promise<InterruptedDelivery>((resolve, reject) => {
@@ -498,7 +514,7 @@ function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: stri
     })().catch(fail);
   };
   void context.route(devices, async (route) => {
-    if (devicesReleased) await route.continue();
+    if (first !== null) await route.continue();
     else heldDevices.push(route);
   });
   void context.route(envelopes, async (route) => {
@@ -508,26 +524,40 @@ function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: stri
     }
     if (first === null) {
       first = route;
-      devicesReleased = true;
+      reached();
       for (const held of heldDevices.splice(0)) await held.continue();
-      setTimeout(releaseFirst, 2_000);
       return;
     }
     dropped += 1;
     await route.abort("connectionreset");
-    releaseFirst();
+    if (releaseOnDrop) releaseFirst();
   });
-  return done;
+  return {
+    held,
+    dropped: () => dropped,
+    releaseWithin(ms) {
+      releaseOnDrop = true;
+      if (dropped > 0) releaseFirst();
+      setTimeout(releaseFirst, ms);
+      return done;
+    },
+  };
 }
 
 /**
  * Конверт, применённый кругом, который успели снять, всё равно доходит до экрана.
  *
  * Прежде экран узнавал о чужой операции только от того круга, который её применил, и только если
- * этот круг доживал до конца. На старте цикл опроса начинается заново, как только приходит список
- * устройств, — и круг, уже применивший конверт, уходил молча. Документ и курсор на диске были
- * правильными, следующий круг ничего нового не находил, и экран до перезапуска показывал бюджет
- * без чужой покупки — со «синхронизировано» в шапке и без семейной новости (прогон проверки 2b).
+ * этот круг доживал до конца. Круг снимался на каждом старте — приходил список устройств, и цикл
+ * опроса начинался заново, — и круг, уже применивший конверт, уходил молча. Документ и курсор на
+ * диске были правильными, следующий круг ничего нового не находил, и экран до перезапуска
+ * показывал бюджет без чужой покупки — со «синхронизировано» в шапке и без семейной новости
+ * (прогон проверки 2b).
+ *
+ * Старт цикл больше не перезапускает, а действие на экране «Семья» — по-прежнему: отзыв
+ * устройства начинает цикл заново, чтобы следующий круг шёл сразу. Анна открывает приложение и,
+ * пока её первый круг везёт покупку Бориса, отзывает телефон Бориса; покупка, сделанная до отзыва,
+ * обязана дойти до её экрана.
  */
 test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
@@ -536,37 +566,54 @@ test("приём, применённый снятым кругом, доходи
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
   try {
-    const anna = await annaContext.newPage();
-    const firstBoris = await borisContext.newPage();
-    const syncOrigin = await anna.request
+    const firstAnna = await annaContext.newPage();
+    const boris = await borisContext.newPage();
+    const syncOrigin = await firstAnna.request
       .get(`${baseURL}/__e2e__/health`)
       .then(async (response) => ((await response.json()) as { syncServerUrl: string }).syncServerUrl);
-    await formFamily(anna, firstBoris, baseURL, { anna: "anna-three@example.org", boris: "boris-three@example.org" });
+    await formFamily(firstAnna, boris, baseURL, { anna: "anna-three@example.org", boris: "boris-three@example.org" });
 
-    // Борис закрыл приложение. Анна записывает, и запись принята сервером — у неё есть свой `seq`.
-    await firstBoris.close();
-    const accepted = anna.waitForResponse(
+    // Анна закрыла приложение. Борис записывает, и запись принята сервером — у неё есть свой `seq`.
+    await firstAnna.close();
+    const accepted = boris.waitForResponse(
       (response) => response.request().method() === "POST" && /\/v1\/families\/[^/]+\/envelopes$/u.test(response.url()) && response.ok(),
     );
-    await recordExpense(anna, { date: "2026-07-09", amount: "4000", category: "Продукты" });
+    await recordExpense(boris, { date: "2026-07-09", amount: "4000", category: "Продукты" });
     const purchase = ((await (await accepted).json()) as { readonly accepted: readonly { readonly seq: number }[] }).accepted;
     expect(purchase).toHaveLength(1);
+    await boris.close();
 
-    // Борис открывает приложение — и первый круг, который принесёт покупку Анны, снимается.
-    const interrupted = holdFirstDeliveryUntilRestart(borisContext, syncOrigin);
-    const boris = await borisContext.newPage();
-    await boris.goto("/");
-    const delivery = await interrupted;
-    // Покупку Анны принесла именно придержанная выборка, и, пока она ждала, цикл опроса начался
-    // заново — круг, сложивший покупку в документ, был снят.
-    expect(delivery.delivered).toContain(purchase[0]!.seq);
-    expect(delivery.dropped).toBeGreaterThan(0);
+    // Анна открывает приложение — первый круг, который принесёт покупку Бориса, придержан.
+    const delivery = holdFirstDelivery(annaContext, syncOrigin);
+    const anna = await annaContext.newPage();
+    await anna.goto("/");
+    await delivery.held;
 
-    // На экране — то, что лежит в документе: покупка Анны, новость о ней и остаток после неё.
-    await boris.getByRole("button", { name: "Обзор", exact: true }).click();
-    await expect(boris.locator(".family-news")).toContainText(/4\s*000\s*₽/u);
-    await expect(flexibleRemaining(boris)).toHaveText(/23\s*000\s*₽/u);
-    await expectOperationCount(boris, G002_INITIAL_OPERATION_COUNT + 1);
+    // Пока он ждёт, приходят список устройств и пин телефона Бориса (привязка по коду
+    // приглашения, 6.4), — и цикл опроса заново не начинается: ни одной выборки мимо первой.
+    await openFamilyScreen(anna);
+    const borisPhone = anna.locator(".device-row").filter({ hasText: "Привязано автоматически" });
+    await expect(borisPhone).toBeVisible({ timeout: 20_000 });
+    await borisPhone.getByRole("button", { name: "Отозвать устройство" }).click();
+    const confirmation = anna.getByRole("alertdialog", { name: "Отозвать это устройство?" });
+    await expect(confirmation).toBeVisible();
+    expect(delivery.dropped()).toBe(0);
+
+    // Отзыв начинает цикл заново — круг с покупкой в руках снят.
+    await confirmation.getByRole("button", { name: "Отозвать устройство" }).click();
+    await expect(anna.locator(".family-message")).toContainText("Устройство отозвано");
+    const interrupted = await delivery.releaseWithin(10_000);
+    // Покупку Бориса принесла именно придержанная выборка, и, пока она ждала, начался круг нового
+    // цикла — круг, сложивший покупку в документ, был снят.
+    expect(interrupted.delivered).toContain(purchase[0]!.seq);
+    expect(interrupted.dropped).toBeGreaterThan(0);
+
+    // На экране — то, что лежит в документе: покупка Бориса, новость о ней и остаток после неё.
+    await anna.getByRole("button", { name: "Обзор", exact: true }).click();
+    await expect(anna.locator(".family-news")).toContainText(/4\s*000\s*₽/u);
+    await expect(anna.locator(".family-news")).toContainText(/Boris three: 1 покупка/u);
+    await expect(flexibleRemaining(anna)).toHaveText(/23\s*000\s*₽/u);
+    await expectOperationCount(anna, G002_INITIAL_OPERATION_COUNT + 1);
   } finally {
     await annaContext.close();
     await borisContext.close();
