@@ -318,8 +318,8 @@ test("два клиента одной семьи сходятся до копе
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
   try {
-    const anna = await annaContext.newPage();
-    const boris = await borisContext.newPage();
+    let anna = await annaContext.newPage();
+    let boris = await borisContext.newPage();
 
     await restoreCanonicalBudget(anna);
     await signIn(anna, baseURL, "anna-two@example.org");
@@ -362,12 +362,20 @@ test("два клиента одной семьи сходятся до копе
     await recordExpense(anna, { date: "2026-07-09", amount: "4000", category: "Продукты" });
     await recordExpense(boris, { date: "2026-07-10", amount: "1500", category: "Продукты" });
 
-    // Сеть вернулась: обе записи встречаются в журнале, и обе стороны показывают одно число.
+    // Оба закрывают приложение ещё офлайн и открывают его, когда сеть вернулась: обе записи
+    // встречаются в журнале, и обе стороны показывают одно число. Не перезагрузка поверх живой
+    // страницы: страница, застигнутая возвращением сети, своим кругом опроса успевала забрать
+    // чужую запись до перезагрузки, и новость пропадала по правилу §6 — «прошлый раз» после
+    // открытия есть бюджет, прочитанный с диска, а запись в нём уже лежала. Человек её при этом не
+    // видел, а тест падал при сошедшихся числах.
+    await anna.close();
+    await boris.close();
     await annaContext.setOffline(false);
     await borisContext.setOffline(false);
-    await anna.reload();
-    await boris.reload();
-    // Перезагрузка оставляет каждого на том же адресе — на записи; новость живёт на «Обзоре».
+    anna = await annaContext.newPage();
+    boris = await borisContext.newPage();
+    await anna.goto("/");
+    await boris.goto("/");
     await anna.getByRole("button", { name: "Обзор", exact: true }).click();
     await boris.getByRole("button", { name: "Обзор", exact: true }).click();
 
