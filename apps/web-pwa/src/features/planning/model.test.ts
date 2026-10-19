@@ -8,6 +8,7 @@ import {
   editCommitment,
   editFlexibleLine,
   editSchedule,
+  planAccounts,
   planningError,
   PlanningValidationError,
   reactivateFlexibleLine,
@@ -183,5 +184,42 @@ describe("planning date window", () => {
     expect(() => createCommitment(makePlanningTestState(), dto("2200-01-01"), deterministicIds())).toThrow(
       expect.objectContaining({ field: "dueDate", message: "Выберите дату с 1900 по 2199 год." }),
     );
+  });
+});
+
+describe("счёт платежа — только в базовой валюте (D-032)", () => {
+  const DOLLARS = "90000000-0000-4000-8000-0000000000d1";
+  const withDollars = () => {
+    const state = makePlanningTestState();
+    return { ...state, accounts: [...state.accounts, { id: DOLLARS, name: "Доллары", type: "cash" as const, currency: "USD", openingBalanceMinor: 0, active: true }] };
+  };
+
+  it("план предлагает только активные счета в базовой валюте", () => {
+    const state = withDollars();
+    expect(planAccounts(state).map((account) => account.id)).toEqual([TEST_IDS.account]);
+    expect(planAccounts({ ...state, accounts: state.accounts.map((account) => ({ ...account, active: false })) })).toEqual([]);
+  });
+
+  it("крупный платёж и расписание на долларовом счёте — отказ словами поля, а не ошибкой домена", () => {
+    const state = withDollars();
+    const commitment = {
+      name: "Страхование", categoryId: TEST_IDS.categories.transport, accountId: DOLLARS,
+      dueDate: "2027-01-15", amount: "720", reserved: "0", recurrence: "annual" as const,
+    };
+    const refusal = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return error instanceof PlanningValidationError ? `${error.field}: ${error.message}` : "не тот отказ";
+      }
+      return "не отказал";
+    };
+    const words = "accountId: Платежи плана ведутся в базовой валюте RUB: выберите счёт в ней.";
+    expect(refusal(() => createCommitment(state, commitment, deterministicIds()))).toBe(words);
+    expect(refusal(() => createSchedule(state, {
+      name: "Кружок", categoryId: TEST_IDS.categories.children, accountId: DOLLARS, amount: "50", dueDay: "5", mode: "monthly", months: [],
+    }, deterministicIds()))).toBe(words);
+    // На рублёвом счёте тот же платёж записывается.
+    expect(createCommitment(state, { ...commitment, accountId: TEST_IDS.account }, deterministicIds()).annualCommitments).toHaveLength(1);
   });
 });

@@ -15,6 +15,7 @@ import {
   editCommitment,
   editFlexibleLine,
   editSchedule,
+  planAccounts,
   planningError,
   reactivateFlexibleLine,
   setCommitmentActive,
@@ -141,7 +142,8 @@ function ActiveReferenceFields({ prefix, budget, categoryId, accountId, onCatego
   // Заголовки групп — тот же закрытый перечень домена, что и в форме операции: группировка есть
   // в данных, и там, где из категорий выбирают, она обязана быть видна.
   const groups = groupedCategoryOptions(budget, "expense", "", categoryId === "" ? undefined : categoryId);
-  const accounts = budget.accounts.filter((item) => item.active);
+  // Только счета в базовой валюте (D-032): платёж на долларовом счёте план не сложил бы с рублёвыми.
+  const accounts = planAccounts(budget);
   return <>
     <div className="field">
       <label htmlFor={`${prefix}-categoryId`}>Категория расходов</label>
@@ -167,7 +169,7 @@ function ActiveReferenceFields({ prefix, budget, categoryId, accountId, onCatego
 function commitmentDefaults(budget: BudgetState): CommitmentDraft {
   return {
     name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "",
-    accountId: budget.accounts.find((item) => item.active)?.id ?? "", dueDate: "", amount: "", reserved: "0", recurrence: "annual",
+    accountId: planAccounts(budget)[0]?.id ?? "", dueDate: "", amount: "", reserved: "0", recurrence: "annual",
   };
 }
 
@@ -234,7 +236,7 @@ function CommitmentsEditor({ budget, onChange }: PlanningEditorProps) {
 }
 
 function scheduleDefaults(budget: BudgetState): ScheduleDraft {
-  return { name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "", accountId: budget.accounts.find((item) => item.active)?.id ?? "", amount: "", dueDay: "1", mode: "monthly", months: [] };
+  return { name: "", categoryId: budget.categories.find((item) => item.active && item.type === "expense")?.id ?? "", accountId: planAccounts(budget)[0]?.id ?? "", amount: "", dueDay: "1", mode: "monthly", months: [] };
 }
 
 function SchedulesEditor({ budget, onChange }: PlanningEditorProps) {

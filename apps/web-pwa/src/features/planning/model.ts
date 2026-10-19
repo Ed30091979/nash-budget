@@ -1,7 +1,9 @@
 import {
+  baseCurrencyOf,
   calculateAnnualPlan,
   COLLECTION_LIMITS,
   documentIds,
+  holdsPlans,
   isWithinDateWindow,
   MAX_LOCAL_DATE,
   MIN_LOCAL_DATE,
@@ -165,10 +167,22 @@ function totalBudgetLines(state: BudgetState): number {
   return state.budgets.reduce((count, budget) => count + budget.lines.length, 0);
 }
 
+/**
+ * Счёт платежа — активный и в базовой валюте (D-032): план года складывает платежи без курса, и
+ * доллар среди рублей был бы правдоподобным и неверным числом. Домен отверг бы такой план и сам, но
+ * своими словами и на английском; здесь отказ звучит словами поля.
+ */
 function activeAccount(state: BudgetState, id: string): void {
-  if (!state.accounts.some((item) => item.id === id && item.active)) {
-    fail("accountId", "Выберите активный счёт.");
+  const account = state.accounts.find((item) => item.id === id && item.active);
+  if (account === undefined) fail("accountId", "Выберите активный счёт.");
+  if (!holdsPlans(state, account)) {
+    fail("accountId", `Платежи плана ведутся в базовой валюте ${baseCurrencyOf(state)}: выберите счёт в ней.`);
   }
+}
+
+/** Счета, которые план предлагает: активные и в базовой валюте (D-032). */
+export function planAccounts(state: BudgetState): BudgetState["accounts"] {
+  return state.accounts.filter((item) => item.active && holdsPlans(state, item));
 }
 
 function activeExpenseCategory(state: BudgetState, id: string): void {
