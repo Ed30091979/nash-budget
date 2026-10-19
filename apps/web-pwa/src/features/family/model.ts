@@ -20,6 +20,7 @@ import {
 } from "@family-budget/sync-client";
 import type { JournalIntegrity, WithheldEntity } from "@family-budget/sync-protocol";
 
+import type { WriteRefusalReason } from "../../write-refusal";
 import type { RotationGap, RotationPhase, SkippedDevice } from "./rotation";
 
 /* ───────────────────────────── Индикатор состояния ───────────────────────────── */
@@ -210,6 +211,16 @@ const HOLD_NOTICES = {
       body: "Журнал семьи пришёл, но эта версия приложения не может его открыть, поэтому бюджет семьи на этом устройстве пока не показан, а записи недоступны. Обновите приложение — бюджет и записи откроются сами. Ничего не потеряно: записи семьи хранятся в журнале и появятся, как только бюджет откроется.",
     },
   },
+  journal_not_ready: {
+    kept: {
+      title: "Бюджет семьи пришёл не целиком",
+      body: "В журнале семьи сейчас нет бюджета, который можно показать: его удалили или он ещё не пришёл. На экране — бюджет в том виде, в каком он открылся в последний раз, и записи на этом устройстве временно недоступны: записанное поверх него не появилось бы на экране и затёрло бы изменения семьи. Записи откроются сами, как только семья восстановит бюджет — например, откроет новый месяц. Ничего не потеряно: всё записанное семьёй хранится в журнале.",
+    },
+    empty: {
+      title: "Бюджет семьи пришёл не целиком",
+      body: "Журнал семьи пришёл, но бюджета, который можно показать, в нём сейчас нет, поэтому бюджет семьи на этом устройстве пока не показан, а записи недоступны. Он откроется сам, как только семья восстановит бюджет — например, откроет новый месяц.",
+    },
+  },
 } as const satisfies Readonly<Record<DocumentHoldReason, Readonly<Record<DocumentHold["document"], DocumentHoldNotice>>>>;
 
 /**
@@ -224,6 +235,14 @@ const HOLD_NOTICES = {
 export function documentHoldNotice(hold: DocumentHold | null): DocumentHoldNotice | null {
   if (hold === null) return null;
   return HOLD_NOTICES[hold.reason][hold.document];
+}
+
+/**
+ * Почему записи недоступны, словами плашки и формы: задержка расхождения версий говорит
+ * «обновите приложение», журнал без показуемого бюджета — «дождитесь, пока семья его восстановит».
+ */
+export function holdWriteRefusal(hold: DocumentHold): WriteRefusalReason {
+  return hold.reason === "rejected_by_app" ? "held" : "notReady";
 }
 
 const PENDING_FAMILY_NOTICE: DocumentHoldNotice = {

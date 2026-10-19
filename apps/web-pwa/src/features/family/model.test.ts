@@ -22,6 +22,7 @@ import {
   classifySyncFailure,
   documentHoldNotice,
   familyDocumentNotice,
+  holdWriteRefusal,
   showsFamilyHoldScreen,
   filterTransactionsByMember,
   formatInviteCode,
@@ -203,6 +204,16 @@ describe("состояние журнала, которое приложение
         expect(documentHoldNotice({ reason, document })?.title.length, `${reason} ${document}`).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("журнал без показуемого бюджета называет себя сам и говорит, как из него выйти", () => {
+    // Третье ревью: неготовый журнал на документе семьи — задержка со своими словами.
+    const kept = documentHoldNotice({ reason: "journal_not_ready", document: "kept" })!;
+    expect(kept.title).toBe("Бюджет семьи пришёл не целиком");
+    expect(kept.body).toContain("записи на этом устройстве временно недоступны");
+    expect(kept.body).toContain("откроет новый месяц");
+    expect(holdWriteRefusal({ reason: "journal_not_ready", document: "kept" })).toBe("notReady");
+    expect(holdWriteRefusal({ reason: "rejected_by_app", document: "kept" })).toBe("held");
   });
 
   it("экран ожидания стоит на месте бюджета ровно тогда, когда в семье нет документа семьи", () => {

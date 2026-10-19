@@ -453,7 +453,16 @@ export interface JournalWriterOptions {
  * — не состояние журнала, и правка, собранная из него, ушла бы семье целыми сущностями под
  * меткой, перебивающей чужие правки, — а из личного бюджета ещё и чужими семье счетами (второе
  * ревью, MEDIUM-2 и MEDIUM-3). Запись отклоняется {@link BudgetWriteRefusal} раньше, чем что-либо
- * ляжет в очередь или в документ, и форма показывает, почему.
+ * ляжет в очередь или в документ, и форма показывает, почему. Журнал, состояние которого нельзя
+ * показать вовсе (задержка `journal_not_ready`), пропускает одну запись — ту, после которой его
+ * можно показать: открытие месяца; это решает движок по состоянию, которое запись оставит.
+ *
+ * Правка собирается из того, что показано на экране, и только если это и есть документ. Задержка,
+ * снятая здесь же, или чужая запись, ещё не показанная, означают, что экран отстал: правка из него
+ * несла бы старые сущности поверх новых — переименование другого участника пропало бы у всей
+ * семьи (третье ревью, S1), а личный бюджет вступившего ушёл бы семье (S6). Тогда ответ —
+ * `conflict` с документом с диска: координатор показывает его, и человек повторяет правку уже на
+ * нём, тем же путём, что и при записи другой вкладки.
  */
 export function createBudgetJournalWriter(options: JournalWriterOptions): BudgetJournalWrite {
   return async ({ expectedRevision, previous, next }) => {
@@ -461,10 +470,14 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
     if (engine === null) return null;
     // Сборка, которая теперь открывает состояние журнала, снимает задержку до того, как о записи
     // будет решено, — иначе первая запись после обновления отклонялась бы зря.
-    await engine.settleDocument();
+    const settled = await engine.settleDocument();
     const report = await engine.documentStatus();
-    if (report.hold !== null) throw new BudgetWriteRefusal("held");
+    if (report.hold !== null && report.hold.reason === "rejected_by_app") throw new BudgetWriteRefusal("held");
     if (!report.familyDocument) throw new BudgetWriteRefusal("pending");
+    const stored = await options.store.loadVersioned().catch(() => null);
+    if (settled || (stored !== null && showsOtherThan(previous, stored.value))) {
+      return { status: "conflict", current: stored };
+    }
     const origin = await options.store
       .readSyncState<JournalOrigin>(JOURNAL_ORIGIN_KEY)
       .catch(() => undefined);
@@ -474,6 +487,9 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
     const seed = origin === "local" && journal === undefined;
     const drafts = budgetJournalDrafts(seed ? null : previous, next, options.memberId());
     if (drafts.length === 0) {
+      // Задержанный документ не переписывается ничем, кроме принятого состояния журнала, — даже
+      // записью, в которой не изменилась ни одна сущность.
+      if (report.hold !== null) throw new BudgetWriteRefusal("notReady");
       // Ни одна сущность не изменилась. Журналу сказать нечего, и запись идёт прежним путём,
       // чтобы форма состояния на диске всё равно догнала показанную.
       return options.saveIfRevision(expectedRevision, next);
@@ -485,6 +501,7 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
       // Задержка могла начаться между проверкой выше и записью — приёмом в другой вкладке.
       if (failure instanceof SyncClientError && failure.code === "document_held") throw new BudgetWriteRefusal("held");
       if (failure instanceof SyncClientError && failure.code === "state_refused") throw new BudgetWriteRefusal("refused");
+      if (failure instanceof SyncClientError && failure.code === "journal_not_ready") throw new BudgetWriteRefusal("notReady");
       throw failure;
     }
     const document = await options.store.loadVersioned().catch(() => null);
@@ -495,6 +512,20 @@ export function createBudgetJournalWriter(options: JournalWriterOptions): Budget
     if (committed.revision === null) return { status: "conflict", current: null };
     return { status: "saved", value: next, revision: committed.revision };
   };
+}
+
+/**
+ * Показывает ли экран не то, что лежит в документе: есть ли хоть одна сущность, которой они
+ * различаются. По сущностям, а не по ревизии: чекпойнт и перешифровка очереди переписывают
+ * документ без единого изменения, и сравнение ревизий называло бы каждую такую запись чужой.
+ * Документ, который не открывается шлюзом, — заведомо не то, что показано.
+ */
+function showsOtherThan(shown: BudgetState, stored: unknown): boolean {
+  try {
+    return budgetJournalDrafts(shown, prepareBudgetState(stored)).length > 0;
+  } catch {
+    return true;
+  }
 }
 
 /** «Анна» out of «anna@example.com». Local, cosmetic, and editable later in the budget itself. */
@@ -672,8 +703,9 @@ export function startVisibilityAwarePolling(poll: VisibilityAwarePoll): () => vo
   };
 }
 
-/** Ровно та часть движка, которую делает круг. Тест подставляет сюда объект в две строки. */
+/** Ровно та часть движка, которую делает круг. Тест подставляет сюда объект в несколько строк. */
 export interface SyncRoundEngine {
+  settleDocument(): Promise<boolean>;
   sync(): Promise<{ readonly pull: { readonly applied: number; readonly settled?: boolean } }>;
 }
 
@@ -700,12 +732,41 @@ export interface SyncRoundResult {
  * молчит оно теперь только тогда, когда молчать не о чем.
  */
 export async function runSyncRound(engine: SyncRoundEngine): Promise<SyncRoundResult> {
+  // Документ снимается с задержки отдельным шагом, до сети и до всего, что в ней может упасть, —
+  // и его исход переживает сбой круга: сборка, обновлённая офлайн, сняла задержку на диске, и
+  // экран обязан это показать, хотя до сервера круг не дошёл (третье ревью, S5). Единственный
+  // путь, которым круг узнаёт о снятой задержке; `sync()` спрашивает ещё раз и отвечает «нет».
+  let settled = false;
   try {
+    settled = await engine.settleDocument();
     const result = await engine.sync();
-    return { applied: result.pull.applied, settled: result.pull.settled ?? false, outcome: "ok" };
+    return { applied: result.pull.applied, settled: settled || (result.pull.settled ?? false), outcome: "ok" };
   } catch (failure) {
-    return { applied: 0, settled: false, outcome: classifySyncFailure(failure) };
+    return { applied: 0, settled, outcome: classifySyncFailure(failure) };
   }
+}
+
+/**
+ * Участник этого устройства, которого ещё нет в документе семьи, — или `null`, когда вписывать
+ * некого или некуда.
+ *
+ * Вступившее устройство записывало своего участника в момент вступления, и запись шла в бюджет,
+ * который был у него до вступления: бюджет семьи приходил позже и заменял его, а участник
+ * пропадал — у семьи его имени не было никогда (третье ревью, S4). Участник вписывается, когда
+ * у устройства впервые есть документ семьи и писать в него можно: без задержки, с сессией семьи.
+ * Проверка — по документу, поэтому повтор ничего не меняет, а сбой записи повторится сам на
+ * следующем круге.
+ */
+export function missingLocalMember(
+  document: Pick<BudgetState, "members"> | null,
+  report: Pick<SyncStatusReport, "hold" | "familyDocument"> | null,
+  session: Pick<FamilySession, "email" | "familyId" | "memberId" | "role"> | null,
+): LocalMember | null {
+  if (document === null || report === null || !report.familyDocument || report.hold !== null) return null;
+  if (session === null || session.familyId === null || session.memberId === null) return null;
+  const memberId = session.memberId;
+  if ((document.members ?? []).some((member) => member.id === memberId)) return null;
+  return { id: memberId, name: memberNameFromEmail(session.email), role: session.role === "owner" ? "owner" : "member", active: true };
 }
 
 /**
@@ -900,6 +961,8 @@ export function useFamily(
   sessionRef.current = session;
   // Held in a ref so that the actions below do not change identity every render because of it.
   const registerLocalMemberRef = useRef(options.registerLocalMember);
+  /** `${familyId}:${memberId}` участника, которого круг уже нашёл в документе семьи. */
+  const memberPresentRef = useRef<string | null>(null);
   registerLocalMemberRef.current = options.registerLocalMember;
   const publishRemoteBudgetRef = useRef(options.publishRemoteBudget);
   publishRemoteBudgetRef.current = options.publishRemoteBudget;
@@ -1057,8 +1120,9 @@ export function useFamily(
    */
   const refreshSyncState = useCallback(
     async (engine: SyncEngine, publishDocument: boolean): Promise<void> => {
+      let report: SyncStatusReport | null = null;
       try {
-        const report = await engine.status();
+        report = await engine.status();
         setStatus(report);
         // Высокая вода поднимается здесь и только здесь: это собственная величина устройства, и
         // 5.5 шаг 2 меряет ею границу переноса, которую называет сервер.
@@ -1097,15 +1161,26 @@ export function useFamily(
         setIntegrity(null);
         setTransactionAuthors(new Map());
       }
-      if (!publishDocument) return;
+      // Участник этого устройства вписывается в документ семьи, как только он есть и писать в него
+      // можно (`missingLocalMember`). Документ читается для этого, пока участник не найден в нём
+      // хотя бы раз для этой семьи; дальше круг его не перечитывает.
+      const current = sessionRef.current;
+      const memberKey = current?.familyId != null && current.memberId != null ? `${current.familyId}:${current.memberId}` : null;
+      const checkMember = memberKey !== null && memberPresentRef.current !== memberKey && report !== null && report.familyDocument && report.hold === null;
+      if (!publishDocument && !checkMember) return;
       try {
         const document = await store.loadVersioned();
-        if (document !== null) publishRemoteBudgetRef.current?.(document.value, document.revision);
+        if (document !== null && publishDocument) publishRemoteBudgetRef.current?.(document.value, document.revision);
+        if (document !== null && checkMember) {
+          const member = missingLocalMember(document.value as BudgetState, report, current);
+          if (member === null) memberPresentRef.current = memberKey;
+          else await registerLocalMember(member);
+        }
       } catch {
         // Документ не прочитался — экран остаётся на том состоянии, которое уже показывает.
       }
     },
-    [store],
+    [registerLocalMember, store],
   );
 
   /**
@@ -1719,12 +1794,9 @@ export function useFamily(
           };
           await persistSession(store, next);
           setSession(next);
-          await registerLocalMember({
-            id: joined.memberId,
-            name: memberNameFromEmail(current.email),
-            role: "member",
-            active: true,
-          });
+          // Участник не вписывается здесь: бюджет на устройстве — ещё тот, что был до вступления, и
+          // запись в него пропала бы вместе с ним. Его впишет круг, когда придёт бюджет семьи
+          // (`missingLocalMember`, третье ревью, S4).
           setReload((value) => value + 1);
           return "Вы в семье. Ключ семьи развёрнут кодом приглашения на этом устройстве.";
         });

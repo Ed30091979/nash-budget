@@ -24,6 +24,7 @@ import { DataManagementScreen, downloadTextFile, prepareJsonDownload } from "./f
 import {
   documentHoldNotice,
   FamilyHoldScreen,
+  holdWriteRefusal,
   familyDocumentNotice,
   FamilyScreen,
   MEMBER_FILTER_ALL,
@@ -772,7 +773,8 @@ export default function App() {
   // and no timer, and it follows the person onto whichever screen they are on — the family screen
   // renders its own copy, so this one steps aside there.
   const keyAlarm = syncAlarm(family.status?.stop ?? null);
-  const holdNotice = family.inFamily ? documentHoldNotice(family.status?.hold ?? null) : null;
+  const hold = family.inFamily ? family.status?.hold ?? null : null;
+  const holdNotice = documentHoldNotice(hold);
   const navigate = (destination: Screen) => {
     if (shouldChangeScreen(
       screen,
@@ -810,12 +812,12 @@ export default function App() {
         <div className="route-screen" data-screen={screen}>
           {/* Второе ревью: пока документ задержан, устройство только читает, и человек узнаёт об этом
               до того, как запись откажет, на любом экране, кроме «Семьи», где задержка названа сама. */}
-          {holdNotice && screen !== "family" ? (
+          {hold !== null && holdNotice !== null && screen !== "family" ? (
             <section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">
               <span className="key-alarm-mark"><Icon name="triangle-alert" size={24} /></span>
               <div>
                 <h2 id="app-hold-title">{holdNotice.title}</h2>
-                <p>{WRITE_REFUSAL_TEXT.held}</p>
+                <p>{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}</p>
                 <button className="primary-button" type="button" onClick={() => navigate("family")}>Подробнее</button>
               </div>
             </section>

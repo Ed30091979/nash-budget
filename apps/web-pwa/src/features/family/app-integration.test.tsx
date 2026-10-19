@@ -109,10 +109,13 @@ describe("приложение с экраном семьи", () => {
   });
 
   it("задержанный документ виден плашкой на каждом экране, кроме «Семьи», без кнопки «закрыть»", () => {
-    expect(source).toContain("const holdNotice = family.inFamily ? documentHoldNotice(family.status?.hold ?? null) : null;");
-    expect(source).toContain("{holdNotice && screen !== \"family\" ? (");
+    expect(source).toContain("const hold = family.inFamily ? family.status?.hold ?? null : null;");
+    expect(source).toContain("const holdNotice = documentHoldNotice(hold);");
+    expect(source).toContain("{hold !== null && holdNotice !== null && screen !== \"family\" ? (");
     const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && screen !== \"family\" ? ("));
-    expect(banner).toContain("{WRITE_REFUSAL_TEXT.held}");
+    // The words follow the reason: «обновите приложение» for a version skew, «дождитесь бюджета»
+    // for a journal with nothing to show.
+    expect(banner).toContain("{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}");
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 

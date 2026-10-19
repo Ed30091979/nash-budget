@@ -16,10 +16,13 @@ describe("отказ записи бюджета", () => {
     );
     expect(WRITE_REFUSAL_TEXT.pending).toContain("бюджет семьи ещё не пришёл");
     expect(WRITE_REFUSAL_TEXT.refused).toContain("Ничего не отправлено семье");
+    expect(WRITE_REFUSAL_TEXT.notReady).toContain("откроет новый месяц");
+    expect(Object.keys(WRITE_REFUSAL_TEXT)).toEqual(["held", "pending", "refused", "notReady"]);
   });
 
   it("формы записи, плана, выписки и восстановления показывают эти слова, а не «не удалось»", () => {
-    for (const reason of ["held", "pending", "refused"] as const) {
+    // Every reason of the closed set, `notReady` of the third review included.
+    for (const reason of Object.keys(WRITE_REFUSAL_TEXT) as (keyof typeof WRITE_REFUSAL_TEXT)[]) {
       const refusal = new BudgetWriteRefusal(reason);
       expect(refusal.userMessage).toBe(WRITE_REFUSAL_TEXT[reason]);
       expect(refusal.message).toBe(WRITE_REFUSAL_TEXT[reason]);
