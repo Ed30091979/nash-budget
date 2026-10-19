@@ -17,7 +17,8 @@ import { createBudgetRepository } from "./storage-repository";
 import {
   BUDGET_WRITE_CONFLICT_MESSAGE,
   createAppBudgetSaveCoordinator,
-} from "./App";
+} from "./app/budget-store";
+import { readAppSource } from "./app/shell-source";
 
 const databaseNames = new Set<string>();
 
@@ -98,10 +99,10 @@ afterEach(async () => {
 
 describe("operations app integration", () => {
   it("uses the full operations screen and the shared durable CAS coordinator", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
-    expect(source).toContain('import { OperationsScreen } from "./features/operations"');
+    expect(source).toMatch(/import \{[^}]*\bOperationsScreen\b[^}]*\} from "\.\.\/features\/operations"/u);
     // Смысл, а не буква разметки. Прежде здесь стояли две строки с полным перечнем свойств: они
     // ломались от любого нового свойства и при этом ничего не утверждали о том, куда идёт запись.
     // Утверждение одно: экран, меняющий бюджет, пишет через общий долговечный координатор и

@@ -3,7 +3,7 @@
  *
  * «Операция `4 000 ₽` по «Транспорту» от 9 июля 2026, введённая на первом, появляется у второго
  * с именем автора» — это здесь и проверяется, и проверяется целиком тем же путём, каким идёт
- * приложение: координатор записи из `App.tsx`, тот же `createBudgetJournalWriter`, тот же
+ * приложение: координатор записи из `app/budget-store.ts`, тот же `createBudgetJournalWriter`, тот же
  * `SyncEngine`, те же запечатанные конверты. Подменён только транспорт — журнальная половина
  * сервера, переписанная по 3.3 и 3.4, потому что настоящий сервер нельзя честно попросить
  * доставить пакет ровно тогда, когда этого хочет тест.
@@ -35,7 +35,7 @@ import type {
 import { familyKeyFingerprint, generateFamilyKey, toHex } from "@family-budget/sync-crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "../../App";
+import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "../../app/budget-store";
 import { prepareBudgetState } from "../../backup";
 import { createBudgetRepository } from "../../storage-repository";
 import {
@@ -136,7 +136,7 @@ interface Client {
   readonly apply: (change: (state: BudgetState) => BudgetState) => Promise<BudgetState>;
   readonly shown: () => BudgetState;
   readonly drain: () => Promise<void>;
-  /** Приём чужих операций и показ того, что они записали, — ровно как это делает `App.tsx`. */
+  /** Приём чужих операций и показ того, что они записали, — ровно как это делает оболочка (`app/AppShell.tsx`). */
   readonly receive: () => Promise<{ readonly applied: number; readonly stopped: boolean }>;
 }
 
@@ -740,7 +740,7 @@ describe("документ семьи после третьего ревью: э
     const boris = await makeClient("boris-s4", transport, DEVICE_BORIS, MEMBER_BORIS, familyKey, "family");
     await anna.apply((state) => ({ ...state, members: [{ id: MEMBER_ANNA, name: "Анна", role: "owner", active: true }] }));
     await anna.drain();
-    // joinByCode → registerLocalMember, exactly as App.tsx used to: an ordinary budget change, and
+    // joinByCode → registerLocalMember, exactly as the app shell used to: an ordinary budget change, and
     // refused — the budget on the device is not the family's yet.
     const refusal = await boris.apply((state) => ({ ...state, members: [...(state.members ?? []).filter((item) => item.id !== MEMBER_BORIS), { id: MEMBER_BORIS, name: "Борис", role: "member", active: true }] })).catch((failure: unknown) => failure);
     expect((refusal as BudgetWriteRefusal).reason).toBe("pending");

@@ -9,11 +9,12 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { periodClock } from "./reach";
+import { readAppSource } from "./app/shell-source";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const controllerSource = readFileSync(new URL("./features/family/controller.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
 const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf8");

@@ -5,8 +5,9 @@ import { makeSeedBudget, type BudgetState } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 
 import { HistoryScreen, OperationsScreen, operationsCount } from "./features/operations";
+import { readAppSource } from "./app/shell-source";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 /** Бюджет, в котором ещё ничего не записано: ровно то, с чем человек выходит из онбординга. */

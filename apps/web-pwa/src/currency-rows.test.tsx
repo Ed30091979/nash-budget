@@ -17,7 +17,7 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { OperationAmount } from "./features/operations/OperationAmount";
 import { SaveReceiptView } from "./features/operations/OperationsScreen";

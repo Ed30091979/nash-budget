@@ -19,6 +19,7 @@ import {
   withSyncServerOrigin,
 } from "../vite.config";
 import { SPLASH_DEVICES, SPLASH_DIRECTORY, SPLASH_ORIENTATIONS } from "./splash";
+import { readAppSource } from "./app/shell-source";
 
 const configSource = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
@@ -123,7 +124,7 @@ describe("PWA production configuration", () => {
 });
 
 describe("service worker registration coverage", () => {
-  const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const appSource = readAppSource();
   const updatePolicySource = readFileSync(
     new URL("./components/update-policy.ts", import.meta.url),
     "utf8",

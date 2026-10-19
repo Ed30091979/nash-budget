@@ -6,7 +6,8 @@ import {
   protectUnsavedDraftOnUnload,
   shouldChangeScreen,
   type Screen,
-} from "./App";
+} from "./app/AppShell";
+import { readAppSource } from "./app/shell-source";
 
 describe("draft-safe navigation", () => {
   it("changes a clean route without asking for confirmation", () => {
@@ -57,7 +58,7 @@ describe("draft-safe navigation", () => {
   );
 
   it("оставляет дорогу домой одним нажатием с любого экрана", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     // Ключи проверяются типом: новый экран не пройдёт мимо этого списка.
     const screens = Object.keys({
@@ -109,7 +110,7 @@ describe("draft-safe navigation", () => {
   });
 
   it("routes every internal unmounting control through the shared guard", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
 
     expect(source).toContain('onClick={() => navigate("today")}');
     expect(source).toContain('onClick={() => navigate("year")}');

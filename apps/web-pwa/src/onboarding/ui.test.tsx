@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { designTouchTargetMinimum } from "../design-contract";
 import { Onboarding } from "./Onboarding";
+import { readAppSource } from "../app/shell-source";
 
 describe("onboarding UI contract", () => {
   it("показывает короткий первый шаг с labels и явно отделённым демо", () => {
@@ -23,7 +24,7 @@ describe("onboarding UI contract", () => {
 
   it("держит цели нажатия по нормативу и не использует URL, localStorage и logs в onboarding path", () => {
     const styles = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
-    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const app = readAppSource();
     const operations = readFileSync(new URL("../features/operations/OperationsScreen.tsx", import.meta.url), "utf8");
     const component = readFileSync(new URL("./Onboarding.tsx", import.meta.url), "utf8");
     const model = readFileSync(new URL("./model.ts", import.meta.url), "utf8");

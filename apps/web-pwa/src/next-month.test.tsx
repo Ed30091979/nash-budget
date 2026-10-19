@@ -11,11 +11,12 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { periodClock } from "./reach";
+import { readAppSource } from "./app/shell-source";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 
 /**
  * Выход из закрытого месяца — приёмка того самого дефекта, из-за которого приложение жило один

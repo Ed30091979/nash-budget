@@ -7,7 +7,8 @@ import { designTargetGap, designTouchTargetMinimum } from "./design-contract";
 import { editFlexibleLine } from "./features/planning";
 import { makeCanonicalPlanningState, makePlanningTestState, TEST_IDS } from "./features/planning/test-fixture";
 import { createBudgetRepository } from "./storage-repository";
-import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./App";
+import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./app/budget-store";
+import { readAppSource } from "./app/shell-source";
 
 const databaseNames = new Set<string>();
 
@@ -85,7 +86,7 @@ afterEach(async () => {
 
 describe("planning app integration", () => {
   it("wires active views, one CAS coordinator, strict CSP and no hidden persistence path", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 

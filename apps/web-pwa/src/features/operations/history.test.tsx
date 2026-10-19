@@ -14,8 +14,9 @@ import { HistoryScreen, TotalsFact } from "./HistoryScreen";
 import { archiveCategory, createTransaction } from "./model";
 import { amountText, debtVerb, kindSign, transactionCurrency, transactionDetail } from "./transaction-words";
 import { formatMoney } from "../../money";
+import { readAppSource } from "../../app/shell-source";
 
-const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const historySource = readFileSync(new URL("./HistoryScreen.tsx", import.meta.url), "utf8");
 const operationsSource = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
 
