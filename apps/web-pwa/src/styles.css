@@ -984,7 +984,9 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 /* Имя — под квадратом, переносится по мягким переносам, которые ставит `hyphenation.ts`, и рисуется
    дефисом; не обрезается — на 320 pt длинное имя занимает три строки. `overflow-wrap: anywhere` —
    последнее средство для слова без гласных: ни одно имя стартового набора до него не доходит. */
-.tile-name { display: block; max-width: 100%; margin-top: 6px; padding: 0 2px; overflow-wrap: anywhere; hyphens: manual; }
+/* Имя занимает не меньше двух строк: суммы в ряду стоят на одной линии, у «Жилья» и у «Связи и
+   подписок» (макеты 06, 06b); имя в три строки опускает только свою сумму. */
+.tile-name { display: block; max-width: 100%; min-height: calc(var(--lh-tile) * 2); margin-top: 6px; padding: 0 2px; overflow-wrap: anywhere; hyphens: manual; }
 .tile-sum { margin-top: 2px; font-size: var(--size-tile-amount); line-height: var(--lh-tile-amount); font-weight: 700; overflow-wrap: normal; }
 .tile-sum.quiet { color: var(--ink-muted); }
 .tile-limit { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); overflow-wrap: normal; }

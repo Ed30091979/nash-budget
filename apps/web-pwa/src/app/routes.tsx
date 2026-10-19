@@ -162,6 +162,7 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
       onOpenMonth={(month) => void openMonth(month)}
       onOpenSheet={(request) => openSheet(sheetOpeningOf(request))}
       onAddCategory={setAdding}
+      onAddAccount={() => navigate({ name: "account-new" })}
       onPlan={() => navigate({ name: "plan-month" })}
       onReports={() => navigate({ name: "reports" })}
       onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: "expense" })}

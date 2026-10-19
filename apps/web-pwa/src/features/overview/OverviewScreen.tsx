@@ -54,6 +54,8 @@ export interface OverviewScreenProps {
   /** Касание плиток решило, что записать: лист ввода открывает оболочка. */
   readonly onOpenSheet: (request: SheetRequest) => void;
   readonly onAddCategory: (type: "expense" | "income") => void;
+  /** «+ Счёт» в конце ряда «Доходы и счета» (макеты v5 03b, 05): форма нового счёта. */
+  readonly onAddAccount: () => void;
   /** «Можно тратить» и карточка «Хватает до…» ведут в «План месяца». */
   readonly onPlan: () => void;
   /** «Расходы» ведут в «Отчёты»: там тот же расход разложен по категориям. */
@@ -115,7 +117,7 @@ function useStuck(): [RefObject<HTMLSpanElement | null>, boolean] {
  * `role="status"` — пузырём над навигацией, пока что-то выбрано, и только для диктора, пока нет.
  */
 export function OverviewScreen({
-  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onPlan, onReports, onEdit, coach, hints,
+  budget, today, month, onMonth, clock, flexiblePlanMinor, familyNews, monthToOpen, openingMonth, onOpenMonth, onOpenSheet, onAddCategory, onAddAccount, onPlan, onReports, onEdit, coach, hints,
 }: OverviewScreenProps) {
   const model = useMemo(() => overviewModel(budget, month, today), [budget, month, today]);
   const line = useMemo(() => reachLineModel(budget, flexiblePlanMinor), [budget, flexiblePlanMinor]);
@@ -209,7 +211,9 @@ export function OverviewScreen({
       <section className="tile-section" aria-labelledby="overview-accounts">
         <RowHead id="overview-accounts" title="Доходы и счета" row="accounts" onEdit={onEdit} />
         {/* Одна полоса, листается вбок внутри себя: сначала доходы — тоном своей категории, — за
-            разделителем графитовые счета. Пятая плитка выглядывает из-за края: дальше есть ещё. */}
+            разделителем графитовые счета и «+ Счёт» последней плиткой (макеты 03b, 05). Пятая плитка
+            выглядывает из-за края: дальше есть ещё. Источник дохода заводят в «Категориях и
+            доходах» и в выборе стороны листа ввода. */}
         <div className="tile-row">
           <TileGrid label="Источники дохода" layout="row">
             {model.incomes.map((tile) => {
@@ -217,19 +221,17 @@ export function OverviewScreen({
               const key: PickTile = { kind: "income", id: tile.id };
               return <IncomeTile key={tile.id ?? "none"} tile={tile} monthWord={monthWord} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
             })}
-            <AddTile key="add" label="Добавить источник дохода" caption="Доход" onClick={() => onAddCategory("income")} />
           </TileGrid>
-          {model.accounts.length > 0 ? <>
-            <span className="tile-row-divider" aria-hidden="true" />
-            <TileGrid label="Счета" layout="accounts">
-              {model.accounts.map((tile) => {
-                const key: PickTile = { kind: "account", id: tile.id };
-                return <AccountTile key={tile.id} tile={tile} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
-              })}
-            </TileGrid>
-          </> : null}
+          <span className="tile-row-divider" aria-hidden="true" />
+          <TileGrid label="Счета" layout="accounts">
+            {model.accounts.map((tile) => {
+              const key: PickTile = { kind: "account", id: tile.id };
+              return <AccountTile key={tile.id} tile={tile} pressed={isPicked(picked, key)} onPick={tap(key)} drag={dragFor(key)} />;
+            })}
+            <AddTile key="add" label="Новый счёт" caption="Счёт" onClick={onAddAccount} />
+          </TileGrid>
         </div>
-        {model.accounts.length > 0 ? null : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — заведите счёт карандашом над этим рядом.</p>}
+        {model.accounts.length > 0 ? null : <p className="field-hint">Активных счетов нет. Без счёта операцию записать некуда — заведите его плиткой «Счёт» в конце ряда.</p>}
       </section>
 
       <section className="tile-section" aria-labelledby="overview-expenses">

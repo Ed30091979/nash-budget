@@ -36,6 +36,7 @@ function propsFor(budget: BudgetState, overrides: Partial<OverviewScreenProps> =
     onOpenMonth: vi.fn(),
     onOpenSheet: vi.fn(),
     onAddCategory: vi.fn(),
+    onAddAccount: vi.fn(),
     onPlan: vi.fn(),
     onReports: vi.fn(),
     onEdit: vi.fn(),
@@ -97,7 +98,7 @@ describe("«Обзор»: разметка", () => {
     expect(/<button class="tile tile-expense[^>]*aria-pressed/u.test(markup)).toBe(false);
   });
 
-  it("счета — выбираемые плитки с `aria-pressed`, доходы — ряд, «+» — с именем того, что добавится", () => {
+  it("счета — выбираемые плитки с `aria-pressed`, доходы — ряд, «+» — с именем того, что добавится, в конце ряда", () => {
     const markup = render();
     expect(markup).toMatch(/<button class="tile tile-account" type="button" aria-label="Основной: остаток [^"]+" aria-pressed="false"/u);
     expect(markup).toContain('class="tile-grid tile-grid-accounts"');
@@ -105,7 +106,9 @@ describe("«Обзор»: разметка", () => {
     // Длинное имя целиком — в доступном имени, на плитке — до двух строк.
     expect(markup).toMatch(/aria-label="Подработка и самозанятость: 0[\u00a0 ]₽ за июль\. Затем выберите счёт"/u);
     expect(markup).toMatch(/aria-label="Без категории: 180[\u00a0 ]000[\u00a0 ]₽ за июль\. Затем выберите счёт"/u);
-    expect(markup).toContain('aria-label="Добавить источник дохода"');
+    // «+» ряда «Доходы и счета» — последней плиткой за счетами, «Счёт» (макеты v5 03b, 05).
+    expect(markup).toMatch(/<ul class="tile-grid tile-grid-accounts"[^>]*>[\s\S]*<button class="add-tile" type="button" aria-label="Новый счёт">[\s\S]*?<\/button><\/li><\/ul>/u);
+    expect(markup).not.toContain('aria-label="Добавить источник дохода"');
     expect(markup).toContain('aria-label="Своя категория расходов"');
     // Постоянного абзаца над плитками нет: пока ничего не выбрано, подсказка — только для диктора.
     expect(markup).toMatch(/<p class="pick-hint visually-hidden" role="status">Коснитесь категории/u);

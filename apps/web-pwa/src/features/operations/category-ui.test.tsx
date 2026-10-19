@@ -62,6 +62,7 @@ function overviewMarkup(state: BudgetState = fullCatalogue()): string {
       onOpenMonth={vi.fn()}
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
+      onAddAccount={vi.fn()}
       onPlan={vi.fn()}
       onReports={vi.fn()}
       onEdit={vi.fn()}

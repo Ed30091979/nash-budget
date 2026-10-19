@@ -52,6 +52,7 @@ function renderOverview(state: BudgetState, today: string) {
       onOpenMonth={(month) => opened.push(month)}
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
+      onAddAccount={() => undefined}
       onPlan={() => undefined}
       onReports={() => undefined}
       onEdit={() => undefined}
