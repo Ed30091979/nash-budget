@@ -356,3 +356,27 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
   }
   await applyFontScale(page, 1);
 });
+
+test("месяц плана закрыт — «Открыть …» залитой кнопкой в одну строку, на телефоне и на широком экране", async ({ page }) => {
+  await loadDemo(page);
+  // Демо строит план на текущий месяц; через два месяца он закрыт, и строка предлагает открыть новый.
+  const later = new Date();
+  later.setMonth(later.getMonth() + 2, 10);
+  await page.clock.install({ time: later });
+  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
+    await page.setViewportSize(viewport);
+    await page.reload();
+    await goToOverview(page);
+    const open = page.locator(".reach-line.closed").getByRole("button", { name: /^Открыть / });
+    await expect(open).toBeVisible();
+    const box = await open.boundingBox();
+    const label = await open.locator(".icon-label").boundingBox();
+    if (box === null || label === null) throw new Error("«Открыть …» has no layout box.");
+    // Подпись не сжата в узкую колонку по букве на строку: кнопка — одна строка высотой с цель касания.
+    expect(box.height, `${viewport.width}px: высота кнопки`).toBeLessThan(TOUCH_TARGET_MINIMUM * 1.5);
+    expect(label.width, `${viewport.width}px: ширина подписи`).toBeGreaterThan(120);
+    // Кнопка — основное действие карточки, а не прозрачная строка-ссылка.
+    const fill = await open.evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(fill, `${viewport.width}px: заливка`).not.toBe("rgba(0, 0, 0, 0)");
+  }
+});

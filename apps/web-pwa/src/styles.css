@@ -933,7 +933,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .reach-line.closed { padding-bottom: 16px; }
 .reach-line.empty { padding: 16px; }
 .reach-line > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.reach-line > button { display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 8px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+.reach-line > .reach-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 8px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
 .reach-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
 .reach-line.short .reach-mark { color: var(--amber-ink); }
 .reach-line.out .reach-mark { color: var(--red-ink); }
