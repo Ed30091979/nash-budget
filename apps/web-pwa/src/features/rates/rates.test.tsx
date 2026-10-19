@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { BudgetWriteRefusal } from "../../write-refusal";
 import { RateQuickSheet } from "./RateQuickSheet";
 import { RatesScreen } from "./RatesScreen";
+import { formatDayYear, formatDayYearLine } from "../../date-words";
 import { baseCurrencyState, currencyRates, familyCurrencies, rateSavedText, rateWords, ratesErrorText, ratesNote } from "./rates-model";
 
 const TODAY = "2026-10-19";
@@ -78,6 +79,13 @@ describe("курсы: модель", () => {
     expect(rateSavedText(corrected)).toBe("Курс USD на 15\u00a0октября исправлен: был 93,00, стал 93,50.");
     const kzt = addExchangeRate(state(), { currency: "KZT", date: "2026-10-10", rate: { baseMinor: 1_840, quoteMinor: 10_000 } });
     expect(rateSavedText(kzt)).toBe("Курс KZT на 10\u00a0октября не изменился: 18,40.");
+  });
+
+  it("дата строкой экрана: день с месяцем неразрывны, год может уйти на новую строку — число не рвётся", () => {
+    expect(formatDayYear("2026-10-14")).toBe("14\u00a0октября\u00a02026");
+    expect(formatDayYearLine("2026-10-14")).toBe("14\u00a0октября 2026");
+    const markup = renderToStaticMarkup(<RatesScreen budget={state()} today={TODAY} write={{ run: vi.fn() } as never} onBack={() => undefined} />);
+    expect(markup).toContain('<span class="rate-history-day">15\u00a0октября 2026</span>');
   });
 
   it("базовая валюта: пока бюджет пуст — меняется, иначе — словами того, что её держит", () => {

@@ -7,7 +7,7 @@
 import { expect, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 import type { BudgetState } from "@family-budget/domain";
-import { demoBudget, restoreBudget, withDollarAccount } from "./budgets";
+import { demoBudget, restoreBudget, withDollarAccount, withDollarExpenseAtOldRate } from "./budgets";
 import { applyFontScale } from "./font-scale";
 import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { amountField, entrySheet, goToOverview, leaveDialog, loadDemo, recordExpense, submitButton, tile, toast } from "./sheet";
@@ -219,7 +219,9 @@ test("набранная форма при уходе спрашивает ди�
 test("на 320 pt и при ×2.7 справочники не выезжают за экран, а их цели — не меньше 48", async ({ page }) => {
   test.setTimeout(240_000);
   await loadDemo(page);
-  // Один долларовый счёт с курсом и одна метка — чтобы на экранах было что мерить.
+  // Счёт в долларах с двумя курсами (история курса — две строки) и одна метка — чтобы на экранах
+  // было что мерить (ревью 2c, MEDIUM-2: прежде здесь заводилась одна метка).
+  await restoreBudget(page, withDollarExpenseAtOldRate(demoBudget()));
   await openMore(page, "Метки");
   await page.getByLabel("Новая метка").fill("Подработка для отпуска и дачи");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
@@ -231,13 +233,17 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
     expect(hash).toMatch(/^#\/more\/accounts\/[0-9a-f-]{36}$/u);
     return hash;
   })();
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: /^Доллары: /u }).click();
+  const dollarsId = await page.evaluate(() => window.location.hash);
+  expect(dollarsId).toMatch(/^#\/more\/accounts\/[0-9a-f-]{36}$/u);
   await openMore(page, "Категории и доходы");
   await page.getByRole("button", { name: /^Продукты: /u }).click();
   const categoryHash = await page.evaluate(() => window.location.hash);
   expect(categoryHash).toMatch(/^#\/more\/categories\/[0-9a-f-]{36}\?type=expense$/u);
 
   const screens: readonly (readonly [string, string])[] = [
-    ["#/more", "more"], ["#/more/accounts", "accounts"], ["#/more/accounts/new", "account-new"], [mainId, "account"], ["#/more/rates", "rates"],
+    ["#/more", "more"], ["#/more/accounts", "accounts"], ["#/more/accounts/new", "account-new"], [mainId, "account"], [dollarsId, "account"], ["#/more/rates", "rates"],
     ["#/more/categories?type=expense", "categories"], ["#/more/categories?type=income", "categories"], [categoryHash, "category"], ["#/more/tags", "tags"],
   ];
   for (const [width, height, scale] of [[320, 568, 1], [320, 568, 2.7], [390, 844, 2.7]] as const) {
@@ -265,10 +271,36 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
       expect(measured.scrollWidth, `${label}: без горизонтальной прокрутки`).toBeLessThanOrEqual(measured.clientWidth);
       expect(measured.targets, `${label}: цели найдены`).toBeGreaterThan(1);
       expect(measured.undersized, `${label}: цели не меньше ${TOUCH_TARGET_MINIMUM}`).toEqual([]);
+      if (screen === "rates") await expectReadableRateHistory(page, label, scale > 1);
     }
   }
   await applyFontScale(page, 1);
 });
+
+/**
+ * История курса читается строками, а не столбцом букв (ревью 2c, MEDIUM-2: на 320 pt при ×2.7
+ * день и курс стояли по букве в строке рядом с «Удалить»): слова целы, у дня и курса — не меньше
+ * четырёх кеглей ширины, а при крупном шрифте «Удалить» — под курсом, а не рядом.
+ */
+async function expectReadableRateHistory(page: Page, label: string, large: boolean): Promise<void> {
+  await expect(page.locator(".rate-history > li"), label).toHaveCount(2);
+  expect(await nameSplits(page, ".rate-history-day, .rate-history-value, .rate-now > span"), `${label}: слова и числа курса целы`).toEqual([]);
+  const rows = await page.locator(".rate-history > li").evaluateAll((items) => items.map((item) => {
+    const box = (selector: string) => item.querySelector<HTMLElement>(selector)!.getBoundingClientRect();
+    const em = (selector: string) => parseFloat(getComputedStyle(item.querySelector<HTMLElement>(selector)!).fontSize);
+    return {
+      day: box(".rate-history-day").width / em(".rate-history-day"),
+      value: box(".rate-history-value").width / em(".rate-history-value"),
+      buttonTop: box(".quiet-button").top,
+      valueBottom: box(".rate-history-value").bottom,
+    };
+  }));
+  for (const row of rows) {
+    expect(row.day, `${label}: день — строкой`).toBeGreaterThanOrEqual(4);
+    expect(row.value, `${label}: курс — строкой`).toBeGreaterThanOrEqual(4);
+    if (large) expect(row.buttonTop, `${label}: «Удалить» — под курсом`).toBeGreaterThanOrEqual(row.valueBottom - 1);
+  }
+}
 
 /** Демо, где три расходные категории и источник дохода названы длинно — как их и заводят семьи. */
 function withLongCategoryNames(state: BudgetState): BudgetState {

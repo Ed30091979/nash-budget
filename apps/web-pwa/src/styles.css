@@ -1198,6 +1198,10 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .option-grid { grid-template-columns: minmax(0, 1fr); }
   .manage-row > .reorder, .manage-row > .secondary-button { justify-self: stretch; }
   .manage-row .reorder .secondary-button { flex: 1; }
+  /* История курса — одной колонкой: день, курс, под ними «Удалить». Рядом с кнопкой день и курс
+     на 320 pt при ×2.7 сжимались до буквы в строке (ревью 2c, MEDIUM-2). */
+  .rate-history > li { grid-template-columns: minmax(0, 1fr); }
+  .rate-history .quiet-button { grid-column: 1; grid-row: auto; justify-self: start; }
 }
 
 /* §5 Крупный шрифт и короткий экран — то же условие, что прячет клавиатуру суммы

@@ -13,7 +13,7 @@ import { BackButton } from "../../components/BackButton";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { CurrencySelect, currencyLabel, currencyName } from "../../components/CurrencySelect";
 import { Icon } from "../../components/Icon";
-import { formatDayYear } from "../../date-words";
+import { formatDayYear, formatDayYearLine } from "../../date-words";
 import { useFormDraft } from "../../navigation/draft-guard";
 import type { BudgetWriter } from "../../write/useBudgetWrite";
 import { currencySign, RateQuickSheet } from "./RateQuickSheet";
@@ -145,7 +145,7 @@ function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
       {card.current === undefined ? (
         <p className="rate-now missing"><Icon name="triangle-alert" size={20} /><span>Курса на сегодня нет: операция по счёту в {card.currency} попросит его при записи, а «Всего на счетах» его не учтёт.</span></p>
       ) : (
-        <p className="rate-now"><strong>{rateWords(card.current)}</strong><span> с {formatDayYear(card.current.date)}</span></p>
+        <p className="rate-now"><strong>{rateWords(card.current)}</strong><span> с {formatDayYearLine(card.current.date)}</span></p>
       )}
       {card.accountNames.length === 0 ? null : (
         <p className="field-hint">Счета: {card.accountNames.map((name, index) => <span key={`${name}-${index}`}>{index > 0 ? ", " : ""}«<bdi dir="auto">{name}</bdi>»</span>)}</p>
@@ -155,7 +155,7 @@ function CurrencyCard({ card, adding, panel, onAdd, onRemove }: {
         <ul className="rate-history">
           {card.history.map((rate) => (
             <li key={rate.id}>
-              <span className="rate-history-day">{formatDayYear(rate.date)}</span>
+              <span className="rate-history-day">{formatDayYearLine(rate.date)}</span>
               <span className="rate-history-value">{rateWords(rate)}</span>
               <button className="quiet-button" type="button" aria-label={`Удалить курс ${rate.currency} от ${formatDayYear(rate.date)}`} onClick={() => onRemove(rate)}>Удалить</button>
             </li>
