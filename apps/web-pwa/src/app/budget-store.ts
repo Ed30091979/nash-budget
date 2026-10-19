@@ -102,6 +102,37 @@ export function createAppBudgetSaveCoordinator(options: AppBudgetSaveOptions) {
       });
       return result;
     },
+    /**
+     * Показ догоняет документ на диске: тот, что приём чужих операций записал одной транзакцией с
+     * курсором, — здесь ли, в другой вкладке ли.
+     *
+     * По ревизии, а не по сообщению «круг что-то сложил»: сообщение теряется — круг снят, пока
+     * применял, конверт применила другая вкладка, — а курсор уже ушёл за конверт, и ни один
+     * следующий круг его больше не принесёт. Ревизия на диске, отличная от показанной, — это и
+     * есть «экран отстал», откуда бы оно ни взялось.
+     *
+     * В той же очереди, что и записи: свою запись, начатую раньше, сверка ждёт и читает диск уже
+     * после неё — показ не пропадает из-за того, что запись шла, и не подменяет у неё под руками
+     * состояние, против которого она сравнивает ревизию. `adopt` решает, куда показывать, и
+     * отвечает, показал ли; ответ — и есть результат. Ничего не пишет.
+     */
+    catchUp(adopt: (state: BudgetState, revision: string) => boolean): Promise<boolean> {
+      const run = tail.catch(() => undefined).then(async () => {
+        const stored = await options.repository.loadVersioned();
+        if (stored === null || stored.revision === options.getRevision()) return false;
+        // Документ, который не собирается в показуемый бюджет, не показывается: экран остаётся
+        // на прежнем, как и при записи.
+        let next: BudgetState;
+        try {
+          next = prepareBudgetState(stored.value);
+        } catch {
+          return false;
+        }
+        return adopt(next, stored.revision);
+      });
+      tail = run.then(() => undefined, () => undefined);
+      return run.catch(() => false);
+    },
   };
 }
 
