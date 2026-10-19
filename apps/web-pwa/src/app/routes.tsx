@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { BudgetState, CategoryType, Transaction } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
-import { BackButton } from "../components/BackButton";
+import { TitleBar } from "../components/TitleBar";
 import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup, type BackupRepair } from "../backup";
 import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
@@ -73,9 +73,9 @@ export interface AppRouteContext {
   readonly syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }
 
-/** Кнопка «назад» подэкрана «Ещё»: в iOS-standalone другой нет. */
-function MoreBackButton({ onBack }: { readonly onBack: () => void }) {
-  return <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>;
+/** Строка заголовка подэкрана «Ещё»: «‹ Ещё · заголовок». В iOS-standalone другой кнопки «назад» нет. */
+function MoreTitleBar({ title, onBack }: { readonly title: string; readonly onBack: () => void }) {
+  return <TitleBar back={{ label: "Ещё", onClick: onBack }} title={title} />;
 }
 
 /**
@@ -190,8 +190,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
-          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
-          {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
+          {route.name === "plan-month" ? <><MoreTitleBar title="План месяца" onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
+          {route.name === "plan-year" ? <><MoreTitleBar title="План на год" onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
           {/* Справочники «Учёта» (подволна 2c). Запись — по UUID из адреса; имени в адресе нет. */}

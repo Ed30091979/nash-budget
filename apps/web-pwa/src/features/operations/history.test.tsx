@@ -66,7 +66,7 @@ function textOf(markup: string): string {
 }
 
 function historyMarkup(budget: BudgetState): string {
-  return plainText(renderToStaticMarkup(<HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />));
+  return plainText(renderToStaticMarkup(<HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} />));
 }
 
 /**
@@ -101,9 +101,10 @@ describe("история — вкладка «Операции»", () => {
     const markup = historyMarkup(withAllFlows());
     expect(markup).toMatch(/<button class="row-open" type="button" aria-label="Изменить операцию «Возврат 1 500 ₽ от 2026-07-07»"/u);
     expect(markup).not.toContain("Удалить операцию");
-    // Вкладке кнопка «назад» не нужна; подэкрану, который её передаёт, — нужна.
-    expect(markup).toContain("К разделу «Ещё»");
-    expect(plainText(renderToStaticMarkup(<HistoryScreen budget={withAllFlows()} onEdit={vi.fn()} onAdd={vi.fn()} />))).not.toContain("К разделу «Ещё»");
+    // Вкладке кнопка «назад» не нужна: у неё крупный заголовок, а не строка заголовка подэкрана.
+    expect(markup).not.toContain("К разделу «Ещё»");
+    expect(markup).not.toContain("Назад:");
+    expect(markup).toMatch(/<header class="large-title"><h1 id="operations-history-title">Операции<\/h1><\/header>/u);
   });
 
   it("держит архивную категорию в истории и после архивирования", () => {
@@ -214,7 +215,7 @@ describe("строка истории по счёту в другой валют
   };
 
   it("подписана валютой своего счёта, а не рублями", () => {
-    const markup = plainText(renderToStaticMarkup(<HistoryScreen budget={withDollarExpense()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />));
+    const markup = plainText(renderToStaticMarkup(<HistoryScreen budget={withDollarExpense()} onEdit={vi.fn()} onAdd={vi.fn()} />));
     // The sum is set by `Money` like a rouble one: the currency sign muted in its own element.
     expect(markup).toContain('−40,50<span class="money-currency"> $</span>');
     expect(markup).toContain("Изменить операцию «Расход 40,50 $ от 2026-07-10»");

@@ -45,7 +45,7 @@ function assertThreeRules(markup: string, section: string) {
 describe("пустые состояния", () => {
   it("история без операций называет состояние, объясняет и ведёт к записи", () => {
     const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
+      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} />,
     );
 
     assertThreeRules(markup.slice(markup.indexOf(">Операции</h1>")), "операции");
@@ -56,7 +56,7 @@ describe("пустые состояния", () => {
   it("отличает «ничего не записано» от «фильтр ничего не нашёл» — иначе одно из двух ложь", () => {
     const budget = makeSeedBudget();
     const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
+      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} />,
     );
 
     // В бюджете операции есть, поэтому «Записей пока нет» тут звучать не должно ни при каких

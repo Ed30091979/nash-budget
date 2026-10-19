@@ -122,7 +122,9 @@ describe("таблица стилей считает от измеренного
     // §5 4.0: 8 + 56 + 8 — вкладки 52, «+» 56.
     expect(token("--nav-height")).toBe("72px");
     expect(token("--nav-space")).toBe("calc(var(--nav-height) + env(safe-area-inset-bottom))");
-    expect(token("--header-space")).toBe("calc(56px + env(safe-area-inset-top))");
+    // 5.0: шапки-марки нет — проектная высота шапки — безопасная зона; с индикатором синхронизации
+    // она растёт, и это снимает измерение.
+    expect(token("--header-space")).toBe("env(safe-area-inset-top)");
   });
 
   it("ставит оболочку, полосу действия выписки и тост на измеренную навигацию", () => {

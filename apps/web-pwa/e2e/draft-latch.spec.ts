@@ -55,7 +55,8 @@ async function closesWithoutQuestion(page: Page): Promise<void> {
 async function openMonthPlan(page: Page): Promise<void> {
   await tab(page, "Ещё").click();
   await page.getByRole("button", { name: /^План месяца/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Плановые расходы" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "План месяца" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Плановые расходы" })).toBeVisible();
 }
 
 test("операция: записанная — не спрашивает; набранная после — спрашивает; не записавшаяся — спрашивает", async ({ page }) => {

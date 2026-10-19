@@ -1,6 +1,7 @@
 import type { BudgetState } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
 import { Icon } from "../../components/Icon";
+import { LargeTitle } from "../../components/LargeTitle";
 import { DataManagementScreen } from "../data-management";
 import { formatMoney } from "../../money";
 import { plural } from "../../plural";
@@ -107,7 +108,7 @@ export function MoreScreen(props: {
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }) {
   return <>
-    <h1 className="visually-hidden">Ещё: учёт, семья, план и данные</h1>
+    <LargeTitle title="Ещё" />
     {/* «Учёт» — справочники, на которых стоят «Обзор» и лист ввода: счета, категории, метки, курсы. */}
     <section className="list-group" aria-labelledby="more-ledger-title">
       <h2 id="more-ledger-title" className="list-kicker">Учёт</h2>

@@ -13,7 +13,7 @@ import {
   type CurrencyCode,
 } from "@family-budget/domain";
 import { accountIcon, type CategoryTone } from "../../category-visual";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { CurrencySelect } from "../../components/CurrencySelect";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon, type IconName } from "../../components/Icon";
@@ -285,9 +285,8 @@ export function AccountScreen({ budget, today, accountId, write, onBack, onDone 
 
   return (
     <div className="manage-screen account-screen">
-      <div className="planning-toolbar"><BackButton label="К счетам" onClick={onBack} /></div>
+      <TitleBar back={{ label: "Счета", onClick: onBack }} title={account === null ? "Новый счёт" : <bdi dir="auto">{account.name}</bdi>} />
       <header className="manage-head">
-        <h1>{account === null ? "Новый счёт" : <bdi dir="auto">{account.name}</bdi>}</h1>
         {account === null ? <p>Счёт — место, где лежат деньги: карта, наличные, накопления. Его остаток виден на «Обзоре» плиткой.</p> : (
           <p>
             {ACCOUNT_TYPE_WORDS[account.type]} · {account.currency}

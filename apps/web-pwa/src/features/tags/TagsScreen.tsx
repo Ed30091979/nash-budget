@@ -9,7 +9,7 @@ import {
   type BudgetState,
   type Tag,
 } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
@@ -186,9 +186,8 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
 
   return (
     <div className="manage-screen tags-screen">
-      <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
+      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Метки" />
       <header className="manage-head">
-        <h1>Метки</h1>
         <p>Метка — пометка поверх категории: «отпуск», «ремонт», «дача». Её ставят при записи операции, а деньги по меткам видны в «Отчётах». Ни одна сумма бюджета от меток не зависит.</p>
       </header>
 

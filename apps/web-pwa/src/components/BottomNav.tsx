@@ -13,7 +13,7 @@ import type { Route, TabName } from "../navigation/routes";
 const TABS: readonly { readonly tab: TabName; readonly label: string; readonly icon: IconName }[] = [
   { tab: "overview", label: "Обзор", icon: "house" },
   { tab: "operations", label: "Операции", icon: "history" },
-  { tab: "reports", label: "Отчёты", icon: "trending-up" },
+  { tab: "reports", label: "Отчёты", icon: "chart-pie" },
   { tab: "more", label: "Ещё", icon: "ellipsis" },
 ];
 

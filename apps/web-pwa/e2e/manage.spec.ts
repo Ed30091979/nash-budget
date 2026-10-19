@@ -390,7 +390,7 @@ test("категория и источник дохода: «Назад», си�
   // Расходы: системное «Назад» с категории — список расходов, ещё раз — «Ещё».
   await openMore(page, "Категории и доходы");
   await page.getByRole("button", { name: /^Продукты: /u }).click();
-  await expect(page.getByRole("button", { name: "К категориям" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Расходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Расходы");
@@ -403,19 +403,19 @@ test("категория и источник дохода: «Назад», си�
   await page.goBack();
   await expect(more).toBeAttached();
 
-  // Доходы: системное «Назад», «К источникам дохода» и «Сохранить» — к списку доходов.
+  // Доходы: системное «Назад», «‹ Доходы» и «Сохранить» — к списку доходов.
   await openCategories();
   await page.getByRole("button", { name: "Доходы", exact: true }).click();
   await shows("Доходы");
   const source = page.locator(".categories-screen .tile").first();
   await source.click();
-  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Доходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Доходы");
   expect(await address()).toBe("#/more/categories?type=income");
   await source.click();
-  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await page.getByRole("button", { name: "Назад: Доходы" }).click();
   await shows("Доходы");
   await page.goBack();
   await expect(more).toBeAttached();
@@ -436,7 +436,7 @@ test("категория и источник дохода: «Назад», си�
   // список доходов.
   await page.goto("about:blank");
   await page.goto(`/${sourceAddress}`);
-  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Доходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Доходы");
@@ -444,7 +444,7 @@ test("категория и источник дохода: «Назад», си�
   await page.goto("about:blank");
   await page.goto(`/${sourceAddress.replace(/\?type=income$/u, "")}`);
   await expect.poll(address).toBe(sourceAddress);
-  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await page.getByRole("button", { name: "Назад: Доходы" }).click();
   await expect(list).toBeVisible();
   await shows("Доходы");
 });
@@ -507,7 +507,7 @@ test("фокус после действий на месте — на том, ч
   // «Вернуть» в списке: строка уходит из архива в активные — фокус на неё.
   await page.keyboard.press("Enter");
   await expect(page.locator(".manage-status")).toContainText("в архиве");
-  await page.getByRole("button", { name: "К счетам" }).click();
+  await page.getByRole("button", { name: "Назад: Счета" }).click();
   await pressWithKeyboard(page, "Вернуть «Доллары» из архива");
   await expect(page.locator(".manage-status")).toContainText("снова среди активных");
   await expect.poll(() => focused(page)).toMatch(/^button: Доллары: /u);
@@ -525,7 +525,7 @@ test("фокус после действий на месте — на том, ч
   await page.keyboard.press("Enter");
   await pressWithKeyboard(page, "Убрать в архив", page.getByRole("alertdialog"));
   await expect(page.locator(".manage-status")).toContainText("в архиве");
-  await page.getByRole("button", { name: "К категориям" }).click();
+  await page.getByRole("button", { name: "Назад: Расходы" }).click();
   await pressWithKeyboard(page, "Вернуть «Кафе и доставка» из архива");
   await expect(page.locator(".manage-status")).toContainText("снова на «Обзоре»");
   await expect.poll(() => focused(page)).toMatch(/^button: Кафе и доставка: /u);

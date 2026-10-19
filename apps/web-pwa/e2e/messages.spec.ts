@@ -286,7 +286,7 @@ test("плашка сервис-воркера не накрывает ни од
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Семья"));
       // На экране семьи вкладка «Ещё» уже подсвечена: назад ведёт кнопка экрана, а не вкладка.
-      await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
+      await page.getByRole("button", { name: "Назад: Ещё" }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await page.getByRole("button", { name: /Загрузить выписку банка/u }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");

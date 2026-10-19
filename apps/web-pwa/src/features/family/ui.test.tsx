@@ -687,10 +687,9 @@ describe("доступность экрана семьи", () => {
     expect(signIn).toContain('aria-labelledby="family-signin-title"');
   });
 
-  it("исходник экрана не изобретает новой навигации: возврат тем же приёмом, что и планирование", () => {
+  it("исходник экрана не изобретает новой навигации: возврат той же строкой заголовка, что у всех подэкранов «Ещё»", () => {
     const source = readFileSync(new URL("./FamilyScreen.tsx", import.meta.url), "utf8");
-    expect(source).toContain('className="planning-toolbar"');
-    expect(source).toContain("<BackButton label=\"К разделу «Ещё»\" onClick={props.onBack} />");
+    expect(source).toContain('<TitleBar back={{ label: "Ещё", onClick: props.onBack }} title="Семья" />');
     expect(source).toContain('className="screen-heading"');
     expect(source).toContain('className="section-card"');
     // Ни одного перехода по адресу с решёткой: он пишет в историю браузера, а фокус за ним

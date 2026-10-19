@@ -57,8 +57,8 @@ describe("экран выписки", () => {
     const html = renderToStaticMarkup(<ImportScreen budget={household()} onChange={vi.fn(async () => undefined)} onBack={vi.fn()} memory={silentMemory} />);
     const text = plainText(html);
 
-    expect(html).toContain('<h1 id="import-title"');
-    expect(text).toContain("Выписка банка");
+    // Заголовок стадии — `h1` строки заголовка: при смене стадии фокус приходит на него.
+    expect(html).toMatch(/<header class="title-bar">[\s\S]*?<h1 id="import-title" tabindex="-1">Выписка банка<\/h1>/u);
     // Обещание — плашкой рядом с кнопкой, а не строкой в свёрнутой политике.
     expect(html).toMatch(/<div class="import-privacy" role="note">[\s\S]*Файл читается на этом устройстве/u);
     expect(text).toContain(IMPORT_PRIVACY_TITLE);

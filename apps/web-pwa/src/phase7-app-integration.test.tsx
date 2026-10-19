@@ -182,7 +182,7 @@ describe("phase 7 App composition", () => {
     expect(dashboard).not.toContain("Капитал");
     expect(textOf(operations)).not.toContain("Показано");
     expect(operations).not.toContain("operation-history-search");
-    const history = renderToStaticMarkup(<HistoryScreen budget={sixOperationState()} onEdit={() => undefined} onAdd={() => undefined} onBack={() => undefined} />);
+    const history = renderToStaticMarkup(<HistoryScreen budget={sixOperationState()} onEdit={() => undefined} onAdd={() => undefined} />);
     expect(textOf(history)).toContain("Показано 6 из 6");
   });
 

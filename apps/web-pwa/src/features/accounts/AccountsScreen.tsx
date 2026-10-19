@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { moveAccount, restoreAccount, type BudgetState } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar, TitleBarAction } from "../../components/TitleBar";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
@@ -61,12 +61,8 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate 
 
   return (
     <div className="manage-screen">
-      <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
-      <header className="manage-head">
-        <h1>Счета</h1>
-        <p>Остаток каждого счёта — на сегодня, в его валюте. «Всего на счетах» на «Обзоре» складывает их в базовой валюте по последнему курсу.</p>
-      </header>
-      <button className="primary-button manage-add" type="button" onClick={onCreate}><span className="icon-label"><Icon name="plus" size={20} />Новый счёт</span></button>
+      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Счета" action={<TitleBarAction icon="plus" label="Новый счёт" onClick={onCreate} />} />
+      <p className="manage-lead">Остаток каждого счёта — на сегодня, в его валюте. «Всего на счетах» на «Обзоре» складывает их в базовой валюте по последнему курсу.</p>
       <p className="manage-status" role="status">{status}</p>
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}
 

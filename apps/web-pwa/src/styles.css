@@ -105,6 +105,10 @@
   --radius-plate: 10px;    /* подложка глифа на плитке */
   --radius-fab: 18px;      /* «+» нижней навигации */
 
+  /* §5 Размеры 5.0: строка заголовка подэкрана — 52, квадрат плитки — 52 с глифом 24. */
+  --titlebar-height: 52px;
+  --tile-square: 52px;
+
   /* §5 Глубина. Тень — накопительный стек полупрозрачных слоёв: каждая ступень добавляет слой, а
      не заменяет его, поэтому тень остаётся мягкой. Ступеней ровно две: карточка — 1,
      всплывающий слой (лист, диалог, тост) — 3, больше не бывает. Тон слоёв — чернильный: тень
@@ -131,12 +135,13 @@
   /* §6 Место под навигацию и шапку. Отступ оболочки, полоса записи и тост считаются отсюда, а не
      от `--nav-height`: панель растёт с системным шрифтом — при ×2.7 подписи переносятся, и на
      320 pt она занимает 188 pt, на 390 — 150, а не проектные, — и полоса на 56 уводила кнопку записи под
-     навигацию. На широком экране навигация липнет под шапку, и та при ×2.7 — 79, а не 56.
-     Значения здесь — проектные, на первый кадр; настоящие высоты снимает с разметки
-     `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены не читают, иначе
-     измерение кормило бы само себя. */
+     навигацию. На широком экране навигация липнет под шапку, а итоги «Обзора» — под неё на любом:
+     шапки-марки в 5.0 нет, и проектная высота шапки — безопасная зона, но с индикатором
+     синхронизации она растёт (при ×2.7 — 79). Значения здесь — проектные, на первый кадр; настоящие
+     высоты снимает с разметки `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены
+     не читают, иначе измерение кормило бы само себя. */
   --nav-space: calc(var(--nav-height) + env(safe-area-inset-bottom));
-  --header-space: calc(56px + env(safe-area-inset-top));
+  --header-space: env(safe-area-inset-top);
 
   /* §10 Движение. Длительности и кривые — Material 3, взятые как есть (§5 исследования).
      Пружины берутся standard (демпфирование 0.9), а не expressive: наш тон спокойный, не
@@ -250,19 +255,43 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Появление и уход идут разной парой (§5: появление — decelerate, уход — accelerate), и фон
    приходит быстрее, чем уходит: пока он полупрозрачен, под шапкой просвечивает содержимое, и
    каждая лишняя сотня миллисекунд — это сотня миллисекунд нечитаемой шапки. */
-/* Шапка называет план и больше ничего. Слоган «видим месяц и будущее» — приём лендинга: он
-   продаёт продукт тому, кто его уже открыл, и делал это на каждом экране за 70 pt высоты. */
-.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 56px; padding: calc(8px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left)); color: var(--ink); background: transparent; border-bottom: 1px solid transparent; transition: background-color var(--motion-screen) var(--ease-exit), border-bottom-color var(--motion-screen) var(--ease-exit); }
+/* Шапки-марки «Наш бюджет» нет (5.0, §6 «Строка заголовка»): экран называет себя сам. Шапка — полоса
+   безопасной зоны над содержимым, и в ней живёт только индикатор синхронизации, когда семья вошла.
+   Пустая, она высотой с безопасную зону (на большинстве экранов — ноль) и без границы. */
+.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: flex-end; min-height: 0; padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); color: var(--ink); background: transparent; border-bottom: 1px solid transparent; transition: background-color var(--motion-screen) var(--ease-exit), border-bottom-color var(--motion-screen) var(--ease-exit); }
+.app-header:not(:empty) { min-height: 56px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; }
+.app-header:empty { border-bottom-width: 0; }
 .app-header[data-scrolled] { background: var(--surface); border-bottom-color: var(--border); transition-duration: var(--motion-press); transition-timing-function: var(--ease-enter); }
-.brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
+/* Знак марки — только на онбординге (R2 переводит его на слайды). */
 .brand-mark { display: grid; width: 32px; height: 32px; flex: none; place-items: center; color: var(--ink); background: var(--surface-sunken); }
-.brand strong { display: block; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 /* Состояния сети в шапке нет: без синхронизации приложение к сети не обращается, а с ней о
    сети говорит индикатор синхронизации. Пилюля «в сети» была сведением ни о чём. */
 
 /* §5 Контейнер контента: 480 на телефоне, 960 на широком экране, поля 16 + safe-area. */
-.content { width: min(480px, 100%); min-width: 0; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left)); }
+.content { width: min(480px, 100%); min-width: 0; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left)); }
 .route-screen, .route-screen > *, [data-layout-contract="no-action-overflow"] { min-width: 0; max-width: 100%; }
+
+/* ── Дизайн 5.0, R1: строка заголовка подэкрана и крупный заголовок вкладки (§6). ──
+   Строка заголовка — «‹ Родитель · Заголовок · действие» высотой 52: заменяет кнопку-рамку
+   «← К разделу «Ещё»» и шапку-марку. Цели — по 48; строка выходит в поля экрана на 12, чтобы
+   шеврон стоял у края, как в системной навигации. Заголовок — единственный `h1` экрана, по центру
+   между «назад» и действием; длинное имя переносится по слогам, а не обрезается. */
+.title-bar { display: grid; grid-template-columns: minmax(48px, max-content) minmax(0, 1fr) minmax(48px, max-content); gap: 0 4px; align-items: center; min-height: var(--titlebar-height); margin: 0 -12px; }
+.title-bar h1 { margin: 0; padding: 0 4px; text-align: center; overflow-wrap: anywhere; hyphens: auto; }
+button.title-bar-back { display: inline-flex; min-width: 48px; min-height: 48px; gap: 0; align-items: center; padding: 0 8px 0 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+button.title-bar-back > span { min-width: 0; }
+.title-bar-action { display: flex; justify-content: flex-end; }
+button.icon-button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
+/* Крупный заголовок вкладки: 28/32 слева, справа — одно действие-иконка 48. */
+.large-title { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 56px; padding-top: 4px; margin-right: -12px; }
+.large-title h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; overflow-wrap: anywhere; hyphens: auto; }
+.screen-lead { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* При крупном шрифте заголовок встаёт под «назад» во всю ширину: рядом с ним ему осталась бы буква в строке. */
+@media (max-width: 18em) {
+  .title-bar { grid-template-columns: minmax(0, 1fr) minmax(48px, max-content); }
+  .title-bar h1 { grid-column: 1 / -1; grid-row: 2; padding: 0 12px 8px; text-align: left; }
+  button.title-bar-back { justify-self: start; }
+}
 .route-screen button, .route-screen label, .route-screen strong, .route-screen span { overflow-wrap: anywhere; }
 .route-screen > * + * { margin-top: 24px; }
 /* §4 Капс 11 с трекингом 0.08em остался ровно в двух местах: эйбрау месяца и пилюля резерва.
@@ -272,8 +301,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .eyebrow { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .card-kicker { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; letter-spacing: 0; }
 .screen-heading { display: flex; gap: 16px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
-.screen-heading h1, .screen-heading p { margin: 0; }
-.screen-heading h1 { margin-top: 8px; font-size: var(--size-title); line-height: var(--lh-title); }
+.screen-heading h1, .screen-heading h2, .screen-heading p { margin: 0; }
+.screen-heading h1, .screen-heading h2 { margin-top: 8px; font-size: var(--size-title); line-height: var(--lh-title); }
 .screen-heading p { max-width: 620px; margin-top: 8px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
 /* §6 Плитка-статистика. */
@@ -459,7 +488,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 56px repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
    «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
-.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 400; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
 /* «+» — действие, а не вкладка: коралловый акцент, белый глиф (5.07:1),
    радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
 .nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
@@ -476,7 +505,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* Активная вкладка — это текст, а не графика: подпись набрана чернилами (18.36:1), а «вы здесь»
    говорит точка акцента под глифом — графика, 5.07:1 на белом.
    Акцент мелким текстом не бывает (§3), а оранжевый марки в интерфейсе больше не живёт. */
-.nav-button.active { color: var(--ink); background: transparent; }
+.nav-button.active { color: var(--ink); font-weight: 700; background: transparent; }
 .nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--accent); border-radius: 50%; }
 
 /* §6 Тост. */
@@ -573,7 +602,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; }
 #categories:focus-visible, #composition:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
-.planning-toolbar { display: flex; margin-bottom: 16px; }
 .planning-screen { min-width: 0; }
 .planning-screen > .screen-heading { margin-bottom: 4px; }
 .planning-screen .section-card > h2, .planning-screen .section-card > p { margin: 0; }
@@ -616,9 +644,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
 .amount-total { display: block; margin-top: 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 /* §8 «Вся история» — маршрут внутри «Ещё»: заголовок, число операций, поиск над списком. */
-.history-screen > .planning-toolbar { margin-bottom: 4px; }
-.history-card > h1 { margin: 4px 0 0; }
-.history-count { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.history-count { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .history-card > .transaction-list { margin-top: 8px; }
 .history-card > .secondary-button { margin-top: 12px; }
 .history-card > p[role="status"] { margin-top: 12px; }
@@ -646,8 +672,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Под ним строй месяца и лестница месяцев; крупного числа отдельной карточкой нет — самое тесное
    место горизонта названо в выводе и выделено весом в лестнице. */
 .horizon-card { margin-top: 0; }
-.horizon-card > h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
-.horizon-card.danger > h1 { color: var(--red-ink); }
+.horizon-card > h2 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
+.horizon-card.danger > h2 { color: var(--red-ink); }
 .horizon-detail { margin: 4px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .horizon-card > .primary-button { margin-top: 16px; }
 .month-shape, .ladder-block { margin: 20px 0 0; }
@@ -1124,11 +1150,8 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
    на 320 pt им не хватило бы места с именем и остатком. Карточка прямая (§5), скруглено то, что
    нажимают, и подложка глифа. */
 .manage-screen { display: grid; min-width: 0; gap: 16px; }
-.manage-screen > .planning-toolbar { margin-bottom: 0; }
 .manage-head { display: grid; min-width: 0; gap: 4px; }
-.manage-head h1, .manage-head p { margin: 0; }
-.manage-head h1 { overflow-wrap: anywhere; }
-.manage-head p { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.manage-head p, .manage-lead { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .manage-add { justify-self: start; }
 .manage-status { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .manage-status:empty { margin-top: -16px; }
@@ -1228,9 +1251,8 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
    прямые, скруглено только то, что нажимают. */
 .import-screen { min-width: 0; }
 .import-screen > * + * { margin-top: 12px; }
-.import-screen > .planning-toolbar { margin-bottom: 4px; }
 .import-screen > .section-card:first-child { margin-top: 0; }
-.import-card > h1 { margin-top: 4px; }
+.import-card > .body-copy:first-child { margin-top: 0; }
 .import-card > .body-copy, .import-card > .field-hint { margin: 8px 0 0; }
 .import-privacy { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 16px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
 .import-privacy-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }

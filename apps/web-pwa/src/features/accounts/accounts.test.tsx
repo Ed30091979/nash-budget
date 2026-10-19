@@ -185,7 +185,8 @@ describe("счета: разметка", () => {
   it("заголовок, «Новый счёт», активные с «Выше / Ниже», архив с «Вернуть»; остаток — в валюте счёта", () => {
     const markup = render();
     expect(markup).toContain("<h1>Счета</h1>");
-    expect(markup).toMatch(/Новый счёт<\/span><\/button>/u);
+    // «Новый счёт» — действие строки заголовка: глиф «+» и имя словами.
+    expect(markup).toContain('<div class="title-bar-action"><button class="icon-button" type="button" aria-label="Новый счёт">');
     expect(markup).toContain('aria-label="Основной — выше" aria-disabled="true"');
     expect(markup).toContain('aria-label="Доллары — ниже" aria-disabled="true"');
     expect(markup).toContain('aria-label="Вернуть «Старая карта» из архива"');

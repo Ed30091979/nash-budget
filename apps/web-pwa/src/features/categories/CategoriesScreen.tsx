@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { BudgetState, CategoryType } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { Money, useBaseCurrency } from "../../components/Money";
@@ -62,9 +62,8 @@ export function CategoriesScreen({ budget, type, write, onBack, onType, onOpen, 
   const income = type === "income";
   return (
     <div className="manage-screen categories-screen">
-      <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
+      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Категории и доходы" />
       <header className="manage-head">
-        <h1>Категории и доходы</h1>
         <p>{income
           ? "Источники дохода — плитки ряда «Доходы» на «Обзоре». Коснитесь источника, чтобы переименовать его, сменить иконку и цвет или убрать в архив."
           : `Коснитесь категории, чтобы переименовать её, сменить иконку и цвет, задать лимит${month === null ? "" : ` на ${month}`} или убрать в архив.`}</p>
