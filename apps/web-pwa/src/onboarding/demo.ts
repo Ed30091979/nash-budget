@@ -225,9 +225,15 @@ function demoRates(month: string): readonly ExchangeRate[] {
  * Траты месяца по дням — разбиение макетов v5. Суммы по категориям — канонические: «Продукты»
  * 22 000, «Транспорт» 4 000, «Жильё» 45 000; разбиты они на покупки, а не изменены. Две покупки
  * 18-го несут метку «дача», 12-го — «Дал в долг: Саша», 10-го — перевод с карты в наличные.
+ *
+ * Сцена — прошлое: записанной операции с датой позже сегодняшней не бывает (ревью R2, L-10). День
+ * сцены, который ещё не наступил, становится сегодняшним, — покупки те же, суммы те же, порядок тот
+ * же, поэтому «Расходы» месяца и «Можно на повседневные» (27 000 ₽ канонического набора) одинаковы в
+ * любой день месяца. Будущими бывают только выплаты — и они «ожидаются» (`demoIncomes`).
  */
-function demoScene(month: string): readonly Transaction[] {
-  const day = (value: number) => `${month}-${String(value).padStart(2, "0")}`;
+function demoScene(month: string, today: string): readonly Transaction[] {
+  const todayDay = monthOfDate(today) === month ? Number(today.slice(8, 10)) : 31;
+  const day = (value: number) => `${month}-${String(Math.min(value, todayDay)).padStart(2, "0")}`;
   const { card, cash, dollars } = DEMO_IDS.accounts;
   const { food, transport, housing } = PLANNING_IDS.categories;
   const expense = (index: number, on: number, categoryId: string, amountMinor: number, tagIds?: readonly string[]): Transaction => ({
@@ -355,19 +361,35 @@ export function buildDemoBudgetState(today: string = localToday(new Date())): Bu
     monthIndex(month, "сегодняшний месяц") - monthIndex(CANONICAL_DEMO_MONTH),
   );
 
+  const transactions: readonly Transaction[] = [
+    ...demoIncomes(month, today, salary.id, DEMO_IDS.accounts.card),
+    ...demoScene(month, today),
+  ];
+  const recurringRules = demoRules(month, salary.id);
   return {
     ...scene,
     // Дни выплат названы (D-039): «хватает до 20-го» видно в любой день месяца, и с первого числа.
     household: { id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [PAYDAY_ADVANCE, PAYDAY_SALARY] },
+    categories: activeIncomeSources(scene.categories, transactions, recurringRules),
     accounts: demoAccounts(scene.accounts),
     goals: demoGoals(scene.goals),
     tags: DEMO_TAGS,
     exchangeRates: demoRates(month),
     debts: demoDebts(month),
-    recurringRules: demoRules(month, salary.id),
-    transactions: [
-      ...demoIncomes(month, today, salary.id, DEMO_IDS.accounts.card),
-      ...demoScene(month),
-    ],
+    recurringRules,
+    transactions,
   };
+}
+
+/**
+ * Источники дохода демо — только те, по которым есть операции или регулярная запись: «Зарплата».
+ * Остальные стартовые лежат в архиве, как у набора: восемь плиток по 0 ₽ в ряду «Доходы и счета»
+ * выталкивали счета за край экрана, а макет 06 показывает «Зарплату» и сразу счета. Числа бюджета от
+ * этого не меняются: у архивного источника нет ни одной операции.
+ */
+function activeIncomeSources(categories: readonly Category[], transactions: readonly Transaction[], rules: readonly RecurringRule[]): readonly Category[] {
+  const used = new Set<string>();
+  for (const item of transactions) if ("categoryId" in item && typeof item.categoryId === "string") used.add(item.categoryId);
+  for (const rule of rules) if ("categoryId" in rule.template && typeof rule.template.categoryId === "string") used.add(rule.template.categoryId);
+  return categories.map((category) => (category.type === "income" && !used.has(category.id) ? { ...category, active: false } : category));
 }
