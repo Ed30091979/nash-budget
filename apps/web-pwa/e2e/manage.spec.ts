@@ -43,7 +43,7 @@ test("счёт в долларах заведён в «Ещё», курс зад
   await page.getByRole("button", { name: "Завести счёт" }).click();
   await expect(toast(page, "Счёт «Доллары» заведён.")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Доллары: 500\s\$, наличные · usd\. Изменить$/u })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Доллары: 500\s\$, наличные · USD\. Изменить$/u })).toBeVisible();
   // В адресе — UUID и список, а не имя.
   expect(await page.evaluate(() => window.location.hash)).toBe("#/more/accounts");
 
