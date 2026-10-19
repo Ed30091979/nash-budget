@@ -6,7 +6,7 @@ import { useFormDraft } from "../../navigation/draft-guard";
 import { writeFailureText, type BudgetWriter } from "../../write/useBudgetWrite";
 import { BudgetCurrencyLine } from "./BudgetCurrencyLine";
 import { QuestionSheet } from "./QuestionSheet";
-import { applyCategoryChoice, categoryChips, type CategoryChip } from "./questions-model";
+import { applyCategoryChoice, categoryChips, CHIP_LOCK_WORDS, type CategoryChip } from "./questions-model";
 
 export interface CategoriesQuestionProps {
   readonly budget: BudgetState;
@@ -62,7 +62,7 @@ export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCusto
   });
 
   const toggle = (chip: CategoryChip, frequent: boolean) => {
-    if (busy) return;
+    if (busy || chip.locked !== null) return;
     setError(null);
     const update = (set: ReadonlySet<string>) => {
       const next = new Set(set);
@@ -101,12 +101,13 @@ export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCusto
           className="chip q-chip"
           type="button"
           aria-pressed={on}
-          aria-disabled={busy || undefined}
+          aria-disabled={busy || item.locked !== null || undefined}
           onClick={() => toggle(item, frequent)}
         >
           <span className={on ? `chip-face tone-${item.tone}` : "chip-face"}>
             <Icon name={on ? "check" : "plus"} size={20} />
             <bdi dir="auto"><Hyphenated text={item.name} /></bdi>
+            {item.locked === null ? null : <small className="q-chip-lock"><span className="sr-only">, </span>{CHIP_LOCK_WORDS[item.locked]}</small>}
           </span>
         </button>
       </li>

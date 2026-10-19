@@ -2,7 +2,10 @@
 import "fake-indexeddb/auto";
 import { readFileSync } from "node:fs";
 import { categoryNameKey, householdPaydays, setHouseholdPaydays, type BudgetState } from "@family-budget/domain";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
+import { CategoriesQuestion } from "./CategoriesQuestion";
 import { buildOnboardingBudgetState } from "../../onboarding/model";
 import {
   createFirstRunMemory,
@@ -16,6 +19,7 @@ import {
   applyCategoryChoice,
   beginFirstRun,
   categoryChips,
+  CHIP_LOCK_WORDS,
   initialChoice,
   LATER_RETURN_DAYS,
   markAnswered,
@@ -129,6 +133,49 @@ describe("«На что вы тратите?»: чипы и что делает 
     const chips = categoryChips(own);
     expect(chips.frequent.at(-1)?.name).toBe("Рыбалка");
     expect(initialChoice(chips).has(categoryNameKey("Рыбалка"))).toBe(true);
+  });
+});
+
+describe("лист чипов, показанный снова через неделю: что снять уже нельзя (ревью R2, L-7)", () => {
+  function lived(): BudgetState {
+    const state = preset();
+    const id = (name: string) => state.categories.find((item) => item.name === name)!.id;
+    const budget = state.budgets[0]!;
+    return {
+      ...state,
+      budgets: [{ ...budget, lines: [{ id: "00000000-0000-4000-8000-0000000000a1", categoryId: id("Транспорт"), plannedMinor: 1_000_000 }] }],
+      scheduledExpenses: [{ id: "00000000-0000-4000-8000-0000000000a2", name: "Интернет", categoryId: id("Связь и подписки"), accountId: state.accounts[0]!.id, amountMinor: 70_000, dueDay: 10, mode: "monthly", active: true }],
+      transactions: [{ id: "00000000-0000-4000-8000-0000000000a3", kind: "expense", status: "posted", occurredOn: TODAY, amountMinor: 50_000, accountId: state.accounts[0]!.id, categoryId: id("Продукты") }],
+    };
+  }
+
+  it("категория с записями, лимитом или регулярным платежом отмечена и заперта, с пометкой почему", () => {
+    const chips = categoryChips(lived());
+    const lockOf = (name: string) => chips.frequent.find((chip) => chip.name === name)?.locked;
+    expect(lockOf("Продукты")).toBe("records");
+    expect(lockOf("Транспорт")).toBe("limit");
+    expect(lockOf("Связь и подписки")).toBe("payment");
+    expect(lockOf("Жильё")).toBeNull();
+    expect(chips.more.every((chip) => chip.locked === null)).toBe(true);
+    expect(CHIP_LOCK_WORDS).toEqual({ records: "есть записи", limit: "есть лимит", payment: "есть платёж" });
+  });
+
+  it("«Готово» без отметки на запертых их не трогает: лимит открытого месяца жив, записи — на месте", () => {
+    const state = lived();
+    const chips = categoryChips(state);
+    const chosen = new Set(initialChoice(chips));
+    for (const name of ["Продукты", "Транспорт", "Связь и подписки", "Жильё"]) chosen.delete(categoryNameKey(name));
+    const next = applyCategoryChoice(state, chips, chosen);
+    for (const name of ["Продукты", "Транспорт", "Связь и подписки"]) expect(activeExpense(next), name).toContain(name);
+    expect(activeExpense(next)).not.toContain("Жильё");
+    expect(next.budgets[0]!.lines[0]!.active).not.toBe(false);
+  });
+
+  it("на листе запертый чип нажат и недоступен, пометка — словами", () => {
+    const markup = renderToStaticMarkup(createElement(CategoriesQuestion, { budget: lived(), write: { run: async (change) => change({} as BudgetState) }, onAnswered: () => undefined, onLater: () => undefined, onCustom: () => undefined }));
+    expect(markup.match(/aria-pressed="true" aria-disabled="true"/gu)).toHaveLength(3);
+    expect(markup).toContain('<small class="q-chip-lock"><span class="sr-only">, </span>есть записи</small>');
+    expect(markup).toContain("есть лимит</small>");
   });
 });
 

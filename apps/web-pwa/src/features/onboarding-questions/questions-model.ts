@@ -114,6 +114,30 @@ export interface CategoryChip {
   readonly group: CategoryGroup;
   readonly icon: IconName;
   readonly tone: CategoryTone;
+  /**
+   * Почему снять отметку нельзя (ревью R2, L-7): у категории уже есть записи, лимит открытого месяца
+   * или регулярный платёж. Лист, показанный снова через неделю, не убирает такую категорию в архив —
+   * лимит молча погас бы, а строка листа обещает «Поменять можно в любой момент». `null` — можно.
+   */
+  readonly locked: ChipLock | null;
+}
+
+export type ChipLock = "records" | "limit" | "payment";
+
+/** Короткая пометка на чипе, который снять нельзя. */
+export const CHIP_LOCK_WORDS: Readonly<Record<ChipLock, string>> = {
+  records: "есть записи",
+  limit: "есть лимит",
+  payment: "есть платёж",
+};
+
+/** Что держит категорию на «Обзоре»: записи, лимит открытого месяца, регулярный или крупный платёж. */
+export function chipLock(state: BudgetState, categoryId: string): ChipLock | null {
+  if (state.transactions.some((item) => "categoryId" in item && item.categoryId === categoryId)) return "records";
+  if (state.budgets.some((budget) => budget.status !== "closed" && budget.lines.some((line) => line.categoryId === categoryId && line.active !== false))) return "limit";
+  if (state.scheduledExpenses.some((item) => item.categoryId === categoryId && item.active)
+    || state.annualCommitments.some((item) => item.categoryId === categoryId && item.active)) return "payment";
+  return null;
 }
 
 export interface CategoryChips {
@@ -129,7 +153,8 @@ export function categoryChips(state: BudgetState): CategoryChips {
   const always = categoryNameKey(ALWAYS_ACTIVE_EXPENSE);
   const chip = (name: string, source: CategoryChip["source"], categoryId: string | null, group: CategoryGroup): CategoryChip => {
     const visual = categoryVisual({ name, type: "expense", group });
-    return { key: categoryNameKey(name), name, source, categoryId, group, icon: visual.icon, tone: visual.tone };
+    const locked = source === "active" && categoryId !== null ? chipLock(state, categoryId) : null;
+    return { key: categoryNameKey(name), name, source, categoryId, group, icon: visual.icon, tone: visual.tone, locked };
   };
   // Порядок листа — порядок набора (§e: от «Продуктов» до «Подарков»); своё — следом, по месту в списке.
   const presetIndex = (name: string) => {
@@ -181,7 +206,8 @@ export function applyCategoryChoice(
 ): BudgetState {
   let next = state;
   for (const item of chips.frequent) {
-    if (chosen.has(item.key) || item.categoryId === null) continue;
+    // Категорию с записями, лимитом или платежом лист в архив не убирает никогда.
+    if (chosen.has(item.key) || item.categoryId === null || item.locked !== null) continue;
     const current = next.categories.find((category) => category.id === item.categoryId);
     if (current?.active) next = archiveCategoryWithLimits(next, item.categoryId);
   }

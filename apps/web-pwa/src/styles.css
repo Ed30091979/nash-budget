@@ -1423,6 +1423,8 @@ button.intro-skip { border-radius: var(--radius-control); }
 .q-chips { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
 .q-chip .chip-face { gap: 6px; padding: 7px 14px 7px 10px; font-size: var(--size-body); line-height: var(--lh-body); }
 .q-chip .chip-face .icon { flex: none; color: var(--ink-muted); }
+/* Чип, который снять нельзя (ревью R2, L-7): отмечен, а пометка говорит почему. */
+.q-chip-lock { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .q-chip[aria-pressed="true"] .chip-face { color: var(--ink); background: var(--surface-sunken); border-color: transparent; }
 .q-chip[aria-pressed="true"] .chip-face.tone-mint { background: var(--tone-mint); }
 .q-chip[aria-pressed="true"] .chip-face.tone-lilac { background: var(--tone-lilac); }
