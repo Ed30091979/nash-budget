@@ -98,25 +98,27 @@ describe("набор первого запуска (DIRECTION §e, п. 2)", () =
   });
 });
 
-describe("валюта набора по языку устройства (§e; D-031)", () => {
-  it("ru → рубль, kk → тенге, be → белорусский рубль — по языку, а не по региону", () => {
-    expect(currencyForLocale("ru")).toBe("RUB");
-    expect(currencyForLocale("ru-RU")).toBe("RUB");
-    expect(currencyForLocale("ru-KZ")).toBe("RUB");
-    expect(currencyForLocale("ru-UA")).toBe("RUB");
-    expect(currencyForLocale("kk")).toBe("KZT");
-    expect(currencyForLocale("kk-KZ")).toBe("KZT");
-    expect(currencyForLocale("be-BY")).toBe("BYN");
+describe("валюта набора: рубль, другая — только по явному признаку (§e; D-031; ревью R2, L-3)", () => {
+  it("таблица: регион тега с валютой из двух знаков, казахский и белорусский языки — иначе рубль", () => {
+    const table: readonly (readonly [string, string])[] = [
+      // Русский язык — рубль; русский в другой стране — валюта этой страны: регион назван явно.
+      ["ru", "RUB"], ["ru-RU", "RUB"], ["ru-KZ", "KZT"], ["ru-BY", "BYN"], ["ru-UA", "UAH"],
+      // Язык, который сам называет страну.
+      ["kk", "KZT"], ["kk-KZ", "KZT"], ["be", "BYN"], ["be-BY", "BYN"],
+      // Явный регион.
+      ["en-US", "USD"], ["en-GB", "GBP"], ["en-RU", "RUB"], ["de-DE", "EUR"], ["de-CH", "CHF"], ["fr-CA", "CAD"],
+      ["uk-UA", "UAH"], ["hy-AM", "AMD"], ["uz-Latn-UZ", "UZS"], ["zh-CN", "CNY"], ["tr-TR", "TRY"], ["pl_PL", "PLN"],
+      // Без региона страну по языку не угадать: английский телефон у человека в России — рубль.
+      ["en", "RUB"], ["de", "RUB"], ["zh", "RUB"], ["es", "RUB"], ["pt", "RUB"], ["uk", "RUB"], ["fr", "RUB"], ["hy", "RUB"],
+      // Регион без своей валюты в таблице — тоже рубль; расширение валюты в теге не читается.
+      ["es-MX", "RUB"], ["pt-BR", "RUB"], ["es-419", "RUB"], ["en-US-u-cu-eur", "USD"],
+    ];
+    for (const [tag, currency] of table) expect(currencyForLocale(tag), tag).toBe(currency);
   });
 
-  it("иначе — по региону, а у тега без региона — по вероятному региону языка", () => {
-    expect(currencyForLocale("en-US")).toBe("USD");
-    expect(currencyForLocale("en-GB")).toBe("GBP");
-    expect(currencyForLocale("de-DE")).toBe("EUR");
-    expect(currencyForLocale("de")).toBe("EUR");
-    expect(currencyForLocale("uk")).toBe("UAH");
-    expect(currencyForLocale("hy-AM")).toBe("AMD");
-    expect(currencyForLocale("uz-Latn-UZ")).toBe("UZS");
+  it("регион без двухзначной валюты не подменяет язык: kk-JP — тенге, ja-JP — рубль", () => {
+    expect(currencyForLocale("kk-JP")).toBe("KZT");
+    expect(currencyForLocale("ja-JP")).toBe("RUB");
   });
 
   it("базовой бывает только валюта с двумя знаками: иена, вона, донг и крона Исландии — рубль", () => {

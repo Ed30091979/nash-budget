@@ -194,6 +194,33 @@ test("дни выплат меняются и снимаются: «Ещё» →
   await expect(planRow).toContainText("даты выплат — из доходов");
 });
 
+test("валюта набора: рубль при русском языке, «Поменять» на первом листе — пока бюджет пуст", async ({ page }) => {
+  await skipToOverview(page);
+  const chips = question(page, CHIPS);
+  await expect(chips.getByText("Валюта бюджета:")).toBeVisible();
+  await expect(tile(page, "Карта")).toContainText("0 ₽");
+  await chips.getByRole("button", { name: "Поменять валюту бюджета" }).click();
+  await chips.getByLabel("Валюта бюджета").selectOption("KZT");
+  await chips.getByRole("button", { name: "Сохранить валюту" }).click();
+  await expect(chips.getByRole("button", { name: "Поменять валюту бюджета" })).toBeFocused();
+  await chips.getByRole("button", { name: "Готово", exact: true }).click();
+  await expect(question(page, ACCOUNTS)).toBeVisible();
+  await question(page, ACCOUNTS).getByRole("button", { name: "Спросить позже" }).click();
+  await question(page, PAYDAY).getByRole("button", { name: "Спросить позже" }).click();
+  await expect(tile(page, "Карта")).toContainText("0 KZT");
+  await expect(tile(page, "Наличные")).toContainText("0 KZT");
+});
+
+test.describe("казахский язык устройства", () => {
+  test.use({ locale: "kk-KZ" });
+
+  test("набор — в тенге", async ({ page }) => {
+    await skipToOverview(page);
+    await question(page, CHIPS).getByRole("button", { name: "Спросить позже" }).click();
+    await expect(tile(page, "Карта")).toContainText("0 KZT");
+  });
+});
+
 test("«Удалить данные» стирает память первого запуска, а пример её обнуляет", async ({ page }) => {
   await skipToOverview(page);
   for (const name of [CHIPS, ACCOUNTS, PAYDAY]) {

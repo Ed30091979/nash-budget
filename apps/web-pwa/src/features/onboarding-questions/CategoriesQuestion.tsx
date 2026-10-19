@@ -4,6 +4,7 @@ import { Hyphenated } from "../../components/Hyphenated";
 import { Icon } from "../../components/Icon";
 import { useFormDraft } from "../../navigation/draft-guard";
 import { writeFailureText, type BudgetWriter } from "../../write/useBudgetWrite";
+import { BudgetCurrencyLine } from "./BudgetCurrencyLine";
 import { QuestionSheet } from "./QuestionSheet";
 import { applyCategoryChoice, categoryChips, type CategoryChip } from "./questions-model";
 
@@ -124,6 +125,7 @@ export function CategoriesQuestion({ budget, write, onAnswered, onLater, onCusto
       tall
       footer={<button className="primary-button wide" type="button" aria-disabled={busy || undefined} aria-busy={busy} onClick={done}>Готово</button>}
     >
+      <BudgetCurrencyLine budget={budget} write={write} busy={busy} />
       {chips.frequent.length === 0 ? null : <>
         <p className="q-group" id="q-categories-frequent">Частые — уже отмечены</p>
         <ul className="q-chips" aria-labelledby="q-categories-frequent">{chips.frequent.map((item) => chip(item, true))}</ul>

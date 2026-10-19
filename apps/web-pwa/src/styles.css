@@ -1413,6 +1413,13 @@ button.intro-skip { border-radius: var(--radius-control); }
 .q-sub { margin: 0 4px 12px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .q-body { min-width: 0; }
 .q-group { margin: 4px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+/* «Валюта бюджета: ₽ · Поменять» (ревью R2, L-3): одна строка над чипами, на узком экране — в две. */
+.q-currency { display: flex; flex-wrap: wrap; column-gap: 4px; align-items: center; margin: 0 4px 4px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); }
+.q-currency strong { color: var(--ink); }
+.q-currency .q-currency-change { min-height: 48px; padding: 13px 4px; }
+.q-currency-form { display: grid; gap: 8px; margin: 0 4px 12px; min-width: 0; }
+.q-currency-form select { width: 100%; max-width: 100%; }
+.q-currency-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .q-chips { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
 .q-chip .chip-face { gap: 6px; padding: 7px 14px 7px 10px; font-size: var(--size-body); line-height: var(--lh-body); }
 .q-chip .chip-face .icon { flex: none; color: var(--ink-muted); }
