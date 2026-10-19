@@ -162,6 +162,62 @@ function isGeneratedWorkboxBundle(name) {
   );
 }
 
+/**
+ * Top-level arguments of the call whose argument list starts at `start`, split by
+ * the commas that belong to the call itself — not to a nested call, array,
+ * object or string. Minified code puts commas everywhere, so a regex cannot
+ * tell the third argument of pushState from a comma inside its first one.
+ */
+function topLevelArguments(text, start) {
+  const args = [];
+  let current = "";
+  let depth = 0;
+  let quote = null;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote !== null) {
+      current += character;
+      if (character === "\\") {
+        current += text[index + 1] ?? "";
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    if (character === ")" || character === "]" || character === "}") {
+      if (depth === 0) {
+        args.push(current);
+        return args;
+      }
+      depth -= 1;
+    }
+    if (character === "," && depth === 0) {
+      args.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  return null;
+}
+
+/** Literal addresses (third argument) of every pushState/replaceState call. */
+function historyLiteralAddresses(text) {
+  const addresses = [];
+  for (const match of text.matchAll(/history\.(?:pushState|replaceState)\(/gu)) {
+    const address = topLevelArguments(text, match.index + match[0].length)?.[2]?.trim();
+    if (address !== undefined && /^["'`]/u.test(address)) addresses.push(address);
+  }
+  return addresses;
+}
+
 const applicationBundles = javascriptArtifacts.filter(
   ({ name }) => !isGeneratedWorkboxBundle(name),
 );
@@ -171,15 +227,30 @@ for (const { name, text } of applicationBundles) {
   }
   // The address bar is a leak channel: it is visible in browser history, it
   // travels in the referer header and into server logs, and it can be shared
-  // by hand. Amounts, categories or family identifiers reaching it would be a
-  // defect, so reading or writing it stays forbidden without exception.
+  // by hand. Amounts, notes, names or a family's data reaching it would be a
+  // defect.
+  //
+  // Wave 2 (plans/ui-wave2.md §2.1) gives the app one sanctioned use of it: the
+  // hash router keeps the route in the fragment, and only opaque UUIDs and
+  // filter keys may appear there. The fragment never reaches a server or a
+  // referer. That address is written by one module, src/navigation/router.ts,
+  // with keys made by formatRoute (which refuses anything but a UUID), and the
+  // source test navigation/address-privacy.test.ts pins both. What stays
+  // forbidden here, in the built code: the query string (location.search),
+  // writing the fragment around the router (location.hash = …), and any
+  // pushState/replaceState whose address is a literal other than a fragment —
+  // path-shaped state like "/budget/january" or "/spent".
   //
   // Building a query string is deliberately NOT forbidden here. The sync
   // transport assembles `keyEpoch`/`after`/`limit` for its outgoing calls;
   // that is ordinary HTTP carrying values the server already knows, not a
   // channel that outlives the request. Banning `URLSearchParams` banned the
   // technique instead of the risk. Do not restore it as one rule.
-  if (/location\.(?:search|hash)|history\.(?:pushState|replaceState)/u.test(text)) {
+  if (
+    /location\.search/u.test(text) ||
+    /location\.hash\s*=(?!=)/u.test(text) ||
+    historyLiteralAddresses(text).some((address) => !/^["'`]#/u.test(address))
+  ) {
     fail(`URL state channel found in ${name}`);
   }
   if (

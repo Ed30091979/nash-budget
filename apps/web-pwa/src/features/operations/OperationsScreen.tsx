@@ -40,7 +40,7 @@ import { amountText, draftCurrency, kindLabels, moneyIn, operationLabel, rubles,
 import { OperationAmount } from "./OperationAmount";
 import { createDraftSaving, useDraftGuard } from "../../navigation/draft-guard";
 
-/** Просьба открыть операцию в форме — из истории на «Ещё». `nonce` отличает две просьбы об одной операции. */
+/** Просьба открыть операцию в форме — из «Операций», адресом `#/new?edit=<id>`. `nonce` отличает две просьбы об одной операции. */
 export interface EditRequest {
   readonly id: string;
   readonly nonce: number;

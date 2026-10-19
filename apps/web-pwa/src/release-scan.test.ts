@@ -146,9 +146,10 @@ describe("production release scanner", () => {
 
   it.each([
     ["location.search", 'const filter = new URL(location.search, "http://x").search;'],
-    ["location.hash", "const view = location.hash.slice(1);"],
+    ["location.hash written around the router", 'location.hash = "#/spent/" + amount;'],
     ["history.pushState", 'history.pushState(null, "", "/budget/january");'],
     ["history.replaceState", 'history.replaceState({ amount: 1200 }, "", "/spent");'],
+    ["history.pushState through another object", 'frame.history.pushState(state, "", `/budget/${month}`);'],
   ])("rejects the address bar as a state channel: %s", (_label, contents) => {
     const fixture = createScanFixture();
     write(join(fixture.dist, "assets/router-abc123.js"), contents);
@@ -159,6 +160,23 @@ describe("production release scanner", () => {
     expect(result.stderr).toContain(
       "URL state channel found in assets/router-abc123.js",
     );
+  });
+
+  it("accepts the hash router: it reads the fragment and writes only fragment addresses it formatted", () => {
+    // План волны 2, §2.1: маршрут живёт в решётке адреса, и пишет её один модуль — роутер, ключами
+    // `formatRoute` (только UUID и ключи фильтров). Так выглядит его собранный код.
+    const fixture = createScanFixture();
+    write(
+      join(fixture.dist, "assets/index-router123.js"),
+      'const key = e.location.hash; e.history.pushState(o(n.slice(0,r+1)),"",n[r]??"#/");' +
+        ' e.history.replaceState(o(n),"",key); e.history.replaceState(o(c),"","#/more");' +
+        ' if (e.location.hash === t) return;',
+    );
+
+    const result = runScan(fixture);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Release scan passed");
   });
 
   it("accepts a query string built for an outgoing sync request", () => {
