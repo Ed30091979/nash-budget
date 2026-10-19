@@ -14,7 +14,7 @@ import {
 } from "@family-budget/storage";
 import { Icon, IconSprite } from "../components/Icon";
 import { BottomNav } from "../components/BottomNav";
-import { Toast, toastDuration, type ToastMessage } from "../components/Toast";
+import { Toast, type ToastMessage } from "../components/Toast";
 import { BaseCurrencyProvider } from "../components/Money";
 import { observeLayoutSpace } from "../layout-space";
 import { UpdatePrompt } from "../components/UpdatePrompt";
@@ -383,12 +383,6 @@ export default function App() {
     signIn.current = { ...signIn.current, isDirty: () => awaitingLoginCode };
     drafts.refresh();
   }, [drafts, awaitingLoginCode]);
-
-  useEffect(() => {
-    if (toast === null) return;
-    const timeout = window.setTimeout(() => setToast(null), toastDuration(toast));
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
 
   // После перехода на другой экран: прокрутка — та, на которой его оставили (или начало), фокус —
   // на `h1` экрана, чтобы читающий с экрана услышал, куда попал. Лист поверх экрана и смена месяца
@@ -794,7 +788,17 @@ export default function App() {
           onClose={back}
         />
       ) : null}
-      {toast !== null ? <Toast key={toast.key} toast={toast} onClose={() => setToast(null)} /> : null}
+      {/* Тост гасится своим таймером (`components/Toast.tsx`), и время его стоит, пока на нём
+          фокус или указатель и пока поверх лист или вопрос: тогда он под затемнением. */}
+      {toast !== null ? (
+        <Toast
+          key={toast.key}
+          toast={toast}
+          paused={route.sheet !== undefined || leaveRequest !== null || replaceFailed !== null}
+          onClose={() => setToast(null)}
+          fallbackFocus={() => focusRouteHeading(document.getElementById(MAIN_CONTENT_ID))}
+        />
+      ) : null}
       {leaveQuestion}
       {replaceFailedQuestion}
       </BaseCurrencyProvider>

@@ -85,8 +85,10 @@ describe("приложение с экраном семьи", () => {
   it("тревога о подмене ключа не идёт через самозакрывающийся тост", () => {
     expect(source).toContain("const keyAlarm = syncAlarm(family.status?.stop ?? null);");
     expect(source).toContain('<section className="key-alarm" role="alert"');
-    // Тост гасится таймером; тревога в него не попадает ни на одном пути.
-    expect(source).toMatch(/setTimeout\(\(\) => setToast\(null\), toastDuration\(toast\)\)/u);
+    // Тост гасится своим таймером (с 2b — внутри `Toast`, с паузой на фокусе); тревога в него не
+    // попадает ни на одном пути.
+    expect(readFileSync(new URL("../../components/Toast.tsx", import.meta.url), "utf8")).toMatch(/window\.setTimeout\(\(\) => latest\.current\.onClose\(\), left\.current\)/u);
+    expect(source).toMatch(/<Toast\s+key=\{toast\.key\}\s+toast=\{toast\}/u);
     expect(source).not.toMatch(/(?:setMessage|showToast)\([^)]*keyAlarm/u);
     const banner = source.slice(source.indexOf('className="key-alarm"'), source.indexOf("<RouteView "));
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
