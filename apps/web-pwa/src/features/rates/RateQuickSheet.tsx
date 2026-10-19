@@ -26,6 +26,9 @@ export function currencySign(currency: CurrencyCode): string {
  */
 export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel }: RateQuickSheetProps) {
   const id = useId();
+  // A plain name, not a template literal in the props: the release scan reads the built `form`
+  // props up to the first brace and must find `onSubmit` there.
+  const titleId = `${id}-title`;
   const per = ratePer(currency);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -44,8 +47,8 @@ export function RateQuickSheet({ currency, baseCurrency, date, onSave, onCancel 
     setError(refusal);
   };
   return (
-    <form className="rate-quick" aria-labelledby={`${id}-title`} onSubmit={(event) => void submit(event)} noValidate>
-      <h3 id={`${id}-title`}>Курс {currency} с {formatDay(date)}</h3>
+    <form className="rate-quick" onSubmit={(event) => void submit(event)} aria-labelledby={titleId} noValidate>
+      <h3 id={titleId}>Курс {currency} с {formatDay(date)}</h3>
       <div className="field">
         <label htmlFor={`${id}-rate`}>Сколько {currencySign(baseCurrency)} за {per} {currency}</label>
         <input id={`${id}-rate`} inputMode="decimal" autoComplete="off" maxLength={20} placeholder="92,50" value={text} aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined} onChange={(event) => { setText(event.target.value); setError(null); }} />
