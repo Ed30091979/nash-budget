@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUnsavedDrafts, type DraftRegistry } from "../navigation/draft-guard";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import {
   createAutomaticUpdates,
@@ -121,14 +122,14 @@ export function UpdatePromptView({
  * секунду не показывается: нажимать в ней нечего. Не удалась — плашка возвращается обычным
  * предложением, а не жалобой на действие, которого человек не совершал.
  */
-export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: { readonly hasUnsavedChanges?: boolean; readonly suppressed?: boolean }) {
+export function UpdatePrompt({ drafts, suppressed = false }: { readonly drafts: DraftRegistry; readonly suppressed?: boolean }) {
   const [registrationFailed, setRegistrationFailed] = useState(false);
   const [updatePhase, setUpdatePhase] = useState<UpdatePhase>("idle");
   const [updateBlocked, setUpdateBlocked] = useState(false);
   const [applyingSilently, setApplyingSilently] = useState(false);
-  // Решение о молчании принимается в обработчике сервис-воркера, а не в эффекте: обработчик
-  // закрыт над первым отрисованным состоянием, поэтому свежие значения он берёт из ссылок.
-  const unsavedChanges = useRef(hasUnsavedChanges);
+  // Черновики — из того же реестра, что спрашивают переход и `beforeunload`: для показа плашки —
+  // снимок с перерисовкой, для решения о молчаливом обмене — ответ в самый момент решения.
+  const hasUnsavedChanges = useUnsavedDrafts(drafts);
   const pendingSilentApply = useRef(false);
   const applySilently = useRef<() => void>(() => {
     pendingSilentApply.current = true;
@@ -136,7 +137,7 @@ export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: 
   const [updates] = useState(() =>
     createAutomaticUpdates({
       apply: () => applySilently.current(),
-      hasUnsavedChanges: () => unsavedChanges.current,
+      hasUnsavedChanges: () => drafts.hasUnsavedDrafts("unload"),
       isVisible: () =>
         typeof document === "undefined" || document.visibilityState === "visible",
       now: () => Date.now(),
@@ -200,12 +201,11 @@ export function UpdatePrompt({ hasUnsavedChanges = false, suppressed = false }: 
   );
 
   useEffect(() => {
-    unsavedChanges.current = hasUnsavedChanges;
     if (!hasUnsavedChanges) setUpdateBlocked(false);
   }, [hasUnsavedChanges]);
 
   const update = () => {
-    if (hasUnsavedChanges) {
+    if (drafts.hasUnsavedDrafts("unload")) {
       setUpdateBlocked(true);
       return;
     }

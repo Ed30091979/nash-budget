@@ -10,7 +10,7 @@ import "fake-indexeddb/auto";
 import { makeSeedBudget } from "@family-budget/domain";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createAppBudgetSaveCoordinator } from "../../App";
+import { createAppBudgetSaveCoordinator } from "../../app/budget-store";
 import { prepareBudgetState } from "../../backup";
 import { createBudgetRepository } from "../../storage-repository";
 import { createBudgetJournalWriter } from "./controller";

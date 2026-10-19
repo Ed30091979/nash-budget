@@ -9,11 +9,12 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { periodClock } from "./reach";
+import { readAppSource } from "./app/shell-source";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const controllerSource = readFileSync(new URL("./features/family/controller.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
 const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf8");
@@ -124,9 +125,11 @@ describe("семейная новость на «Сегодня»", () => {
   it("исчезает после того, как человек её увидел, и не возвращается за тем же", () => {
     // «Прошлый раз» — операции бюджета на момент открытия…
     expect(appSource).toContain("setSeenTransactionIds(transactionIds(prepared));");
-    // …и на момент, когда новость стояла на экране: человек ушёл с «Сегодня» или свернул приложение.
-    expect(appSource).toContain('const newsOnScreen = screen === "today" && familyNews.length > 0;');
+    // …и на момент, когда новость стояла на экране: человек ушёл с «Обзора» или свернул приложение.
+    expect(appSource).toContain('const newsOnScreen = route.name === "overview" && familyNews.length > 0;');
     expect(appSource).toContain("if (newsOnScreen) markNewsSeen();");
+    // Уход с «Обзора» замечает роутер — перед сменой маршрута, каким бы путём она ни пришла.
+    expect(appSource).toMatch(/onLeave: \(key\) => \{[\s\S]{0,120}leaving\.current\(\);/u);
     expect(appSource).toMatch(/visibilityState !== "hidden"[\s\S]{0,200}setSeenTransactionIds\(transactionIds\(current\)\)[\s\S]{0,200}addEventListener\("visibilitychange"/u);
     // Нового хранилища нет: память сессии, а на следующем открытии — бюджет с диска.
     expect(appSource).not.toMatch(/seen-transactions|family-news-seen|writeSyncState\(\[\{ key: "news/u);

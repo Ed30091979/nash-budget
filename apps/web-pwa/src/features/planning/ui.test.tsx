@@ -4,10 +4,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   hasChangedRestoreDrafts,
-  hasUnsavedPlanningDrafts,
   isPlanningEditorDirty,
   PlanningScreen,
 } from "./PlanningScreen";
+import { createDraftRegistry, type DraftEntry } from "../../navigation/draft-guard";
 import { archiveFlexibleLine } from "./model";
 import { makePlanningTestState, TEST_IDS } from "./test-fixture";
 
@@ -56,27 +56,28 @@ describe("planning UI", () => {
     expect(isPlanningEditorDirty(
       { name: "Новая страховка", dueDate: "", amount: "" },
       { name: "", dueDate: "", amount: "" },
-      null,
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "", dueDay: "15", months: [9, 10] },
       { name: "", dueDay: "1", months: [] },
-      null,
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "Продукты", amount: "30000" },
       { name: "", amount: "" },
-      null,
+    )).toBe(true);
+    // Открытая правка сравнивается со снимком, сделанным при «Изменить»: нетронутая — не
+    // несохранённое (ревью 2a, п. 3), а тронутая — несохранённое.
+    expect(isPlanningEditorDirty(
+      { name: "Продукты", amount: "30000" },
+      { name: "Продукты", amount: "30000" },
+    )).toBe(false);
+    expect(isPlanningEditorDirty(
+      { name: "Продукты", amount: "31000" },
+      { name: "Продукты", amount: "30000" },
     )).toBe(true);
     expect(isPlanningEditorDirty(
       { name: "", amount: "" },
       { name: "", amount: "" },
-      "editing-existing-line",
-    )).toBe(true);
-    expect(isPlanningEditorDirty(
-      { name: "", amount: "" },
-      { name: "", amount: "" },
-      null,
     )).toBe(false);
 
     const baselines = new Map([
@@ -92,29 +93,40 @@ describe("planning UI", () => {
       "stale-category": { amount: "999", error: null },
     }, baselines)).toBe(false);
 
+    // Три редактора — три черновика в реестре: любой грязный держит переход, чистые — нет.
     for (const editor of ["commitment", "schedule", "flexible"] as const) {
-      expect(hasUnsavedPlanningDrafts({
-        commitment: editor === "commitment",
-        schedule: editor === "schedule",
-        flexible: editor === "flexible",
-      })).toBe(true);
+      const registry = createDraftRegistry();
+      for (const name of ["commitment", "schedule", "flexible"] as const) {
+        const entry: DraftEntry = { label: name, isDirty: () => name === editor };
+        registry.register({ current: entry });
+      }
+      expect(registry.hasUnsavedDrafts("navigation")).toBe(true);
+      expect(registry.dirtyLabels("navigation")).toEqual([editor]);
     }
-    expect(hasUnsavedPlanningDrafts({
-      commitment: false,
-      schedule: false,
-      flexible: false,
-    })).toBe(false);
+    const clean = createDraftRegistry();
+    for (const name of ["commitment", "schedule", "flexible"]) clean.register({ current: { label: name, isDirty: () => false } });
+    expect(clean.hasUnsavedDrafts("navigation")).toBe(false);
   });
 
-  it("wires one aggregate dirty callback through every editor with unmount cleanup", () => {
+  it("держит черновик каждого редактора в реестре: переход спрашивает его синхронно, запись снимает до ожидания", () => {
     const source = readFileSync(new URL("./PlanningScreen.tsx", import.meta.url), "utf8");
 
-    expect(source).toContain("onDirtyChange?: (dirty: boolean) => void");
-    expect(source).toContain("<CommitmentsEditor {...props} onDirtyChange={reportCommitmentDirty} />");
-    expect(source).toContain("<SchedulesEditor {...props} onDirtyChange={reportScheduleDirty} />");
-    expect(source).toContain("<FlexibleEditor {...props} onDirtyChange={reportFlexibleDirty} />");
-    expect(source).toMatch(/useEffect\(\(\) => \(\) => \{\s*onDirtyChange\(false\);/);
-    expect(source).toContain("onDirtyChange?.(false)");
+    // Пассивного флага больше нет: экран не сообщает о черновике, а отвечает на вопрос реестра.
+    expect(source).not.toContain("onDirtyChange");
+    expect(source.match(/usePlanningDraft\(/gu)).toHaveLength(4);
+    expect(source).toContain("useDraftGuard({ label, isDirty: () => (dirty && !saving.saving) || otherDirty, discard });");
+    // Сумма возврата из архива охраняется сама по себе и защёлку формы не держит (ревью 2a, п. 2).
+    expect(source).toMatch(/isPlanningEditorDirty\(draft, pristine\),\s*save\.saving,[\s\S]*?hasChangedRestoreDrafts\(restoreDrafts, restoreBaselines\),\s*\);/u);
+    // «Изменить» снимает снимок правки в каждом из трёх редакторов (ревью 2a, п. 3).
+    expect(source.match(/setPristine\(opened\);\s*setDraft\(opened\);/gu)).toHaveLength(3);
+    // Черновик, отправленный в запись, «записывается» — синхронно, до первого ожидания; неудача
+    // возвращает его, удача держит, пока сброшенная форма не нарисована.
+    expect(source).toMatch(/const ticket = submitsDraft \? saving\.begin\(\) : null;\s*dispatch\(\{ type: "submit" \}\);\s*try \{\s*await onChange\(change\);\s*if \(ticket !== null\) saving\.succeed\(ticket\);/u);
+    expect(source).toMatch(/\} catch \(error\) \{\s*\/\/[^\n]*\n\s*if \(ticket !== null\) saving\.fail\(ticket\);/u);
+    expect(source).toMatch(/useLayoutEffect\(\(\) => \{\s*saving\.settle\(dirty\);\s*\}\);/u);
+    // Архив и возврат строки черновик не уносят; уносят только «Добавить» и «Сохранить».
+    expect(source.match(/, true\);/gu)).toHaveLength(2);
+    expect(source).toMatch(/\(\) => \{ resetDraft\(\); setEditingId\(\(current\) => nextEditingId\(current, \{ type: "saved" \}\)\); \},\s*true,/u);
   });
 
   it("печатает заголовки групп там же, где предлагает выбрать категорию", () => {

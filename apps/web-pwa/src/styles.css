@@ -1,5 +1,5 @@
-/* Дизайн-система «Наш бюджет» 3.0 (DESIGN.md). Бумажная палитра: тёплый холст, чернила, белые
-   карточки. Мятной палитры 2.0 и тёмного оформления 1.0.0 больше нет. */
+/* Дизайн-система «Наш бюджет» 4.0 (DESIGN.md). Бумажная палитра 3.0 — тёплый холст, чернила, белые
+   карточки — плюс пастельные тона сущностей, плитки и один акцент действия и выбора (§0, §3). */
 :root {
   color-scheme: light;
   color: var(--ink);
@@ -15,10 +15,9 @@
   text-rendering: optimizeLegibility;
   -webkit-text-size-adjust: 100%;
 
-  /* §3 Роли цвета. Пары контраста измерены, не меняйте их поодиночке.
-     Главное правило палитры: нормальное состояние экрана не имеет цвета. Цветных ролей ровно
-     три — янтарная, красная и оранжевая, и каждая появляется только тогда, когда есть что
-     сказать. Всё остальное — бумага и чернила. */
+  /* §3 Роли цвета. Пары контраста измерены (`palette-contrast.test.ts` пересчитывает таблицу §3),
+     не меняйте их поодиночке. Тон метит сущность, янтарь и красный — сигнал, акцент — действие и
+     выбор. Всё остальное — бумага и чернила. */
   --canvas: #f0ece3;         /* тёплый холст под карточками */
   --surface: #ffffff;        /* карточка, поле, нижняя навигация */
   --surface-sunken: #e6e1d6; /* трек полосы, вложенная плашка, нейтральный чип */
@@ -30,19 +29,48 @@
   --amber-ink: #8a5a00;      /* 5.23:1 на `--amber-soft`, 5.93:1 на белом, 4.55:1 к треку */
   --red-soft: #fbe9e3;       /* «перелимит», ошибка, разрушающее действие */
   --red-ink: #a3341f;        /* 5.82:1 на `--red-soft`, 6.84:1 на белом, 5.25:1 к треку */
-  --orange: #b8471a;         /* единственная роль: «вы здесь» в навигации — 5.31:1 на белом */
+  --orange: #b8471a;         /* только марка: значок, заставки, Android. В интерфейсе не используется */
+  --accent: #d9481f;         /* действие и выбор: «+», кольцо выбора, точка вкладки. Не для мелкого текста: 4.29:1 */
+  --positive-ink: #1f6b48;   /* доход в строке, всегда со знаком «+»: 6.45:1 на белом, 5.47:1 на холсте */
   --focus: #0b57d0;          /* кольцо фокуса: 6.39:1 на белом, 5.42:1 на холсте */
   --on-ink: #ffffff;         /* текст и глиф на чернильной плоскости: 18.36:1 */
   --scrim: rgb(23 20 16 / 55%);
 
-  /* §3 Тона категорий. Заливка плитки; глиф и подпись на ней — только `--ink`.
-     Тон метит категорию, а не величину: пары измерены и меняются только вместе. */
-  --tone-mint: #9fcfb4;   /* 10.54:1 с `--ink` */
-  --tone-lilac: #c2bfe2;  /* 10.35:1 */
-  --tone-peach: #f0c7a2;  /* 11.71:1 */
-  --tone-amber: #f3ddaa;  /* 13.75:1 */
-  --tone-sage: #bcd6c3;   /* 11.84:1 */
-  --tone-coral: #eec3ac;  /* 11.40:1 */
+  /* §3 Тона сущностей. Пастельная заливка плитки и строки; подпись на ней — `--ink` (14.76–15.44:1),
+     глиф — `--tone-*-ink` на подложке `--icon-plate` (5.88–7.50:1). Тон метит сущность, а не
+     величину: пары измерены и меняются только вместе. Ключи прежние — `color` категории хранится
+     в синхронизируемых данных. */
+  --tone-mint: #ddefe5;
+  --tone-mint-ink: #1f6b48;
+  --tone-lilac: #ece6f7;
+  --tone-lilac-ink: #5b3f9e;
+  --tone-peach: #fbe3d3;
+  --tone-peach-ink: #9a4a1c;
+  --tone-amber: #f5ebcf;
+  --tone-amber-ink: #7a5a00;
+  --tone-sage: #e3ebdd;
+  --tone-sage-ink: #46613a;
+  --tone-coral: #f8e1e4;
+  --tone-coral-ink: #9b2c3f;
+  --icon-plate: #ffffffb3;            /* подложка глифа на тоне: белый 70 % */
+  --tile-track: rgb(23 20 16 / 8%);   /* трек полосы лимита на плитке */
+
+  /* §3 Плитки счёта и дохода. Счёт — тёмная плитка: на ней только белый и его приглушение; красного
+     текста на ней нет (2.25:1) — отрицательный остаток набирается белым с U+2212 и глифом. */
+  --tile-account: #22252a;
+  --on-tile-account: #ffffff;         /* 15.37:1 */
+  --on-tile-account-muted: #d5d8de;   /* 10.77:1 */
+  --tile-income: #e9e7fb;
+  --income-ink: #3f3fb0;              /* 6.78:1 на плитке дохода */
+
+  /* §3 Серии графиков: каждая ≥ 3:1 на белом; седьмая — «Остальное» и прочие месяцы. */
+  --chart-1: #1f6b48;
+  --chart-2: #8a5a00;
+  --chart-3: #5b3f9e;
+  --chart-4: #d9481f;
+  --chart-5: #9b2c3f;
+  --chart-6: #2f6f9f;
+  --chart-7: #8d8577;
 
   /* §4 Типографика. Ступеней пять, начертаний два — 400 и 700, третьего нет.
      Заголовок один на все уровни: восемь ступеней кегля — это восемь уровней, которые читателю
@@ -57,8 +85,10 @@
   --lh-body: 22px;
   --size-caption: 13px;
   --lh-caption: 19px;
-  --size-label: 11px;     /* капс-метка: эйбрау месяца и пилюля резерва — и больше нигде */
+  --size-label: 11px;     /* капс-метка: эйбрау, кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ», пилюля резерва */
   --lh-label: 14px;
+  --size-tile: 12px;      /* подпись плитки: имя до двух строк */
+  --lh-tile: 15px;
   /* Оси вариативного SF. Ширина 92 % отыгрывает ~15 % на длинной сумме, но она бонус, а не
      несущая: поведение осей на Android и Windows не проверено, и герой обязан помещаться и при
      обычной ширине. `font-optical-sizing` не пишем — Chromium его игнорирует, ось задаётся прямо. */
@@ -68,11 +98,17 @@
   --font-code: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --tracking-code: 0.08em;
 
-  /* §5 Форма. Радиус — признак того, что элемент трогают пальцем: кнопка, поле, чип-пилюля.
-     Поверхности прямые. Тогда правило читается само: скруглённое нажимается, прямое читается. */
+  /* §5 Форма: скругление по ролям. Каждый радиус принадлежит одной роли, и роль видна по нему:
+     кнопка и поле — 14, пилюля — круглая, плитка — 16, карточка — 20, лист — 24, подложка глифа —
+     10, «+» навигации — 18. Радиус по месту не набирается. */
   --radius-control: 14px;  /* кнопка */
   --radius-input: 14px;    /* поле ввода */
   --radius-pill: 999px;    /* чип-пилюля и сегмент-переключатель */
+  --radius-tile: 16px;     /* плитка категории, счёта, дохода */
+  --radius-card: 20px;     /* карточка */
+  --radius-sheet: 24px;    /* лист и диалог */
+  --radius-plate: 10px;    /* подложка глифа на плитке */
+  --radius-fab: 18px;      /* «+» нижней навигации */
 
   /* §5 Глубина. Тень — накопительный стек полупрозрачных слоёв: каждая ступень добавляет слой, а
      не заменяет его, поэтому тень остаётся мягкой. Ступеней ровно две: карточка — 1,
@@ -91,13 +127,15 @@
      поэтому доля объявлена здесь одним числом: сквозь экран проходит одна вертикаль. */
   --reach-mark: 75%;
 
-  /* §6 Нижняя навигация: 4 + 48 + 4 — проектная высота, от неё считается только `min-height`
-     самой панели. Полоса записи стояла на воображаемой навигации в 80 px, а настоящая — 56, и в
-     зазоре между ними просвечивала карточка. */
-  --nav-height: 56px;
+  /* §5 Нижняя навигация: 8 + 56 + 8 — проектная высота (вкладки 52, «+» 56), от неё считается
+     только `min-height` самой панели. Полоса записи стояла на воображаемой навигации в 80 px, а
+     настоящая — 56, и в зазоре между ними просвечивала карточка. */
+  --nav-height: 72px;
+  /* Короткий экран (ниже 38em, iPhone SE — 568 pt): панель сжимается до 4 + 48 + 4, см. правило ниже. */
+  --nav-height-compact: 56px;
   /* §6 Место под навигацию и шапку. Отступ оболочки, полоса записи и тост считаются отсюда, а не
      от `--nav-height`: панель растёт с системным шрифтом — при ×2.7 подписи переносятся, и на
-     320 pt она занимает 188 pt, на 390 — 150, а не 56, — и полоса на 56 уводила кнопку записи под
+     320 pt она занимает 188 pt, на 390 — 150, а не проектные, — и полоса на 56 уводила кнопку записи под
      навигацию. На широком экране навигация липнет под шапку, и та при ×2.7 — 79, а не 56.
      Значения здесь — проектные, на первый кадр; настоящие высоты снимает с разметки
      `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены не читают, иначе
@@ -507,17 +545,30 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .storage-meter, .body-copy { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
-/* §6 Нижняя навигация. */
-.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
+/* §5 Нижняя навигация — пять мест: две вкладки, «+», две вкладки. «+» берёт свои 56 pt, вкладки
+   делят остаток поровну; между целями 8 (§9). */
+.bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 56px repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
-   «Записать» шире четверти экрана, и без переноса навигация выезжала бы за его край. */
-.nav-button { position: relative; display: grid; min-width: 0; min-height: 48px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+   «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
+.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
+/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (4.29:1 — графика, порог 3:1),
+   радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
+.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-ink); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
+.nav-fab svg { width: 24px; height: 24px; }
+/* При обычном кегле подпись вкладки — одна строка: на 320 pt «Операции» шире своей колонки на
+   пару пунктов, перенос по слогам поднимал панель на 8 pt, и при открытой клавиатуре суммы под
+   ней не оставалось места конверту. Лишнее уходит в зазор 8 между целями, а не под соседа. При
+   системном увеличении (уже 18em) подпись снова переносится — не обрезается никогда. */
+@media (min-width: 18em) {
+  .nav-button > span:last-child { white-space: nowrap; }
+}
 .nav-icon { position: relative; display: grid; place-items: center; height: 24px; }
 .nav-icon svg { width: 24px; height: 24px; }
-/* Активная вкладка — это текст, а не графика, и порог у него 4.5:1, а не 3:1. Прежний оранжевый
-   давал на белом 3.49:1: число измерили верно, а отнесли не к той категории. Здесь 5.31:1. */
-.nav-button.active { color: var(--orange); background: transparent; }
-.nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--orange); border-radius: 50%; }
+/* Активная вкладка — это текст, а не графика, и порог у него 4.5:1, а не 3:1: подпись набрана
+   чернилами (18.36:1), а «вы здесь» говорит точка акцента под глифом — графика, 4.29:1 на белом.
+   Акцент мелким текстом не бывает (§3), а оранжевый марки в интерфейсе больше не живёт. */
+.nav-button.active { color: var(--ink); background: transparent; }
+.nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--accent); border-radius: 50%; }
 
 /* §6 Тост. */
 /* Сообщение занимает своё место в разметке и липнет к низу экрана, а не висит над ним.
@@ -905,7 +956,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .data-management > .list-danger { margin-top: 24px; }
 .confirmation-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; padding: 16px; place-items: center; background: var(--scrim); animation: scrim-in var(--motion-surface) var(--ease-enter); }
 .confirmation-dialog { width: min(520px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-sheet); animation: dialog-in var(--motion-surface) var(--ease-enter); }
-.confirmation-dialog h3 { margin: 0; }
+.confirmation-dialog h2, .confirmation-dialog h3 { margin: 0; }
 .confirmation-dialog p { color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 .dialog-actions { display: flex; gap: 12px; justify-content: flex-end; }
 .dialog-actions button { min-height: 48px; padding: 13px 20px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
@@ -948,7 +999,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .sync-badge.synced { color: var(--ink); background: var(--surface-sunken); }
 .sync-badge.synced::before { background: var(--ink); }
 .sync-badge.waiting { color: var(--amber-ink); background: var(--amber-soft); }
-.sync-badge.waiting::before { background: var(--orange); }
+.sync-badge.waiting::before { background: var(--amber-ink); }
 .sync-badge.error { color: var(--red-ink); background: var(--red-soft); }
 .sync-badge.error::before { background: var(--red-ink); }
 
@@ -1001,7 +1052,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .fingerprint-block { display: grid; gap: 6px; padding: 16px; margin-top: 12px; background: var(--surface-sunken); border-left: 4px solid var(--border); }
 .fingerprint-block.own { background: var(--surface-sunken); border-left-color: var(--ink); }
 .fingerprint-block.pinned { background: var(--surface-sunken); border-left-color: var(--ink-muted); }
-.fingerprint-block.unverified_candidate { background: var(--amber-soft); border-left-color: var(--orange); }
+.fingerprint-block.unverified_candidate { background: var(--amber-soft); border-left-color: var(--amber-ink); }
 .fingerprint-block small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); overflow-wrap: anywhere; }
 .fingerprint-block p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .fingerprint-block.unverified_candidate p { color: var(--amber-ink); }
@@ -1127,6 +1178,16 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
   .quick-grid { grid-template-columns: 1fr; }
   .bottom-nav { gap: 8px; padding-right: max(4px, env(safe-area-inset-right)); padding-left: max(4px, env(safe-area-inset-left)); }
   .nav-button { min-width: 0; }
+}
+
+/* §5 Короткий экран. На 320×568 при открытой клавиатуре суммы шапка, полоса записи (306 pt) и
+   панель в 72 pt оставляли под конверт 134 pt — меньше конверта, и набор суммы снова шёл вслепую
+   (`keypad.spec.ts`). Ниже 38em в высоту панель возвращается к 56: 16 pt на таком экране — это
+   разница между конвертом на виду и конвертом под панелью. */
+@media (max-height: 38em) {
+  .bottom-nav { min-height: calc(var(--nav-height-compact) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 48px repeat(2, minmax(0, 1fr)); padding-top: 4px; padding-bottom: calc(4px + env(safe-area-inset-bottom)); }
+  .nav-button { min-height: 48px; }
+  .nav-fab { width: 48px; height: 48px; min-height: 48px; }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {

@@ -29,7 +29,8 @@ import {
   OPERATIONS_TEST_IDS,
 } from "./features/operations/test-fixture";
 import { createBudgetRepository } from "./storage-repository";
-import { createAppBudgetSaveCoordinator } from "./App";
+import { createAppBudgetSaveCoordinator } from "./app/budget-store";
+import { readAppSource } from "./app/shell-source";
 
 const databaseNames = new Set<string>();
 
@@ -116,7 +117,7 @@ function textOf(markup: string): string {
 
 describe("phase 7 App composition", () => {
   it("renders G-002 dashboard on Year and keeps planning and search in their intended routes", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const dashboard = renderToStaticMarkup(
       <DashboardScreen budget={makePlanningSeed()} startMonth="2026-07" onPlanning={() => undefined} />,
     ).replaceAll("\u00a0", " ");
@@ -124,15 +125,15 @@ describe("phase 7 App composition", () => {
     const twelve = createDashboardModel(makePlanningSeed(), "2026-07", 12);
     const twentyFour = createDashboardModel(makePlanningSeed(), "2026-07", 24);
 
-    expect(source).toContain('import { DashboardScreen, monthsSpan, nextScheduledDate } from "./features/dashboard"');
+    expect(source).toContain('import { DashboardScreen, monthsSpan, nextScheduledDate } from "../dashboard"');
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
     // Кнопка перехода в план стоит в герое «Года», а не отдельной панелью над заголовком экрана.
     expect(dashboard).toContain("Настроить план");
-    // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на маршруте
-    // «История» внутри «Ещё», а не отдельным вторым списком и не на «Годе». Экран записи
-    // истории больше не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
-    expect(source).toMatch(/screen === "operations" \? <OperationsScreen budget=\{budget\}/);
-    expect(source).toMatch(/screen === "history" \? <HistoryScreen budget=\{budget\}/);
+    // Поиск по операциям живёт внутри самой истории, которую он фильтрует, — на вкладке
+    // «Операции», а не отдельным вторым списком и не на плане года. Экран записи («+») истории
+    // не несёт: он отвечает на «можем ли мы себе это позволить» до траты.
+    expect(source).toMatch(/route\.name === "entry" \? <OperationsScreen budget=\{budget\}/);
+    expect(source).toMatch(/route\.name === "operations" \? <HistoryScreen budget=\{budget\}/);
     expect(source).not.toContain("OperationsSearch");
     expect(source.match(/const budgetSave = useMemo\(\(\) => createAppBudgetSaveCoordinator/g)).toHaveLength(1);
     expect(source).not.toMatch(/repository\.save\(/);
@@ -296,7 +297,7 @@ describe("phase 7 App composition", () => {
   });
 
   it("App has one post-download metadata callback and no eager legacy writer", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
 
     expect(source.match(/onRecordSuccessfulBackup=/g)).toHaveLength(2);
     expect(source).toContain("await repository.setLastSuccessfulBackup(createdAt);");
@@ -307,7 +308,7 @@ describe("phase 7 App composition", () => {
   });
 
   it("App tells the user about a cleared attribution instead of swallowing it", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
 
     // Every repair the restore reports reaches the message, and the message names each kind.
     expect(source).toMatch(

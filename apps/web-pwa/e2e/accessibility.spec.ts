@@ -40,6 +40,13 @@ async function expectFocusedRouteHeading(page: Page, navigationName: string) {
   });
 }
 
+/** План на год — подэкран «Ещё»: вкладки «Год» в навигации из пяти мест нет. */
+async function openYearPlan(page: Page) {
+  await expectFocusedRouteHeading(page, "Ещё");
+  await page.getByRole("button", { name: /^План на год/u }).click();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
+}
+
 async function expectGeometryContract(page: Page, viewport: ViewportContract) {
   const geometry = await page.evaluate((minimum) => {
     const interactiveSelector = [
@@ -213,7 +220,7 @@ test("keyboard navigation exposes the skip link and route focus without stealing
   await expect(page.locator("#main-content")).toBeFocused();
   await expect(page.locator("#main-content")).toHaveJSProperty("tagName", "MAIN");
 
-  await expectFocusedRouteHeading(page, "Год");
+  await expectFocusedRouteHeading(page, "Операции");
   await expectFocusedRouteHeading(page, "Записать");
 
   const amount = page.getByLabel("Сумма, ₽");
@@ -243,23 +250,16 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
 
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
-    await expectFocusedRouteHeading(page, "Год");
+    await openYearPlan(page);
     await expectGeometryContract(page, viewport);
     await page.getByRole("button", { name: "Настроить план" }).click();
     await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
     await expectGeometryContract(page, viewport);
 
-    for (const route of ["Записать", "Ещё", "Сегодня"]) {
+    // Пять мест навигации — каждое со своим экраном и своими целями; «История» теперь вкладка.
+    for (const route of ["Записать", "Операции", "Отчёты", "Ещё", "Обзор"]) {
       await expectFocusedRouteHeading(page, route);
       await expectGeometryContract(page, viewport);
-      if (route === "Ещё") {
-        // «Вся история» — маршрут внутри «Ещё»: поиск, список и его цели меряются отдельно.
-        await page.getByRole("button", { name: /^Вся история/u }).click();
-        await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
-        await expectGeometryContract(page, viewport);
-        await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
-        await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
-      }
     }
 
     if (viewport.name === "phone-landscape") {
@@ -281,7 +281,7 @@ test("phone, 200% zoom equivalent, and iPad layouts preserve targets and contain
  * навигация липла под воображаемую шапку в 56 pt, а настоящая при ×2.7 — 79.
  *
  * Здесь перекрытие меряется пересечением прямоугольников, а не выводится из чисел: на четырёх
- * ширинах телефона и двух широких, при обычном шрифте и при ×2.7, на всех пяти экранах, в
+ * ширинах телефона и двух широких, при обычном шрифте и при ×2.7, на всех семи экранах, в
  * четырёх положениях прокрутки. Тест обязан упасть, если полоса, тост или что угодно липкое
  * снова встанет на число, а не на панель.
  * --------------------------------------------------------------------------------------------- */
@@ -465,13 +465,17 @@ for (const scale of FONT_SCALES) {
       const label = (screen: string) => `${viewport.name} ×${scale} ${screen}`;
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
 
-      await expectFocusedRouteHeading(page, "Год");
-      await expectNavigationClearance(page, label("Год"), layout);
+      await openYearPlan(page);
+      await expectNavigationClearance(page, label("План на год"), layout);
       await page.getByRole("button", { name: "Настроить план" }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectNavigationClearance(page, label("Планирование"), layout);
       await expectFocusedRouteHeading(page, "Ещё");
       await expectNavigationClearance(page, label("Ещё"), layout);
+      await expectFocusedRouteHeading(page, "Операции");
+      await expectNavigationClearance(page, label("Операции"), layout);
+      await expectFocusedRouteHeading(page, "Отчёты");
+      await expectNavigationClearance(page, label("Отчёты"), layout);
 
       // «Записать» с черновиком: в полосе две кнопки — самый высокий её вариант.
       await expectFocusedRouteHeading(page, "Записать");
@@ -481,8 +485,8 @@ for (const scale of FONT_SCALES) {
       await page.getByRole("button", { name: "Очистить черновик" }).click();
       await expect(page.getByRole("button", { name: "Очистить черновик" })).toHaveCount(0);
 
-      await expectFocusedRouteHeading(page, "Сегодня");
-      await expectNavigationClearance(page, label("Сегодня"), layout);
+      await expectFocusedRouteHeading(page, "Обзор");
+      await expectNavigationClearance(page, label("Обзор"), layout);
     }
   });
 }

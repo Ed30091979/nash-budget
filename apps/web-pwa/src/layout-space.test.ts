@@ -2,9 +2,10 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HEADER_SPACE_PROPERTY, NAV_SPACE_PROPERTY, observeLayoutSpace } from "./layout-space";
+import { readAppSource } from "./app/shell-source";
 
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const withoutComments = styles.replace(/\/\*[\s\S]*?\*\//gu, "");
 
 interface CssRule {
@@ -118,7 +119,8 @@ describe("место под навигацию и шапку снимается 
 
 describe("таблица стилей считает от измеренного места, а не от числа", () => {
   it("объявляет токены места с проектными значениями на первый кадр", () => {
-    expect(token("--nav-height")).toBe("56px");
+    // §5 4.0: 8 + 56 + 8 — вкладки 52, «+» 56.
+    expect(token("--nav-height")).toBe("72px");
     expect(token("--nav-space")).toBe("calc(var(--nav-height) + env(safe-area-inset-bottom))");
     expect(token("--header-space")).toBe("calc(56px + env(safe-area-inset-top))");
   });

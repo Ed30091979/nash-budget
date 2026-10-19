@@ -4,8 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   focusRouteHeading,
   MAIN_CONTENT_ID,
-} from "./App";
+} from "./app/AppShell";
 import { addressesTouchTarget, designTouchTargetMinimum } from "./design-contract";
+import { readAppSource } from "./app/shell-source";
 
 interface CssRule {
   readonly selectors: readonly string[];
@@ -56,17 +57,20 @@ describe("phase 8 accessibility and responsive contract", () => {
   });
 
   it("offers a stable skip target and moves focus only after route navigation", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
 
     expect(MAIN_CONTENT_ID).toBe("main-content");
     expect(source).toContain('href={`#${MAIN_CONTENT_ID}`}');
     expect(source).toContain("id={MAIN_CONTENT_ID}");
     expect(source).toMatch(/id=\{MAIN_CONTENT_ID\} tabIndex=\{-1\}/);
     expect(source).toContain('data-layout-contract="no-action-overflow"');
-    expect(source).toContain('data-screen={screen}');
+    expect(source).toContain('data-screen={route.name}');
     expect(source).toMatch(
-      /useEffect\(\(\) => \{\s*if \(previousScreenRef\.current === screen\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[screen\]\);/,
+      /useEffect\(\(\) => \{\s*if \(previousRouteKeyRef\.current === currentRouteKey\) return;[\s\S]*focusRouteHeading\(document\.getElementById\(MAIN_CONTENT_ID\)\);[\s\S]*\}, \[currentRouteKey\]\);/,
     );
+    // Прокрутка возвращается по ключу маршрута, а ссылка обхода не трогает адрес: решётка — роутера.
+    expect(source).toContain("window.scrollTo(0, scrollPositions.current.get(currentRouteKey) ?? 0);");
+    expect(source).toMatch(/const skip = \(event: MouseEvent<HTMLAnchorElement>\) => \{\s*event\.preventDefault\(\);\s*document\.getElementById\(MAIN_CONTENT_ID\)\?\.focus\(\);/u);
     expect(source).not.toMatch(/focusRouteHeading[\s\S]{0,100}\[(?:budget|message|loadState)\]/);
   });
 
@@ -132,7 +136,7 @@ describe("phase 8 accessibility and responsive contract", () => {
   });
 
   it("не называет состояние сети: без синхронизации приложение к сети не обращается", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
     // Пилюля «в сети» была сведением ни о чём: она называла состояние, которым продукт не занят.

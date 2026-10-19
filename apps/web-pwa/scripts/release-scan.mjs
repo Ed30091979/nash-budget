@@ -162,6 +162,114 @@ function isGeneratedWorkboxBundle(name) {
   );
 }
 
+/**
+ * Top-level arguments of the call whose argument list starts at `start`, split by
+ * the commas that belong to the call itself — not to a nested call, array,
+ * object or string. Minified code puts commas everywhere, so a regex cannot
+ * tell the third argument of pushState from a comma inside its first one.
+ */
+function topLevelArguments(text, start) {
+  const args = [];
+  let current = "";
+  let depth = 0;
+  let quote = null;
+  for (let index = start; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote !== null) {
+      current += character;
+      if (character === "\\") {
+        current += text[index + 1] ?? "";
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    if (character === ")" || character === "]" || character === "}") {
+      if (depth === 0) {
+        args.push(current);
+        return args;
+      }
+      depth -= 1;
+    }
+    if (character === "," && depth === 0) {
+      args.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  return null;
+}
+
+/**
+ * The history calls the app is allowed to make, pinned by number. They are the
+ * hash router's own (src/navigation/router.ts): the push that grows history
+ * (also the re-push that puts an address back when a draft holds Back), and
+ * the replace of an entry that has nothing above it. memoryRouterWindow, the
+ * in-memory history the shell renders with when there is no window, defines
+ * one method of each name. A new call site, a new definition, or the names
+ * appearing in any other form (`history["pushState"]`, `.pushState.call`,
+ * destructuring) changes these numbers, and changing them must be a deliberate
+ * edit here, next to the reason (docs/SECURITY.md, "The app's address").
+ */
+const HISTORY_CALL_SITES = { pushState: 1, replaceState: 1 };
+const HISTORY_METHOD_DEFINITIONS = { pushState: 1, replaceState: 1 };
+const HISTORY_TRAVERSALS = 1;
+
+/**
+ * Names next to the address, pinned by number across the application bundles
+ * (re-review of 2a, round 2). Each number is what the shipped code needs today,
+ * listed by who needs it; a mistake that names one of them anywhere else — an
+ * alias of location, a helper it is passed to, the Navigation API, a link
+ * built in a variable — changes the number, and the scan stops. A dependency
+ * upgrade may change them too: then the list is re-read and the number edited
+ * here, deliberately.
+ */
+const PINNED_MENTIONS = [
+  // The router: frame.location.hash read four times; memoryRouterWindow's
+  // `location:` key. React DOM: the same-origin iframe check
+  // (`contentWindow.location.href`) and the keyboard event's `location` field.
+  // The PWA update flow: `window.location.reload()` twice.
+  { label: "mentions of location", pattern: /\blocation\b/gu, count: 9 },
+  // React DOM's transition tracking (addEventListener ×3, removeEventListener
+  // ×3, currentEntry, navigate, transition). The app itself has none.
+  { label: "Navigation API members", pattern: /\bnavigation\s*(?:\?\.|\.)\s*[A-Za-z_$]/gu, count: 9 },
+  // React DOM's preloaded script; the backup download link (an object URL).
+  { label: "href assignments", pattern: /\.href\s*=(?!=)/gu, count: 2 },
+  // React DOM's resource hints (six); the icon sprite's <use>; the skip link.
+  { label: "href properties", pattern: /\bhref\s*:/gu, count: 8 },
+  // The router's one traversal, under any name (`past.go(-1)` too).
+  { label: "history traversals (.go)", pattern: /\.go\s*\(/gu, count: HISTORY_TRAVERSALS },
+];
+
+function count(text, pattern) {
+  return [...text.matchAll(pattern)].length;
+}
+
+/**
+ * What is wrong with one pushState/replaceState call, or null. The state must
+ * be built by a function (the router's stateOf), never a literal; the unused
+ * title is an empty string; the address is an expression with no literal and
+ * no concatenation in it — the router passes keys formatRoute made, and a
+ * literal, a template or a `+` is how an amount or a note would get in.
+ */
+function historyCallProblem(text, start) {
+  const args = topLevelArguments(text, start)?.map((argument) => argument.trim());
+  if (args === null || args === undefined || args.length !== 3) return "a history call without exactly three arguments";
+  const [state, title, address] = args;
+  if (!/^[A-Za-z_$][\w$]*\(/u.test(state)) return "history state that is not built by the router";
+  if (!/^(?:""|''|``)$/u.test(title)) return "a history title that is not empty";
+  if (/["'`+]/u.test(address)) return "a history address with a literal or concatenation in it";
+  return null;
+}
+
 const applicationBundles = javascriptArtifacts.filter(
   ({ name }) => !isGeneratedWorkboxBundle(name),
 );
@@ -171,16 +279,51 @@ for (const { name, text } of applicationBundles) {
   }
   // The address bar is a leak channel: it is visible in browser history, it
   // travels in the referer header and into server logs, and it can be shared
-  // by hand. Amounts, categories or family identifiers reaching it would be a
-  // defect, so reading or writing it stays forbidden without exception.
+  // by hand. Amounts, notes, names or a family's data reaching it would be a
+  // defect.
+  //
+  // Wave 2 (plans/ui-wave2.md §2.1) gives the app one sanctioned use of it: the
+  // hash router keeps the route in the fragment, in the closed grammar of
+  // src/navigation/routes.ts — opaque UUIDs and closed-type filter values, no
+  // free text. The source test navigation/address-privacy.test.ts pins who
+  // writes it and what; here, in the built code, nothing may write the address
+  // around the router: no query string (location.search), no location writes
+  // or navigations, no history traversal but the router's one, and every
+  // history call is one of the pinned call sites below with a clean address.
   //
   // Building a query string is deliberately NOT forbidden here. The sync
   // transport assembles `keyEpoch`/`after`/`limit` for its outgoing calls;
   // that is ordinary HTTP carrying values the server already knows, not a
   // channel that outlives the request. Banning `URLSearchParams` banned the
   // technique instead of the risk. Do not restore it as one rule.
-  if (/location\.(?:search|hash)|history\.(?:pushState|replaceState)/u.test(text)) {
-    fail(`URL state channel found in ${name}`);
+  const locationChannel = [
+    /location\s*\.\s*search/u,
+    /location\s*\.\s*(?:hash|href|pathname|search|host|hostname|port|protocol)\s*(?:\+|-)?=(?!=)/u,
+    /\blocation\s*=(?!=)/u,
+    /location\s*\.\s*(?:assign|replace)\s*\(/u,
+    /\blocation\s*\[/u,
+    /\[\s*["'`]location["'`]\s*\]/u,
+    /\bhistory\s*\.\s*(?:back|forward)\s*\(/u,
+    /\bhistory\s*\[/u,
+    // The title is in the history list and the app switcher, as the address is.
+    /\bdocument\s*\.\s*title\b/u,
+    // window.open(url, "_self") navigates this window; a bare open( is the same global.
+    /\b(?:window|globalThis|self|top|parent)\s*(?:\?\.|\.)\s*open\s*\(/u,
+    /(?<![.\w$])open\(/u,
+    // A global destructured or aliased hides the names the counts look for.
+    /\{[^{}]*\}\s*=\s*(?:window|globalThis|self|document)\b/u,
+    /=\s*(?:window|globalThis|self|top|parent)\s*[;,)]/u,
+    // A link straight into the route fragment, and a form with no handler,
+    // which submits by GET into the query string (`?q=…` in the address).
+    /\bhref\s*:\s*["'`]#\//u,
+    /\(\s*["'`]form["'`]\s*,\s*\{(?![^{}]*\bonSubmit\s*:)/u,
+  ].find((pattern) => pattern.test(text));
+  if (locationChannel !== undefined) {
+    fail(`URL state channel found in ${name}: ${locationChannel.source}`);
+  }
+  for (const match of text.matchAll(/\.(?:pushState|replaceState)\(/gu)) {
+    const problem = historyCallProblem(text, match.index + match[0].length);
+    if (problem !== null) fail(`URL state channel found in ${name}: ${problem}`);
   }
   if (
     /\beval\s*\(/u.test(text) ||
@@ -188,6 +331,28 @@ for (const { name, text } of applicationBundles) {
     /\b(?:setTimeout|setInterval)\s*\(\s*["'`]/u.test(text)
   ) {
     fail(`dynamic string execution found in ${name}`);
+  }
+}
+
+// The pinned numbers hold across all application bundles together: code
+// splitting may move the router, but not add to it.
+const applicationCode = applicationBundles.map(({ text }) => text).join("\n");
+for (const method of ["pushState", "replaceState"]) {
+  const calls = count(applicationCode, new RegExp(`\\.${method}\\(`, "gu"));
+  const definitions = count(applicationCode, new RegExp(`(?<![.\\w$])${method}\\([^()]*\\)\\{`, "gu"));
+  const mentions = count(applicationCode, new RegExp(`${method}`, "gu"));
+  if (calls !== HISTORY_CALL_SITES[method] || definitions !== HISTORY_METHOD_DEFINITIONS[method] || mentions !== calls + definitions) {
+    fail(
+      `URL state channel: the bundle has ${calls} ${method} call sites, ${definitions} definitions and ` +
+        `${mentions} mentions; the scanner pins ${HISTORY_CALL_SITES[method]} call sites and ` +
+        `${HISTORY_METHOD_DEFINITIONS[method]} definitions (src/navigation/router.ts)`,
+    );
+  }
+}
+for (const { label, pattern, count: pinned } of PINNED_MENTIONS) {
+  const found = count(applicationCode, pattern);
+  if (found !== pinned) {
+    fail(`URL state channel: the bundle has ${found} ${label}; the scanner pins ${pinned}`);
   }
 }
 

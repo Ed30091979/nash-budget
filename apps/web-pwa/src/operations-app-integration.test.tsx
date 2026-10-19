@@ -17,7 +17,8 @@ import { createBudgetRepository } from "./storage-repository";
 import {
   BUDGET_WRITE_CONFLICT_MESSAGE,
   createAppBudgetSaveCoordinator,
-} from "./App";
+} from "./app/budget-store";
+import { readAppSource } from "./app/shell-source";
 
 const databaseNames = new Set<string>();
 
@@ -98,31 +99,31 @@ afterEach(async () => {
 
 describe("operations app integration", () => {
   it("uses the full operations screen and the shared durable CAS coordinator", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
-    expect(source).toContain('import { OperationsScreen } from "./features/operations"');
+    expect(source).toMatch(/import \{[^}]*\bOperationsScreen\b[^}]*\} from "\.\.\/features\/operations"/u);
     // Смысл, а не буква разметки. Прежде здесь стояли две строки с полным перечнем свойств: они
     // ломались от любого нового свойства и при этом ничего не утверждали о том, куда идёт запись.
     // Утверждение одно: экран, меняющий бюджет, пишет через общий долговечный координатор и
-    // сообщает о несохранённом черновике — а собственного пути в хранилище у него нет.
-    for (const [screen, dirtyFlag] of [
-      ["OperationsScreen", "setOperationDraftDirty"],
-      ["PlanningScreen", "setPlanningDraftDirty"],
+    // держит несохранённый черновик в реестре — а собственного пути в хранилище у него нет.
+    for (const [screen, file] of [
+      ["OperationsScreen", "./features/operations/OperationsScreen.tsx"],
+      ["PlanningScreen", "./features/planning/PlanningScreen.tsx"],
     ] as const) {
       const start = source.indexOf(`<${screen} `);
       expect(start, `${screen} нет в разметке приложения`).toBeGreaterThan(-1);
       const element = source.slice(start, source.indexOf("/>", start));
       expect(element, `${screen} обязан писать через общий координатор`)
-        .toContain("onChange={(change) => budgetSave.apply(change)}");
-      expect(element, `${screen} обязан сообщать о несохранённом черновике`)
-        .toContain(`onDirtyChange={${dirtyFlag}}`);
+        .toContain("onChange={(change) => write.run(change)}");
+      expect(readFileSync(new URL(file, import.meta.url), "utf8"), `${screen} обязан держать несохранённый черновик в реестре`)
+        .toContain("useDraftGuard(");
     }
-    // Черновики всех трёх экранов держат обновление: их сумма уходит в раму, а рама — в плашку.
-    expect(source).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
-    expect(source).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
-    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} />");
-    expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
+    // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
+    expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
+    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
+    expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
+    expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
     expect(source).toContain(".slice(0, 5)");
     expect(source).not.toMatch(/entryKind|entryAmount|entryCategoryId|addTransaction/);
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);

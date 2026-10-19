@@ -14,10 +14,12 @@ import { HistoryScreen, TotalsFact } from "./HistoryScreen";
 import { archiveCategory, createTransaction } from "./model";
 import { amountText, debtVerb, kindSign, transactionCurrency, transactionDetail } from "./transaction-words";
 import { formatMoney } from "../../money";
+import { readAppSource } from "../../app/shell-source";
 
-const appSource = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 const historySource = readFileSync(new URL("./HistoryScreen.tsx", import.meta.url), "utf8");
 const operationsSource = readFileSync(new URL("./OperationsScreen.tsx", import.meta.url), "utf8");
+const reportsSource = readFileSync(new URL("../reports/ReportsScreen.tsx", import.meta.url), "utf8");
 
 const extraIds = {
   categories: { over: "33333333-3333-4333-8333-333333333336" },
@@ -69,16 +71,16 @@ function historyMarkup(budget: BudgetState): string {
 }
 
 /**
- * «Вся история» и «Итоги и остатки» переехали с экрана записи на «Ещё» (§8).
+ * «Вся история» стала вкладкой «Операции», «Итоги и остатки» — частью «Отчётов» (план волны 2, §4 «2a»).
  *
- * Здесь проверяется, что при переезде ничего не потерялось: история достижима с «Ещё» одной
- * строкой, поиск фильтрует ту же историю, строка открывает операцию в форме записи, итоги
- * называют те же числа, а пустая история по-прежнему ведёт к записи.
+ * Здесь проверяется, что при переезде ничего не потерялось: история — одна вкладка навигации,
+ * поиск фильтрует ту же историю, строка открывает операцию в форме записи, итоги называют те же
+ * числа, а пустая история по-прежнему ведёт к записи.
  */
-describe("история на «Ещё»", () => {
+describe("история — вкладка «Операции»", () => {
   it("называет каждую операцию: категорию, дату с видом, сумму со знаком направления", () => {
     const text = textOf(historyMarkup(withAllFlows()));
-    expect(text).toContain("Вся история");
+    expect(text).toContain("Операции");
     expect(text).toContain("Продукты 2026-07-07 · Возврат +1 500 ₽");
     expect(text).toContain("Перевод 2026-07-11 · Основной → Накопительный 5 000 ₽");
     expect(text).toContain("Взнос в цель 2026-07-10 · Основной → Резерв 10 000 ₽");
@@ -86,23 +88,24 @@ describe("история на «Ещё»", () => {
     expect(text).toContain("Поиск по категории, счёту или сумме");
   });
 
-  it("достижима с «Ещё» одной строкой, и её строка открывает операцию в форме «Записать»", () => {
-    // Дверь на «Ещё»: группа «Записи», строка с числом операций, маршрут `history` внутри «Ещё».
-    expect(appSource).toContain('<h2 id="more-records-title" className="list-kicker">Записи</h2>');
-    expect(appSource).toMatch(/onClick=\{props\.onHistory\}[^]*?<strong>Вся история<\/strong>/u);
-    expect(appSource).toContain('onHistory={() => navigate("history")}');
-    expect(appSource).toContain('active={screen === "more" || screen === "family" || screen === "import" || screen === "history"}');
-    // Строка истории просит экран записи открыть операцию; тот выполняет просьбу и гасит её,
-    // чтобы повторный приход на экран не открыл ту же операцию снова.
-    expect(appSource).toContain('onEdit={(transaction) => { setEditRequest({ id: transaction.id, nonce: Date.now() }); navigate("operations"); }}');
-    expect(appSource).toContain("editRequest={editRequest} onEditRequestHandled={() => setEditRequest(null)}");
+  it("— вкладка навигации, и её строка открывает операцию в форме записи по адресу правки", () => {
+    // Вкладка «Операции» нижней навигации — второе место из пяти; на «Ещё» второй двери нет.
+    expect(appSource).toContain('{ tab: "operations", label: "Операции", icon: "history" },');
+    expect(appSource).toContain('{route.name === "operations" ? <HistoryScreen budget={budget} onEdit={(transaction) => navigate({ name: "entry", edit: transaction.id })} onAdd={() => navigate({ name: "entry" })} /> : null}');
+    expect(appSource).not.toContain("Вся история</strong>");
+    // Строка просит экран записи открыть операцию адресом `#/new?edit=<id>`: просьба одна на адрес,
+    // а кончившаяся правка сменяет адрес на адрес записи.
+    expect(appSource).toContain("const editRequest = useMemo<EditRequest | null>(() => editId === null ? null : { id: editId, nonce: 0 }, [editId]);");
+    expect(appSource).toContain('editRequest={editRequest} onEditFinished={() => redirect({ name: "entry" }, { replace: true })}');
     expect(operationsSource).toMatch(/if \(transaction\) beginEdit\(transaction\);\s*onEditRequestHandled\?\.\(\);/u);
+    expect(operationsSource).toMatch(/const reset = \(kind: FormKind = draft\.kind\) => \{\s*if \(editingId !== null\) onEditFinished\?\.\(\);/u);
     // Строка — одна цель нажатия с именем операции; удаление живёт в форме, а не в строке.
     const markup = historyMarkup(withAllFlows());
     expect(markup).toMatch(/<button class="row-open" type="button" aria-label="Изменить операцию «Возврат 1 500 ₽ от 2026-07-07»"/u);
     expect(markup).not.toContain("Удалить операцию");
-    // Назад — кнопкой экрана: вкладка «Ещё» на этом маршруте уже подсвечена.
+    // Вкладке кнопка «назад» не нужна; подэкрану, который её передаёт, — нужна.
     expect(markup).toContain("К разделу «Ещё»");
+    expect(plainText(renderToStaticMarkup(<HistoryScreen budget={withAllFlows()} onEdit={vi.fn()} onAdd={vi.fn()} />))).not.toContain("К разделу «Ещё»");
   });
 
   it("держит архивную категорию в истории и после архивирования", () => {
@@ -163,7 +166,7 @@ describe("история на «Ещё»", () => {
     expect(textOf(html)).toContain("Показано 25 из 50005");
   });
 
-  it("«Итоги и остатки» на «Ещё» называют те же числа, что раньше стояли под табло", () => {
+  it("«Итоги и остатки» на «Отчётах» называют те же числа, что раньше стояли под табло", () => {
     const state = withAllFlows();
     const text = textOf(plainText(renderToStaticMarkup(<TotalsFact budget={state} metrics={calculateBudget(state)} />)));
     expect(text).toContain("Итоги и остатки");
@@ -172,7 +175,7 @@ describe("история на «Ещё»", () => {
     expect(text).toContain("Капитал 24 850 ₽");
     expect(text).toContain("Основной 9 850 ₽");
     expect(text).toContain("Накопительный 15 000 ₽");
-    expect(appSource).toContain("<TotalsFact budget={props.budget} metrics={props.metrics} />");
+    expect(reportsSource).toContain("<li><TotalsFact budget={budget} metrics={metrics} /></li>");
   });
 });
 

@@ -19,6 +19,7 @@ import {
   withSyncServerOrigin,
 } from "../vite.config";
 import { SPLASH_DEVICES, SPLASH_DIRECTORY, SPLASH_ORIENTATIONS } from "./splash";
+import { readAppSource } from "./app/shell-source";
 
 const configSource = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
@@ -123,7 +124,7 @@ describe("PWA production configuration", () => {
 });
 
 describe("service worker registration coverage", () => {
-  const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+  const appSource = readAppSource();
   const updatePolicySource = readFileSync(
     new URL("./components/update-policy.ts", import.meta.url),
     "utf8",
@@ -166,9 +167,10 @@ describe("service worker registration coverage", () => {
     }
     expect(appSource).toContain('<AppFrame className="app-shell"');
     expect(appSource.match(/<UpdatePrompt /gu)).toHaveLength(1);
-    expect(appSource).toMatch(/function AppFrame\([\s\S]*?<UpdatePrompt hasUnsavedChanges=\{hasUnsavedChanges\} suppressed=\{messageShown\} \/>/u);
-    expect(appSource).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
-    expect(appSource).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
+    expect(appSource).toMatch(/function AppFrame\([\s\S]*?<UpdatePrompt drafts=\{drafts\} suppressed=\{messageShown\} \/>/u);
+    // Плашка читает тот же реестр черновиков, что и переход: один на всё время жизни приложения.
+    expect(appSource).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
+    expect(appSource).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
   });
 });
 

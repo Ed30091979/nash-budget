@@ -15,6 +15,7 @@ import {
 } from "./artifact-staleness.mjs";
 import { verifyDebugApkSigner } from "./apk-signer-policy.mjs";
 import { readWebPalette, wrapperPaletteProblems } from "./brand-palette.mjs";
+import { backNavigationProblems } from "./native-source-policy.mjs";
 import {
   expectedManifestPermissions,
   resolveConfiguredSyncOrigin,
@@ -561,6 +562,9 @@ assert(
   /registerPlugin\(NativeFileExportPlugin\.class\)/u.test(mainActivitySource),
   "native file export plugin is not registered",
 );
+for (const problem of backNavigationProblems(mainActivitySource)) {
+  fail(problem);
+}
 assert(
   /Intent\.ACTION_CREATE_DOCUMENT/u.test(exportPluginSource) &&
     /Intent\.CATEGORY_OPENABLE/u.test(exportPluginSource),

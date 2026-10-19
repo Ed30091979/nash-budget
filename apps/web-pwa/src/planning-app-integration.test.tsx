@@ -7,7 +7,8 @@ import { designTargetGap, designTouchTargetMinimum } from "./design-contract";
 import { editFlexibleLine } from "./features/planning";
 import { makeCanonicalPlanningState, makePlanningTestState, TEST_IDS } from "./features/planning/test-fixture";
 import { createBudgetRepository } from "./storage-repository";
-import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./App";
+import { BUDGET_WRITE_CONFLICT_MESSAGE, createAppBudgetSaveCoordinator } from "./app/budget-store";
+import { readAppSource } from "./app/shell-source";
 
 const databaseNames = new Set<string>();
 
@@ -85,19 +86,24 @@ afterEach(async () => {
 
 describe("planning app integration", () => {
   it("wires active views, one CAS coordinator, strict CSP and no hidden persistence path", () => {
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
     const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 
-    expect(source).toContain('type Screen = "today" | "year" | "planning"');
+    // План месяца и план на год — подэкраны «Ещё» со своими адресами и кнопкой «назад».
+    const routes = readFileSync(new URL("./navigation/routes.ts", import.meta.url), "utf8");
+    expect(routes).toContain('| { readonly name: "plan-month"; readonly sheet?: SheetName }');
+    expect(routes).toContain('| { readonly name: "plan-year"; readonly sheet?: SheetName }');
     expect(source).toContain("<DashboardScreen budget={budget} paydays={paydays} onPlanning={onPlanning} />");
-    expect(source).toContain("<BackButton label=\"К горизонту\" onClick={() => navigate(\"year\")} />");
-    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => budgetSave.apply(change)} onDirtyChange={setPlanningDraftDirty} />');
-    // Черновики всех трёх экранов держат обновление: их сумма уходит в раму, а рама — в плашку.
-    expect(source).toContain("const hasUnsavedDraft = operationDraftDirty || planningDraftDirty || importDraftDirty;");
-    expect(source).toContain('<AppFrame className="app-shell" hasUnsavedChanges={hasUnsavedDraft} messageShown={message !== null}>');
-    expect(source).toContain("<UpdatePrompt hasUnsavedChanges={hasUnsavedChanges} suppressed={messageShown} />");
-    expect(source).toContain('active={screen === "year" || screen === "planning"}');
+    expect(source).toContain('{route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}');
+    expect(source).toContain('<BackButton label="К разделу «Ещё»" onClick={onBack} />');
+    expect(source).toContain('<PlanningScreen budget={budget} onChange={(change) => write.run(change)} />');
+    // Черновики всех экранов держат обновление: реестр один, и рама отдаёт его плашке.
+    expect(source).toContain("const drafts = useMemo(() => createDraftRegistry(), []);");
+    expect(source).toContain('<AppFrame className="app-shell" drafts={drafts} messageShown={message !== null}>');
+    expect(source).toContain("<UpdatePrompt drafts={drafts} suppressed={messageShown} />");
+    // На подэкранах плана подсвечена вкладка «Ещё»: план живёт под ней.
+    expect(source).toMatch(/case "plan-month":\s*case "plan-year":\s*case "family":\s*case "import":\s*return "more";/u);
     expect(source).toContain("activeBudget.lines.filter((line) => line.active !== false)");
     expect(source).toContain("category.active && flexibleIds.has(category.id)");
     // Выключенная строка плана на «Год» не попадает — ни крупная, ни регулярная.
@@ -107,7 +113,7 @@ describe("planning app integration", () => {
     expect(source).toContain("repository.loadVersioned()");
     expect(source).toContain("repository.saveIfRevision(expectedRevision, candidate)");
     expect(source).not.toMatch(/commitBudget|repository\.save\(/);
-    expect(source).toContain("(restored) => budgetSave.apply(() => restored).then(() => undefined)");
+    expect(source).toContain("(restored) => write.run(() => restored).then(() => undefined)");
     expect(source).toContain("() => undefined,");
     expect(source).not.toMatch(/location\.|URLSearchParams|localStorage|sessionStorage/);
     expect(source.match(/buildDemoBudgetState\(\)/g)).toHaveLength(1);

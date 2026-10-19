@@ -11,11 +11,12 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { periodClock } from "./reach";
+import { readAppSource } from "./app/shell-source";
 
-const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const appSource = readAppSource();
 
 /**
  * Выход из закрытого месяца — приёмка того самого дефекта, из-за которого приложение жило один
@@ -134,7 +135,7 @@ describe("выход из закрытого месяца", () => {
   it("ведёт открытие месяца тем же путём записи, что и всякое другое изменение", () => {
     // Не своим путём в хранилище, а через координатор: значит — через журнал семьи, когда она
     // есть. Второе устройство узнаёт про новый месяц оттуда же, откуда узнаёт про покупку.
-    expect(appSource).toContain("await budgetSave.apply((state) => carryBudgetForward(state, month).state);");
+    expect(appSource).toContain("await write.run((state) => carryBudgetForward(state, month).state);");
     expect(appSource).toContain("const monthToOpen = clock.position === \"after\" ? monthAfterPeriod(activeBudget, today) : null;");
     expect(appSource).toContain("onOpenMonth={(month) => void openMonth(month)}");
     // И никакого автоматического открытия: месяц открывается нажатием, а не приходом даты.

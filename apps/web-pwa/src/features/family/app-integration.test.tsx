@@ -15,7 +15,7 @@ import {
 } from "@family-budget/sync-crypto";
 import { toBase64 } from "@family-budget/sync-client";
 
-import App from "../../App";
+import App from "../../app/AppShell";
 import {
   checkInviteBinding,
   memberNameFromEmail,
@@ -23,8 +23,9 @@ import {
   parseStoredInvite,
   serializePins,
 } from "./controller";
+import { readAppSource } from "../../app/shell-source";
 
-const source = readFileSync(new URL("../../App.tsx", import.meta.url), "utf8");
+const source = readAppSource();
 
 const originalFetch = globalThis.fetch;
 let calls: string[] = [];
@@ -54,17 +55,15 @@ describe("приложение с экраном семьи", () => {
   });
 
   it("экран семьи добавлен как маршрут и не трогает нижнюю навигацию", () => {
-    expect(source).toContain('| "family"');
-    // Один и тот же экран «Семья» — маршрут оболочки и дверь с экрана ожидания документа семьи.
-    expect(source).toContain('{screen === "family" ? familyScreen(() => navigate("more")) : null}');
+    const routes = readFileSync(new URL("../../navigation/routes.ts", import.meta.url), "utf8");
+    expect(routes).toContain('| { readonly name: "family"; readonly sheet?: SheetName }');
+    // Один и тот же экран «Семья» — маршрут оболочки (`#/more/family`) и дверь с экрана ожидания.
+    expect(source).toContain('{route.name === "family" ? familyScreen(back) : null}');
     expect(source).toContain("const familyScreen = (onBack: () => void) => (\n    <FamilyScreen");
-    // Кнопок в нижней навигации по-прежнему четыре, и порядок прежний.
-    const navButtons = source.match(/<NavButton /gu) ?? [];
-    expect(navButtons).toHaveLength(4);
-    expect(source).toContain('label="Сегодня"');
-    expect(source).toContain('label="Год"');
-    expect(source).toContain('label="Записать"');
-    expect(source).toContain('label="Ещё"');
+    // Нижняя навигация — пять мест, и «Семьи» среди них нет: она живёт под «Ещё».
+    const tabs = [...source.matchAll(/\{ tab: "([a-z]+)", label: "([^"]+)"/gu)].map((match) => match[2]);
+    expect(tabs).toEqual(["Обзор", "Операции", "Отчёты", "Ещё"]);
+    expect(source).toContain('<button className={`nav-fab${adding ? " active" : ""}`} type="button" aria-label="Записать"');
     // Вход на экран — строкой списка «Ещё», названной словами.
     expect(source).toMatch(/onClick=\{props\.onFamily\}>[\s\S]{0,200}Семья и синхронизация/u);
     expect(source).toContain("<BackButton label=");
@@ -89,7 +88,7 @@ describe("приложение с экраном семьи", () => {
     // Тост гасится таймером; тревога в него не попадает ни на одном пути.
     expect(source).toMatch(/setTimeout\(\(\) => setMessage\(null\), 6000\)/u);
     expect(source).not.toMatch(/setMessage\([^)]*keyAlarm/u);
-    const banner = source.slice(source.indexOf('className="key-alarm"'), source.indexOf('{screen === "today" ?'));
+    const banner = source.slice(source.indexOf('className="key-alarm"'), source.indexOf("<RouteView "));
     expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 
@@ -111,12 +110,13 @@ describe("приложение с экраном семьи", () => {
   it("задержанный документ виден плашкой на каждом экране, кроме «Семьи», без кнопки «закрыть»", () => {
     expect(source).toContain("const hold = family.inFamily ? family.status?.hold ?? null : null;");
     expect(source).toContain("const holdNotice = documentHoldNotice(hold);");
-    expect(source).toContain("{hold !== null && holdNotice !== null && screen !== \"family\" ? (");
-    const banner = source.slice(source.indexOf('className="key-alarm family-hold-banner"'), source.indexOf("{keyAlarm && screen !== \"family\" ? ("));
+    expect(source).toContain("{hold !== null && holdNotice !== null && route.name !== \"family\" ? (");
     // The words follow the reason: «обновите приложение» for a version skew, «дождитесь бюджета»
     // for a journal with nothing to show.
-    expect(banner).toContain("{WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]}");
-    expect(banner).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
+    expect(source).toContain('<ReadOnlyBanner title={holdNotice.title} body={WRITE_REFUSAL_TEXT[holdWriteRefusal(hold)]} onDetails={() => navigate({ name: "family" })} />');
+    const banner = readFileSync(new URL("../../components/ReadOnlyBanner.tsx", import.meta.url), "utf8");
+    expect(banner).toContain('<section className="key-alarm family-hold-banner" role="alert" aria-labelledby="app-hold-title">');
+    expect(banner.slice(banner.indexOf("export function"))).not.toMatch(/Закрыть|Понятно|Скрыть|dismiss/u);
   });
 
   it("предупреждение о смене бюджета получает и бюджет, и дату копии, и саму копию", () => {
@@ -176,7 +176,9 @@ describe("участник в локальном бюджете", () => {
 
   it("приложение записывает участника тем же CAS, что и любое изменение бюджета", () => {
     expect(source).toContain("registerLocalMember: async (member) => {");
-    expect(source).toContain("await budgetSave.apply((state) => ({");
+    // Тот же путь записи, что у всех, — только молча: запись начинает синхронизация, не человек.
+    expect(source).toContain("await write.run((state) => ({");
+    expect(source).toMatch(/members: \[\.\.\.\(state\.members \?\? \[\]\)\.filter\(\(item\) => item\.id !== member\.id\), member\],\s*\}\), \{ silent: true \}\);/u);
     expect(source).toContain("memberNameOf={(memberId) => memberById.get(memberId)?.name ?? null}");
   });
 });
@@ -187,9 +189,13 @@ describe("запись бюджета подключена к журналу", (
     // журнал, начинающий вестись только после перезагрузки.
     expect(source).toContain("journalWrite: () => journalWriteRef.current");
     expect(source).toContain("journalWriteRef.current = family.writeBudget;");
-    // Единственный funnel записи остался единственным: экраны по-прежнему зовут budgetSave.apply.
-    const applies = source.match(/budgetSave\.apply\(/gu) ?? [];
-    expect(applies.length).toBeGreaterThanOrEqual(4);
+    // Единственный путь записи остался единственным: экраны и оболочка зовут `write.run`, а он —
+    // координатор; мимо него координатора не зовёт никто.
+    expect(source).toContain("const { write, unseenFailure, dismissUnseenFailure } = useBudgetWrite(budgetSave, place);");
+    expect((source.match(/write\.run\(/gu) ?? []).length).toBeGreaterThanOrEqual(6);
+    expect(source).not.toContain("budgetSave.apply(");
+    const writer = readFileSync(new URL("../../write/useBudgetWrite.ts", import.meta.url), "utf8");
+    expect(writer).toContain("return await options.coordinator.apply(change);");
   });
 
   it("чужие операции доходят до экрана, а не только до базы", () => {

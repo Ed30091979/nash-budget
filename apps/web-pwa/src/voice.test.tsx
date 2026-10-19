@@ -9,10 +9,11 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { TodayScreen } from "./App";
+import { TodayScreen } from "./features/today/TodayScreen";
 import { MEMBER_FILTER_ALL } from "./features/family";
 import { OperationsScreen } from "./features/operations";
 import { periodClock, reach } from "./reach";
+import { readAppSource } from "./app/shell-source";
 
 const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf8");
 
@@ -91,7 +92,7 @@ describe("голос о нехватке: факт и путь", () => {
       expect(text).toMatch(/не дотягивает\.\s*Тратим \d[\d ]* ₽ в день; чтобы дотянуть — \d[\d ]* ₽ в день\./u);
     }
     // Правило держится на самой строке героя, а не на удаче образца.
-    const source = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    const source = readAppSource();
     expect(source).toMatch(/не дотягивает\.<\/b> Тратим <Money value=\{rate\} \/> в день; чтобы дотянуть — <Money value=\{needPerDay\} \/> в день\./u);
   });
 

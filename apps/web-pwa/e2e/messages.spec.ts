@@ -187,6 +187,13 @@ async function goToRoute(page: Page, navigationName: string): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
 }
 
+/** Строка списка «Ещё», ведущая на подэкран: план на год, семья, выписка. */
+async function openFromMore(page: Page, row: RegExp): Promise<void> {
+  await goToRoute(page, "Ещё");
+  await page.getByRole("button", { name: row }).click();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
+}
+
 test("плашка сервис-воркера не накрывает ни одной цели — с первого шага онбординга до «Ещё»", async ({ page }) => {
   test.setTimeout(480_000);
   await page.goto("/");
@@ -244,10 +251,10 @@ test("плашка сервис-воркера не накрывает ни од
       const label = (screen: string) => `${screen}, ${viewport.name} ×${scale}`;
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
 
-      await goToRoute(page, "Сегодня");
-      await expectMessageClearance(page, label("Сегодня"));
-      await goToRoute(page, "Год");
-      await expectMessageClearance(page, label("Год"));
+      await goToRoute(page, "Обзор");
+      await expectMessageClearance(page, label("Обзор"));
+      await openFromMore(page, /^План на год/u);
+      await expectMessageClearance(page, label("План на год"));
       await page.getByRole("button", { name: "Настроить план" }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Планирование"));
@@ -258,14 +265,13 @@ test("плашка сервис-воркера не накрывает ни од
       await expectMessageClearance(page, label("Записать"));
       await page.getByRole("button", { name: "Очистить черновик" }).click();
       await expect(page.getByRole("button", { name: "Очистить черновик" })).toHaveCount(0);
+      // «Операции» — вкладка с поиском над списком: своя раскладка, свои цели. «Отчёты» — тоже.
+      await goToRoute(page, "Операции");
+      await expectMessageClearance(page, label("Операции"));
+      await goToRoute(page, "Отчёты");
+      await expectMessageClearance(page, label("Отчёты"));
       await goToRoute(page, "Ещё");
       await expectMessageClearance(page, label("Ещё"));
-      // «Вся история» — маршрут внутри «Ещё» с поиском над списком: своя раскладка, свои цели.
-      await page.getByRole("button", { name: /^Вся история/u }).click();
-      await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
-      await expectMessageClearance(page, label("История"));
-      await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
-      await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await page.getByRole("button", { name: /Семья и синхронизация/u }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Семья"));
@@ -282,7 +288,7 @@ test("плашка сервис-воркера не накрывает ни од
   await applyFontScale(page, 1);
   await page.setViewportSize({ width: 390, height: 844 });
   // С экрана выписки вкладка «Ещё» уже подсвечена: сначала домой, потом на список «Ещё».
-  await goToRoute(page, "Сегодня");
+  await goToRoute(page, "Обзор");
   await goToRoute(page, "Ещё");
   await page.locator("#backup-file").setInputFiles({
     name: "family-budget-g002.json",
@@ -290,7 +296,7 @@ test("плашка сервис-воркера не накрывает ни од
     buffer: makeG002BackupBuffer(),
   });
   await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
-  await goToRoute(page, "Сегодня");
+  await goToRoute(page, "Обзор");
   // Июль G-002 закрыт: открытие месяца — единственный путь получить сообщение приложения.
   await page.getByRole("button", { name: /^Открыть /u }).click();
   const message = page.locator(".message-toast");
