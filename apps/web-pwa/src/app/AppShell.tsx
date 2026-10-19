@@ -672,6 +672,7 @@ export default function App() {
   };
   shellNavigate.current = navigate;
   const back = () => router.back();
+  const replace = (destination: Route) => router.navigate(destination, { replace: true });
   /**
    * Лист ввода поверх экрана, на котором стоишь: с плиток — вид и плитки, с «+» — ничего, из
    * «Операций» — операция. В адрес — только эти закрытые ключи (SECURITY §7.3).
@@ -756,7 +757,7 @@ export default function App() {
   };
   const routeContext: AppRouteContext = {
     budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, openSheet, openEdit, write, budgetRef,
+    openingMonth, openMonth, familyNewsText, navigate, back, replace, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,

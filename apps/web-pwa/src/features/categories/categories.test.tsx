@@ -1,0 +1,241 @@
+import {
+  calculateBudget,
+  CategoryValidationError,
+  makePlanningSeed,
+  moveCategory,
+  PLANNING_IDS,
+  type BudgetState,
+  type Category,
+} from "@family-budget/domain";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import { BudgetWriteRefusal } from "../../write-refusal";
+import { overviewModel } from "../overview/overview-model";
+import { PlanningValidationError } from "../planning/model";
+import { CategoriesScreen, categoryCardLabel } from "./CategoriesScreen";
+import {
+  archiveCategoryWithLimits,
+  categoriesView,
+  categoryDraftDiffers,
+  categoryDraftOf,
+  categoryFormError,
+  categoryLimit,
+  categoryPosition,
+  categorySave,
+  planMonthWord,
+  restoreCategory,
+} from "./category-model";
+import { CategoryFormView } from "./CategoryScreen";
+
+const FOOD = PLANNING_IDS.categories.food;
+const LEISURE = PLANNING_IDS.categories.leisure;
+const TRANSPORT = PLANNING_IDS.categories.transport;
+const CHILDREN = PLANNING_IDS.categories.children;
+const SALARY = "e2c00000-0000-4000-8000-0000000000b1";
+const OLD = "e2c00000-0000-4000-8000-0000000000b2";
+
+function state(): BudgetState {
+  const seed = makePlanningSeed();
+  return {
+    ...seed,
+    categories: [
+      ...seed.categories,
+      { id: SALARY, name: "Зарплата", type: "income", group: "income", active: true, sortOrder: 100 },
+      { id: OLD, name: "Старая", type: "expense", group: "personal", active: false, sortOrder: 200 },
+    ],
+  };
+}
+const category = (budget: BudgetState, id: string) => budget.categories.find((item) => item.id === id) as Category;
+const activeLine = (budget: BudgetState, id: string) =>
+  budget.budgets.find((item) => item.id === budget.activeBudgetId)?.lines.find((line) => line.categoryId === id);
+
+describe("категории: модель", () => {
+  it("расходы — по группам в их порядке, доходы — одной группой; архив отдельно; лимит — план строки месяца", () => {
+    const budget = state();
+    const expense = categoriesView(budget, "expense");
+    expect(expense.groups.map((group) => group.title)).toEqual(["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]);
+    const everyday = expense.groups.find((group) => group.key === "everyday")!;
+    expect(everyday.cards.map((card) => card.category.name)).toEqual(["Дети", "Продукты", "Транспорт", "Дом и мелкие покупки"]);
+    expect(everyday.cards.find((card) => card.category.id === FOOD)?.limitMinor).toBe(categoryLimit(budget, FOOD));
+    expect(categoryLimit(budget, FOOD)).toBeGreaterThan(0);
+    expect(expense.archived.map((card) => card.category.name)).toEqual(["Старая"]);
+    const income = categoriesView(budget, "income");
+    expect(income.groups.map((group) => [group.title, group.cards.map((card) => card.category.name)])).toEqual([["Доходы", ["Зарплата"]]]);
+    expect(income.groups[0]?.cards[0]?.limitMinor).toBeNull();
+    expect(planMonthWord(budget)).toBe("июль");
+  });
+
+  it("место в группе — для «Выше / Ниже»; перестановка меняет только двух соседей группы", () => {
+    const budget = state();
+    expect(categoryPosition(budget, category(budget, FOOD))).toEqual({ position: 2, count: 4 });
+    expect(categoryPosition(budget, category(budget, OLD))).toEqual({ position: 0, count: 0 });
+    const moved = moveCategory(budget, FOOD, "up");
+    expect(categoryPosition(moved, category(moved, FOOD))).toEqual({ position: 1, count: 4 });
+    const changed = moved.categories.filter((item, index) => item !== budget.categories[index]).map((item) => item.id);
+    expect(changed.sort()).toEqual([CHILDREN, FOOD].sort());
+  });
+
+  it("форма: снимок при открытии; «грязно» — по имени без краевых пробелов и по сумме лимита", () => {
+    const budget = state();
+    const pristine = categoryDraftOf(budget, category(budget, FOOD));
+    expect(pristine).toMatchObject({ name: "Продукты", group: "everyday", icon: null, tone: null });
+    expect(pristine.limit).toBe(String((categoryLimit(budget, FOOD) ?? 0) / 100));
+    expect(categoryDraftDiffers(pristine, pristine)).toBe(false);
+    expect(categoryDraftDiffers({ ...pristine, name: " Продукты " }, pristine)).toBe(false);
+    expect(categoryDraftDiffers({ ...pristine, limit: `${pristine.limit},00` }, pristine)).toBe(false);
+    expect(categoryDraftDiffers({ ...pristine, limit: "" }, pristine)).toBe(true);
+    expect(categoryDraftDiffers({ ...pristine, tone: "lilac" }, pristine)).toBe(true);
+    expect(categoryDraftOf(budget, category(budget, SALARY)).limit).toBe("");
+  });
+
+  it("одна запись: имя, иконка, тон и лимит; ни одна сумма бюджета, кроме лимита, не двигается", () => {
+    const budget = state();
+    const food = category(budget, FOOD);
+    const pristine = categoryDraftOf(budget, food);
+    const next = categorySave(food, { ...pristine, name: "Еда", icon: "cup", tone: "lilac", limit: "32000" }, pristine)(budget);
+    expect(category(next, FOOD)).toMatchObject({ name: "Еда", icon: "cup", color: "lilac", group: "everyday" });
+    expect(activeLine(next, FOOD)).toMatchObject({ plannedMinor: 3_200_000 });
+    const before = calculateBudget(budget);
+    const after = calculateBudget(next);
+    expect(after.expensesMinor).toBe(before.expensesMinor);
+    expect(after.categoryMetrics[FOOD]?.actualMinor).toBe(before.categoryMetrics[FOOD]?.actualMinor);
+    // Без изменений — то же состояние: журнал не видит правки.
+    expect(categorySave(food, pristine, pristine)(budget)).toBe(budget);
+  });
+
+  it("лимит: пусто снимает, сумма возвращает снятый, у категории без строки — заводит её", () => {
+    const budget = state();
+    const food = category(budget, FOOD);
+    const pristine = categoryDraftOf(budget, food);
+    const cleared = categorySave(food, { ...pristine, limit: "" }, pristine)(budget);
+    expect(activeLine(cleared, FOOD)?.active).toBe(false);
+    expect(categoryLimit(cleared, FOOD)).toBeNull();
+    const back = categorySave(food, { ...pristine, limit: "15000" }, { ...pristine, limit: "" })(cleared);
+    expect(activeLine(back, FOOD)).toMatchObject({ active: true, plannedMinor: 1_500_000 });
+    // «Дети» без лимита: строка месяца плана заводится на ту же категорию, а не на тёзку.
+    const children = category(budget, CHILDREN);
+    const noLimit = categoryDraftOf(budget, children);
+    expect(noLimit.limit).toBe("");
+    const created = categorySave(children, { ...noLimit, limit: "5000" }, noLimit)(budget);
+    expect(activeLine(created, CHILDREN)).toMatchObject({ plannedMinor: 500_000, active: true });
+    expect(created.categories).toHaveLength(budget.categories.length);
+  });
+
+  it("архив прячет категорию с «Обзора» и гасит её лимиты; операции остаются; возврат — без лимита", () => {
+    const budget = state();
+    expect(overviewModel(budget, "2026-07", "2026-07-20").categories.some((tile) => tile.id === FOOD)).toBe(true);
+    const archived = archiveCategoryWithLimits(budget, FOOD);
+    expect(category(archived, FOOD).active).toBe(false);
+    expect(archived.budgets.flatMap((item) => item.lines).filter((line) => line.categoryId === FOOD).every((line) => line.active === false)).toBe(true);
+    expect(overviewModel(archived, "2026-07", "2026-07-20").categories.some((tile) => tile.id === FOOD)).toBe(false);
+    expect(archived.transactions).toEqual(budget.transactions);
+    expect(calculateBudget(archived).expensesMinor).toBe(calculateBudget(budget).expensesMinor);
+    const restored = restoreCategory(archived, FOOD);
+    expect(category(restored, FOOD).active).toBe(true);
+    expect(categoryLimit(restored, FOOD)).toBeNull();
+  });
+
+  it("архив не пропускает категорию с крупным или регулярным платежом — словами формы операции", () => {
+    const budget = state();
+    expect(() => archiveCategoryWithLimits(budget, TRANSPORT)).toThrow("Сначала отключите активные лимиты и регулярные платежи этой категории.");
+  });
+
+  it("лимит архивной категории не трогается: план не завёл бы ей тёзку", () => {
+    const budget = state();
+    const old = category(budget, OLD);
+    const pristine = categoryDraftOf(budget, old);
+    const next = categorySave(old, { ...pristine, name: "Совсем старая", limit: "1000" }, pristine)(budget);
+    expect(next.categories).toHaveLength(budget.categories.length);
+    expect(category(next, OLD).name).toBe("Совсем старая");
+    expect(activeLine(next, OLD)).toBeUndefined();
+  });
+
+  it("отказы — у своего поля: имя и группа домена, сумма лимита плана; задержка — у формы", () => {
+    const budget = state();
+    const food = category(budget, FOOD);
+    const pristine = categoryDraftOf(budget, food);
+    const refusal = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return categoryFormError(error);
+      }
+      return null;
+    };
+    expect(refusal(() => categorySave(food, { ...pristine, name: "транспорт" }, pristine)(budget)))
+      .toEqual({ field: "name", message: "Активная категория с таким названием уже существует." });
+    expect(refusal(() => categorySave(food, { ...pristine, name: "" }, pristine)(budget))?.field).toBe("name");
+    expect(refusal(() => categorySave(food, { ...pristine, limit: "кофе" }, pristine)(budget)))
+      .toEqual({ field: "limit", message: "Введите положительную сумму в рублях, не более двух знаков после запятой." });
+    expect(categoryFormError(new CategoryValidationError("invalid_color", "color", "Выберите цвет из списка."))).toEqual({ field: "tone", message: "Выберите цвет из списка." });
+    expect(categoryFormError(new PlanningValidationError("lines", "Достигнут лимит повседневных категорий."))).toEqual({ field: "form", message: "Достигнут лимит повседневных категорий." });
+    expect(categoryFormError(new BudgetWriteRefusal("notReady"))).toEqual({ field: "form", message: new BudgetWriteRefusal("notReady").userMessage });
+  });
+});
+
+const plain = (markup: string) => markup.replace(/<[^>]+>/gu, " ").replace(/\s+/gu, " ").replace(/[ ­]/gu, (char) => (char === "­" ? "" : " ")).trim();
+
+describe("категории: разметка", () => {
+  const render = (type: "expense" | "income") => renderToStaticMarkup(
+    <CategoriesScreen budget={state()} type={type} write={{ run: vi.fn() }} onBack={vi.fn()} onType={vi.fn()} onOpen={vi.fn()} onMessage={vi.fn()} />,
+  );
+
+  it("расходы: переключатель видов, «Новая категория», плитки по группам с лимитом и карандашом, архив с «Вернуть»", () => {
+    const markup = render("expense");
+    expect(markup).toContain('aria-pressed="true"><span class="chip-face">Расходы</span>');
+    expect(markup).toContain('aria-pressed="false"><span class="chip-face">Доходы</span>');
+    expect(markup).toContain("Новая категория");
+    for (const title of ["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]) expect(markup).toContain(`>${title}</h2>`);
+    expect(markup).toMatch(/aria-label="Продукты: лимит [^"]+ на июль\. Изменить"/u);
+    expect(markup).toContain('aria-label="Дети: без лимита. Изменить"');
+    expect(markup).toContain('href="#glyph-pencil"');
+    expect(markup).toContain('aria-label="Вернуть «Старая» из архива"');
+    expect(plain(markup)).toContain("Архивная категория не стоит на «Обзоре»");
+  });
+
+  it("доходы: та же сетка без лимитов; плитка называет источник и действие", () => {
+    const markup = render("income");
+    expect(markup).toContain("Новый источник дохода");
+    expect(markup).toContain('aria-label="Зарплата. Изменить"');
+    expect(markup).not.toContain("без лимита");
+    const card = categoriesView(state(), "income").groups[0]!.cards[0]!;
+    expect(categoryCardLabel(card, "RUB", "июль")).toBe("Зарплата. Изменить");
+  });
+});
+
+describe("форма категории: разметка", () => {
+  const view = (id: string, overrides: Partial<Parameters<typeof CategoryFormView>[0]> = {}) => {
+    const budget = state();
+    const item = category(budget, id);
+    return renderToStaticMarkup(
+      <CategoryFormView budget={budget} category={item} draft={categoryDraftOf(budget, item)} error={null} busy={false} onPatch={vi.fn()} onSubmit={vi.fn()} {...overrides} />,
+    );
+  };
+
+  it("расходная: плитка-образец, название, группа, лимит месяца плана, цвет и иконка — радиогруппы", () => {
+    const markup = view(LEISURE);
+    const order = ['class="tile tile-expense', 'for="category-name"', 'for="category-group"', 'for="category-limit"', "<legend>Цвет</legend>", "<legend>Иконка</legend>", ">Сохранить</button>"];
+    const at = order.map((piece) => markup.indexOf(piece));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(markup).toContain("Лимит на июль, ₽ — не обязательно");
+    expect(markup).toContain('<option value="personal" selected="">Личное и досуг</option>');
+  });
+
+  it("источник дохода — без группы и без лимита; архивная — без лимита", () => {
+    const income = view(SALARY);
+    expect(income).not.toContain('for="category-group"');
+    expect(income).not.toContain('for="category-limit"');
+    expect(income).toContain('class="tile tile-income');
+    expect(view(OLD)).not.toContain('for="category-limit"');
+  });
+
+  it("отказ у поля связан с полем; образец показывает набранное имя и выбранные иконку и тон", () => {
+    const budget = state();
+    const draft = { ...categoryDraftOf(budget, category(budget, FOOD)), name: "Еда", icon: "cup" as const, tone: "coral" as const };
+    const markup = view(FOOD, { draft, error: { field: "limit", message: "Введите положительную сумму в рублях, не более двух знаков после запятой." } });
+    expect(markup).toMatch(/<input id="category-limit"[^>]*aria-invalid="true" aria-describedby="category-limit-hint category-limit-error"/u);
+    expect(markup).toContain('id="category-limit-error" role="alert"');
+    expect(markup).toMatch(/class="tile tile-expense tone-coral manage-preview" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
+  });
+});

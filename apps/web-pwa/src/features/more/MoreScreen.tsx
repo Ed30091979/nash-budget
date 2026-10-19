@@ -40,6 +40,14 @@ export function monthNote(budget: BudgetState, paydays: readonly number[]): stri
   return parts.join(" · ");
 }
 
+/** «15 категорий расходов · 8 источников дохода» — подпись строки «Категории и доходы». */
+export function categoriesNote(budget: BudgetState): string {
+  const active = budget.categories.filter((category) => category.active);
+  const expense = active.filter((category) => category.type === "expense").length;
+  const income = active.length - expense;
+  return `${plural(expense, ["категория расходов", "категории расходов", "категорий расходов"])} · ${plural(income, ["источник дохода", "источника дохода", "источников дохода"])}`;
+}
+
 /** «3 счёта · 1 в архиве» — подпись строки «Счета». */
 export function accountsNote(budget: BudgetState): string {
   const active = budget.accounts.filter((account) => account.active).length;
@@ -80,6 +88,8 @@ export function MoreScreen(props: {
   accountsNote: string;
   onRates: () => void;
   ratesNote: string;
+  onCategories: () => void;
+  categoriesNote: string;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
@@ -91,6 +101,7 @@ export function MoreScreen(props: {
       <h2 id="more-ledger-title" className="list-kicker">Учёт</h2>
       <ul className="list-card">
         <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
         <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
