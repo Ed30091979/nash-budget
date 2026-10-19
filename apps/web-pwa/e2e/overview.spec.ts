@@ -483,7 +483,7 @@ test("имена плиток не обрезаются: ни многоточи
       const style = getComputedStyle(name);
       const hidden = name.scrollHeight > name.clientHeight + 1 || name.scrollWidth > name.clientWidth + 1;
       const cut = style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none" || /hidden|clip/u.test(style.overflowY);
-      return hidden || cut ? [`${name.textContent?.replace(/­/gu, "")}`] : [];
+      return hidden || cut ? [`${name.textContent?.replace(/\u00ad/gu, "")}`] : [];
     }));
     expect(clipped, `${width} pt ×${scale}`).toEqual([]);
     await expect(tile(page, "Развлечения и хобби").locator(".tile-name")).toHaveText(/^Раз.*хоб.*би$/u);
