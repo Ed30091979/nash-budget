@@ -6,9 +6,11 @@ import type {
   CategoryId,
   CategoryTemplate,
   CategoryType,
+  DisplayKey,
   StoredCategoryGroup,
 } from "./types.js";
-import { labelKey, normalizeLabel, TextValidationError, type TextErrorCode } from "./text.js";
+import { MAX_SORT_ORDER } from "./limits.js";
+import { isDisplayKey, labelKey, normalizeLabel, TextValidationError, type TextErrorCode } from "./text.js";
 
 /**
  * Groups are a closed set, not free text: the interface prints these titles as headings and
@@ -173,14 +175,19 @@ export type CategoryErrorCode =
   | "group_type_mismatch"
   | "id_required"
   | "duplicate_id"
-  | "sort_order_overflow";
+  | "sort_order_overflow"
+  | "unknown_category"
+  | "invalid_icon"
+  | "invalid_color";
+
+export type CategoryField = "name" | "type" | "group" | "id" | "icon" | "color";
 
 /** Refusal a person is meant to read: `code` for the caller, `message` for the screen. */
 export class CategoryValidationError extends Error {
   readonly code: CategoryErrorCode;
-  readonly field: "name" | "type" | "group" | "id";
+  readonly field: CategoryField;
 
-  constructor(code: CategoryErrorCode, field: "name" | "type" | "group" | "id", message: string) {
+  constructor(code: CategoryErrorCode, field: CategoryField, message: string) {
     super(message);
     this.name = "CategoryValidationError";
     this.code = code;
@@ -190,7 +197,7 @@ export class CategoryValidationError extends Error {
 
 function fail(
   code: CategoryErrorCode,
-  field: "name" | "type" | "group" | "id",
+  field: CategoryField,
   message: string,
 ): never {
   throw new CategoryValidationError(code, field, message);
@@ -369,4 +376,124 @@ export function suggestedCategories(
       (type === undefined || template.type === type) &&
       !taken.has(`${template.type}\u0000${categoryNameKey(template.name)}`),
   );
+}
+
+/** A change to a category; a field left out stays as it is. `null` clears a display key. */
+export interface CategoryPatch {
+  readonly name?: string;
+  readonly icon?: DisplayKey | null;
+  readonly color?: DisplayKey | null;
+  /** Another group of the same type; income has the one group. */
+  readonly group?: CategoryGroup;
+}
+
+function requireCategory(state: Pick<BudgetState, "categories">, id: CategoryId): Category {
+  const category = state.categories.find((item) => item.id === id);
+  if (category === undefined) fail("unknown_category", "id", "Категория не найдена.");
+  return category;
+}
+
+function displayKeyOf(value: DisplayKey | null | undefined, field: "icon" | "color"): DisplayKey | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (!isDisplayKey(value)) {
+    fail(field === "icon" ? "invalid_icon" : "invalid_color", field, field === "icon" ? "Выберите иконку из списка." : "Выберите цвет из списка.");
+  }
+  return value;
+}
+
+/**
+ * Renames a category, gives it an icon and a tone of the family's choice (D-036), or moves it to
+ * another group of its type. Refuses what {@link createCategory} refuses for the same field — a
+ * malformed name, a name another active category of the type carries, a group of the other type — and
+ * a display key that is not one. A category moved to another group goes to the end of it, so it is
+ * not wedged between two of the group's own in the middle of the list.
+ *
+ * Nothing the budget counts moves: operations, limits and plans name the category by identifier, so
+ * a renamed «Продукты» keeps every kopeck it had. A patch that changes nothing returns the very same
+ * state, so the journal sees no update.
+ */
+export function updateCategory(state: BudgetState, id: CategoryId, patch: CategoryPatch): BudgetState {
+  const current = requireCategory(state, id);
+  const name = patch.name === undefined ? current.name : normalizeCategoryName(patch.name);
+  if (current.active && categoryNameKey(name) !== categoryNameKey(current.name)) {
+    const key = categoryNameKey(name);
+    const clash = state.categories.some(
+      (item) => item.id !== id && item.active && item.type === current.type && categoryNameKey(item.name) === key,
+    );
+    if (clash) fail("duplicate_name", "name", "Активная категория с таким названием уже существует.");
+  }
+  const icon = displayKeyOf(patch.icon, "icon");
+  const color = displayKeyOf(patch.color, "color");
+  let group: StoredCategoryGroup = current.group;
+  let sortOrder = current.sortOrder;
+  if (patch.group !== undefined && patch.group !== resolveCategoryGroup(current)) {
+    const target = groupFor(current.type, patch.group);
+    group = target;
+    sortOrder = nextSortOrder(state.categories.filter((item) => item.id !== id), target);
+    if (sortOrder > MAX_SORT_ORDER) fail("sort_order_overflow", "group", "Порядок категорий слишком велик.");
+  }
+  const { icon: _icon, color: _color, ...rest } = current;
+  const nextIcon = icon === undefined ? current.icon : icon ?? undefined;
+  const nextColor = color === undefined ? current.color : color ?? undefined;
+  const next: Category = {
+    ...rest,
+    name,
+    group,
+    sortOrder,
+    ...(nextIcon === undefined ? {} : { icon: nextIcon }),
+    ...(nextColor === undefined ? {} : { color: nextColor }),
+  };
+  const keys = new Set([...Object.keys(current), ...Object.keys(next)]) as Set<keyof Category>;
+  if ([...keys].every((key) => current[key] === next[key])) return state;
+  return { ...state, categories: state.categories.map((item) => (item.id === id ? next : item)) };
+}
+
+/** The active categories of one type and group, in the order the interface lists them. */
+export function categoriesInGroupOrder(
+  categories: readonly Category[],
+  type: CategoryType,
+  group: CategoryGroup,
+): readonly Category[] {
+  return categories
+    .map((category, index) => ({ category, index }))
+    .filter(({ category }) => category.active && category.type === type && resolveCategoryGroup(category) === group)
+    .sort((left, right) => left.category.sortOrder - right.category.sortOrder || left.index - right.index)
+    .map(({ category }) => category);
+}
+
+/**
+ * Moves an active category one place up or down inside its group. Two positions swap and only those
+ * two categories change, for the reason `moveAccount` gives: every update is a whole entity in the
+ * journal. Tied positions in the group are first spread apart in their current order. At either end,
+ * or for an archived category, the state stays as it is.
+ */
+export function moveCategory(state: BudgetState, id: CategoryId, direction: "up" | "down"): BudgetState {
+  const category = requireCategory(state, id);
+  if (!category.active) return state;
+  const group = resolveCategoryGroup(category);
+  const members = categoriesInGroupOrder(state.categories, category.type, group);
+  const at = members.findIndex((item) => item.id === id);
+  const neighbour = members[direction === "up" ? at - 1 : at + 1];
+  if (neighbour === undefined) return state;
+
+  const positions = new Map(members.map((item) => [item.id, item.sortOrder]));
+  if (new Set(positions.values()).size !== positions.size) {
+    let previous = Number.NEGATIVE_INFINITY;
+    for (const item of members) {
+      const next = Math.max(item.sortOrder, previous + 1);
+      if (!Number.isSafeInteger(next) || next > MAX_SORT_ORDER) fail("sort_order_overflow", "group", "Порядок категорий слишком велик.");
+      positions.set(item.id, next);
+      previous = next;
+    }
+  }
+  const mine = positions.get(category.id) ?? category.sortOrder;
+  positions.set(category.id, positions.get(neighbour.id) ?? neighbour.sortOrder);
+  positions.set(neighbour.id, mine);
+  return {
+    ...state,
+    categories: state.categories.map((item) => {
+      const sortOrder = positions.get(item.id);
+      return sortOrder === undefined || sortOrder === item.sortOrder ? item : { ...item, sortOrder };
+    }),
+  };
 }

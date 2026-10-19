@@ -13,8 +13,12 @@ import {
   findTagByName,
   makeSeedBudget,
   normalizeTagIds,
+  renameTag,
+  restoreTag,
   SEED_IDS,
+  tagUsage,
   TagValidationError,
+  updateTag,
   type BudgetState,
   type TagId,
   type Transaction,
@@ -269,5 +273,50 @@ describe("calculateTagExpenses", () => {
     expect(() => calculateTagExpenses(ledger(), "44444444-4444-4444-8444-4444444444ff")).toThrow(/calculateTagExpenses references unknown id/);
     const dangling: BudgetState = { ...ledger(), tags: [] };
     expect(() => calculateTagExpenses(dangling)).toThrow(/tagIds references unknown id/);
+  });
+});
+
+describe("updateTag and renameTag", () => {
+  it("renames a tag without writing a single operation", () => {
+    const state = taggedSeed();
+    const next = renameTag(state, HOLIDAY, "  Отдых ");
+    expect(next.tags?.find((tag) => tag.id === HOLIDAY)).toEqual({ id: HOLIDAY, name: "Отдых", active: true });
+    expect(next.transactions).toBe(state.transactions);
+    expect(calculateTagExpenses(next).byTag[HOLIDAY]).toEqual(calculateTagExpenses(state).byTag[HOLIDAY]);
+    expect(updateTag(state, HOLIDAY, {})).toBe(state);
+    expect(renameTag(state, HOLIDAY, "Отпуск")).toBe(state);
+  });
+
+  it("refuses what creation refuses, an active namesake, and an unknown tag", () => {
+    const state = taggedSeed();
+    expect(code(() => renameTag(state, HOLIDAY, "дом"))).toBe("duplicate_name");
+    expect(code(() => renameTag(state, HOLIDAY, "   "))).toBe("name_required");
+    expect(code(() => renameTag(state, HOLIDAY, "—"))).toBe("name_unreadable");
+    expect(code(() => renameTag(state, "8a000000-0000-4000-8000-0000000000ff", "Новая"))).toBe("unknown_tag");
+    // An archived tag may carry a name an active one has: it is out of every list it would be confused in.
+    const archived = archiveTag(state, HOLIDAY);
+    expect(renameTag(archived, HOLIDAY, "Дом").tags?.find((tag) => tag.id === HOLIDAY)?.name).toBe("Дом");
+  });
+});
+
+describe("restoreTag", () => {
+  it("brings an archived tag back, once, and refuses while an active tag carries its name", () => {
+    const state = taggedSeed();
+    const archived = archiveTag(state, HOLIDAY);
+    const restored = restoreTag(archived, HOLIDAY);
+    expect(restored.tags).toEqual(state.tags);
+    expect(restoreTag(restored, HOLIDAY)).toBe(restored);
+    const clash = createTag(archived, "Отпуск", sequentialIds("8a000000-0000-4000-8000-0000000000a3")).state;
+    expect(code(() => restoreTag(clash, HOLIDAY))).toBe("duplicate_name");
+  });
+});
+
+describe("tagUsage", () => {
+  it("counts the operations carrying each tag", () => {
+    const state = taggedSeed();
+    const usage = tagUsage(state);
+    expect(usage.get(HOLIDAY)).toBe(1);
+    expect(usage.get(HOME)).toBe(1);
+    expect(tagUsage(makeSeedBudget()).size).toBe(0);
   });
 });

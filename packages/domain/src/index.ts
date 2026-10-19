@@ -26,6 +26,7 @@ export {
   CATEGORY_GROUPS,
   CATEGORY_NAME_MAX_LENGTH,
   CATEGORY_SUGGESTIONS,
+  categoriesInGroupOrder,
   categoryGroupDefinition,
   categoryNameKey,
   CategoryValidationError,
@@ -37,11 +38,13 @@ export {
   isCategoryGroup,
   makeCategoriesFromTemplates,
   makeDefaultCategories,
+  moveCategory,
   normalizeCategoryName,
   resolveCategoryGroup,
   suggestedCategories,
+  updateCategory,
 } from "./categories.js";
-export type { CategoryCreation, CategoryDraft, CategoryErrorCode } from "./categories.js";
+export type { CategoryCreation, CategoryDraft, CategoryErrorCode, CategoryField, CategoryPatch } from "./categories.js";
 export {
   addDays,
   dateFromDayIndex,
@@ -144,9 +147,13 @@ export {
   findTagByName,
   normalizeTagIds,
   normalizeTagName,
+  renameTag,
+  restoreTag,
   TagValidationError,
+  tagUsage,
+  updateTag,
 } from "./tags.js";
-export type { TagCreation, TagErrorCode } from "./tags.js";
+export type { TagCreation, TagErrorCode, TagPatch } from "./tags.js";
 export {
   isBlankStoredText,
   isStorableLabel,

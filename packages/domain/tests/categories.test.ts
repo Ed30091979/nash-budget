@@ -15,10 +15,14 @@ import {
   findCategoryByName,
   isCategoryGroup,
   makeDefaultCategories,
+  categoriesInGroupOrder,
   makeSeedBudget,
+  MAX_SORT_ORDER,
+  moveCategory,
   resolveCategoryGroup,
   SEED_IDS,
   suggestedCategories,
+  updateCategory,
   type BudgetState,
   type CategoryGroup,
   type CategoryId,
@@ -431,5 +435,104 @@ describe("income categories on operations", () => {
           : item),
     };
     expect(() => calculateBudget(withExpenseCategory)).toThrow(/must reference an income category/);
+  });
+});
+
+function categoryCode(run: () => unknown): string | null {
+  try {
+    run();
+    return null;
+  } catch (error) {
+    if (error instanceof CategoryValidationError) return error.code;
+    throw error;
+  }
+}
+
+/** The seed with the full starting catalogue next to its own three categories. */
+function catalogue(): BudgetState {
+  const seed = makeSeedBudget();
+  const extra = makeDefaultCategories(sequentialIds("default"))
+    .filter((category) => !seed.categories.some((own) => own.name === category.name))
+    .map((category, index) => ({ ...category, id: `8d000000-0000-4000-8000-${String(index).padStart(12, "0")}`, sortOrder: 1_000 + index * 10 }));
+  return { ...seed, categories: [...seed.categories, ...extra] };
+}
+
+describe("updateCategory", () => {
+  it("renames, gives an icon and a tone, and moves no kopeck", () => {
+    const seed = makeSeedBudget();
+    const next = updateCategory(seed, SEED_IDS.categories.food, { name: "  Еда ", icon: "shopping-basket", color: "lilac" });
+    expect(next.categories.find((item) => item.id === SEED_IDS.categories.food)).toMatchObject({ name: "Еда", icon: "shopping-basket", color: "lilac" });
+    expect(calculateBudget(next)).toEqual(calculateBudget(seed));
+    expect(updateCategory(seed, SEED_IDS.categories.food, {})).toBe(seed);
+    const cleared = updateCategory(next, SEED_IDS.categories.food, { icon: null, color: null });
+    const food = cleared.categories.find((item) => item.id === SEED_IDS.categories.food)!;
+    expect(Object.hasOwn(food, "icon")).toBe(false);
+    expect(Object.hasOwn(food, "color")).toBe(false);
+  });
+
+  it("refuses an active duplicate of the same type in any case, and an archived category may keep a taken name", () => {
+    const seed = makeSeedBudget();
+    const transport = seed.categories.find((item) => item.id === SEED_IDS.categories.transport)!;
+    expect(categoryCode(() => updateCategory(seed, SEED_IDS.categories.food, { name: transport.name.toUpperCase() }))).toBe("duplicate_name");
+    // The case of its own name is the category's own business.
+    const food = seed.categories.find((item) => item.id === SEED_IDS.categories.food)!;
+    expect(updateCategory(seed, SEED_IDS.categories.food, { name: food.name.toUpperCase() }).categories.find((item) => item.id === food.id)?.name).toBe(food.name.toUpperCase());
+    const archived: BudgetState = { ...seed, categories: seed.categories.map((item) => (item.id === food.id ? { ...item, active: false } : item)) };
+    expect(updateCategory(archived, food.id, { name: transport.name }).categories.find((item) => item.id === food.id)?.name).toBe(transport.name);
+    expect(categoryCode(() => updateCategory(seed, SEED_IDS.categories.food, { name: "   " }))).toBe("name_required");
+    expect(categoryCode(() => updateCategory(seed, "8d000000-0000-4000-8000-0000000000ff", { name: "Ничья" }))).toBe("unknown_category");
+  });
+
+  it("refuses display keys that are not keys", () => {
+    const seed = makeSeedBudget();
+    for (const key of ["#00ff00", "constructor", "Mint", "x".repeat(41)]) {
+      expect(categoryCode(() => updateCategory(seed, SEED_IDS.categories.food, { icon: key })), key).toBe("invalid_icon");
+      expect(categoryCode(() => updateCategory(seed, SEED_IDS.categories.food, { color: key })), key).toBe("invalid_color");
+    }
+  });
+
+  it("moves an expense to another expense group, at its end, and refuses a group of the other type", () => {
+    const state = catalogue();
+    const next = updateCategory(state, SEED_IDS.categories.food, { group: "personal" });
+    const food = next.categories.find((item) => item.id === SEED_IDS.categories.food)!;
+    expect(resolveCategoryGroup(food)).toBe("personal");
+    expect(categoriesInGroupOrder(next.categories, "expense", "personal").at(-1)?.id).toBe(food.id);
+    expect(food.sortOrder).toBeLessThanOrEqual(MAX_SORT_ORDER);
+    expect(categoryCode(() => updateCategory(state, SEED_IDS.categories.food, { group: "income" }))).toBe("group_type_mismatch");
+    // Its own group again is no change at all.
+    const group = resolveCategoryGroup(state.categories.find((item) => item.id === SEED_IDS.categories.food)!);
+    expect(updateCategory(state, SEED_IDS.categories.food, { group })).toBe(state);
+  });
+});
+
+describe("moveCategory", () => {
+  it("swaps two neighbours of one group and changes only those two; at either end nothing moves", () => {
+    const state = catalogue();
+    const everyday = categoriesInGroupOrder(state.categories, "expense", "everyday").map((item) => item.id);
+    expect(everyday.length).toBeGreaterThan(2);
+    const moved = moveCategory(state, everyday[1]!, "up");
+    expect(categoriesInGroupOrder(moved.categories, "expense", "everyday").map((item) => item.id)).toEqual([everyday[1], everyday[0], ...everyday.slice(2)]);
+    const changed = moved.categories.filter((item, index) => item !== state.categories[index]).map((item) => item.id);
+    expect(changed.sort()).toEqual([everyday[0], everyday[1]].sort());
+    expect(moveCategory(state, everyday[0]!, "up")).toBe(state);
+    expect(moveCategory(state, everyday.at(-1)!, "down")).toBe(state);
+    // Other groups keep their order.
+    expect(categoriesInGroupOrder(moved.categories, "expense", "personal")).toEqual(categoriesInGroupOrder(state.categories, "expense", "personal"));
+  });
+
+  it("spreads tied positions in their order before swapping, within the shared bound", () => {
+    const state = catalogue();
+    const tied: BudgetState = { ...state, categories: state.categories.map((item) => (item.type === "income" ? { ...item, sortOrder: 7 } : item)) };
+    const incomes = categoriesInGroupOrder(tied.categories, "income", "income").map((item) => item.id);
+    const moved = moveCategory(tied, incomes[2]!, "up");
+    expect(categoriesInGroupOrder(moved.categories, "income", "income").map((item) => item.id)).toEqual([incomes[0], incomes[2], incomes[1], ...incomes.slice(3)]);
+    const edge: BudgetState = { ...state, categories: state.categories.map((item) => (item.type === "income" ? { ...item, sortOrder: MAX_SORT_ORDER } : item)) };
+    expect(categoryCode(() => moveCategory(edge, incomes[1]!, "up"))).toBe("sort_order_overflow");
+  });
+
+  it("does not move an archived category", () => {
+    const state = catalogue();
+    const archived: BudgetState = { ...state, categories: state.categories.map((item) => (item.id === SEED_IDS.categories.food ? { ...item, active: false } : item)) };
+    expect(moveCategory(archived, SEED_IDS.categories.food, "up")).toBe(archived);
   });
 });
