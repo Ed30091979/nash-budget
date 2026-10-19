@@ -31,7 +31,8 @@
 Переиспользовать: `Keypad.tsx` (тот же набор клавиш, включая «÷»; 4 колонки; кнопка записи отдельной строкой); `amount-expression.ts`; `createOperationsSubmissionGate` (`form-state.ts`); `effectTarget/effectValueMinor` (`save-receipt.ts`) + `MoneyOdometer` для тоста «Записано» с «Отменить»; `CategorySheet.tsx`.
 Удалить: табло конвертов (`Envelope`, `OperationsScreen.tsx:392`), `OperationsScreen` после 2b, `.envelope*`, `.record-*`.
 
-### 1.3 Операции — `#/operations?from&to&acc&cat&tag&member&kind&q`
+### 1.3 Операции — `#/operations?from&to&acc&cat&tag&member&kind`
+В адресе — только фильтры закрытого типа: `from`/`to` — дата `ГГГГ-ММ-ДД`, `acc`/`cat`/`tag`/`member` — UUID, `kind` — значение из перечня (`docs/SECURITY.md` §7.3). Строка поиска в адрес не попадает никогда: это свободный текст — сумма, заметка, имя; она живёт в памяти экрана, переживает переход на лист правки и обратно, а перезагрузку и «Назад» с экрана — нет.
 Заголовок, поиск «Сумма, комментарий, # метка»; чипы период/«Все счета»/«Все категории»/«Метки»/«Участник» (в семье); группы по дням «Сегодня, 18 октября» с итогом дня без переводов; строки: плитка, заголовок, мета «счёт · комментарий · #метка · повторяется…», сумма со знаком; пагинация 50; нажатие → лист в режиме правки.
 Есть: `buildOperationSearchIndex/searchOperations` (`features/dashboard/model.ts:336–390`), `OPERATION_PAGE_SIZE`, `transactionDetail/kindLabels/kindSign/amountText` (`transaction-words.ts`), `filterTransactionsByMember`, `memberFilterOptions`, `transactionAuthorLabel`.
 Добавить: `features/feed/feed-model.ts` (фильтры `accountIds/categoryIds/tagIds/memberId/from/to`; индекс с заметкой, именами меток, суммой «1250», «1 250», «1250,00»; группировка по дням с итогами в базе); реэкспорт в `dashboard`.
@@ -88,7 +89,7 @@
 Почему не react-router: своя семантика защиты черновиков на `popstate`; без лишних зависимостей, офлайн; hash не требует переписывания адресов ни на статическом хостинге, ни в Capacitor, SW-навигация и CSP прежние.
 `src/navigation/routes.ts`: union `Route`, `parseRoute(hash)`, `formatRoute(route)`; мусор/неизвестное/несуществующий id → родитель + тост «Запись не найдена»; у каждого маршрута `parent`. `src/navigation/router.ts`: `useRoute()` на `useSyncExternalStore` (`popstate`), `navigate(route, {replace})`, `back()`.
 История: Обзор — корень; Обзор → вкладка = push, вкладка → вкладка = replace (Назад с любой вкладки → Обзор, с Обзора → выход); подэкраны и листы = push; внутренние кнопки «назад» (`components/BackButton.tsx`) → `parent` с replace (не слепой `history.back()`); при перезагрузке `sheet=` отбрасывается — черновик никогда не попадает в адрес.
-Приватность: в hash только непрозрачные UUID и ключи фильтров — ни сумм, ни заметок, ни имён.
+Приватность: в hash только то, что разрешает закрытая грамматика `QUERY_GRAMMAR` (`routes.ts`): у маршрута — свой список ключей, у ключа — значение закрытого типа (UUID, перечень, дата, месяц, небольшое число); ни сумм, ни заметок, ни имён, ни строки поиска. Как это держится — `docs/SECURITY.md` §7.3.
 Фокус и прокрутка: `h1` маршрута в фокусе после перехода (`focusRouteHeading`), прокрутка восстанавливается по ключу маршрута; лист ловит фокус и возвращает его на плитку.
 Android: `@capacitor/app` нет; без новой зависимости, по образцу `NativeFileExportPlugin`: в `MainActivity.java` `OnBackPressedCallback` — `webView.canGoBack()` ? `goBack()` : отдать системе. Проверить на эмуляторе в 2a. iOS standalone — своя кнопка «назад» на каждом подэкране.
 
@@ -171,7 +172,8 @@ Android: `@capacitor/app` нет; без новой зависимости, по
 
 ### 2d. Лента операций и отчёты
 Файлы: `features/feed/*` (`FeedScreen`, `FeedRow`, `DayGroup`, `FilterBar`, `FilterSheet`, `feed-model.ts`), `features/reports/*` (`ReportsScreen`, `Donut`, `MonthBars`, `ReportLegend`, `report-model.ts`), `packages/domain/src/reports.ts`, `e2e/canonical-ledger.ts` (G-003 из `@family-budget/test-fixtures`). Удалить: `HistoryScreen.tsx`, `history.test.tsx`.
-Тесты: домен на G-003 (C1 1 550 000; C2 факт 506 338; T1 506 338, T2 1 550 000, T3 12 000 000); `feed-model` (фильтры, поиск по заметке, метке, «1 250»/«1250», итоги дня); фильтры в адресе (Назад восстанавливает); доступность графиков (`role="img"` + таблица); e2e `feed.spec.ts`, `reports.spec.ts`.
+Адрес: фильтры — новые ключи `operations` в `QUERY_GRAMMAR` (дата, UUID, перечень), каждый с примером в `ROUTE_FIXTURES` и в выписанном руками `ROUTE_FRAGMENT` (`navigation/test-fixture.ts`). Строка поиска — состояние экрана в памяти, не ключ адреса и не `history.state`: ни `q=`, ни иного свободного текста грамматика не принимает, и `address-privacy.test.ts` это держит.
+Тесты: домен на G-003 (C1 1 550 000; C2 факт 506 338; T1 506 338, T2 1 550 000, T3 12 000 000); `feed-model` (фильтры, поиск по заметке, метке, «1 250»/«1250», итоги дня); фильтры в адресе (Назад восстанавливает; строки поиска в адресе нет); доступность графиков (`role="img"` + таблица); e2e `feed.spec.ts`, `reports.spec.ts`.
 Риски: 50 000 операций (мемоизировать индекс); календарный период против окна бюджета (определить явно); доли меток > 100 %.
 
 ### 2e. Долги, цели, регулярные
