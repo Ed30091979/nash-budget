@@ -160,6 +160,49 @@ describe("запись из листа ввода", () => {
     expect(back).toBeDefined();
   });
 
+  it("«Отменить» снимает и метку, которую создала та же запись, — если её больше ничто не носит", async () => {
+    // Ревью 2b, LOW-1: «+ метка» создаёт метку той же записью, а «Отменить» оставлял её в списке.
+    const shell = harness();
+    const tagged = { ...food("300"), newTags: ["Дача"] };
+    shell.open(tagged);
+    shell.controller.submit(tagged);
+    await settle();
+    expect(shell.budget().tags?.map((tag) => tag.name)).toContain("Дача");
+    shell.toasts[0]!.action?.run();
+    await settle();
+    expect(shell.budget().tags?.map((tag) => tag.name) ?? []).not.toContain("Дача");
+
+    // Метка, которую уже носит другая операция, после «Отменить» остаётся.
+    shell.open(tagged);
+    shell.controller.submit(tagged);
+    await settle();
+    const dacha = shell.budget().tags!.find((tag) => tag.name === "Дача")!;
+    const second = { ...food("40"), tagIds: [dacha.id] };
+    shell.open(second);
+    shell.controller.submit(second);
+    await settle();
+    shell.toasts[2]!.action?.run();
+    await settle();
+    expect(shell.budget().tags?.some((tag) => tag.id === dacha.id)).toBe(true);
+  });
+
+  it("«Отменить» правки, которая создала метку, снимает и её", async () => {
+    const shell = harness();
+    const expense = shell.budget().transactions.find((item) => item.kind === "expense")!;
+    const opening = draftFromTransaction(shell.budget(), expense);
+    if (opening.kind !== "draft") throw new Error("expense must open as a draft");
+    const at: Route = { name: "operations", sheet: "entry", edit: expense.id };
+    const edit = { ...opening.draft, newTags: ["Ремонт"] };
+    shell.open(edit, at);
+    shell.controller.submit(edit);
+    await settle();
+    expect(shell.budget().tags?.map((tag) => tag.name)).toContain("Ремонт");
+    shell.toasts[0]!.action?.run();
+    await settle();
+    expect(shell.budget().transactions.find((item) => item.id === expense.id)).toEqual(expense);
+    expect(shell.budget().tags?.map((tag) => tag.name) ?? []).not.toContain("Ремонт");
+  });
+
   it("курс из листа: неверный — словами, верный — записан тем же путём", async () => {
     const shell = harness();
     await expect(shell.controller.saveRate({ currency: "RUB", date: TODAY, rate: { baseMinor: 1, quoteMinor: 1 } })).resolves.not.toBeNull();

@@ -1,5 +1,6 @@
 import {
   addExchangeRate,
+  deleteTag,
   RateValidationError,
   TagValidationError,
   type BudgetState,
@@ -86,6 +87,23 @@ function receiptDetail(before: BudgetState, after: BudgetState, draft: EntryDraf
   }
 }
 
+/**
+ * Метки, которые создала запись (`«+ метка»`), снимаются вместе с ней при «Отменить» — если их уже
+ * не носит ничто другое (ревью 2b, LOW-1). Метку, которую успели поставить на другую операцию или
+ * в правило, домен удалить не даст, и она остаётся.
+ */
+function withoutUnusedTags(state: BudgetState, ids: readonly string[]): BudgetState {
+  let next = state;
+  for (const id of ids) {
+    try {
+      next = deleteTag(next, id);
+    } catch (error) {
+      if (!(error instanceof TagValidationError)) throw error;
+    }
+  }
+  return next;
+}
+
 export function createEntryController(options: EntryControllerOptions): EntryController {
   const gate = createOperationsSubmissionGate();
   const makeId = options.makeId ?? (() => crypto.randomUUID());
@@ -126,6 +144,8 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
           const written = after.transactions.find((item) => item.id === transactionId);
           if (written === undefined) return;
           const previous = draft.editId === null ? undefined : before.transactions.find((item) => item.id === draft.editId);
+          const known = new Set((before.tags ?? []).map((tag) => tag.id));
+          const createdTags = (after.tags ?? []).filter((tag) => !known.has(tag.id)).map((tag) => tag.id);
           const label = operationWords(draft.editId === null ? "Записано" : "Изменено", written, after);
           options.showToast({
             text: label,
@@ -133,8 +153,8 @@ export function createEntryController(options: EntryControllerOptions): EntryCon
             action: {
               label: "Отменить",
               run: () => undo(label.slice(label.indexOf(":") + 2), previous === undefined
-                ? (state) => deleteTransaction(state, transactionId)
-                : (state) => restoreTransaction(state, previous)),
+                ? (state) => withoutUnusedTags(deleteTransaction(state, transactionId), createdTags)
+                : (state) => withoutUnusedTags(restoreTransaction(state, previous), createdTags)),
             },
           });
         } catch (error) {
