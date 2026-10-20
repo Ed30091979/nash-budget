@@ -11,6 +11,7 @@ import type { BudgetState } from "@family-budget/domain";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { demoBudget, restoreBudget } from "./budgets";
+import { e2eNow } from "./clock";
 import { applyFontScale } from "./font-scale";
 import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, recordExpense, tile, toast } from "./sheet";
 
@@ -360,9 +361,9 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
 test("месяц плана закрыт — «Открыть …» залитой кнопкой в одну строку, на телефоне и на широком экране", async ({ page }) => {
   await loadDemo(page);
   // Демо строит план на текущий месяц; через два месяца он закрыт, и строка предлагает открыть новый.
-  const later = new Date();
+  const later = e2eNow();
   later.setMonth(later.getMonth() + 2, 10);
-  await page.clock.install({ time: later });
+  await page.clock.setSystemTime(later);
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
     await page.setViewportSize(viewport);
     await page.reload();
