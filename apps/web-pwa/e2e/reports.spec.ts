@@ -2,6 +2,7 @@ import { expect, test } from "./fixtures";
 import { applyFontScale } from "./font-scale";
 import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { restoreBudget } from "./budgets";
+import { CANONICAL_E2E_DAY } from "./clock";
 import { G003_CATEGORIES, G003_EXPENSES_MINOR, G003_INCOME_MINOR, G003_LEDGER, G003_MONTH_FROM, G003_TAGS } from "./canonical-ledger";
 import { entrySheet, loadDemo } from "./sheet";
 import { formatMoney } from "../src/money";
@@ -52,63 +53,72 @@ test("«Расходы» с «Обзора» — в «Отчёты» с тем �
   await expect(page.getByRole("table", { name: "Расходы по месяцам" })).toBeVisible();
 });
 
-test("строка легенды — «Операции» с категорией и периодом; «Назад» — «Отчёты» с тем же периодом", async ({ page }) => {
-  await loadDemo(page);
-  await tab(page, "Отчёты").click();
-  await expect(heading(page)).toBeVisible();
-  // Год: опора — сегодня, адрес её не пишет; строка легенды — поверх «Отчётов» за год.
-  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Год", exact: true }).click();
-  expect(await hash(page)).toBe("#/reports?period=year");
-  await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
-  expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-01-01&to=\d{4}-12-31&cat=[0-9a-f-]{36}$/u);
-  // Лента поверх «Отчётов» — со строкой «‹ Отчёты»: она возвращает к той же их записи истории,
-  // а не кладёт новую (LOW-6); фокус — на заголовке «Отчётов».
-  const length = await page.evaluate(() => window.history.length);
-  await page.getByRole("button", { name: "Назад: Отчёты" }).click();
-  await expect(heading(page)).toBeFocused();
-  expect(await hash(page)).toBe("#/reports?period=year");
-  expect(await page.evaluate(() => window.history.length)).toBe(length);
-  // Снова в ленту: лист правки поверх неё — тот же экран, и после него строка «‹ Отчёты» на месте;
-  // системное «Назад» ведёт туда же, куда она.
-  await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
-  await page.locator(".feed-row").first().getByRole("button").click();
-  await expect(entrySheet(page)).toBeVisible();
-  await entrySheet(page).getByRole("button", { name: "Закрыть" }).first().click();
-  await expect(entrySheet(page)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Назад: Отчёты" })).toBeVisible();
-  await page.goBack();
-  expect(await hash(page)).toBe("#/reports?period=year");
-  // Месяц — без ключей, как у вкладки; его легенда — числа октября макета.
-  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /^[А-Я][а-я]+$/u }).first().click();
-  expect(await hash(page)).toBe("#/reports");
-  await page.getByRole("button", { name: /^Продукты: 22\s000\s₽, 31\s%\. Показать операции$/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
-  expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&cat=[0-9a-f-]{36}$/u);
-  const feed = page.getByRole("region", { name: "Операции" });
-  await expect(feed.getByRole("button", { name: "Категория: Продукты", exact: true })).toHaveAttribute("data-set", "true");
-  await expect(feed.locator(".feed-row")).toHaveCount(6);
-  await expect(feed.locator(".feed-sum")).toContainText(/Расходы 22\s000\s₽/u);
-  await page.goBack();
-  await expect(heading(page)).toBeVisible();
-  expect(await hash(page)).toBe("#/reports");
-  // Квартал и вкладки — тот же экран: «Доходы» и «Метки» заменяют запись, «Назад» — на «Обзор».
-  await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Квартал", exact: true }).click();
-  expect(await hash(page)).toBe("#/reports?period=quarter");
-  await expect(page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /квартал$/u })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Доходы" }).click();
-  expect(await hash(page)).toBe("#/reports?view=income&period=quarter");
-  await expect(page.getByRole("heading", { level: 2, name: "Больше всего пришло из источника «Зарплата»" })).toBeVisible();
-  await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Метки" }).click();
-  await expect(page.getByRole("heading", { level: 2, name: /^Больше всего потрачено с меткой «.+»$/u })).toBeVisible();
-  await page.getByRole("button", { name: /^#дача: / }).click();
-  await expect(page.getByRole("region", { name: "Операции" }).getByRole("button", { name: "Метка: #дача", exact: true })).toHaveAttribute("data-set", "true");
-  expect(await hash(page)).toMatch(/&tag=[0-9a-f-]{36}$/u);
-  await page.goBack();
-  expect(await hash(page)).toBe("#/reports?view=tags&period=quarter");
-  await page.goBack();
-  await expect(page.locator(".reach-card")).toBeVisible();
+/*
+ * Доход квартала есть, только когда первая выплата квартала уже пришла: 1–4 октября аванс 5-го ещё
+ * «ожидается», и «Доходы» за квартал пусты. Тест держит числа демо на её канонический день (как «три
+ * итога» в `overview.spec.ts`), а не на день прогона.
+ */
+test.describe("канонический день демо — 19 октября", () => {
+  test.use({ today: CANONICAL_E2E_DAY });
+
+  test("строка легенды — «Операции» с категорией и периодом; «Назад» — «Отчёты» с тем же периодом", async ({ page }) => {
+    await loadDemo(page);
+    await tab(page, "Отчёты").click();
+    await expect(heading(page)).toBeVisible();
+    // Год: опора — сегодня, адрес её не пишет; строка легенды — поверх «Отчётов» за год.
+    await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Год", exact: true }).click();
+    expect(await hash(page)).toBe("#/reports?period=year");
+    await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
+    expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-01-01&to=\d{4}-12-31&cat=[0-9a-f-]{36}$/u);
+    // Лента поверх «Отчётов» — со строкой «‹ Отчёты»: она возвращает к той же их записи истории,
+    // а не кладёт новую (LOW-6); фокус — на заголовке «Отчётов».
+    const length = await page.evaluate(() => window.history.length);
+    await page.getByRole("button", { name: "Назад: Отчёты" }).click();
+    await expect(heading(page)).toBeFocused();
+    expect(await hash(page)).toBe("#/reports?period=year");
+    expect(await page.evaluate(() => window.history.length)).toBe(length);
+    // Снова в ленту: лист правки поверх неё — тот же экран, и после него строка «‹ Отчёты» на месте;
+    // системное «Назад» ведёт туда же, куда она.
+    await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
+    await page.locator(".feed-row").first().getByRole("button").click();
+    await expect(entrySheet(page)).toBeVisible();
+    await entrySheet(page).getByRole("button", { name: "Закрыть" }).first().click();
+    await expect(entrySheet(page)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Назад: Отчёты" })).toBeVisible();
+    await page.goBack();
+    expect(await hash(page)).toBe("#/reports?period=year");
+    // Месяц — без ключей, как у вкладки; его легенда — числа октября макета.
+    await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /^[А-Я][а-я]+$/u }).first().click();
+    expect(await hash(page)).toBe("#/reports");
+    await page.getByRole("button", { name: /^Продукты: 22\s000\s₽, 31\s%\. Показать операции$/u }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
+    expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&cat=[0-9a-f-]{36}$/u);
+    const feed = page.getByRole("region", { name: "Операции" });
+    await expect(feed.getByRole("button", { name: "Категория: Продукты", exact: true })).toHaveAttribute("data-set", "true");
+    await expect(feed.locator(".feed-row")).toHaveCount(6);
+    await expect(feed.locator(".feed-sum")).toContainText(/Расходы 22\s000\s₽/u);
+    await page.goBack();
+    await expect(heading(page)).toBeVisible();
+    expect(await hash(page)).toBe("#/reports");
+    // Квартал и вкладки — тот же экран: «Доходы» и «Метки» заменяют запись, «Назад» — на «Обзор».
+    await page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: "Квартал", exact: true }).click();
+    expect(await hash(page)).toBe("#/reports?period=quarter");
+    await expect(page.getByRole("group", { name: "Период и счёт" }).getByRole("button", { name: /квартал$/u })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Доходы" }).click();
+    expect(await hash(page)).toBe("#/reports?view=income&period=quarter");
+    await expect(page.getByRole("heading", { level: 2, name: "Больше всего пришло из источника «Зарплата»" })).toBeVisible();
+    await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Метки" }).click();
+    await expect(page.getByRole("heading", { level: 2, name: /^Больше всего потрачено с меткой «.+»$/u })).toBeVisible();
+    await page.getByRole("button", { name: /^#дача: / }).click();
+    await expect(page.getByRole("region", { name: "Операции" }).getByRole("button", { name: "Метка: #дача", exact: true })).toHaveAttribute("data-set", "true");
+    expect(await hash(page)).toMatch(/&tag=[0-9a-f-]{36}$/u);
+    await page.goBack();
+    expect(await hash(page)).toBe("#/reports?view=tags&period=quarter");
+    await page.goBack();
+    await expect(page.locator(".reach-card")).toBeVisible();
+  });
 });
 
 test("прошлый месяц из листа периода, свой период и пустой период: «За … расходов нет» с дорогой к записи", async ({ page }) => {
