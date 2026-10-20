@@ -20,11 +20,17 @@ export async function startDemo(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Посмотреть на примере", exact: true }).click();
 }
 
-/** Демо загружено и «Обзор» стоит: карточка «Хватает до …» под итогами на месте. */
+/**
+ * Демо загружено и «Обзор» стоит: карточка «Хватает до …» под итогами на месте, а въезд оболочки
+ * закончился. Пока `.route-screen` проявляется (`route-fade`, один раз при появлении оболочки), её
+ * прозрачность — свой слой наложения: лист, открытый в эти 200 мс, лежит под навигацией и плашкой, и
+ * проверка целей мерила бы этот миг, а не экран.
+ */
 export async function loadDemo(page: Page): Promise<void> {
   await page.goto("/");
   await startDemo(page);
   await expect(page.locator(".reach-card")).toBeVisible();
+  await page.locator(".route-screen").evaluate((screen) => Promise.all(screen.getAnimations().map((animation) => animation.finished)));
 }
 
 /** Число «Можно тратить» — третий итог шапки, одно на экран (`overview-ui.test.tsx` держит это). */
