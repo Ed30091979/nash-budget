@@ -594,6 +594,12 @@ describe("роутер 2d: «Операции» с фильтром и «Отч�
     // Смена фильтра ленты заменяет её запись — «Отчёты» под ней остаются.
     await go(router, { name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense" }, true);
     expect(router.beneath()).toEqual({ name: "reports", period: "year" });
+    // Лист правки поверх ленты — тот же экран: под ним по-прежнему «Отчёты», и строка «‹ Отчёты» не пропадает.
+    await go(router, { name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense", sheet: "entry", edit: OPERATION });
+    expect(router.beneath()).toEqual({ name: "reports", period: "year" });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense" });
     // «‹ Отчёты» — переход к записи под лентой: история едет назад, ленты впереди не прибавляется.
     await go(router, beneath!);
     expect(formatRoute(router.current())).toBe("#/reports?period=year");

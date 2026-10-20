@@ -32,7 +32,7 @@ import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
 import { ReportsScreen } from "../features/reports/ReportsScreen";
 import { reportsFieldsForMonth } from "../features/reports/report-model";
-import { isTab, type Route } from "../navigation/routes";
+import type { Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
 import type { BudgetWriter } from "../write/useBudgetWrite";
@@ -206,7 +206,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
           {route.name === "overview" ? <OverviewRoute app={app} month={route.month} sheetOpen={route.sheet !== undefined} /> : null}
           {/* «Операции» — вкладка: фильтры в адресе, смена фильтра заменяет запись истории; строка
               открывает операцию в листе ввода поверх ленты, и строка поиска экрана при этом остаётся.
-              Лента с фильтром поверх «Отчётов» — со строкой «‹ Отчёты»: назад к той же их записи. */}
+              Лента поверх «Отчётов» (строка легенды; лист правки поверх неё — тот же экран) — со строкой
+              «‹ Отчёты»: назад к той же их записи истории. */}
           {route.name === "operations" ? (
             <FeedScreen
               budget={budget}
@@ -216,7 +217,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onEdit={openEdit}
               onAdd={() => openSheet({ op: "expense" })}
               onImport={() => navigate({ name: "import" })}
-              {...(app.beneath?.name === "reports" && !isTab(route) ? { back: { label: "Отчёты", onClick: () => navigate(app.beneath!) } } : {})}
+              {...(app.beneath?.name === "reports" ? { back: { label: "Отчёты", onClick: () => navigate(app.beneath!) } } : {})}
             />
           ) : null}
           {/* «Отчёты»: вкладка и период — тот же экран (замена записи), строка легенды — «Операции»

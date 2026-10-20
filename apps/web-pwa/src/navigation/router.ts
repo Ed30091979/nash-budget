@@ -10,6 +10,7 @@ import {
   routeChain,
   routeKey,
   sameRoute,
+  withoutSheet,
   type Route,
 } from "./routes";
 
@@ -129,8 +130,9 @@ export interface Router {
   /** Кнопка «назад» внутри экрана: к родителю маршрута. */
   back(): void;
   /**
-   * Маршрут записи истории под текущей, если она наша: «‹ Отчёты» у ленты, открытой строкой легенды,
-   * ведёт к ней, а не к родителю (ревью 2d, LOW-6). `null` — под текущей ничего нет (корень).
+   * Маршрут записи истории под текущим экраном: «‹ Отчёты» у ленты, открытой строкой легенды, ведёт к
+   * ней, а не к родителю (ревью 2d, LOW-6). Лист поверх экрана — тот же экран: под лентой с открытой
+   * правкой — всё те же «Отчёты». `null` — под экраном ничего нет (корень).
    */
   beneath(): Route | null;
   /**
@@ -462,8 +464,12 @@ export function createRouter(options: RouterOptions): Router {
       if (parent !== null) navigate(parent);
     },
     beneath: () => {
-      const key = stack.length < 2 ? undefined : stack[stack.length - 2];
-      return key === undefined ? null : parseRoute(key).route;
+      const screen = routeKey(withoutSheet(route));
+      for (let at = stack.length - 1; at >= 0; at -= 1) {
+        const below = parseRoute(stack[at]!).route;
+        if (routeKey(withoutSheet(below)) !== screen) return below;
+      }
+      return null;
     },
     redirect: (target, redirectOptions = {}) => perform(target, redirectOptions.replace === true),
     start,

@@ -3,7 +3,7 @@ import { applyFontScale } from "./font-scale";
 import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { restoreBudget } from "./budgets";
 import { G003_CATEGORIES, G003_EXPENSES_MINOR, G003_INCOME_MINOR, G003_LEDGER, G003_MONTH_FROM, G003_TAGS } from "./canonical-ledger";
-import { loadDemo } from "./sheet";
+import { entrySheet, loadDemo } from "./sheet";
 import { formatMoney } from "../src/money";
 import type { Page } from "@playwright/test";
 
@@ -69,9 +69,15 @@ test("строка легенды — «Операции» с категорие
   await expect(heading(page)).toBeFocused();
   expect(await hash(page)).toBe("#/reports?period=year");
   expect(await page.evaluate(() => window.history.length)).toBe(length);
-  // Снова в ленту — и системное «Назад» ведёт туда же.
+  // Снова в ленту: лист правки поверх неё — тот же экран, и после него строка «‹ Отчёты» на месте;
+  // системное «Назад» ведёт туда же, куда она.
   await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
+  await page.locator(".feed-row").first().getByRole("button").click();
+  await expect(entrySheet(page)).toBeVisible();
+  await entrySheet(page).getByRole("button", { name: "Закрыть" }).first().click();
+  await expect(entrySheet(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Назад: Отчёты" })).toBeVisible();
   await page.goBack();
   expect(await hash(page)).toBe("#/reports?period=year");
   // Месяц — без ключей, как у вкладки; его легенда — числа октября макета.
