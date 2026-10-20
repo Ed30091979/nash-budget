@@ -365,6 +365,16 @@ test("валюта чипами и поиском: стрелки по чипа�
   await expect(chips.getByRole("radio")).toHaveCount(6);
   await expect(chips.getByRole("radio", { name: "Бат — THB" })).toBeFocused();
   await expect(chips.getByRole("radio", { name: "Бат — THB" })).toHaveAttribute("aria-checked", "true");
+  // Текущая валюта в списке названа и словами, а не только галочкой (ревью R3, LOW-6).
+  await other.click();
+  await search.fill("thb");
+  await expect(list.getByRole("option")).toHaveCount(1);
+  await expect(list.getByRole("option").first()).toHaveAccessibleName(/THB\W*текущая$/u);
+  await search.fill("евро");
+  await expect(list.getByRole("option", { name: /Евро EUR$/u })).toHaveCount(1);
+  await expect(list.getByRole("option", { name: /текущая/u })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(other).toBeFocused();
   // Esc в поиске сворачивает его и возвращает фокус на «Другая», а лист остаётся.
   await other.click();
   await search.fill("зззз");
@@ -454,6 +464,44 @@ test("остаток ниже нуля — в поле минусом, отме�
   await sheet.getByRole("button", { name: "Сохранить", exact: true }).click();
   await expect(toast(page, "Счёт «Кредитка» сохранён.")).toBeVisible();
   await expect(page.getByRole("button", { name: /^Кредитка: 50\s000\s₽, /u })).toBeVisible();
+});
+
+test("валюта счёта с операциями заперта: касание и стрелки чип не меняют, «Другой» нет, причина — рядом (ревью R3, LOW-3)", async ({ page }) => {
+  await loadDemo(page);
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: /^Карта: /u }).click();
+  const sheet = formSheet(page);
+  const chips = sheet.getByRole("radiogroup", { name: "Валюта" });
+  const rub = chips.getByRole("radio", { name: "Рубль — RUB" });
+  const usd = chips.getByRole("radio", { name: "Доллар — USD" });
+  await expect(rub).toHaveAttribute("aria-checked", "true");
+  await expect(chips).toHaveAttribute("aria-disabled", "true");
+  await expect(chips).toHaveAccessibleDescription(/^Валюту не сменить: по счёту есть операции/u);
+  await expect(sheet.locator("#account-currency-lock")).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Другая", exact: true })).toHaveCount(0);
+  // Касание запертого чипа — «нет»: выбор и знак суммы прежние.
+  await usd.click({ force: true });
+  await expect(usd).toHaveAttribute("aria-checked", "false");
+  await expect(rub).toHaveAttribute("aria-checked", "true");
+  await expect(sheet.locator("#account-opening + .dir-money-sign")).toHaveText("₽");
+  // Стрелки — тоже «нет»: фокус остаётся на выбранном чипе.
+  await rub.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("End");
+  await expect(rub).toBeFocused();
+  await expect(rub).toHaveAttribute("aria-checked", "true");
+  // И позже ничего не «догоняет»: набор в другом поле не уводит фокус на чип.
+  const name = sheet.getByLabel("Название");
+  await name.click();
+  await page.keyboard.type("!");
+  await expect(name).toBeFocused();
+  await expect(name).toHaveValue("Карта!");
+  await expect(rub).toHaveAttribute("aria-checked", "true");
+  await name.fill("Карта");
+  // Ничего не набрано: лист закрывается без вопроса.
+  await page.keyboard.press("Escape");
+  await expect(formSheet(page)).toHaveCount(0);
+  await expect(leaveDialog(page)).toHaveCount(0);
 });
 
 test("режим «Изменить порядок»: стрелки у каждого счёта с фокусом на той же кнопке, край говорит «нет», мышью — перетаскивание за ручку", async ({ page }) => {

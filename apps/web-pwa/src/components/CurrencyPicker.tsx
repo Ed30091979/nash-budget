@@ -345,7 +345,8 @@ export function CurrencyPicker({ id, labelledBy, value, onChange, disabled = fal
               >
                 <span className="cur-option-name">{currencyName(code)}</span>
                 <span className="cur-option-code">{code}</span>
-                {code === value ? <Icon name="check" size={20} /> : null}
+                {/* Текущая валюта — галочкой для глаза и словом для слуха: `aria-selected` занят вариантом под стрелкой. */}
+                {code === value ? <><Icon name="check" size={20} /><span className="sr-only">, текущая</span></> : null}
               </li>
             ))}
           </ul>
