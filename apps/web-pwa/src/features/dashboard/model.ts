@@ -4,7 +4,6 @@ import {
   normalizeScheduledDueDate,
   type BudgetState,
   type PlanningMonthMetrics,
-  type Transaction,
 } from "@family-budget/domain";
 import { formatMoney } from "../../money";
 
@@ -64,27 +63,6 @@ export interface DashboardModel {
   readonly verdict: HorizonVerdict;
 }
 
-export interface OperationSearchFilters {
-  readonly query?: string;
-  readonly kind?: Transaction["kind"] | "all";
-  readonly categoryId?: string | "all";
-  readonly status?: Transaction["status"] | "all";
-}
-
-export interface OperationSearchResult {
-  readonly transaction: Transaction;
-  readonly categoryName: string | null;
-  readonly context: string;
-}
-
-export interface OperationSearchIndex {
-  readonly entries: readonly OperationSearchResult[];
-  readonly searchableById: ReadonlyMap<string, string>;
-}
-
-export const OPERATION_PAGE_SIZE = 50;
-const MAX_QUERY_LENGTH = 80;
-const RUSSIAN_LOCALE = "ru-RU";
 
 function addMinor(left: number, right: number): number {
   const result = left + right;
@@ -92,18 +70,6 @@ function addMinor(left: number, right: number): number {
     throw new Error("Сумма операций выходит за поддерживаемый диапазон.");
   }
   return result;
-}
-
-function normalizeSearchText(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase(RUSSIAN_LOCALE);
-}
-
-function normalizeQuery(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length > MAX_QUERY_LENGTH) {
-    throw new Error(`Поиск ограничен ${MAX_QUERY_LENGTH} символами.`);
-  }
-  return normalizeSearchText(trimmed).slice(0, MAX_QUERY_LENGTH);
 }
 
 function monthFacts(
@@ -291,100 +257,6 @@ export function createDashboardModel(
     summary: horizonSummary(months),
     verdict: horizonVerdict(months),
   };
-}
-
-function transactionContext(
-  transaction: Transaction,
-  accountById: ReadonlyMap<string, string>,
-  categoryById: ReadonlyMap<string, string>,
-  goalById: ReadonlyMap<string, string>,
-  transactionById: ReadonlyMap<string, Transaction>,
-): { readonly categoryName: string | null; readonly context: string } {
-  if (transaction.kind === "expense") {
-    const category = categoryById.get(transaction.categoryId) ?? "Категория удалена";
-    return { categoryName: category, context: `${category} ${accountById.get(transaction.accountId) ?? "Счёт удалён"}` };
-  }
-  if (transaction.kind === "refund") {
-    const category = categoryById.get(transaction.categoryId) ?? "Категория удалена";
-    const original = transactionById.get(transaction.originalTransactionId);
-    const originalContext = original?.kind === "expense"
-      ? categoryById.get(original.categoryId) ?? "Категория удалена"
-      : "Исходный расход";
-    return {
-      categoryName: category,
-      context: `${category} возврат расхода ${originalContext} ${accountById.get(transaction.accountId) ?? "Счёт удалён"}`,
-    };
-  }
-  if (transaction.kind === "income") {
-    return { categoryName: null, context: `Доход ${accountById.get(transaction.accountId) ?? "Счёт удалён"}` };
-  }
-  if (transaction.kind === "transfer") {
-    return {
-      categoryName: null,
-      context: `Перевод ${accountById.get(transaction.fromAccountId) ?? "Счёт удалён"} ${accountById.get(transaction.toAccountId) ?? "Счёт удалён"}`,
-    };
-  }
-  if (transaction.kind === "debt_out" || transaction.kind === "debt_in") {
-    return { categoryName: null, context: `Долг ${accountById.get(transaction.accountId) ?? "Счёт удалён"}` };
-  }
-  return {
-    categoryName: null,
-    context: `Взнос в цель ${goalById.get(transaction.goalId) ?? "Цель удалена"} ${accountById.get(transaction.fromAccountId) ?? "Счёт удалён"} ${accountById.get(transaction.toAccountId) ?? "Счёт удалён"}`,
-  };
-}
-
-export function searchOperations(
-  state: BudgetState,
-  filters: OperationSearchFilters = {},
-): readonly OperationSearchResult[] {
-  const index = buildOperationSearchIndex(state);
-  return filterOperationSearchIndex(index, filters);
-}
-
-export function buildOperationSearchIndex(state: BudgetState): OperationSearchIndex {
-  const accountById = new Map(state.accounts.map((item) => [item.id, item.name]));
-  const categoryById = new Map(state.categories.map((item) => [item.id, item.name]));
-  const goalById = new Map(state.goals.map((item) => [item.id, item.name]));
-  const transactionById = new Map(state.transactions.map((item) => [item.id, item]));
-  const entries = state.transactions
-    .map((transaction) => {
-      const context = transactionContext(transaction, accountById, categoryById, goalById, transactionById);
-      return { transaction, ...context };
-    })
-    .sort((left, right) => (
-      right.transaction.occurredOn.localeCompare(left.transaction.occurredOn)
-        || right.transaction.id.localeCompare(left.transaction.id)
-    ));
-  return {
-    entries,
-    searchableById: new Map(entries.map((result) => [
-      result.transaction.id,
-      normalizeSearchText([
-        result.transaction.occurredOn,
-        result.transaction.kind,
-        String(result.transaction.amountMinor),
-        result.context,
-      ].join(" ")),
-    ])),
-  };
-}
-
-function filterOperationSearchIndex(
-  index: OperationSearchIndex,
-  filters: OperationSearchFilters,
-): readonly OperationSearchResult[] {
-  const query = normalizeQuery(filters.query ?? "");
-  return index.entries
-    .filter((result) => {
-      const transaction = result.transaction;
-      if (filters.kind !== undefined && filters.kind !== "all" && transaction.kind !== filters.kind) return false;
-      if (filters.status !== undefined && filters.status !== "all" && transaction.status !== filters.status) return false;
-      if (filters.categoryId !== undefined && filters.categoryId !== "all") {
-        if (!("categoryId" in transaction) || transaction.categoryId !== filters.categoryId) return false;
-      }
-      if (query.length === 0) return true;
-      return index.searchableById.get(transaction.id)!.includes(query);
-    });
 }
 
 /** Три буквы месяца — для оси лестницы и коротких подписей расписания. */

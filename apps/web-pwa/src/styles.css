@@ -451,10 +451,6 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .transaction-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
 .transaction-row { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .transaction-row:last-child { border-bottom: 0; }
-/* §7 Строка истории: та же анатомия, что и на «Сегодня». Сама строка — цель нажатия, она
-   открывает операцию в форме наверху; удаление стоит отдельной целью 44×44, чтобы «изменить» и
-   «удалить» нельзя было перепутать пальцем. */
-.history-row { grid-template-columns: minmax(0, 1fr); }
 .row-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; min-width: 0; padding: 0; text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
 .row-open > b { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: right; overflow-wrap: normal; }
 /* §6: плитка 40×40 с глифом 24. Кружок со знаком «−» был текстовым глифом в роли иконки. */
@@ -591,16 +587,6 @@ button.icon-button { display: grid; width: 48px; height: 48px; flex: none; paddi
 .keypad button.key-op { color: var(--ink-muted); font-weight: 400; }
 /* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
 .amount-total { display: block; margin-top: 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
-/* §8 «Вся история» — маршрут внутри «Ещё»: заголовок, число операций, поиск над списком. */
-.history-count { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.history-card > .transaction-list { margin-top: 8px; }
-.history-card > .secondary-button { margin-top: 12px; }
-.history-card > p[role="status"] { margin-top: 12px; }
-/* «Итоги и остатки» на «Ещё» — строка факта; плитки внутри белой карточки стоят на утопленной
-   плоскости, иначе белое на белом не имело бы края. */
-.list-fact > .quick-grid { margin: 4px 0 0; }
-.list-fact > .quick-grid .quick-card { background: var(--surface-sunken); box-shadow: none; }
-.list-fact > .summary-list { margin: 8px 0 16px; }
 .summary-list { display: grid; gap: 0; margin: 16px 0 0; }
 .summary-list div { display: flex; gap: 16px; align-items: baseline; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .summary-list div:last-child { border-bottom: 0; }
@@ -1772,4 +1758,175 @@ label.check-row.dir-toggle { justify-content: space-between; min-height: 56px; p
   .sheet-backdrop.dir-backdrop { align-items: stretch; padding: 0; }
   .sheet.dir-sheet { max-height: none; }
   .dir-sheet-form, .dir-sheet-body { flex: none; overflow: visible; }
+}
+
+/* Дизайн 5.0, 2d: операции и отчёты */
+/* «Операции» (макет 08): поиск на утопленной плоскости, чипы фильтров вбок, строка итогов, дни с
+   итогом справа и белые карточки строк. Строка — одна цель нажатия 56; при крупном шрифте сумма
+   переходит под название (§5). Поверхности скруглены ролями: карточка дня — карточкой, подложка
+   строки — подложкой, поле поиска — полем. */
+.feed-screen, .reports-screen { min-width: 0; }
+.feed-body { display: grid; min-width: 0; }
+.feed-search { position: relative; min-width: 0; margin-top: 4px; }
+.feed-search input { width: 100%; min-height: 48px; padding: 0 48px 0 44px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); background: var(--surface-sunken); border: 0; border-radius: var(--radius-input); -webkit-appearance: none; appearance: none; }
+.feed-search input::placeholder { color: var(--ink-muted); }
+/* Пока поле пусто, крестика нет — и подсказке отдано его место. */
+.feed-search input:placeholder-shown { padding-right: 14px; }
+.feed-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.feed-search-icon { position: absolute; top: 14px; left: 14px; color: var(--ink-muted); pointer-events: none; }
+.feed-search .feed-search-clear { position: absolute; top: 0; right: 0; color: var(--ink-muted); }
+/* Чипы — ряд вбок внутри себя, а не страницы, и выходят в поля экрана; заданный фильтр — чернилами. */
+.filter-chips { display: flex; min-width: 0; gap: 8px; margin: 4px -16px 0; padding: 0 16px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.filter-chips::-webkit-scrollbar { display: none; }
+.filter-chips > .chip { flex: none; }
+.filter-chips .chip-face { gap: 6px; white-space: nowrap; }
+.filter-chips .chip-face .icon { flex: none; }
+.filter-chip[data-set="true"] .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.feed-sum { display: flex; flex-wrap: wrap; gap: 0 16px; margin: 6px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.feed-sum b { color: var(--ink); font-weight: 700; }
+.feed-day { min-width: 0; margin-top: 14px; }
+.feed-day-head { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; justify-content: space-between; padding: 0 4px 6px; }
+.feed-day-head h2 { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.feed-day-total { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.feed-list.card { margin: 0; padding: 0; overflow: hidden; list-style: none; background: var(--surface); box-shadow: var(--shadow-card); }
+.feed-row + .feed-row { background: linear-gradient(var(--border), var(--border)) 68px 0 / calc(100% - 68px) 1px no-repeat; }
+button.feed-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; min-width: 0; min-height: 56px; padding: 8px 16px; color: var(--ink); text-align: left; background: transparent; border: 0; }
+/* Кольцо фокуса внутри карточки: снаружи его срезал бы край скруглённой карточки. */
+button.feed-open:focus-visible { outline-offset: -3px; }
+.feed-row .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
+.feed-row .icon-plate.tone-mint { color: var(--tone-mint-ink); }
+.feed-row .icon-plate.tone-lilac { color: var(--tone-lilac-ink); }
+.feed-row .icon-plate.tone-peach { color: var(--tone-peach-ink); }
+.feed-row .icon-plate.tone-amber { color: var(--tone-amber-ink); }
+.feed-row .icon-plate.tone-sage { color: var(--tone-sage-ink); }
+.feed-row .icon-plate.tone-coral { color: var(--tone-coral-ink); }
+.feed-row .icon-plate.tone-neutral { color: var(--ink); }
+/* Ожидаемая операция — пунктирная подложка и приглушённая сумма; слово «ожидается» — в имени строки. */
+.feed-row.pending .icon-plate { color: var(--ink-muted); background: transparent; outline: 1.5px dashed var(--line); outline-offset: -1.5px; }
+.feed-row.pending .feed-amount { color: var(--ink-muted); }
+.feed-copy { display: grid; min-width: 0; }
+.feed-title { font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; }
+.feed-meta { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; overflow-wrap: anywhere; }
+.feed-tag bdi { color: var(--ink); }
+.feed-amount { display: grid; justify-items: end; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: right; overflow-wrap: normal; }
+.feed-amount.positive { color: var(--positive-ink); }
+.feed-base { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.feed-more { margin-top: 16px; }
+.feed-status { margin: 12px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.feed-body > .empty-state { margin-top: 8px; }
+/* «Искать за всё время» под тем немногим, что поиск нашёл за месяц (ревью 2d, LOW-11). */
+.feed-widen { display: grid; min-width: 0; gap: 8px; margin-top: 16px; }
+.feed-widen p { margin: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* Экран, который не открылся (граница ошибок маршрута, ревью 2d, HIGH-1): крупный заголовок и пустое состояние. */
+.route-failure { display: grid; min-width: 0; }
+
+/* Лист выбора фильтра: снизу, скруглён сверху ролью листа; вариант — строка 48 с галочкой акцентом. */
+.sheet-backdrop.filter-backdrop { padding: 8px 0 0; }
+.sheet.filter-sheet { width: min(560px, 100%); max-height: min(88dvh, 720px); border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.filter-sheet-head { display: flex; flex: none; gap: 8px; align-items: center; justify-content: space-between; padding: 12px 4px 4px 20px; }
+.filter-sheet-head h2 { min-width: 0; margin: 0; font-size: var(--size-display); line-height: var(--lh-display); overflow-wrap: anywhere; }
+.filter-sheet-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }
+.filter-group + .filter-group { margin-top: 12px; }
+.filter-group h3 { margin: 8px 4px 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.filter-choices { margin: 0; padding: 0; list-style: none; }
+.filter-choices > li + li { border-top: 1px solid var(--border); }
+button.filter-choice { display: flex; gap: 12px; align-items: center; width: 100%; min-width: 0; min-height: 48px; padding: 6px 4px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+button.filter-choice[aria-pressed="true"] { font-weight: 700; }
+.filter-choice-text { display: grid; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.filter-choice-text small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.filter-check { flex: none; color: var(--accent); }
+.filter-sheet .icon-plate { display: grid; width: 36px; height: 36px; flex: none; place-items: center; border-radius: var(--radius-plate); }
+.filter-sheet .icon-plate.tone-mint { color: var(--tone-mint-ink); }
+.filter-sheet .icon-plate.tone-lilac { color: var(--tone-lilac-ink); }
+.filter-sheet .icon-plate.tone-peach { color: var(--tone-peach-ink); }
+.filter-sheet .icon-plate.tone-amber { color: var(--tone-amber-ink); }
+.filter-sheet .icon-plate.tone-sage { color: var(--tone-sage-ink); }
+.filter-sheet .icon-plate.tone-coral { color: var(--tone-coral-ink); }
+.filter-sheet .icon-plate.tone-neutral { color: var(--ink); }
+.filter-sheet .icon-plate.plate-account { color: var(--on-tile-account); background: var(--tile-account); }
+.period-form { display: grid; min-width: 0; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.period-form h3 { margin: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+.period-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+/* «Отчёты» (макет 09): сегмент вкладок, чипы периода и счёта, карточка с выводом заголовком, кольцо
+   с легендой-кнопками и таблицей, «По месяцам» — столбцы. Цвет серии — чернила тона категории
+   (`--chart-ink` от класса тона), «Остальное» и прошлые месяцы — `--line`, сегодняшний — акцент. */
+.reports-screen > * + * { margin-top: 8px; }
+.reports-screen > .large-title + * { margin-top: 4px; }
+.report-views { padding: 4px; }
+.report-views > .chip .chip-face { padding: 8px 6px; }
+.reports-screen > .card { margin-top: 12px; padding: 16px 12px 4px 16px; background: var(--surface); box-shadow: var(--shadow-card); container-type: inline-size; }
+.reports-screen > .report-months { padding: 16px 16px 4px; }
+.reports-screen > .empty-state { margin-top: 12px; }
+.report-card > h2, .report-months > h2 { margin: 0; overflow-wrap: anywhere; }
+.report-compare, .report-caption { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.report-chart { display: flex; min-width: 0; gap: 12px; align-items: center; margin: 14px 0 8px; }
+.report-chart.legend-below { flex-direction: column; align-items: stretch; }
+@container (max-width: 20em) {
+  .report-chart { flex-direction: column; align-items: stretch; }
+}
+.donut { position: relative; flex: none; align-self: center; width: 140px; height: 140px; }
+.donut-svg { display: block; width: 100%; height: 100%; }
+.donut-seg { stroke: var(--chart-ink); }
+.donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+.donut-center b { font-size: var(--size-title); line-height: var(--lh-title); }
+.donut-center span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.chart-tone-mint { --chart-ink: var(--tone-mint-ink); }
+.chart-tone-lilac { --chart-ink: var(--tone-lilac-ink); }
+.chart-tone-peach { --chart-ink: var(--tone-peach-ink); }
+.chart-tone-amber { --chart-ink: var(--tone-amber-ink); }
+.chart-tone-sage { --chart-ink: var(--tone-sage-ink); }
+.chart-tone-coral { --chart-ink: var(--tone-coral-ink); }
+.chart-tone-neutral { --chart-ink: var(--ink); }
+.chart-rest { --chart-ink: var(--line); }
+.report-legend { flex: 1; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.report-legend > li + li { background: linear-gradient(var(--border), var(--border)) 18px 0 / calc(100% - 18px) 1px no-repeat; }
+button.legend-row { display: flex; gap: 8px; align-items: center; width: 100%; min-width: 0; min-height: 48px; padding: 4px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+.legend-swatch { flex: none; width: 10px; height: 10px; margin-left: 4px; background: var(--chart-ink); }
+.legend-text { display: grid; flex: 1; min-width: 0; }
+.legend-text b { font-size: var(--size-body); line-height: var(--lh-body); overflow-wrap: anywhere; }
+.legend-text > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.legend-chevron { flex: none; color: var(--ink-muted); }
+.tag-archived { color: var(--ink-muted); font-weight: 400; }
+.tag-bar { display: block; width: 100%; height: 6px; margin: 6px 0 2px; }
+.tag-bar-track { fill: var(--track); }
+.tag-bar-fill { fill: var(--ink); }
+/* «Все категории и таблица», «Показать таблицей»: сводка 48 с шевроном, таблица прокручивается вбок
+   внутри себя при крупном шрифте, а не страница. */
+.report-details { min-width: 0; margin-top: 2px; overflow-x: auto; border-top: 1px solid var(--border); }
+.report-details > summary { display: flex; min-height: 48px; gap: 8px; align-items: center; justify-content: space-between; padding: 0 8px 0 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); list-style: none; cursor: pointer; }
+.report-details > summary::-webkit-details-marker { display: none; }
+.report-details > summary::after { content: ""; flex: none; width: 8px; height: 8px; border-right: 2px solid var(--ink-muted); border-bottom: 2px solid var(--ink-muted); transform: rotate(-45deg); }
+.report-details[open] > summary::after { transform: rotate(45deg); }
+.report-table { width: 100%; margin: 0 0 12px; border-collapse: collapse; font-size: var(--size-caption); line-height: var(--lh-caption); }
+.report-table caption { padding: 0 0 6px; color: var(--ink-muted); text-align: left; }
+.report-table th, .report-table td { padding: 8px 4px; font-weight: 400; text-align: right; border-top: 1px solid var(--border); }
+.report-table th[scope="row"], .report-table thead th:first-child { text-align: left; overflow-wrap: anywhere; }
+.report-table thead th { color: var(--ink-muted); font-weight: 700; }
+.report-table tfoot th, .report-table tfoot td { font-weight: 700; }
+.month-bars { display: flex; min-width: 0; gap: 10px; align-items: flex-end; margin: 10px 0 12px; }
+.month-bar { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; align-items: center; }
+.month-bar .month-bar-value { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); text-align: center; overflow-wrap: normal; }
+.month-bar-svg { display: block; width: 100%; max-width: 34px; }
+.month-bar-rect { fill: var(--line); }
+.month-bar.current .month-bar-rect { fill: var(--accent); }
+.month-bar-label { color: var(--ink-muted); font-size: var(--size-tile); line-height: var(--lh-tile); }
+.month-bar.current .month-bar-value, .month-bar.current .month-bar-label { color: var(--ink); font-weight: 700; }
+
+/* Крупный шрифт (уже 18em): строка операции — сумма под названием, чипы — столбцом во всю ширину,
+   дни своего периода — друг под другом, кольцо — без подписи в середине (итог стоит в выводе над
+   ним), столбцы месяцев — по два в ряд, сегмент вкладок — столбцом прямоугольников. */
+@media (max-width: 18em) {
+  button.feed-open { grid-template-columns: 40px minmax(0, 1fr); }
+  .feed-amount { grid-column: 2; justify-items: start; text-align: left; }
+  .filter-chips { flex-direction: column; margin: 4px 0 0; padding: 0; overflow-x: visible; }
+  .filter-chips .chip-face { white-space: normal; }
+  .period-fields { grid-template-columns: minmax(0, 1fr); }
+  /* День в поле — целиком, с годом и значком выбора: при ×2.7 на 320 pt «20.10.2026» кеглем
+     основного текста шире поля, и год обрезался (ревью 2d, LOW-5). Кегль подписи и поля тоньше. */
+  .period-form .field input[type="date"] { padding-right: 8px; padding-left: 10px; font-size: var(--size-caption); line-height: var(--lh-caption); }
+  .donut-center { display: none; }
+  .month-bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
+  .report-views { flex-direction: column; padding: 0; background: transparent; }
+  .report-views > .chip .chip-face { background: var(--surface); border: 1px solid var(--line); }
 }

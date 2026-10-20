@@ -2,6 +2,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { formatDay, monthGenitive, monthName, monthNominative } from "../../date-words";
 import { reach, runsOutOn, type PaydayHorizon, type PeriodClock, type ReachState } from "../../reach";
+import { periodLabel } from "../feed/feed-model";
 import type { ReachLineModel } from "./overview-model";
 
 /** «20 октября», когда дата выведена из доходов, и «конца октября», когда выводить не из чего. */
@@ -83,6 +84,8 @@ export function ReachCard({ line, clock, monthToOpen, openingMonth, onOpenMonth,
       </section>
     );
   }
+  // Окно плана не календарный месяц — карточка называет его: «лимиты на 7–20 октября» (ревью 2d, LOW-2).
+  const limitsWords = line.window === null ? "лимиты" : `лимиты на ${periodLabel(line.window.from, line.window.to, today)}`;
   const reachLine = reach({ remainingMinor: line.safeToSpendMinor, spentMinor: line.flexibleSpentMinor, elapsedDays, daysAhead: payday.daysAhead });
   const needPerDay = payday.daysAhead > 0 ? Math.round(Math.max(0, line.safeToSpendMinor) / payday.daysAhead / 100) * 100 : 0;
   const runsOut = runsOutOn(today, reachLine.daysCovered);
@@ -93,7 +96,7 @@ export function ReachCard({ line, clock, monthToOpen, openingMonth, onOpenMonth,
     ? <>до {until} ещё {payday.daysAhead} дн.</>
     : reachLine.state === "short"
       ? <>до {until} не дотянет · чтобы дотянуть — <Money value={needPerDay} /> в день</>
-      : <>лимиты: <Money value={line.flexibleSpentMinor} bare /> из <Money value={line.limitsMinor} /></>;
+      : <>{limitsWords}: <Money value={line.flexibleSpentMinor} bare /> из <Money value={line.limitsMinor} /></>;
   return (
     <section className={`card reach-card ${reachLine.state}`} aria-label="Хватает ли до выплаты">
       <button className="reach-open" type="button" onClick={onPlan}>

@@ -121,6 +121,10 @@ const GLYPHS = {
   yen: <><path d="M12 9.5V21m0-11.5L6 3m6 6.5L18 3" /><path d="M6 15h12" /><path d="M6 11h12" /></>,
   tenge: <><path d="M6 4h12" /><path d="M6 9h12" /><path d="M12 9v12" /></>,
   ruble: <><path d="M6 11h8a4 4 0 0 0 0-8H9v18" /><path d="M6 15h8" /></>,
+
+  /* ── Дизайн 5.0, 2d: операции и отчёты. Поиск «Операций» — тот же `search`, что у R3 выше (один
+     глиф на оба экрана); шеврон чипа фильтра, открывающего лист. ── */
+  "chevron-down": <path d="m6 9 6 6 6-6" />,
 } satisfies Readonly<Record<string, ReactElement>>;
 
 export type IconName = keyof typeof GLYPHS;

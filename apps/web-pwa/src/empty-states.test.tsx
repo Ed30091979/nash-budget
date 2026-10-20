@@ -4,8 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { calculateAnnualPlan, makeSeedBudget, type BudgetState } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 
-import { MEMBER_FILTER_ALL, MEMBER_FILTER_NONE, memberFilterOptions, membersById } from "./features/family/model";
-import { HistoryScreen, operationsCount } from "./features/operations";
+import { FeedScreen } from "./features/feed/FeedScreen";
+import { operationsCount } from "./features/operations";
 import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { readAppSource } from "./app/shell-source";
 import { periodClock } from "./reach";
@@ -24,45 +24,42 @@ function budgetWithoutLimits(): BudgetState {
   return { ...seed, budgets: seed.budgets.map((budget) => ({ ...budget, lines: [] })) };
 }
 
+/** «Операции» 2d в статической разметке: фильтры — как пришли бы из адреса. */
+function feed(budget: BudgetState, filters: Record<string, string> = {}): string {
+  return renderToStaticMarkup(
+    <FeedScreen budget={budget} today="2026-07-13" filters={filters} onFilters={vi.fn()} onEdit={vi.fn()} onAdd={vi.fn()} onImport={vi.fn()} />,
+  );
+}
+
 /**
- * Три правила пустого состояния (§6 исследования, пункт 29, NN/g).
- *
- * Проверяется не текст, а то, что состояние отвечает на все три вопроса: в каком оно состоянии,
- * что сюда попадает и куда отсюда идти. Прежние состояния отвечали только на первый — «Здесь
- * появятся операции» — и человек, только что создавший бюджет, оставался с ним один на один.
+ * Пустое состояние 5.0 (`components/EmptyState.tsx`, DIRECTION §c): название состояния заголовком,
+ * одна строка о том, что сюда попадает, и ровно одна основная кнопка.
  */
-function assertThreeRules(markup: string, section: string) {
-  const start = markup.indexOf('<div class="empty-state">');
+function assertEmptyState(markup: string, section: string, title: string, text: string, action: string) {
+  const start = markup.indexOf('<section class="empty-state"');
   expect(start, `${section}: пустого состояния нет вовсе`).toBeGreaterThan(-1);
-  const block = markup.slice(start, markup.indexOf("</div>", start) + 6);
-  expect(block, `${section}: не назвал состояние заголовком`).toMatch(/<h3>[^<]{6,}<\/h3>/u);
-  expect(block, `${section}: не объяснил, что сюда попадает`).toMatch(/<p[^>]*>[^<]{40,}<\/p>/u);
-  expect(block, `${section}: не дал дороги к задаче`).toMatch(/<button[^>]*class="primary-button"/u);
-  const actions = block.match(/<button/gu) ?? [];
-  expect(actions.length, `${section}: основное действие обязано быть одно`).toBe(1);
+  const block = markup.slice(start, markup.indexOf("</section>", start));
+  expect(block, `${section}: не назвал состояние заголовком`).toContain(title);
+  expect(block, `${section}: не объяснил, что сюда попадает`).toContain(text);
+  expect(block, `${section}: не дал дороги к задаче`).toMatch(new RegExp(`<button[^>]*class="primary-button[^"]*"[^>]*>${action}</button>`, "u"));
+  expect((block.match(/<button/gu) ?? []).length, `${section}: основное действие обязано быть одно`).toBe(1);
 }
 
 describe("пустые состояния", () => {
-  it("история без операций называет состояние, объясняет и ведёт к записи", () => {
-    const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} />,
-    );
-
-    assertThreeRules(markup.slice(markup.indexOf(">Операции</h1>")), "операции");
-    expect(markup).toContain("Записей пока нет");
-    expect(markup).toContain("Записать первую операцию");
+  it("лента без операций называет состояние, объясняет и ведёт к записи", () => {
+    const markup = feed(budgetWithoutOperations());
+    expect(markup).toContain('<span class="sr-only">Операции</span></h1>');
+    assertEmptyState(markup, "операции", "Записей пока нет", "Здесь будет всё, что вы запишете.", "Записать расход");
   });
 
   it("отличает «ничего не записано» от «фильтр ничего не нашёл» — иначе одно из двух ложь", () => {
     const budget = makeSeedBudget();
-    const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} />,
-    );
-
     // В бюджете операции есть, поэтому «Записей пока нет» тут звучать не должно ни при каких
     // фильтрах: это разные состояния системы, и разными словами они и названы.
-    expect(markup).not.toContain("Записей пока нет");
-    expect(markup).toContain(">Операции</h1>");
+    expect(feed(budget)).not.toContain("Записей пока нет");
+    const nothing = feed(budget, { from: "2030-01-01", to: "2030-01-31" });
+    expect(nothing).not.toContain("Записей пока нет");
+    assertEmptyState(nothing, "фильтр", "Ничего не нашлось", "Попробуйте сумму или другое слово.", "Сбросить фильтры");
   });
 
   it("на «Обзоре» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
@@ -118,12 +115,13 @@ describe("пустые состояния", () => {
     // Списки «Сегодня» (последние записи, повседневные лимиты) ушли вместе с ним; их пустые
     // состояния живут там, куда переехали сами списки.
     for (const [file, action] of [
-      ["./features/operations/HistoryScreen.tsx", "Записать первую операцию"],
+      ["./features/feed/FeedScreen.tsx", "Записать расход"],
+      ["./features/reports/ReportsScreen.tsx", "Записать расход"],
       ["./features/overview/ReachCard.tsx", "Задайте лимиты — покажем, хватит ли до"],
     ] as const) {
       const source = readFileSync(new URL(file, import.meta.url), "utf8");
       // У «Обзора» пустое состояние — компактная строка карточки (макеты v5 03b, 05), а не блок.
-      expect(source, `${file} по-прежнему рисует пустой список без слов`).toMatch(/empty-state|reach-card empty/u);
+      expect(source, `${file} по-прежнему рисует пустой список без слов`).toMatch(/<EmptyState|reach-card empty/u);
       expect(source, `${file} не даёт дороги к задаче`).toContain(action);
     }
     // Список платежей «Года» без единого платежа тоже объясняет, чем он наполняется.
@@ -139,23 +137,22 @@ describe("пустые состояния", () => {
     const masha = "c6666666-6666-4666-8666-666666666601";
     const seed = makeSeedBudget();
     const budget: BudgetState = { ...seed, members: [{ id: masha, name: "Маша", role: "member", active: true }] };
-    const members = (filter: string) => ({ options: memberFilterOptions(budget), filter, onFilter: vi.fn(), byId: membersById(budget) });
-    const hidden = renderToStaticMarkup(<HistoryScreen budget={budget} members={members(masha)} onEdit={vi.fn()} onAdd={vi.fn()} />);
-    assertThreeRules(hidden.slice(hidden.indexOf(">Операции</h1>")), "фильтр участника");
-    expect(hidden).toContain("У выбранного участника записей нет");
-    expect(hidden).toContain("Показать записи всех");
+    const hidden = feed(budget, { member: masha });
+    assertEmptyState(hidden, "фильтр участника", "У выбранного участника записей нет", "Записи остальных на месте.", "Показать записи всех");
     expect(hidden).not.toContain("Записей пока нет");
-    expect(hidden).toContain('<label for="history-member-filter">Кто записал</label>');
-    // Записи без участника — свои: фильтр «Без участника» их показывает, и автор назван в строке.
-    const unattributed = renderToStaticMarkup(<HistoryScreen budget={budget} members={members(MEMBER_FILTER_NONE)} onEdit={vi.fn()} onAdd={vi.fn()} />);
-    expect(unattributed).not.toContain("У выбранного участника записей нет");
-    expect(unattributed).toContain("· Без участника");
+    // Чип «Участник» есть только в семье и называет выбранного.
+    expect(hidden).toMatch(/<button class="chip filter-chip"[^>]*data-set="true"[^>]*><span class="chip-face"><bdi dir="auto">Маша<\/bdi>/u);
+    // Записи без участника — свои: автор назван в строке словами.
+    const all = feed(budget);
+    expect(all).toContain(" · Без участника");
+    expect(all).toContain(">Участник</bdi>");
     // Пустой бюджет с фильтром — по-прежнему «Записей пока нет»: фильтру прятать нечего.
-    const empty = renderToStaticMarkup(<HistoryScreen budget={{ ...budget, transactions: [] }} members={members(masha)} onEdit={vi.fn()} onAdd={vi.fn()} />);
-    expect(empty).toContain("Записей пока нет");
-    // Без участников выбирать не из кого: ни фильтра, ни автора в строке.
-    const alone = renderToStaticMarkup(<HistoryScreen budget={seed} members={{ ...members(MEMBER_FILTER_ALL), options: memberFilterOptions(seed) }} onEdit={vi.fn()} onAdd={vi.fn()} />);
-    expect(alone).not.toContain("Кто записал");
+    expect(feed({ ...budget, transactions: [] }, { member: masha })).toContain("Записей пока нет");
+    // Фильтр участника вместе с поиском или другим фильтром — уже не «у участника нет», а «ничего не нашлось».
+    expect(feed(budget, { member: masha, kind: "income" })).toContain("Ничего не нашлось");
+    // Без участников выбирать не из кого: ни чипа, ни автора в строке.
+    const alone = feed(seed);
+    expect(alone).not.toContain(">Участник</bdi>");
     expect(alone).not.toContain("Без участника");
   });
 

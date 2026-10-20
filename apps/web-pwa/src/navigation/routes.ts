@@ -1,4 +1,4 @@
-import { ACCOUNT_TYPES, isUuid, isWithinDateWindow, MAX_LOCAL_DATE, MIN_LOCAL_DATE, type AccountType } from "@family-budget/domain";
+import { ACCOUNT_TYPES, isUuid, isWithinDateWindow, MAX_LOCAL_DATE, MIN_LOCAL_DATE, type AccountType, type TransactionKind } from "@family-budget/domain";
 
 /**
  * Маршруты приложения и их адреса (план волны 2, §2.1).
@@ -54,11 +54,70 @@ export type CategoryListType = (typeof CATEGORY_LIST_TYPES)[number];
  */
 export const NEW_ACCOUNT_TYPES: readonly AccountType[] = ACCOUNT_TYPES;
 
+/** Вид операции в фильтре «Операций» — значения домена, и только они. */
+export const FEED_KINDS = ["income", "expense", "refund", "transfer", "goal_contribution", "debt_out", "debt_in"] as const satisfies readonly TransactionKind[];
+export type FeedKind = (typeof FEED_KINDS)[number];
+/** Новый вид операции в домене без строки здесь не компилируется: фильтр знает каждый. */
+const FEED_KINDS_COMPLETE: Exclude<TransactionKind, FeedKind> extends never ? true : never = true;
+void FEED_KINDS_COMPLETE;
+
+/** Период «Операций» словом: `all` — вся история. Без него и без дней — текущий месяц. */
+export const FEED_PERIODS = ["all"] as const;
+export type FeedPeriod = (typeof FEED_PERIODS)[number];
+
+/**
+ * Фильтры «Операций» (подволна 2d, план волны 2, §1.3) — только закрытые типы: период из перечня,
+ * дни `ГГГГ-ММ-ДД`, UUID счёта, категории, метки и участника и вид операции из перечня. Строки поиска
+ * среди них нет и быть не может: это свободный текст — сумма, заметка, имя, — и он живёт в памяти
+ * экрана (`features/feed/FeedScreen.tsx`), а не в адресе и не в состоянии записи истории (SECURITY §7.3).
+ *
+ * Период: без ключей — текущий месяц (лента по умолчанию — месяц с итогами дней и строкой итогов,
+ * ревью 2d, LOW-11), `period=all` — вся история, `from`/`to` — свои дни. Слово и дни вместе не бывают.
+ */
+export interface OperationsFilterFields {
+  /** `all` — вся история; не вместе с днями. */
+  readonly period?: FeedPeriod;
+  /** Первый день периода, включительно. */
+  readonly from?: string;
+  /** Последний день периода, включительно; не раньше `from`. */
+  readonly to?: string;
+  readonly acc?: string;
+  readonly cat?: string;
+  readonly tag?: string;
+  readonly member?: string;
+  readonly kind?: FeedKind;
+}
+
+/** Ключи фильтров «Операций» в каноническом порядке. */
+export const FEED_FILTER_KEYS = ["period", "from", "to", "acc", "cat", "tag", "member", "kind"] as const satisfies readonly (keyof OperationsFilterFields)[];
+
+/** Вкладки «Отчётов»: расходы, доходы, метки. */
+export const REPORT_VIEWS = ["expense", "income", "tags"] as const;
+export type ReportView = (typeof REPORT_VIEWS)[number];
+/** Период «Отчётов»: календарный месяц, квартал, год или свои дни. */
+export const REPORT_PERIODS = ["month", "quarter", "year", "custom"] as const;
+export type ReportPeriod = (typeof REPORT_PERIODS)[number];
+
+/**
+ * Что показывают «Отчёты» (план волны 2, §1.4): вкладка, период и счёт. У месяца, квартала и года
+ * `from` — день внутри периода (без него — сегодняшний), у своего периода — его первый день, а `to` —
+ * последний. Периоды — календарные: окно плана в отчёт не входит (`packages/domain/src/reports.ts`).
+ */
+export interface ReportsFields {
+  readonly view?: ReportView;
+  readonly period?: ReportPeriod;
+  readonly from?: string;
+  readonly to?: string;
+  readonly acc?: string;
+}
+
 export type Route =
   /** «Обзор»; `month` — месяц плиток, `ГГГГ-ММ`, без него — текущий. */
   | ({ readonly name: "overview"; readonly month?: string } & SheetFields)
-  | ({ readonly name: "operations" } & SheetFields)
-  | ({ readonly name: "reports" } & SheetFields)
+  /** «Операции»; фильтры — в адресе, строка поиска — в памяти экрана. */
+  | ({ readonly name: "operations" } & OperationsFilterFields & SheetFields)
+  /** «Отчёты»: вкладка, период и счёт. */
+  | ({ readonly name: "reports" } & ReportsFields & SheetFields)
   | ({ readonly name: "more" } & SheetFields)
   | ({ readonly name: "plan-month" } & SheetFields)
   | ({ readonly name: "plan-year" } & SheetFields)
@@ -115,8 +174,20 @@ const PATH_ID: QueryValue = { kind: "uuid" };
 /** Адрес длиннее этого — не наш: настоящие адреса приложения короче сотни знаков. */
 const MAX_HASH_LENGTH = 512;
 
+/** Стоит ли в адресе «Операций» хоть один фильтр. */
+export function hasFeedFilters(route: Route): boolean {
+  return route.name === "operations" && FEED_FILTER_KEYS.some((key) => route[key] !== undefined);
+}
+
+/**
+ * Вкладка — экран нижней навигации без листа. «Операции» с фильтром — не вкладка, а взгляд на них
+ * откуда-то (строка легенды «Отчётов»): такой маршрут кладётся поверх того, где стоишь, и «Назад»
+ * возвращает туда — к «Отчётам» с их периодом. Смена фильтра на самом экране заменяет запись
+ * истории, а не копит их (`features/feed/FeedScreen.tsx`).
+ */
 export function isTab(route: Route): boolean {
-  return (TAB_NAMES as readonly string[]).includes(route.name) && route.sheet === undefined;
+  if (route.sheet !== undefined || !(TAB_NAMES as readonly string[]).includes(route.name)) return false;
+  return !hasFeedFilters(route);
 }
 
 export function isRoot(route: Route): boolean {
@@ -245,14 +316,35 @@ const SHEET_GRAMMAR = {
   edit: { kind: "uuid", invalid: "close-sheet" },
 } as const satisfies { readonly [K in keyof SheetFields]-?: QuerySpec };
 
+/** Фильтры «Операций» (2d): период и вид из перечней, дни, идентификаторы записей — ничего свободного. */
+const OPERATIONS_GRAMMAR = {
+  period: { kind: "enum", values: FEED_PERIODS },
+  from: { kind: "day" },
+  to: { kind: "day" },
+  acc: { kind: "uuid" },
+  cat: { kind: "uuid" },
+  tag: { kind: "uuid" },
+  member: { kind: "uuid" },
+  kind: { kind: "enum", values: FEED_KINDS },
+} as const satisfies { readonly [K in keyof OperationsFilterFields]-?: QuerySpec };
+
+/** «Отчёты» (2d): вкладка и период из перечней, дни и счёт. */
+const REPORTS_GRAMMAR = {
+  view: { kind: "enum", values: REPORT_VIEWS },
+  period: { kind: "enum", values: REPORT_PERIODS },
+  from: { kind: "day" },
+  to: { kind: "day" },
+  acc: { kind: "uuid" },
+} as const satisfies { readonly [K in keyof ReportsFields]-?: QuerySpec };
+
 /**
  * The address grammar: per route, the query keys it may carry, in their canonical order. Adding a
  * key is adding a line here — and in the fragment pattern of `address-privacy.test.ts`, on purpose.
  */
 export const QUERY_GRAMMAR = {
   overview: { month: { kind: "month" }, ...SHEET_GRAMMAR },
-  operations: SHEET_GRAMMAR,
-  reports: SHEET_GRAMMAR,
+  operations: { ...OPERATIONS_GRAMMAR, ...SHEET_GRAMMAR },
+  reports: { ...REPORTS_GRAMMAR, ...SHEET_GRAMMAR },
   more: SHEET_GRAMMAR,
   "plan-month": SHEET_GRAMMAR,
   "plan-year": SHEET_GRAMMAR,
@@ -280,6 +372,15 @@ function sheetFieldsCoherent(fields: Readonly<Record<string, unknown>>): boolean
   if (!open && SHEET_ONLY_KEYS.some((key) => fields[key] !== undefined)) return false;
   if (fields.op === undefined && (fields.src !== undefined || fields.dst !== undefined)) return false;
   return !(fields.edit !== undefined && fields.op !== undefined);
+}
+
+/**
+ * Период — от `from` до `to` включительно: последний день не раньше первого. У «Операций» период —
+ * либо словом («вся история»), либо днями, но не тем и другим сразу.
+ */
+function periodCoherent(fields: Readonly<Record<string, unknown>>): boolean {
+  if (fields.name === "operations" && fields.period !== undefined && (fields.from !== undefined || fields.to !== undefined)) return false;
+  return typeof fields.from !== "string" || typeof fields.to !== "string" || fields.from <= fields.to;
 }
 
 const DAY_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/u;
@@ -352,6 +453,7 @@ export function formatRoute(route: Route): string {
     pairs.push(`${key}=${text}`);
   }
   if (!sheetFieldsCoherent(fields)) throw new Error("A sheet key is outside an open sheet, or an edit names tiles too.");
+  if (!periodCoherent(fields)) throw new Error("A period ends before it starts, or names the whole history and days at once.");
   const path = pathOf(route);
   return pairs.length === 0 ? path : `${path}?${pairs.join("&")}`;
 }
@@ -468,6 +570,13 @@ export function parseRoute(hash: string): ParsedRoute {
   if (fields.sheet === undefined) for (const key of SHEET_ONLY_KEYS) delete fields[key];
   if (fields.edit !== undefined) delete fields.op;
   if (fields.op === undefined) for (const key of ["src", "dst"] as const) delete fields[key];
+  // Период, который кончается раньше, чем начался, — не период: оба дня уходят, и это «Запись не найдена».
+  // «Вся история» вместе с днями — тоже: дни уходят, остаётся слово.
+  if (!periodCoherent(fields)) {
+    delete fields.from;
+    delete fields.to;
+    rejected = true;
+  }
   const route = fields as unknown as Route;
   try {
     formatRoute(route);
@@ -492,6 +601,26 @@ export interface RouteRecords {
   readonly account?: (id: string) => boolean;
   /** Вид категории — расходы или доходы; `null` — такой категории нет. */
   readonly category?: (id: string) => CategoryListType | null;
+  /** Метка фильтра «Операций». */
+  readonly tag?: (id: string) => boolean;
+  /** Участник фильтра «Операций». */
+  readonly member?: (id: string) => boolean;
+}
+
+/**
+ * Фильтры «Операций» и счёт «Отчётов», чьих записей в бюджете нет (удалены здесь или на другом
+ * устройстве, ссылка из чужого бюджета): такие ключи уходят из маршрута, экран остаётся.
+ */
+function missingRecordKeys(route: Route, exists: RouteRecords): readonly ("acc" | "cat" | "tag" | "member")[] {
+  if (route.name !== "operations" && route.name !== "reports") return [];
+  const missing: ("acc" | "cat" | "tag" | "member")[] = [];
+  if (route.acc !== undefined && exists.account !== undefined && !exists.account(route.acc)) missing.push("acc");
+  if (route.name === "operations") {
+    if (route.cat !== undefined && exists.category !== undefined && exists.category(route.cat) === null) missing.push("cat");
+    if (route.tag !== undefined && exists.tag !== undefined && !exists.tag(route.tag)) missing.push("tag");
+    if (route.member !== undefined && exists.member !== undefined && !exists.member(route.member)) missing.push("member");
+  }
+  return missing;
 }
 
 /**
@@ -501,6 +630,13 @@ export interface RouteRecords {
  * источник дохода без `type`), — найдена, но маршрут её — с видом записи: по нему и «назад».
  */
 export function resolveRoute(route: Route, exists: RouteRecords): ParsedRoute {
+  const missingKeys = missingRecordKeys(route, exists);
+  if (missingKeys.length > 0) {
+    const fields: Record<string, unknown> = { ...route };
+    for (const key of missingKeys) delete fields[key];
+    const rest = resolveRoute(fields as unknown as Route, exists);
+    return notFound(rest.route);
+  }
   const screen = withoutSheet(route);
   const kind = screen.name === "category" && exists.category !== undefined ? exists.category(screen.id) : undefined;
   const missing = (screen.name === "account" && exists.account !== undefined && !exists.account(screen.id)) || kind === null;
@@ -515,12 +651,15 @@ export function resolveRoute(route: Route, exists: RouteRecords): ParsedRoute {
 }
 
 /**
- * Экран маршрута: без листа и без месяца «Обзора». По нему помнится прокрутка и ставится фокус на
- * заголовок: открытый лист и смена месяца — тот же экран, и фокус там ведут лист и стрелки.
+ * Экран маршрута: без листа, без месяца «Обзора», без фильтров «Операций» и без вкладки и периода
+ * «Отчётов». По нему помнится прокрутка и ставится фокус на заголовок: открытый лист, смена месяца,
+ * фильтра или периода — тот же экран, и фокус там ведут лист, стрелки и чипы. Строка поиска
+ * «Операций» живёт ровно столько, сколько этот экран (`features/feed/FeedScreen.tsx`).
  */
 export function screenKey(route: Route): string {
   const screen = withoutSheet(route);
   if (screen.name === "overview" && screen.month !== undefined) return routeKey(ROOT_ROUTE);
+  if (screen.name === "operations" || screen.name === "reports") return routeKey({ name: screen.name });
   return routeKey(screen);
 }
 

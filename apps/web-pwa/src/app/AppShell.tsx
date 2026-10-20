@@ -26,11 +26,9 @@ import {
   holdWriteRefusal,
   familyDocumentNotice,
   FamilyScreen,
-  MEMBER_FILTER_ALL,
   showsFamilyHoldScreen,
   familyNewsLines,
   familyNewsSince,
-  memberFilterOptions,
   membersById,
   resolveSyncServerUrl,
   syncAlarm,
@@ -38,7 +36,6 @@ import {
   transactionIds,
   useFamily,
   type BudgetJournalWrite,
-  type MemberFilter,
   type OwnAuthor,
 } from "../features/family";
 import { createImportMemory } from "../features/import";
@@ -62,6 +59,7 @@ import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
+import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { createRouter, memoryRouterWindow } from "../navigation/router";
 import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, sameRoute, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
@@ -177,7 +175,6 @@ export default function App() {
   const [leaveRequest, setLeaveRequest] = useState<LeaveRequest | null>(null);
   // Новый лист ввода поверх не записанного черновика: что сделать, если человек начнёт новую операцию.
   const [replaceFailed, setReplaceFailed] = useState<{ readonly proceed: () => void } | null>(null);
-  const [memberFilter, setMemberFilter] = useState<MemberFilter>(MEMBER_FILTER_ALL);
   // §6 «Семейная новость»: что человек уже видел — идентификаторы операций бюджета на момент
   // открытия и на момент, когда новость стояла на экране. Не хранилище, а память сессии: на
   // следующем открытии «прошлый раз» — это бюджет, прочитанный с диска, а в него приём уже
@@ -404,6 +401,8 @@ export default function App() {
       transaction: (id) => current.transactions.some((item) => sameRecordId(item.id, id)),
       account: (id) => current.accounts.some((item) => sameRecordId(item.id, id)),
       category: (id) => current.categories.find((item) => sameRecordId(item.id, id))?.type ?? null,
+      tag: (id) => (current.tags ?? []).some((item) => sameRecordId(item.id, id)),
+      member: (id) => (current.members ?? []).some((item) => sameRecordId(item.id, id)),
     });
     if (!resolved.notFound) {
       // Маршрут найден, но назван неточно (старая ссылка на источник дохода без вида списка):
@@ -652,7 +651,6 @@ export default function App() {
       setOpeningMonth(false);
     }
   };
-  const members = { options: memberFilterOptions(budget), filter: memberFilter, onFilter: setMemberFilter, byId: memberById };
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const syncIndicator = syncIndicatorPresentation(family.status, family.syncRound);
@@ -677,6 +675,8 @@ export default function App() {
   };
   shellNavigate.current = navigate;
   const back = () => router.back();
+  // Запись истории под текущей — по маршруту, который сейчас показан: перерисовка приходит с ним.
+  const beneath = router.beneath();
   const replace = (destination: Route) => router.navigate(destination, { replace: true });
   /**
    * Лист ввода поверх экрана, на котором стоишь: с плиток — вид и плитки, с «+» — ничего, из
@@ -761,8 +761,8 @@ export default function App() {
     setLoadState("empty");
   };
   const routeContext: AppRouteContext = {
-    budget, today, plan, metrics, clock, paydays, categoryById, members, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, replace, openSheet, openEdit, write, budgetRef,
+    budget, today, plan, clock, paydays, categoryById, monthToOpen,
+    openingMonth, openMonth, familyNewsText, navigate, back, beneath, replace, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,
@@ -805,7 +805,10 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          <RouteView route={route} app={routeContext} />
+          {/* Экран, упавший при отрисовке, — спокойный экран с «На «Обзор»», а не белая страница (ревью 2d, HIGH-1). */}
+          <RouteErrorBoundary routeKey={routeKey(route)} onHome={() => navigate({ name: "overview" })}>
+            <RouteView route={route} app={routeContext} />
+          </RouteErrorBoundary>
         </div>
       </main>
 

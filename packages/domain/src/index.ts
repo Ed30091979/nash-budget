@@ -125,6 +125,19 @@ export type {
   RecurringSkipReason,
 } from "./recurring.js";
 export {
+  calculateMonthlySeries,
+  calculatePeriodBreakdown,
+} from "./reports.js";
+export type {
+  MonthlyAmount,
+  MonthlySeries,
+  MonthlySeriesOptions,
+  PeriodBreakdown,
+  PeriodCategoryAmount,
+  PeriodQuery,
+  PeriodSide,
+} from "./reports.js";
+export {
   addExchangeRate,
   baseSnapshot,
   deleteExchangeRate,

@@ -7,7 +7,6 @@ export {
   monthShape,
   monthsSpan,
   nextScheduledDate,
-  searchOperations,
   shapeAnnouncement,
   type DashboardHorizon,
   type DashboardModel,
@@ -16,7 +15,5 @@ export {
   type HorizonVerdict,
   type LadderModel,
   type LadderRow,
-  type OperationSearchFilters,
-  type OperationSearchResult,
   type ShapeRow,
 } from "./model";
