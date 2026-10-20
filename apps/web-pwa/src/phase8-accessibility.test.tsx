@@ -96,7 +96,6 @@ describe("phase 8 accessibility and responsive contract", () => {
     expect(declaredTargets.filter(({ px }) => px < minimum)).toEqual([]);
 
     expect(styles).toContain(".segmented label:has(input:focus-visible)");
-    expect(styles).toContain(".composition-options label:has(input:focus-visible)");
     expect(styles).toContain(".month-checkboxes label:has(input:focus-visible)");
     expect(styles).toContain(".file-button:focus-within");
     expect(styles).toContain("outline: 3px solid var(--focus)");
@@ -160,11 +159,11 @@ describe("phase 8 accessibility and responsive contract", () => {
     // Заголовок маршрута: фокус ставится кодом ради объявления смены экрана — кольца там нет.
     expect(outlineOf(rules, 'h1[tabindex="-1"]:focus')).toEqual(["outline: none"]);
     expect(outlineOf(rules, 'h1[tabindex="-1"]:focus-visible')).toEqual(["outline: none"]);
-    // Ни одно правило во всей таблице не возвращает заголовку онбординга рамку.
+    // Ни одно правило во всей таблице не возвращает заголовку слайдов первого запуска рамку.
     expect(
       rules.filter(
         (rule) =>
-          rule.selectors.some((selector) => selector.includes("#onboarding-title")) &&
+          rule.selectors.some((selector) => /intro.*h1|#intro-title/u.test(selector)) &&
           rule.declarations.some((declaration) => declaration.startsWith("outline:")),
       ),
     ).toEqual([]);
@@ -175,9 +174,6 @@ describe("phase 8 accessibility and responsive contract", () => {
       "input:focus-visible",
       "select:focus-visible",
       "a:focus-visible",
-      "#categories:focus-visible",
-      "#composition:focus-visible",
-      ".composition-options label:has(input:focus-visible)",
     ]) {
       expect(outlineOf(rules, selector)).toContain("outline: 3px solid var(--focus)");
     }
@@ -190,14 +186,29 @@ describe("phase 8 accessibility and responsive contract", () => {
     ).toEqual(['h1[tabindex="-1"]:focus', 'h1[tabindex="-1"]:focus-visible']);
   });
 
-  it("держит шаги онбординга нажимаемыми целями с клавиатурным фокусом", () => {
+  it("у суммы листа фокус — подчёркивание цветом фокуса, а не рамка браузера и не пустота (WCAG 2.4.7)", () => {
     const rules = cssRules(readFileSync(new URL("./styles.css", import.meta.url), "utf8"));
-    const step = rules.find((rule) => rule.selectors.includes(".step-progress-step"));
+    const amount = rules.filter((rule) => rule.selectors.includes(".entry-amount-field input:focus-visible")).flatMap((rule) => rule.declarations);
 
-    // Кнопка, а не span: кольцо ей достаётся общим правилом button:focus-visible.
-    expect(step?.declarations).toContain("min-height: 48px");
-    expect(outlineOf(rules, ".step-progress-step")).toEqual([]);
-    expect(rules.find((rule) => rule.selectors.includes(".step-progress ol"))?.declarations)
-      .toContain("gap: 8px");
+    // Своё видимое указание вместо рамки: 3 pt под числом, `--focus` к белому листу — 6.39:1 (§3).
+    expect(amount).toContain("box-shadow: inset 0 -3px 0 var(--focus)");
+    // Кольцо не снято, а прозрачно — в режиме принудительных цветов его рисует система.
+    expect(amount).toContain("outline: 3px solid transparent");
+    // Прозрачное кольцо — только у суммы: остальное по-прежнему рисует 3 pt `--focus`.
+    expect(
+      rules
+        .filter((rule) => rule.declarations.some((declaration) => /^outline:.*transparent/u.test(declaration)))
+        .flatMap((rule) => rule.selectors),
+    ).toEqual([".entry-amount-field input:focus-visible"]);
+  });
+
+  it("держит цели слайдов первого запуска нажимаемыми кнопками с клавиатурным фокусом", () => {
+    const rules = cssRules(readFileSync(new URL("./styles.css", import.meta.url), "utf8"));
+    const skip = rules.find((rule) => rule.selectors.includes(".intro-skip"));
+
+    // «Пропустить» — кнопка, а не ссылка-подпись: цель 48 и кольцо общим правилом button:focus-visible.
+    expect(skip?.declarations).toContain("min-height: 48px");
+    expect(outlineOf(rules, ".intro-skip")).toEqual([]);
+    expect(rules.find((rule) => rule.selectors.includes(".intro-actions"))?.declarations).toContain("gap: 8px");
   });
 });

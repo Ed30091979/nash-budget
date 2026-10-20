@@ -55,7 +55,8 @@ async function closesWithoutQuestion(page: Page): Promise<void> {
 async function openMonthPlan(page: Page): Promise<void> {
   await tab(page, "Ещё").click();
   await page.getByRole("button", { name: /^План месяца/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Плановые расходы" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "План месяца" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Плановые расходы" })).toBeVisible();
 }
 
 test("операция: записанная — не спрашивает; набранная после — спрашивает; не записавшаяся — спрашивает", async ({ page }) => {
@@ -95,7 +96,7 @@ test("правка операции: открытая и нетронутая �
   await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
   await closesWithoutQuestion(page);
   await leavesWithoutQuestion(page, "Обзор", /.+/u);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 
   await tab(page, "Операции").click();
   await page.locator('button[aria-label^="Изменить операцию «Расход"]').first().click();
@@ -222,7 +223,7 @@ test("выписка: добавленная — не спрашивает; сл
   // снова несохранённый.
   const other = await page.context().newPage();
   await other.goto("/");
-  await expect(other.locator(".reach-line")).toBeVisible();
+  await expect(other.locator(".reach-card")).toBeVisible();
   await recordExpense(other, { category: "Продукты", amount: "10" });
   await expect(toast(other, /Записано: расход 10\s₽/u)).toBeVisible();
   await other.close();

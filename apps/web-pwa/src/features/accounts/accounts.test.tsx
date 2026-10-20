@@ -185,7 +185,8 @@ describe("счета: разметка", () => {
   it("заголовок, «Новый счёт», активные с «Выше / Ниже», архив с «Вернуть»; остаток — в валюте счёта", () => {
     const markup = render();
     expect(markup).toContain("<h1>Счета</h1>");
-    expect(markup).toMatch(/Новый счёт<\/span><\/button>/u);
+    // «Новый счёт» — действие строки заголовка: глиф «+» и имя словами.
+    expect(markup).toContain('<div class="title-bar-action"><button class="icon-button" type="button" aria-label="Новый счёт">');
     expect(markup).toContain('aria-label="Основной — выше" aria-disabled="true"');
     expect(markup).toContain('aria-label="Доллары — ниже" aria-disabled="true"');
     expect(markup).toContain('aria-label="Вернуть «Старая карта» из архива"');
@@ -250,7 +251,7 @@ describe("форма счёта: разметка", () => {
 });
 
 describe("тон и иконка счёта — на «Обзоре»", () => {
-  it("плитка счёта несёт выбранные иконку и тон: подложка глифа его цвета; без тона — тёмная целиком", async () => {
+  it("плитка счёта несёт выбранные иконку и тон: квадрат его цвета; без тона — графитовый", async () => {
     const { overviewModel } = await import("../overview/overview-model");
     const { AccountTile } = await import("../../components/tiles/AccountTile");
     const tiles = overviewModel(state(), "2026-07", TODAY).accounts;
@@ -260,9 +261,9 @@ describe("тон и иконка счёта — на «Обзоре»", () => {
     // Архивный счёт с «Обзора» уходит.
     expect(tiles.some((tile) => tile.id === ARCHIVED)).toBe(false);
     const markup = renderToStaticMarkup(<AccountTile tile={dollars} pressed={false} onPick={vi.fn()} />);
-    expect(markup).toContain('<span class="tile-glyph tone-lilac" aria-hidden="true">');
+    expect(markup).toContain('<span class="tile-square tone-lilac" aria-hidden="true">');
     expect(markup).toContain('href="#glyph-dollar-sign"');
     const plain = renderToStaticMarkup(<AccountTile tile={tiles.find((tile) => tile.id === MAIN)!} pressed={false} onPick={vi.fn()} />);
-    expect(plain).toContain('<span class="tile-glyph" aria-hidden="true">');
+    expect(plain).toContain('<span class="tile-square account" aria-hidden="true">');
   });
 });

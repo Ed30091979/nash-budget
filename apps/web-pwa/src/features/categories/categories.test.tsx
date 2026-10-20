@@ -59,7 +59,7 @@ describe("категории: модель", () => {
   it("расходы — по группам в их порядке, доходы — одной группой; архив отдельно; лимит — план строки месяца", () => {
     const budget = state();
     const expense = categoriesView(budget, "expense");
-    expect(expense.groups.map((group) => group.title)).toEqual(["Обязательные платежи", "Каждый день", "Личное и досуг", "Прочее"]);
+    expect(expense.groups.map((group) => group.title)).toEqual(["Каждый день", "Обязательные платежи", "Личное и досуг", "Прочее"]);
     const everyday = expense.groups.find((group) => group.key === "everyday")!;
     expect(everyday.cards.map((card) => card.category.name)).toEqual(["Дети", "Продукты", "Транспорт", "Дом и мелкие покупки"]);
     expect(everyday.cards.find((card) => card.category.id === FOOD)?.limitMinor).toBe(categoryLimit(budget, FOOD));
@@ -325,6 +325,6 @@ describe("форма категории: разметка", () => {
     const markup = view(FOOD, { draft, error: { field: "limit", message: "Введите положительную сумму в рублях, не более двух знаков после запятой." } });
     expect(markup).toMatch(/<input id="category-limit"[^>]*aria-invalid="true" aria-describedby="category-limit-hint category-limit-error"/u);
     expect(markup).toContain('id="category-limit-error" role="alert"');
-    expect(markup).toMatch(/class="tile tile-expense tone-coral manage-preview" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
+    expect(markup).toMatch(/class="tile tile-expense manage-preview" aria-hidden="true"><span class="tile-square tone-coral" aria-hidden="true">[^]*?glyph-cup[^]*?Еда/u);
   });
 });

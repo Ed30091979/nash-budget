@@ -5,6 +5,7 @@ import {
   calculateBudget,
   carryBudgetForward,
   findBudgetForMonth,
+  householdPaydays,
   monthAfterPeriod,
   type BudgetState,
 } from "@family-budget/domain";
@@ -47,8 +48,8 @@ import { buildDemoBudgetState } from "../onboarding/demo";
 import { createBudgetBackup, prepareBudgetState } from "../backup";
 import { monthNominative } from "../date-words";
 import {
+  budgetPaydays,
   localToday,
-  paydayDays,
   periodClock,
 } from "../reach";
 import { createBudgetRepository } from "../storage-repository";
@@ -573,6 +574,7 @@ export default function App() {
     if (result.status === "existing") {
       setMessage("Бюджет уже создан в другой вкладке. Открыли сохранённую там версию; введённые здесь данные её не перезаписали.");
     }
+    return result.status;
   };
 
   const loadDemo = async () => {
@@ -622,8 +624,10 @@ export default function App() {
   const incomeDates = budget.transactions
     .filter((transaction) => transaction.status === "posted" && transaction.kind === "income")
     .map((transaction) => transaction.occurredOn);
-  const clock = periodClock(activeBudget, incomeDates, today);
-  const paydays = paydayDays(incomeDates, today);
+  // Дни выплат, названные семьёй (`household.paydays`), — первыми; без них — выведенные из доходов.
+  const declaredPaydays = householdPaydays(budget);
+  const clock = periodClock(activeBudget, incomeDates, today, declaredPaydays);
+  const paydays = budgetPaydays(declaredPaydays, incomeDates, today);
   // §6, выход из закрытого месяца. Пока месяц плана идёт, предлагать нечего; когда он кончился —
   // предлагается ровно один месяц, тот, в котором семья сейчас живёт и тратит.
   const monthToOpen = clock.position === "after" ? monthAfterPeriod(activeBudget, today) : null;
@@ -771,9 +775,10 @@ export default function App() {
       <IconSprite />
       <SkipLink />
       <header ref={headerRef} className="app-header" data-scrolled={headerScrolled ? "true" : undefined}>
-        {/* Шапка называет план и больше ничего. Слоган «видим месяц и будущее» продавал продукт
-            тому, кто его уже открыл, и делал это на каждом экране за 70 pt высоты. */}
-        <div className="brand"><span className="brand-mark"><Icon name="piggy-bank" size={20} /></span><strong>Наш бюджет</strong></div>
+        {/* Шапки-марки «Наш бюджет» больше нет (дизайн 5.0, §d): экран называет себя сам — строкой
+            заголовка подэкрана, крупным заголовком вкладки или месяцем «Обзора». Марка осталась на
+            значке и заставке. Шапка — полоса безопасной зоны над содержимым; в ней живёт только
+            индикатор синхронизации, когда семья вошла. Пустая, она не занимает места. */}
         {/* Состояние синхронизации — единственное, что шапке есть сказать о сети, и только когда
             семья вошла. Без входа приложение к сети не обращается вовсе, и пилюля «в сети» была
             бы сведением ни о чём: она называла бы состояние, которым продукт не занят. */}

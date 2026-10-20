@@ -1,6 +1,7 @@
 import {
   DEFAULT_CATEGORIES,
   categoryNameKey,
+  HOUSEHOLD_ID,
   makePlanningSeed,
   monthIndex,
   monthOfDate,
@@ -8,10 +9,17 @@ import {
   monthStartDate,
   normalizeCategoryName,
   PLANNING_IDS,
+  SEED_IDS,
   shiftDate,
   shiftMonth,
+  type Account,
   type BudgetState,
   type Category,
+  type Debt,
+  type ExchangeRate,
+  type Goal,
+  type RecurringRule,
+  type Tag,
   type Transaction,
 } from "@family-budget/domain";
 
@@ -22,8 +30,9 @@ import { localToday } from "../reach";
  *
  * Числа берутся из `makePlanningSeed()` и не пересчитываются здесь ни одного: демо построено на
  * каноническом наборе, его первый месяц — резерв `19 809 ₽` и «свободно» `44 191 ₽`, дно
- * горизонта `13 191 ₽` — названы поимённо в приёмке. Меняются три вещи: словарь категорий,
- * календарь сцены и история доходов.
+ * горизонта `13 191 ₽`, «Можно на повседневные» `27 000 ₽` — названы поимённо в приёмке. Меняются
+ * словарь категорий, календарь сцены, история доходов и — по данным макетов v5 (DIRECTION, «Данные в
+ * макетах») — раскладка счетов, разбиение трат по дням, курс доллара, метки, долг и цель.
  *
  * Зачем менять словарь. Семь категорий сида носили имена, которых нет ни в стартовом наборе
  * домена (`DEFAULT_CATEGORIES`), ни в карте вида (`category-visual.ts`): «Досуг», «Дом и мелкие
@@ -33,6 +42,17 @@ import { localToday } from "../reach";
  * доводится до полных двадцати трёх категорий, ровно как его получает семья после онбординга
  * (`buildOnboardingBudgetState`). Категория без плана и без операций не двигает ни одной суммы:
  * она просто есть в списке, как есть в настоящем хозяйстве.
+ *
+ * Правило дня. Демо строится на сегодняшний день, и от числа месяца зависят две вещи: пришли ли
+ * выплаты и какой курс доллара действует. Сцена трат прижата к сегодняшнему числу, поэтому «Расходы»
+ * месяца — 71 000 ₽ и «Можно тратить» — 27 000 ₽ в любой день. Аванс 70 000 ₽ 5-го и получка
+ * 110 000 ₽ 20-го до своего дня «ожидаются», а с него записаны (`demoIncomes`); 1 200 $ стоят по
+ * 91,80 до 15-го и по 92,50 с 15-го (`demoRates`). Отсюда «На счетах» (`demoHoldingsRule`):
+ * 483 160 ₽ с 1-го по 4-е, 553 160 ₽ с 5-го по 14-е, 554 000 ₽ с 15-го по 19-е — это числа макетов
+ * v5, снятые 19 октября, — и 664 000 ₽ с 20-го до конца месяца. «Хватает до» меряет до ближайшей
+ * названной выплаты: 5-го, 20-го, а с 20-го — 5-го следующего месяца. Прогон e2e стоит на 19 октября
+ * 2026 года (`e2e/clock.ts`), а unit-проверка держит правило на каждом дне 31-дневного месяца и
+ * февраля, обычного и високосного.
  */
 const DEMO_CATEGORY_RENAMES: Readonly<Record<string, string>> = {
   "ЖКХ и связь": "ЖКХ",
@@ -127,18 +147,38 @@ function transposeMonths(state: BudgetState, offset: number): BudgetState {
   };
 }
 
-/** Число месяца, на которое приходится аванс, и число получки — из них выводится линейка. */
-const PAYDAY_ADVANCE = 5;
-const PAYDAY_SALARY = 20;
+/** Число месяца, на которое приходится аванс, и число получки. */
+export const PAYDAY_ADVANCE = 5;
+export const PAYDAY_SALARY = 20;
 /** Аванс и получка в сумме дают канонические 180 000 ₽ планового дохода месяца. */
 const ADVANCE_MINOR = 7_000_000;
 const SALARY_MINOR = 11_000_000;
+/** Рублёвые счета демо между авансом и получкой: карта 418 000, наличные 10 000, резерв 15 000. */
+const RUBLES_BETWEEN_PAYDAYS_MINOR = 44_300_000;
+/** Счёт «Доллары»: 1 200 $ в центах. */
+const DOLLARS_MINOR = 120_000;
+/** Курс доллара в копейках за 1 $: с 1-го числа месяца и с 15-го (`demoRates`). */
+const RATE_FROM_FIRST = 9_180;
+const RATE_FROM_FIFTEENTH = 9_250;
+const RATE_CHANGE_DAY = 15;
+
+/**
+ * «На счетах» демо в день `today` (правило дня, см. шапку модуля): рублёвые счета — плюс выплаты,
+ * которые уже пришли, — и 1 200 $ по курсу дня. Это не расчёт для экрана — экран считает остатки
+ * сам, — а записанное обещание, с которым сверяются проверки.
+ */
+export function demoHoldingsRule(today: string): number {
+  const day = Number(today.slice(8, 10));
+  const rubles = RUBLES_BETWEEN_PAYDAYS_MINOR - (day < PAYDAY_ADVANCE ? ADVANCE_MINOR : 0) + (day >= PAYDAY_SALARY ? SALARY_MINOR : 0);
+  const rate = day < RATE_CHANGE_DAY ? RATE_FROM_FIRST : RATE_FROM_FIFTEENTH;
+  return rubles + (DOLLARS_MINOR * rate) / 100;
+}
 /**
  * Сколько прошлых месяцев демо помнит.
  *
- * Расписанием число месяца становится с двух повторений в разные месяцы (`paydayDays`), но
- * выплаты, которые ещё не наступили, в вывод не идут: первого числа месяца обе сегодняшние
- * выплаты впереди. Трёх прошлых месяцев хватает на любой день календаря.
+ * Дни выплат демо называет сам (`household.paydays`, D-039), но история остаётся: из неё выводит
+ * даты тот, у кого дни не названы, и ось «Года» показывает прошлые выплаты. Трёх прошлых месяцев
+ * хватает на любой день календаря: расписанием число становится с двух повторений в разные месяцы.
  */
 const HISTORY_MONTHS = 3;
 
@@ -148,28 +188,44 @@ const DEMO_PAYDAYS: readonly (readonly [day: number, amountMinor: number])[] = [
   [PAYDAY_SALARY, SALARY_MINOR],
 ];
 
+/** Идентификаторы того, что макеты v5 добавили к каноническому набору. */
+export const DEMO_IDS = {
+  accounts: {
+    card: SEED_IDS.accounts.main,
+    reserve: SEED_IDS.accounts.savings,
+    cash: "7c666666-6666-4666-8666-666666666661",
+    dollars: "7c666666-6666-4666-8666-666666666662",
+  },
+  rates: ["7d777777-7777-4777-8777-777777777771", "7d777777-7777-4777-8777-777777777772", "7d777777-7777-4777-8777-777777777773"],
+  tags: { vacation: "7e888888-8888-4888-8888-888888888881", dacha: "7e888888-8888-4888-8888-888888888882" },
+  debt: "7f999999-9999-4999-8999-999999999991",
+  rules: { salary: "7faaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", rent: "7faaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2" },
+} as const;
+
+/** Операция сцены макетов: день текущего месяца и что за ней. */
+function sceneId(index: number): string {
+  return `7b555555-5555-4555-8555-6666${String(index).padStart(8, "0")}`;
+}
+
 /**
  * Регулярные доходы: аванс 5-го и получка 20-го, в этом месяце и в трёх предыдущих.
  *
- * Дат выплат в домене нет, и заводить их нельзя — это миграция хранилища и новая операция
- * журнала. Приложение выводит их из дат уже записанных доходов (`reach.ts`), и потому демо без
- * истории доходов не показывало ни аванса на оси года, ни насечки выплаты на линейке: витрина
- * молчала как раз о том, ради чего всё делалось. Одна операция «18 000 000 первого числа»
- * расписанием не является — расписание начинается там, где число повторилось в разные месяцы.
- *
- * Сумма месяца остаётся канонической: `7 000 000 + 11 000 000` — это те же 180 000 ₽, и ни
- * одной суммы бюджета это не двигает. Доходы прошлых месяцев лежат вне периода плана, а домен
- * считает бюджет только по операциям своего периода — они не двигают ни остатка, ни капитала.
+ * Выплата, день которой ещё не наступил, — не записанный доход с будущей датой, а ожидаемый:
+ * `pending` (макеты v5: «110 000, 20-го, ожидается»). Такой доход не входит в доходы месяца, пока не
+ * пришёл, — 19-го «Доходы октября» честно говорят 70 000, — а сумма месяца по плану остаётся
+ * канонической: `7 000 000 + 11 000 000` — те же 180 000 ₽ планового дохода. Доходы прошлых месяцев
+ * лежат вне периода плана и не двигают ни одного показателя бюджета.
  */
-function demoIncomes(month: string, salaryCategoryId: string, accountId: string): readonly Transaction[] {
+function demoIncomes(month: string, today: string, salaryCategoryId: string, accountId: string): readonly Transaction[] {
   const incomes: Transaction[] = [];
   for (let back = HISTORY_MONTHS; back >= 0; back -= 1) {
     const paid = shiftMonth(month, -back);
     DEMO_PAYDAYS.forEach(([day, amountMinor], index) => {
+      const occurredOn = `${paid}-${String(day).padStart(2, "0")}`;
       incomes.push({
         id: demoIncomeId(back * DEMO_PAYDAYS.length + index),
-        occurredOn: `${paid}-${String(day).padStart(2, "0")}`,
-        status: "posted",
+        occurredOn,
+        status: occurredOn > today ? "pending" : "posted",
         kind: "income",
         amountMinor,
         accountId,
@@ -180,8 +236,134 @@ function demoIncomes(month: string, salaryCategoryId: string, accountId: string)
   return incomes;
 }
 
+/** Курс доллара (макеты v5): 93,10 ₽ с 15-го прошлого месяца, 91,80 ₽ с 1-го и 92,50 ₽ с 15-го. */
+function demoRates(month: string): readonly ExchangeRate[] {
+  const rate = (index: number, date: string, baseMinor: number): ExchangeRate => ({
+    id: DEMO_IDS.rates[index]!,
+    currency: "USD",
+    baseCurrency: "RUB",
+    date,
+    rate: { baseMinor, quoteMinor: 100 },
+  });
+  return [
+    rate(0, `${shiftMonth(month, -1)}-15`, 9_310),
+    rate(1, `${month}-01`, RATE_FROM_FIRST),
+    rate(2, `${month}-${String(RATE_CHANGE_DAY).padStart(2, "0")}`, RATE_FROM_FIFTEENTH),
+  ];
+}
+
 /**
- * Канонический демо-бюджет: сцена в текущем месяце, суммы канонического набора.
+ * Траты месяца по дням — разбиение макетов v5. Суммы по категориям — канонические: «Продукты»
+ * 22 000, «Транспорт» 4 000, «Жильё» 45 000; разбиты они на покупки, а не изменены. Две покупки
+ * 18-го несут метку «дача», 12-го — «Дал в долг: Саша», 10-го — перевод с карты в наличные.
+ *
+ * Сцена — прошлое: записанной операции с датой позже сегодняшней не бывает (ревью R2, L-10). День
+ * сцены, который ещё не наступил, становится сегодняшним, — покупки те же, суммы те же, порядок тот
+ * же, поэтому «Расходы» месяца и «Можно на повседневные» (27 000 ₽ канонического набора) одинаковы в
+ * любой день месяца. Будущими бывают только выплаты — и они «ожидаются» (`demoIncomes`).
+ */
+function demoScene(month: string, today: string): readonly Transaction[] {
+  const todayDay = monthOfDate(today) === month ? Number(today.slice(8, 10)) : 31;
+  const day = (value: number) => `${month}-${String(Math.min(value, todayDay)).padStart(2, "0")}`;
+  const { card, cash, dollars } = DEMO_IDS.accounts;
+  const { food, transport, housing } = PLANNING_IDS.categories;
+  const expense = (index: number, on: number, categoryId: string, amountMinor: number, tagIds?: readonly string[]): Transaction => ({
+    id: sceneId(index),
+    occurredOn: day(on),
+    status: "posted",
+    kind: "expense",
+    amountMinor,
+    accountId: card,
+    categoryId,
+    ...(tagIds === undefined ? {} : { tagIds }),
+  });
+  return [
+    expense(1, PAYDAY_ADVANCE, housing, 4_500_000),
+    expense(2, 6, food, 440_000),
+    expense(3, 9, food, 385_000),
+    { id: sceneId(4), occurredOn: day(10), status: "posted", kind: "transfer", amountMinor: 1_000_000, fromAccountId: card, toAccountId: cash },
+    expense(5, 11, transport, 90_000),
+    expense(6, 12, food, 390_000),
+    { id: sceneId(7), occurredOn: day(12), status: "posted", kind: "debt_out", amountMinor: 500_000, accountId: card, debtId: DEMO_IDS.debt },
+    expense(8, 14, food, 430_000),
+    expense(9, 16, food, 215_000),
+    expense(10, 18, food, 340_000, [DEMO_IDS.tags.dacha]),
+    expense(11, 18, transport, 250_000, [DEMO_IDS.tags.dacha]),
+    expense(12, 19, transport, 60_000),
+    // Доллары куплены в прошлом месяце: 111 000 ₽ с карты — 1 200 $ на счёт «Доллары». Перевод
+    // между валютами несёт сумму зачисления; ни расходом, ни доходом он не считается.
+    { id: sceneId(13), occurredOn: `${shiftMonth(month, -1)}-22`, status: "posted", kind: "transfer", amountMinor: 11_100_000, fromAccountId: card, toAccountId: dollars, toAmountMinor: 120_000 },
+  ];
+}
+
+/**
+ * Счета макетов v5 при той же сумме «На счетах» 554 000 ₽ (на 19-е число): карта 418 000, наличные
+ * 10 000, резерв платежей 15 000 и доллары 1 200 $ — 111 000 ₽ по курсу 92,50. Карта — прежний
+ * «Основной» с тем же идентификатором: на него ссылаются доходы, платежи плана и операции сцены.
+ * Остаток на начало у карты — 5 000 ₽: ровно столько ушло в долг Саше, и «На счетах» сходится.
+ */
+function demoAccounts(accounts: readonly Account[]): readonly Account[] {
+  return [
+    ...accounts.map((account) => account.id === DEMO_IDS.accounts.card
+      ? { ...account, name: "Карта", openingBalanceMinor: 500_000, sortOrder: 10 }
+      : { ...account, sortOrder: 30 }),
+    { id: DEMO_IDS.accounts.cash, name: "Наличные", type: "cash", currency: "RUB", openingBalanceMinor: 0, active: true, sortOrder: 20 },
+    { id: DEMO_IDS.accounts.dollars, name: "Доллары", type: "savings", currency: "USD", openingBalanceMinor: 0, active: true, sortOrder: 40 },
+  ];
+}
+
+/**
+ * Цель макетов: «Отпуск», 45 000 из 150 000 ₽. Это прежняя цель набора под новым именем и с новой
+ * суммой: взнос по плану — те же 10 000 ₽ в месяц, поэтому «свободно» и дно горизонта не двигаются.
+ */
+function demoGoals(goals: readonly Goal[]): readonly Goal[] {
+  return goals.map((goal) => ({ ...goal, name: "Отпуск", targetMinor: 15_000_000, openingContributedMinor: 4_500_000 }));
+}
+
+/** Метки: «дача» — на двух покупках 18-го, «отпуск» — пока без операций. */
+const DEMO_TAGS: readonly Tag[] = [
+  { id: DEMO_IDS.tags.vacation, name: "отпуск", active: true },
+  { id: DEMO_IDS.tags.dacha, name: "дача", active: true },
+];
+
+/** Долг: Саша должен 5 000 ₽ и вернёт до 1-го следующего месяца. */
+function demoDebts(month: string): readonly Debt[] {
+  return [{ id: DEMO_IDS.debt, counterparty: "Саша", direction: "owed_to_me", currency: "RUB", openingMinor: 0, dueDate: monthStartDate(shiftMonth(month, 1)), active: true }];
+}
+
+/**
+ * Регулярные операции макетов: зарплата 110 000 ₽ 20-го и аренда 45 000 ₽ 5-го. Модель хранит их
+ * без экрана 2e, и до 2e их никто не исполняет: водяной знак стоит на конце месяца сцены, поэтому
+ * ни одно вхождение не повторит записанную аренду или ожидаемую получку этого месяца.
+ */
+function demoRules(month: string, salaryCategoryId: string): readonly RecurringRule[] {
+  const start = shiftMonth(month, -HISTORY_MONTHS);
+  return [
+    {
+      id: DEMO_IDS.rules.salary,
+      name: "Зарплата",
+      template: { kind: "income", accountId: DEMO_IDS.accounts.card, categoryId: salaryCategoryId, amountMinor: SALARY_MINOR },
+      frequency: "monthly",
+      interval: 1,
+      startDate: `${start}-${String(PAYDAY_SALARY).padStart(2, "0")}`,
+      materializedThrough: monthEndDate(month),
+      active: true,
+    },
+    {
+      id: DEMO_IDS.rules.rent,
+      name: "Аренда",
+      template: { kind: "expense", accountId: DEMO_IDS.accounts.card, categoryId: PLANNING_IDS.categories.housing, amountMinor: 4_500_000 },
+      frequency: "monthly",
+      interval: 1,
+      startDate: `${start}-${String(PAYDAY_ADVANCE).padStart(2, "0")}`,
+      materializedThrough: monthEndDate(month),
+      active: true,
+    },
+  ];
+}
+
+/**
+ * Демо-бюджет: сцена в текущем месяце, суммы канонического набора, счета и операции макетов v5.
  *
  * Проверка на месте, а не в тесте: если сид когда-нибудь заведёт восьмую категорию или переименует
  * седьмую, молча уехать этому нельзя — суммы останутся, а имя, на которое они ссылаются, исчезнет
@@ -209,14 +391,36 @@ export function buildDemoBudgetState(today: string = localToday(new Date())): Bu
     { ...seed, categories: [...categories] },
     monthIndex(month, "сегодняшний месяц") - monthIndex(CANONICAL_DEMO_MONTH),
   );
-  const accountId = scene.transactions.find((item) => item.kind === "income")?.accountId
-    ?? scene.accounts[0]!.id;
 
+  const transactions: readonly Transaction[] = [
+    ...demoIncomes(month, today, salary.id, DEMO_IDS.accounts.card),
+    ...demoScene(month, today),
+  ];
+  const recurringRules = demoRules(month, salary.id);
   return {
     ...scene,
-    transactions: [
-      ...demoIncomes(month, salary.id, accountId),
-      ...scene.transactions.filter((item) => item.kind !== "income"),
-    ],
+    // Дни выплат названы (D-039): «хватает до 20-го» видно в любой день месяца, и с первого числа.
+    household: { id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [PAYDAY_ADVANCE, PAYDAY_SALARY] },
+    categories: activeIncomeSources(scene.categories, transactions, recurringRules),
+    accounts: demoAccounts(scene.accounts),
+    goals: demoGoals(scene.goals),
+    tags: DEMO_TAGS,
+    exchangeRates: demoRates(month),
+    debts: demoDebts(month),
+    recurringRules,
+    transactions,
   };
+}
+
+/**
+ * Источники дохода демо — только те, по которым есть операции или регулярная запись: «Зарплата».
+ * Остальные стартовые лежат в архиве, как у набора: восемь плиток по 0 ₽ в ряду «Доходы и счета»
+ * выталкивали счета за край экрана, а макет 06 показывает «Зарплату» и сразу счета. Числа бюджета от
+ * этого не меняются: у архивного источника нет ни одной операции.
+ */
+function activeIncomeSources(categories: readonly Category[], transactions: readonly Transaction[], rules: readonly RecurringRule[]): readonly Category[] {
+  const used = new Set<string>();
+  for (const item of transactions) if ("categoryId" in item && typeof item.categoryId === "string") used.add(item.categoryId);
+  for (const rule of rules) if ("categoryId" in rule.template && typeof rule.template.categoryId === "string") used.add(rule.template.categoryId);
+  return categories.map((category) => (category.type === "income" && !used.has(category.id) ? { ...category, active: false } : category));
 }

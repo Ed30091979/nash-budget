@@ -1,4 +1,3 @@
-import { Icon } from "../Icon";
 import { Money } from "../Money";
 import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
@@ -13,20 +12,14 @@ export function accountTileLabel(tile: AccountTileModel): string {
 }
 
 /**
- * Тёмная плитка счёта: имя и остаток в валюте счёта (§7: валюта счёта на плитке, база — в итогах).
- * Тон, выбранный семьёй, — подложка глифа его цвета (глиф — его чернилами, 5.05–6.50:1); без тона
- * глиф стоит прямо на тёмной плитке.
- * На тёмной плитке только белый и его приглушение; отрицательный остаток — белым, с U+2212 и глифом,
- * а не красным (2.25:1 — запрет §3).
+ * Плитка счёта: графитовый квадрат с белым глифом (15.37:1) — или тон, который выбрала семья (D-036),
+ * — имя и остаток в валюте счёта под ним (§7: валюта счёта на плитке, база — в итогах).
+ * Отрицательный остаток — знаком U+2212 и бейджем-кругом в углу квадрата, а не красным числом.
  */
 export function AccountTile({ tile, pressed, onPick, drag }: { readonly tile: AccountTileModel; readonly pressed: boolean; readonly onPick: () => void; readonly drag?: TileDrag }) {
   const negative = tile.balanceMinor !== null && tile.balanceMinor < 0;
   return (
-    <Tile variant="account" label={accountTileLabel(tile)} pressed={pressed} onClick={onPick} drag={drag} tileKey={`account:${tile.id}`}>
-      <span className="tile-top">
-        <span className={tile.tone === null ? "tile-glyph" : `tile-glyph tone-${tile.tone}`} aria-hidden="true"><Icon name={tile.icon} size={20} /></span>
-        {negative ? <span className="tile-state negative" aria-hidden="true"><Icon name="circle-alert" size={20} /></span> : null}
-      </span>
+    <Tile variant="account" icon={tile.icon} tone={tile.tone ?? "account"} badge={negative ? "negative" : undefined} label={accountTileLabel(tile)} pressed={pressed} onClick={onPick} drag={drag} tileKey={`account:${tile.id}`}>
       <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(tile.name)}</bdi></span>
       <span className="tile-sum" aria-hidden="true">{tile.balanceMinor === null ? "—" : <Money value={tile.balanceMinor} currency={tile.currency} />}</span>
       {!tile.includeInTotal ? <small className="tile-note" aria-hidden="true">вне итога</small> : tile.unvalued ? <small className="tile-note" aria-hidden="true">нет курса</small> : null}

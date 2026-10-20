@@ -1,5 +1,6 @@
 import type { BudgetState, calculateBudget } from "@family-budget/domain";
 import { Icon } from "../../components/Icon";
+import { LargeTitle } from "../../components/LargeTitle";
 import { Money } from "../../components/Money";
 import { SectionTitle } from "../../components/SectionTitle";
 import { categoryVisual } from "../../category-visual";
@@ -46,7 +47,8 @@ export function ReportsScreen({ budget, metrics }: { readonly budget: BudgetStat
   const monthOf = active ? monthGenitive(active.startDate) : "";
   const rows = categorySpend(budget, metrics);
   return <>
-    <header className="screen-heading"><div><span className="card-kicker">Итоги из записанного</span><h1>Отчёты</h1><p>Расходы месяца плана по категориям, доход, капитал и остатки по счетам.</p></div></header>
+    <LargeTitle title="Отчёты" />
+    <p className="screen-lead">Расходы месяца плана по категориям, доход, капитал и остатки по счетам.</p>
     <section className="section-card" aria-labelledby="reports-categories-title">
       <SectionTitle id="reports-categories-title" title="Расходы по категориям" note={monthOf ? `Месяц плана — ${monthOf}, с учётом возвратов` : "Месяц плана, с учётом возвратов"} />
       {rows.length ? <ul className="transaction-list report-categories">{rows.map(({ category, spentMinor, share }) => {

@@ -45,7 +45,7 @@ function assertThreeRules(markup: string, section: string) {
 describe("пустые состояния", () => {
   it("история без операций называет состояние, объясняет и ведёт к записи", () => {
     const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
+      <HistoryScreen budget={budgetWithoutOperations()} onEdit={vi.fn()} onAdd={vi.fn()} />,
     );
 
     assertThreeRules(markup.slice(markup.indexOf(">Операции</h1>")), "операции");
@@ -56,7 +56,7 @@ describe("пустые состояния", () => {
   it("отличает «ничего не записано» от «фильтр ничего не нашёл» — иначе одно из двух ложь", () => {
     const budget = makeSeedBudget();
     const markup = renderToStaticMarkup(
-      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} onBack={vi.fn()} />,
+      <HistoryScreen budget={budget} onEdit={vi.fn()} onAdd={vi.fn()} />,
     );
 
     // В бюджете операции есть, поэтому «Записей пока нет» тут звучать не должно ни при каких
@@ -66,8 +66,9 @@ describe("пустые состояния", () => {
   });
 
   it("на «Обзоре» месяц без лимитов объясняет, что такое лимит, и ведёт в план", () => {
-    // Прежде это говорило табло конвертов «Записать»; с 2b строка «Можно на повседневные» —
-    // и без лимитов она не врёт «0 ₽ · исчерпаны», а называет состояние и ведёт в план.
+    // Прежде это говорило табло конвертов «Записать»; с 5.0 — карточка «Хватает до …» под итогами:
+    // без лимитов она не врёт «0 ₽ · исчерпаны», а компактной строкой макетов 03b/05 называет
+    // состояние, объясняет, что дадут лимиты, и вся ведёт в план.
     const budget = budgetWithoutLimits();
     const plan = calculateAnnualPlan(budget, "2026-07", 24);
     const markup = renderToStaticMarkup(
@@ -84,15 +85,23 @@ describe("пустые состояния", () => {
         onOpenMonth={vi.fn()}
         onOpenSheet={vi.fn()}
         onAddCategory={vi.fn()}
+        onAddAccount={vi.fn()}
         onPlan={vi.fn()}
+        onReports={vi.fn()}
         onEdit={vi.fn()}
       />,
     );
 
-    assertThreeRules(markup.slice(markup.indexOf('class="card reach-line empty"')), "лимиты");
-    expect(markup).toContain("Лимитов на этот месяц нет");
-    expect(markup).toContain("Задать лимиты в плане");
-    expect(markup).not.toContain("Можно на повседневные");
+    const card = /<section class="card reach-card empty"[^>]*>([\s\S]*?)<\/section>/u.exec(markup)?.[1] ?? "";
+    // Дорога к задаче — вся строка: одна кнопка, и её имя начинается с названия состояния.
+    expect(card.match(/<button/gu)).toHaveLength(1);
+    expect(card).toMatch(/^<button class="reach-open" type="button">/u);
+    expect(card).toContain('<span class="visually-hidden">Лимитов на этот месяц нет. </span>');
+    // Вопрос, на который ответят лимиты, и что для этого сделать — словами, до какого дня.
+    expect(card).toContain('<span class="reach-title">Сколько можно тратить?</span>');
+    expect(card).toMatch(/<span class="reach-caption">Задайте лимиты — покажем, хватит ли до [^<]{4,}<\/span>/u);
+    // И итог «Можно тратить» не выдумывает числа: лимитов нет — так и сказано.
+    expect(markup).toContain('<span class="total-label">Можно тратить</span><span class="total-value"><span class="total-none">лимитов нет</span></span>');
   });
 
   it("демо остаётся вторым выходом там, где ему место, — на первом экране онбординга", () => {
@@ -100,8 +109,9 @@ describe("пустые состояния", () => {
     // Внутри готового бюджета второй выход невозможен: демо не перезаписывает чужие данные.
     const onboarding = readFileSync(new URL("./onboarding/Onboarding.tsx", import.meta.url), "utf8");
 
-    expect(onboarding).toContain("Загрузить демонстрационный бюджет");
-    expect(onboarding).toContain("Хотите сначала посмотреть?");
+    // С v5 — тихая кнопка последнего слайда, под главной «Начать» (DIRECTION §e, п. 1).
+    expect(onboarding).toContain(">Посмотреть на примере</button>");
+    expect(onboarding.indexOf(">Начать</button>")).toBeLessThan(onboarding.indexOf(">Посмотреть на примере</button>"));
   });
 
   it("на «Обзоре», в «Операциях» и на «Годе» пустые списки тоже говорят и ведут, а не молчат пустой карточкой", () => {
@@ -109,10 +119,11 @@ describe("пустые состояния", () => {
     // состояния живут там, куда переехали сами списки.
     for (const [file, action] of [
       ["./features/operations/HistoryScreen.tsx", "Записать первую операцию"],
-      ["./features/overview/ReachLine.tsx", "Задать лимиты в плане"],
+      ["./features/overview/ReachCard.tsx", "Задайте лимиты — покажем, хватит ли до"],
     ] as const) {
       const source = readFileSync(new URL(file, import.meta.url), "utf8");
-      expect(source, `${file} по-прежнему рисует пустой список без слов`).toContain("empty-state");
+      // У «Обзора» пустое состояние — компактная строка карточки (макеты v5 03b, 05), а не блок.
+      expect(source, `${file} по-прежнему рисует пустой список без слов`).toMatch(/empty-state|reach-card empty/u);
       expect(source, `${file} не даёт дороги к задаче`).toContain(action);
     }
     // Список платежей «Года» без единого платежа тоже объясняет, чем он наполняется.

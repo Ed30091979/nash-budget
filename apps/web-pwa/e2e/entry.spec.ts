@@ -314,14 +314,14 @@ test("тост «Записано» называет то же число, чт�
   // накопленным. У демо есть доходы прошлых месяцев, и числа расходились.
   await loadDemo(page);
   await tile(page, "Зарплата").click();
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await amountField(page).fill("100");
   const promised = (await entrySheet(page).locator("#entry-effect").innerText()).trim();
-  const balance = /^На счёте «Основной» станет (.+)$/u.exec(promised)?.[1];
+  const balance = /^На счёте «Карта» станет (.+)$/u.exec(promised)?.[1];
   expect(balance, promised).toBeDefined();
   await submitButton(page).click();
   const receipt = toast(page, /Записано: доход 100\s₽/u).locator(".toast-receipt .sr-only");
-  await expect(receipt).toHaveText(`Остаток на счёте «Основной»: ${balance}, больше на 100\u00a0₽`);
+  await expect(receipt).toHaveText(`Остаток на счёте «Карта»: ${balance}, больше на 100\u00a0₽`);
 });
 
 /** Табом до кнопки или поля, чьё доступное имя — `name`; не дальше шестидесяти шагов. */
@@ -397,4 +397,96 @@ test("лист держит фокус: Tab ходит внутри, Esc с на
   await expect(leaveDialog(page)).toHaveCount(0);
   await expect(sheet).toHaveCount(0);
   await expect(tile(page, "Продукты")).toBeFocused();
+});
+
+test("лист 5.0: сегмент вида с «+», карточки сторон, плашка «Почти лимит», знаки клавиш — глифами, «Записать» — акцентом", async ({ page }) => {
+  // Макет 07: «Карта → Продукты», 2 400 ₽ — 24 400 из 30 000, порог 80 %: «почти лимит», останется 5 600.
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Записать", exact: true }).click();
+  const sheet = entrySheet(page);
+  const modes = sheet.getByRole("group", { name: "Вид операции" });
+  await expect(modes.getByRole("button")).toHaveText(["Расход", "Доход", "Перевод"]);
+  await expect(modes.getByRole("button", { name: "Расход" })).toHaveAttribute("aria-pressed", "true");
+  await modes.getByRole("button", { name: "Доход" }).click();
+  await expect(modes.getByRole("button", { name: "Доход" })).toHaveAttribute("aria-pressed", "true");
+  await discardSheet(page);
+
+  await tile(page, "Продукты").click();
+  await expect(sheet.locator('[data-side="from"] .endpoint-plate.account')).toBeVisible();
+  await expect(sheet.locator('[data-side="to"] .endpoint-plate')).toHaveClass(/tone-/u);
+  await typeOnKeypad(page, ["2", "4", "0", "0"]);
+  const state = sheet.locator("#entry-state");
+  await expect(state).toHaveClass(/\bnear\b/u);
+  await expect(state).toHaveText(/^Почти лимит: В категории «Продукты» останется 5\s600\s₽ из 30\s000\s₽$/u);
+  await expect(state.locator("use")).toHaveAttribute("href", "#glyph-triangle-alert");
+  await expect(amountField(page)).toHaveAttribute("aria-describedby", "entry-state");
+  // Знаки — глифы спрайта; клавиши — на утопленной плоскости, 52 в высоту.
+  for (const [name, glyph] of [["Плюс", "plus"], ["Минус", "minus"], ["Разделить", "divide"], ["Стереть", "delete"]] as const) {
+    await expect(keypadKey(page, name).locator("use")).toHaveAttribute("href", `#glyph-${glyph}`);
+    await expect(keypadKey(page, name)).toHaveText("");
+  }
+  const key = await keypadKey(page, "5").evaluate((element) => ({ height: element.getBoundingClientRect().height, background: getComputedStyle(element).backgroundColor }));
+  expect(key).toEqual({ height: 52, background: "rgb(238, 233, 225)" });
+  // Основная кнопка — акцент с белым, а не чернильная плита.
+  expect(await submitButton(page).evaluate((element) => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color])).toEqual(["rgb(196, 66, 26)", "rgb(255, 255, 255)"]);
+  await expect(submitButton(page)).toHaveText(/^Записать 2\s400\s₽$/u);
+  await discardSheet(page);
+});
+
+test("320×640: дата, комментарий и метки свёрнуты в строку, клавиши 48, всё на экране и без прокрутки вбок", async ({ page }) => {
+  // Макет 07, 320×640: ниже 700 pt высоты подписи сторон спрятаны, а дата, комментарий и метки —
+  // одной строкой «Сегодня · Комментарий, метки»; клавиатура и «Записать» — целиком на экране.
+  await loadDemo(page);
+  await page.setViewportSize({ width: 320, height: 640 });
+  await tile(page, "Продукты").click();
+  const sheet = entrySheet(page);
+  await typeOnKeypad(page, ["2", "4", "0", "0"]);
+  const more = sheet.getByRole("button", { name: "Комментарий, метки" });
+  await expect(more).toBeVisible();
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await expect(sheet.getByRole("textbox", { name: "Комментарий" })).toBeHidden();
+  await expect(sheet.locator(".endpoint-word").first()).toBeHidden();
+  const geometry = await page.evaluate(() => {
+    const rect = (selector: string) => document.querySelector<HTMLElement>(selector)?.getBoundingClientRect() ?? null;
+    const keypad = rect(".keypad");
+    const submit = rect(".entry-submit");
+    const amount = rect("#entry-amount");
+    const key = rect(".keypad button");
+    return {
+      whole: Boolean(keypad && submit && amount && keypad.top >= 0 && submit.bottom <= innerHeight + 0.5 && amount.top >= 0 && amount.bottom <= keypad.top),
+      key: Math.round(key?.height ?? 0),
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      sheetOverflow: [...document.querySelectorAll<HTMLElement>(".entry-sheet *")].some((element) => element.getBoundingClientRect().right > innerWidth + 0.5),
+    };
+  });
+  expect(geometry).toEqual({ whole: true, key: 48, overflow: false, sheetOverflow: false });
+  // Открыть строку — дата, комментарий и метки на месте, и набирать в них можно.
+  await more.click();
+  await expect(more).toHaveAttribute("aria-expanded", "true");
+  const note = sheet.getByRole("textbox", { name: "Комментарий" });
+  await note.fill("дача");
+  await expect(note).toHaveValue("дача");
+  await expect(sheet.getByRole("button", { name: "Вчера", exact: true })).toBeVisible();
+  await discardSheet(page);
+});
+
+test("фокус суммы — подчёркивание цветом фокуса под числом, а не рамка; цифры при наборе — без разрядов, в «Записать» — с ними", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await tile(page, "Продукты").click();
+  await typeOnKeypad(page, ["2", "4", "0", "0"]);
+  const amount = amountField(page);
+  await expect(amount).toBeFocused();
+  const focus = await amount.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { outlineColor: style.outlineColor, boxShadow: style.boxShadow };
+  });
+  // Ни рамки браузера (`auto`), ни кольца 3 pt вокруг героя: кольцо прозрачно, а указание фокуса —
+  // полоса 3 pt `--focus` (#0B57D0, 6.39:1 к белому листу) под числом.
+  expect(focus.outlineColor).toBe("rgba(0, 0, 0, 0)");
+  expect(focus.boxShadow).toMatch(/^rgb\(11, 87, 208\) 0px -3px 0px 0px inset$/u);
+  await expect(amount).toHaveValue("2400");
+  await expect(submitButton(page)).toHaveText(/^Записать 2\s400\s₽$/u);
+  await discardSheet(page);
 });

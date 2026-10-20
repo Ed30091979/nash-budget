@@ -11,14 +11,17 @@ describe("нижняя навигация из пяти мест", () => {
     expect(html).toContain('<nav class="bottom-nav" aria-label="Основные разделы">');
     // Глиф «+» — декоративный: имя кнопке даёт подпись, а не рисунок.
     expect(html).toMatch(/<button class="nav-fab" type="button" aria-label="Записать"><svg[^>]*aria-hidden="true"/u);
+    // «Отчёты» — кольцо, а не тренд; подпись переносится по слогам, а имя — целое слово.
+    expect(html).toMatch(/aria-label="Отчёты"><span class="nav-icon"><svg[^>]*><use href="#glyph-chart-pie"><\/use><\/svg><\/span><span aria-hidden="true">От\u00adчё\u00adты<\/span>/u);
+    expect([...html.matchAll(/aria-label="([^"]*)"/gu)].map((match) => match[1]).filter((name) => name?.includes("\u00ad"))).toEqual([]);
   });
 
   it("«вы здесь» — `aria-current` и точка у своей вкладки; подэкраны «Ещё» подсвечивают «Ещё»", () => {
     const overview = renderToStaticMarkup(<BottomNav route={{ name: "overview" }} onTab={vi.fn()} onAdd={vi.fn()} />);
     expect(overview.match(/aria-current="page"/gu)).toHaveLength(1);
-    expect(overview).toMatch(/<button class="nav-button active" type="button" aria-current="page">[\s\S]*?Обзор/u);
+    expect(overview).toMatch(/<button class="nav-button active" type="button" aria-current="page" aria-label="Обзор">/u);
     const family = renderToStaticMarkup(<BottomNav route={{ name: "family" }} onTab={vi.fn()} onAdd={vi.fn()} />);
-    expect(family).toMatch(/<button class="nav-button active" type="button" aria-current="page">[\s\S]*?Ещё/u);
+    expect(family).toMatch(/<button class="nav-button active" type="button" aria-current="page" aria-label="Ещё">/u);
     // Лист «+» поверх вкладки: текущая страница — «+», а вкладки ни одной.
     const entry = renderToStaticMarkup(<BottomNav route={{ name: "operations", sheet: "entry" }} onTab={vi.fn()} onAdd={vi.fn()} />);
     expect(entry).toContain('<button class="nav-fab active" type="button" aria-label="Записать" aria-current="page">');
@@ -31,6 +34,6 @@ describe("нижняя навигация из пяти мест", () => {
       expect(markup.match(/aria-current="page"/gu)).toHaveLength(1);
     }
     // Другой месяц «Обзора» — та же вкладка.
-    expect(renderToStaticMarkup(<BottomNav route={{ name: "overview", month: "2026-08" }} onTab={vi.fn()} onAdd={vi.fn()} />)).toMatch(/<button class="nav-button active" type="button" aria-current="page">[\s\S]*?Обзор/u);
+    expect(renderToStaticMarkup(<BottomNav route={{ name: "overview", month: "2026-08" }} onTab={vi.fn()} onAdd={vi.fn()} />)).toMatch(/<button class="nav-button active" type="button" aria-current="page" aria-label="Обзор">/u);
   });
 });

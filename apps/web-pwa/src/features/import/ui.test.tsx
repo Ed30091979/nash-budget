@@ -57,8 +57,8 @@ describe("экран выписки", () => {
     const html = renderToStaticMarkup(<ImportScreen budget={household()} onChange={vi.fn(async () => undefined)} onBack={vi.fn()} memory={silentMemory} />);
     const text = plainText(html);
 
-    expect(html).toContain('<h1 id="import-title"');
-    expect(text).toContain("Выписка банка");
+    // Заголовок стадии — `h1` строки заголовка: при смене стадии фокус приходит на него.
+    expect(html).toMatch(/<header class="title-bar">[\s\S]*?<h1 id="import-title" tabindex="-1">Выписка банка<\/h1>/u);
     // Обещание — плашкой рядом с кнопкой, а не строкой в свёрнутой политике.
     expect(html).toMatch(/<div class="import-privacy" role="note">[\s\S]*Файл читается на этом устройстве/u);
     expect(text).toContain(IMPORT_PRIVACY_TITLE);
@@ -92,7 +92,7 @@ describe("экран выписки", () => {
     // Незнакомое — списком продавцов, по одному полю на продавца, с категориями по группам.
     expect(text).toContain("Не узнали: 2 продавца");
     expect(text).toContain("ООО \"Ромашка\" 2 операции · списание 4 189,90 ₽ · 5 августа и 6 августа");
-    expect(html).toMatch(/<select id="import-merchant-0"[^>]*><option value="" selected="">Выберите категорию<\/option><optgroup label="Обязательные платежи">/u);
+    expect(html).toMatch(/<select id="import-merchant-0"[^>]*><option value="" selected="">Выберите категорию<\/option><optgroup label="Каждый день">/u);
     expect(html).toContain('<option value="#skip">Пропустить — не добавлять</option>');
     // «Прочее» доступно только как явный выбор человека, не как умолчание.
     expect(html).toMatch(/<option value="[^"#]+">Прочее<\/option>/u);

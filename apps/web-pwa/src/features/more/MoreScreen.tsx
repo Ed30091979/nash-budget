@@ -1,6 +1,7 @@
 import type { BudgetState } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
 import { Icon } from "../../components/Icon";
+import { LargeTitle } from "../../components/LargeTitle";
 import { DataManagementScreen } from "../data-management";
 import { formatMoney } from "../../money";
 import { plural } from "../../plural";
@@ -40,12 +41,15 @@ export function monthNote(budget: BudgetState, paydays: readonly number[]): stri
   return parts.join(" · ");
 }
 
-/** «15 категорий расходов · 8 источников дохода» — подпись строки «Категории и доходы». */
+/**
+ * «15 расходов · 8 доходов» — подпись строки «Категории и доходы»: коротко, в одну строку на телефоне
+ * (макет v5 10); что это категории и источники, сказано названием строки.
+ */
 export function categoriesNote(budget: BudgetState): string {
   const active = budget.categories.filter((category) => category.active);
   const expense = active.filter((category) => category.type === "expense").length;
   const income = active.length - expense;
-  return `${plural(expense, ["категория расходов", "категории расходов", "категорий расходов"])} · ${plural(income, ["источник дохода", "источника дохода", "источников дохода"])}`;
+  return `${plural(expense, ["расход", "расхода", "расходов"])} · ${plural(income, ["доход", "дохода", "доходов"])}`;
 }
 
 /** «5 меток · 1 в архиве» — подпись строки «Метки». */
@@ -56,6 +60,22 @@ export function tagsNote(budget: BudgetState): string {
   const parts = [active === 0 ? "меток пока нет" : plural(active, ["метка", "метки", "меток"])];
   if (archived > 0) parts.push(`${archived} в архиве`);
   return parts.join(" · ");
+}
+
+/** Подписи строк-заглушек 2e — «Долги», «Цели», «Регулярные»: сколько уже есть в бюджете. */
+export function debtsNote(budget: BudgetState): string {
+  const count = (budget.debts ?? []).length;
+  return count === 0 ? "долгов нет" : plural(count, ["долг", "долга", "долгов"]);
+}
+
+export function goalsNote(budget: BudgetState): string {
+  const count = budget.goals.length;
+  return count === 0 ? "целей пока нет" : plural(count, ["цель", "цели", "целей"]);
+}
+
+export function recurringNote(budget: BudgetState): string {
+  const count = (budget.recurringRules ?? []).length;
+  return count === 0 ? "регулярных пока нет" : plural(count, ["регулярная", "регулярные", "регулярных"]);
 }
 
 /** «3 счёта · 1 в архиве» — подпись строки «Счета». */
@@ -102,36 +122,42 @@ export function MoreScreen(props: {
   categoriesNote: string;
   onTags: () => void;
   tagsNote: string;
+  /** Заглушки до подволны 2e (R2): строки группы «Планы» (макет v5 10). */
+  onDebts: () => void;
+  debtsNote: string;
+  onGoals: () => void;
+  goalsNote: string;
+  onRecurring: () => void;
+  recurringNote: string;
   familyNote: string;
   monthNote: string;
   syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }) {
   return <>
-    <h1 className="visually-hidden">Ещё: учёт, семья, план и данные</h1>
-    {/* «Учёт» — справочники, на которых стоят «Обзор» и лист ввода: счета, категории, метки, курсы. */}
+    <LargeTitle title="Ещё" />
+    {/* «Деньги» — справочники, на которых стоят «Обзор» и лист ввода (строки «Учёта» 2c): счета,
+        категории, метки, курсы. Подложка строки — тон сущности, как плитка «Обзора». */}
     <section className="list-group" aria-labelledby="more-ledger-title">
-      <h2 id="more-ledger-title" className="list-kicker">Учёт</h2>
+      <h2 id="more-ledger-title" className="list-kicker">Деньги</h2>
       <ul className="list-card">
-        <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onTags}><span className="list-icon"><Icon name="hash" size={24} /></span><span className="list-copy"><strong>Метки</strong><small>{props.tagsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onAccounts}><span className="list-icon account"><Icon name="wallet" size={24} /></span><span className="list-copy"><strong>Счета</strong><small>{props.accountsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onCategories}><span className="list-icon tone-mint"><Icon name="layout-grid" size={24} /></span><span className="list-copy"><strong>Категории и доходы</strong><small>{props.categoriesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onTags}><span className="list-icon tone-peach"><Icon name="hash" size={24} /></span><span className="list-copy"><strong>Метки</strong><small>{props.tagsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRates}><span className="list-icon tone-amber"><Icon name="scale" size={24} /></span><span className="list-copy"><strong>Курсы валют</strong><small>{props.ratesNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 
-    <section className="list-group" aria-labelledby="more-family-title">
-      <h2 id="more-family-title" className="list-kicker">Семья</h2>
-      <ul className="list-card">
-        <li><button className="list-row" type="button" onClick={props.onFamily}><span className="list-icon"><Icon name="users" size={24} /></span><span className="list-copy"><strong>Семья и синхронизация</strong><small>{props.familyNote}</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-      </ul>
-    </section>
-
+    {/* «Планы» (макет v5 10): «План месяца» — строй месяца одной строкой, дверь туда, где его правят;
+        за ним «Регулярные», «Цели», «Долги» — заглушки до подволны 2e (R2) — в порядке и тонах макета;
+        «План на год» — последним: в макете его нет, а дверь к горизонту нужна. Соседние тона разные. */}
     <section className="list-group" aria-labelledby="more-plan-title">
-      <h2 id="more-plan-title" className="list-kicker">План</h2>
+      <h2 id="more-plan-title" className="list-kicker">Планы</h2>
       <ul className="list-card">
-        {/* Строй месяца одной строкой: то, на чём стоят «Обзор» и план на год, и дверь туда, где это правят. */}
-        <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
-        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>Горизонт 12–24 месяцев: сезонные расходы, обучение, страховка и дом</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanMonth}><span className="list-icon tone-lilac"><Icon name="calendar" size={24} /></span><span className="list-copy"><strong>План месяца</strong><small>{props.monthNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onRecurring}><span className="list-icon tone-sage"><Icon name="repeat" size={24} /></span><span className="list-copy"><strong>Регулярные</strong><small>{props.recurringNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onGoals}><span className="list-icon tone-coral"><Icon name="target" size={24} /></span><span className="list-copy"><strong>Цели</strong><small>{props.goalsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onDebts}><span className="list-icon tone-peach"><Icon name="user-round" size={24} /></span><span className="list-copy"><strong>Долги</strong><small>{props.debtsNote}</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+        <li><button className="list-row" type="button" onClick={props.onPlanYear}><span className="list-icon tone-amber"><Icon name="calendar-clock" size={24} /></span><span className="list-copy"><strong>План на год</strong><small>12–24 месяца вперёд: сезонные и годовые расходы</small></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
       </ul>
     </section>
 
@@ -146,6 +172,13 @@ export function MoreScreen(props: {
       onPublishEmpty={props.onPublishEmpty}
       onImportStatement={props.onImportStatement}
     />
+
+    <section className="list-group" aria-labelledby="more-family-title">
+      <h2 id="more-family-title" className="list-kicker">Семья</h2>
+      <ul className="list-card">
+        <li><button className="list-row" type="button" onClick={props.onFamily}><span className="list-icon tone-coral"><Icon name="users" size={24} /></span><span className="list-copy"><strong>Семья и синхронизация</strong><small>{props.familyNote}</small><span className={props.syncIndicator.className} aria-label={props.syncIndicator.ariaLabel}>{props.syncIndicator.text}</span></span><Icon name="chevron-right" size={24} className="row-chevron" /></button></li>
+      </ul>
+    </section>
 
     <section className="list-group" aria-labelledby="more-about-title">
       <h2 id="more-about-title" className="list-kicker">О приложении</h2>

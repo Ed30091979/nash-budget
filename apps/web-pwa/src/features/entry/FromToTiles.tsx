@@ -1,5 +1,4 @@
 import { Icon } from "../../components/Icon";
-import { Money } from "../../components/Money";
 import type { BudgetState } from "@family-budget/domain";
 import { accountIcon, categoryVisual } from "../../category-visual";
 import { softHyphenate } from "../../hyphenation";
@@ -23,11 +22,12 @@ export function sidePickable(draft: EntryDraft, side: EndpointSide): boolean {
 }
 
 /**
- * Плитки «откуда → куда» наверху листа: счёт — тёмной плиткой с остатком, категория — своим тоном.
- * Каждая — кнопка, которая открывает выбор этой стороны; доступное имя называет и сторону, и то, что
- * выбрано.
+ * Карточки «откуда → куда» наверху листа (DESIGN 5.0 §6, макет 07): подложка 40 с глифом — графит
+ * счёта или тон категории, — над именем короткое «Со счёта» / «В категорию». Каждая — кнопка, которая
+ * открывает выбор этой стороны; доступное имя называет и сторону, и то, что выбрано. Остаток счёта
+ * лист называет строкой «останется» под суммой, а не мелкой цифрой на карточке.
  */
-export function FromToTiles({ budget, draft, balances, onPick }: {
+export function FromToTiles({ budget, draft, onPick }: {
   readonly budget: BudgetState;
   readonly draft: EntryDraft;
   /** Остатки счетов — накопленные, в валюте счёта. */
@@ -48,28 +48,29 @@ export function FromToTiles({ budget, draft, balances, onPick }: {
   const fromCategory = draft.mode === "income" ? category(draft.incomeCategoryId) : refundCategory;
   const toCategory = draft.mode === "expense" ? category(draft.categoryId) : undefined;
 
-  const accountFace = (value: ReturnType<typeof account>) => value === undefined ? null : <>
-    <Icon name={accountIcon(value)} size={20} />
-    {balances[value.id] === null || balances[value.id] === undefined ? null : <small className="endpoint-balance" aria-hidden="true"><Money value={balances[value.id] ?? 0} currency={value.currency} /></small>}
-  </>;
-  const categoryTone = (value: ReturnType<typeof category>) => value === undefined ? "neutral" : categoryVisual(value).tone;
+  const categoryVisualOf = (value: ReturnType<typeof category>) => value === undefined ? { icon: "tag" as const, tone: "neutral" as const } : categoryVisual(value);
 
   const tile = (side: EndpointSide) => {
     const isAccount = side === "from" ? fromIsAccount : toIsAccount;
     const value = side === "from" ? names.from : names.to;
     const word = side === "from" ? words.from : words.to;
     const pickable = sidePickable(draft, side);
-    const tone = isAccount ? "tile-account" : `tone-${categoryTone(side === "from" ? fromCategory : toCategory)}`;
+    const chosenAccount = side === "from" ? fromAccount : toAccount;
+    const visual = categoryVisualOf(side === "from" ? fromCategory : toCategory);
+    const plate = isAccount ? "account" : `tone-${visual.tone}`;
+    const glyph = isAccount ? (chosenAccount === undefined ? "wallet" : accountIcon(chosenAccount)) : visual.icon;
     // Имя — с мягкими переносами, как на любой плитке (ревью 2b, раунд 3, NEW-2), и потому только для
     // глаза: что выбрано, диктор слышит из доступного имени, где U+00AD нет.
     const content = <>
-      <span className="endpoint-word" aria-hidden="true">{word}</span>
-      <span className="endpoint-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(value)}</bdi></span>
-      {isAccount ? accountFace(side === "from" ? fromAccount : toAccount) : null}
+      <span className={`endpoint-plate ${plate}`} aria-hidden="true"><Icon name={glyph} size={24} /></span>
+      <span className="endpoint-copy">
+        <span className="endpoint-word" aria-hidden="true">{word}</span>
+        <span className="endpoint-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(value)}</bdi></span>
+      </span>
     </>;
     return pickable
-      ? <button className={`tile endpoint ${tone}`} type="button" data-side={side} aria-label={`${word}: ${value}. Изменить`} onClick={() => onPick(side)}>{content}</button>
-      : <div className={`endpoint fixed ${tone}`} role="group" aria-label={`${word}: ${value}`}>{content}</div>;
+      ? <button className="endpoint" type="button" data-side={side} aria-label={`${word}: ${value}. Изменить`} onClick={() => onPick(side)}>{content}</button>
+      : <div className="endpoint fixed" role="group" aria-label={`${word}: ${value}`}>{content}</div>;
   };
 
   return (

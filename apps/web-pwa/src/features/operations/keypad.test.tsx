@@ -78,7 +78,8 @@ describe("клавиатура суммы", () => {
   it("не отбирает у поля ни физической клавиатуры, ни буфера, ни диктора", () => {
     // Поле — настоящее поле с именем; `inputmode="none"` просит платформу не поднимать
     // системную клавиатуру, и только. `readonly` сломал бы всё три сразу.
-    expect(markup).toContain('<label for="entry-amount">Сумма, ₽</label>');
+    // Подпись видна диктору и голосовому вводу; глазу сумму называет знак валюты рядом с числом.
+    expect(markup).toContain('<label for="entry-amount" class="visually-hidden">Сумма, ₽</label>');
     expect(markup).toMatch(/<input id="entry-amount" inputMode="none" autoComplete="off" maxLength="24"/u);
     expect(markup).not.toMatch(/readonly/iu);
     expect(source).not.toMatch(/readOnly/u);
@@ -108,11 +109,13 @@ describe("клавиатура суммы", () => {
     expect(declared).toBeGreaterThanOrEqual(minimum);
     expect(key).toContain("border-radius: var(--radius-control)");
     expect(addressesTouchTarget(".keypad button")).toBe(true);
-    // Контраст считан по §3: цифры — чернила на белом (18.36:1), знаки — `--ink-muted` (7.16:1),
-    // граница клавиши — `--line` (3.65:1, нетекстовый порог 3:1).
+    // Контраст считан по §3 (5.0): цифры — чернила на утопленной плоскости (15.19:1), знаки —
+    // `--ink-muted` (5.92:1). Рамки нет: клавишу опознаёт цифра, а не край (запрет §3, 1.21:1).
     expect(key).toContain("color: var(--ink)");
-    expect(key).toContain("background: var(--surface)");
-    expect(key).toContain("border: 1px solid var(--line)");
+    expect(key).toContain("background: var(--surface-sunken)");
+    expect(key).toContain("border: 0");
+    // Знаки — глифами спрайта, а не текстовыми символами (§6).
+    for (const glyph of ["plus", "minus", "divide", "delete"]) expect(keypadSource).toContain(`icon: "${glyph}"`);
     expect(rule(".keypad button.key-op")).toContain("color: var(--ink-muted)");
   });
 

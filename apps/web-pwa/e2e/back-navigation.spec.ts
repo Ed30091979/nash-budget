@@ -37,7 +37,7 @@ test("«Назад» с подэкрана ведёт к его родителю
   await expect.poll(() => focusedTag(page)).toBe("H1");
 
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Вкладка на вкладку заменяет запись: «Назад» с любой вкладки — на «Обзор», а не по кругу вкладок.
@@ -46,16 +46,16 @@ test("«Назад» с подэкрана ведёт к его родителю
   await tab(page, "Ещё").click();
   await expect(page.getByRole("button", { name: /^План месяца/u })).toBeVisible();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Кнопка «назад» экрана тоже ведёт к родителю и не оставляет в истории дубля.
   await tab(page, "Ещё").click();
   await page.getByRole("button", { name: /Семья и синхронизация/u }).click();
-  await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
+  await page.getByRole("button", { name: "Назад: Ещё" }).click();
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("лист «+» кладётся поверх вкладки, и «Назад» возвращает на неё", async ({ page }) => {
@@ -106,7 +106,7 @@ test("несохранённый черновик «Назад» не теряе
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
   await expect(entrySheet(page)).toHaveCount(0);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 });
 
@@ -130,12 +130,12 @@ test("адрес, набранный руками поверх черновик�
   await entrySheet(page).getByRole("button", { name: "Закрыть", exact: true }).click();
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 
   // Перезагрузка открывает то, что было на экране, а не лист.
   await page.reload();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect(amount).toHaveCount(0);
   expect(await hash(page)).toBe("#/");
 });
@@ -157,7 +157,7 @@ test("адрес, набранный поверх черновика, → «На
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Не сохранять" }).click();
   await expect(entrySheet(page)).toHaveCount(0);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   await expect.poll(() => hash(page)).toBe("#/");
 });
 
@@ -172,13 +172,13 @@ test("адрес, поставленный на место текущей зап
   await page.getByRole("button", { name: /^План на год/u }).click();
   await expect(page.getByRole("heading", { name: /Плана хватает/u })).toBeVisible();
   await tab(page, "Обзор").click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(page.url()).not.toContain("about:blank");
   expect(await hash(page)).toBe("#/");
   // «Назад» с корня — прочь из приложения, а не на чужую запись внутри него.
   await tab(page, "Отчёты").click();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("ссылка на подэкран достраивает историю родителями, мусор в адресе — «Запись не найдена»", async ({ page }) => {
@@ -190,11 +190,11 @@ test("ссылка на подэкран достраивает историю �
   await back(page);
   expect(await hash(page)).toBe("#/more");
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 
   await page.goto("/#/bogus/route");
   await expect(page.locator(".message-toast")).toContainText("Запись не найдена");
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
   expect(await hash(page)).toBe("#/");
 
   // Перезагрузка оставляет на том же месте: адрес — это маршрут.
@@ -203,7 +203,7 @@ test("ссылка на подэкран достраивает историю �
   await page.reload();
   await expect(page.getByRole("heading", { name: "Отчёты" })).toBeVisible();
   await back(page);
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await expect(page.locator(".reach-card")).toBeVisible();
 });
 
 test("операция с идентификатором в верхнем регистре открывается по адресу и правится", async ({ page }) => {
@@ -241,4 +241,61 @@ test("операция с идентификатором в верхнем ре�
   await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
   await expect(entrySheet(page)).toHaveCount(0);
   expect(await hash(page)).toBe("#/operations");
+});
+
+/** Кнопка «назад» строки заголовка: её прямоугольник — цель нажатия, не меньше 48 в обе стороны. */
+async function expectTitleBarBack(page: Page, name: string): Promise<void> {
+  const back = page.locator(".title-bar").getByRole("button", { name, exact: true });
+  await expect(back).toBeVisible();
+  const box = await back.boundingBox();
+  expect(box?.width ?? 0, `${name}: ширина цели`).toBeGreaterThanOrEqual(48);
+  expect(box?.height ?? 0, `${name}: высота цели`).toBeGreaterThanOrEqual(48);
+}
+
+test("строка заголовка: «‹ Ещё» на каждом подэкране ведёт к родителю, и фокус — на заголовке, куда пришли", async ({ page }) => {
+  // Дизайн 5.0, §d: шапки «Наш бюджет» нет, а кнопку-рамку «← К разделу «Ещё»» сменила строка
+  // заголовка. Поведение то же: подэкран кладёт запись, «назад» — к родителю без дубля в истории,
+  // после перехода фокус на `h1` экрана (DESIGN §9).
+  test.setTimeout(120_000);
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("Наш бюджет", { exact: true })).toHaveCount(0);
+  const subscreens: readonly (readonly [RegExp, string, string])[] = [
+    [/^Счета/u, "Счета", "#/more/accounts"],
+    [/^Категории и доходы/u, "Категории и доходы", "#/more/categories?type=expense"],
+    [/^Метки/u, "Метки", "#/more/tags"],
+    [/^Курсы валют/u, "Курсы валют", "#/more/rates"],
+    [/^План месяца/u, "План месяца", "#/more/plan-month"],
+    [/^План на год/u, "План на год", "#/more/plan-year"],
+    [/^Семья и синхронизация/u, "Семья", "#/more/family"],
+    [/Загрузить выписку банка/u, "Выписка банка", "#/more/import"],
+  ];
+  for (const [row, title, address] of subscreens) {
+    await tab(page, "Ещё").click();
+    await expect(page.getByRole("heading", { level: 1, name: "Ещё" })).toBeVisible();
+    await page.getByRole("button", { name: row }).click();
+    expect(await hash(page), title).toBe(address);
+    const heading = page.getByRole("heading", { level: 1, name: title });
+    await expect(heading).toBeVisible();
+    await expect(heading, `${title}: фокус на заголовке после перехода`).toBeFocused();
+    await expect(page.getByRole("heading", { level: 1 }), `${title}: заголовок экрана один`).toHaveCount(1);
+    await expectTitleBarBack(page, "Назад: Ещё");
+    await page.getByRole("button", { name: "Назад: Ещё", exact: true }).click();
+    expect(await hash(page), `${title} → «Ещё»`).toBe("#/more");
+    await expect(page.getByRole("heading", { level: 1, name: "Ещё" })).toBeFocused();
+  }
+  // Вглубь — к своему родителю: форма счёта → «‹ Счета», категория → «‹ Расходы».
+  await page.getByRole("button", { name: /^Счета/u }).click();
+  await page.getByRole("button", { name: /^Резерв платежей: .*Изменить$/u }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Резерв платежей" })).toBeFocused();
+  await expectTitleBarBack(page, "Назад: Счета");
+  await page.getByRole("button", { name: "Назад: Счета", exact: true }).click();
+  expect(await hash(page)).toBe("#/more/accounts");
+  await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeFocused();
+  // Вкладки — крупным заголовком, без «назад».
+  for (const [name, title] of [["Операции", "Операции"], ["Отчёты", "Отчёты"], ["Ещё", "Ещё"]] as const) {
+    await tab(page, name).click();
+    await expect(page.locator(".large-title").getByRole("heading", { level: 1, name: title })).toBeVisible();
+    await expect(page.locator(".title-bar")).toHaveCount(0);
+  }
 });

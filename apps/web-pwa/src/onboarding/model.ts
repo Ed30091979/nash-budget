@@ -1,395 +1,190 @@
 import {
+  canBeBaseCurrency,
   categoryNameKey,
+  DEFAULT_BASE_CURRENCY,
+  DEFAULT_EXPENSE_CATEGORIES,
   makeDefaultCategories,
+  monthEndDate,
+  monthOfDate,
+  monthStartDate,
+  setBaseCurrency,
+  type Account,
   type BudgetState,
   type Category,
-  type CategoryGroup,
+  type CurrencyCode,
 } from "@family-budget/domain";
 import { type CreateIfAbsentResult } from "@family-budget/storage";
-import { parseMoney } from "../money";
 
-export type OnboardingStep = 1 | 2 | 3 | 4;
-export type HouseholdComposition = "self" | "couple" | "family";
-
-export const HOUSEHOLD_COMPOSITION_LABELS: Readonly<Record<HouseholdComposition, string>> = {
-  self: "Для себя",
-  couple: "Для пары",
-  family: "Для семьи",
-};
-
-export const ONBOARDING_STEPS: readonly OnboardingStep[] = [1, 2, 3, 4];
-
-/**
- * Заголовки шагов называют то, что на шаге происходит.
+/*
+ * Первый запуск без анкеты (дизайн v5, DIRECTION §e).
  *
- * Не команда и не приветствие: человек уже открыл настройку и знает, что настраивает бюджет, —
- * ему нужно понять, о чём именно этот экран. Слова взяты те же, какими остальное приложение зовёт
- * эти же вещи, чтобы «повседневные лимиты» при настройке и «повседневные лимиты» на главном
- * экране читались как одно и то же, а не как два разных понятия.
+ * Три слайда — и сразу «Обзор» с готовым набором, который создаётся молча: два счёта, доход
+ * «Зарплата», двенадцать частых категорий, валюта по языку устройства и месяц плана. Ни одного
+ * поля: «Для себя / пары / семьи» убран — этот выбор не менял ни одного числа, синхронизация в
+ * сборках выключена, а семья живёт в «Ещё». Остальное спрашивают по одному вопросу поверх «Обзора»
+ * (`features/onboarding-questions/`), и каждый вопрос можно пропустить.
+ *
+ * Названия плана в модели нет: прежний онбординг вклеивал его в имя счёта («Для семьи · Наш
+ * бюджет · Основной счёт»). Набор этого больше не делает, и «Наш бюджет» остаётся маркой
+ * приложения на слайдах и значке.
  */
-export const ONBOARDING_STEP_TITLES: Readonly<Record<OnboardingStep, string>> = {
-  1: "План и счёт",
-  2: "Период и валюта",
-  3: "Доход и платежи",
-  4: "Повседневные лимиты",
-};
-
-export interface EverydayCategoryDraft {
-  readonly key: string;
-  readonly name: string;
-  readonly limit: string;
-}
-
-export interface OnboardingDraft {
-  readonly composition: HouseholdComposition;
-  readonly householdLabel: string;
-  readonly accountLabel: string;
-  readonly currency: "RUB";
-  readonly periodStart: string;
-  readonly monthlyIncome: string;
-  readonly mandatoryName: string;
-  readonly mandatoryAmount: string;
-  readonly categories: readonly EverydayCategoryDraft[];
-}
-
-export interface OnboardingStepValidation {
-  readonly valid: boolean;
-  readonly errors: Readonly<Record<string, string>>;
-}
 
 export type IdFactory = () => string;
-export const MAX_ONBOARDING_PERIOD_START = "9997-12-01";
 
-const LOCAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const LABEL_MAX_LENGTH = 80;
-const FORBIDDEN_FORMATTING_PATTERN = /[\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]/u;
-const LABEL_SCRIPT_PATTERNS = [
-  /\p{Script=Latin}/u,
-  /\p{Script=Cyrillic}/u,
-  /\p{Script=Greek}/u,
-] as const;
 
-function currentMonthStart(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-}
+/** Счета набора, в порядке плиток: карта — основной счёт, с неё записывается расход. */
+export const PRESET_ACCOUNTS: readonly { readonly name: string; readonly type: Account["type"] }[] = [
+  { name: "Карта", type: "current" },
+  { name: "Наличные", type: "cash" },
+];
 
-export function createInitialOnboardingDraft(startDate = currentMonthStart()): OnboardingDraft {
-  return {
-    composition: "family",
-    householdLabel: "Наш бюджет",
-    accountLabel: "Основной счёт",
-    currency: "RUB",
-    periodStart: startDate,
-    monthlyIncome: "",
-    mandatoryName: "Жильё",
-    mandatoryAmount: "",
-    categories: [
-      { key: "everyday-1", name: "Продукты", limit: "" },
-      { key: "everyday-2", name: "Транспорт", limit: "" },
-      { key: "everyday-3", name: "Дом и хозяйство", limit: "" },
-    ],
-  };
-}
+/** Единственный активный источник дохода набора; остальные стартовые — в архиве до выбора. */
+export const PRESET_INCOME = "Зарплата";
 
-export function normalizeOnboardingLabel(value: string): string {
-  return value.normalize("NFC").trim();
-}
+/**
+ * Двенадцать категорий набора (§e), в порядке листа «На что вы тратите?». Остальные три стартовые
+ * — «Кредиты и рассрочки», «Дети», «Красота и уход» — заводятся в архиве: лист чипов предлагает их
+ * вернуть одним касанием, и ни один выбор не плодит тёзку.
+ */
+export const PRESET_EXPENSES: readonly string[] = [
+  "Продукты",
+  "Кафе и доставка",
+  "Транспорт",
+  "Дом и хозяйство",
+  "Жильё",
+  "ЖКХ",
+  "Связь и подписки",
+  "Здоровье и аптека",
+  "Одежда и обувь",
+  "Развлечения и хобби",
+  "Подарки и праздники",
+  "Прочее",
+];
 
-function labelError(value: string, label: string): string | null {
-  const trimmed = normalizeOnboardingLabel(value);
-  if (!trimmed) return `Укажите ${label}.`;
-  if (trimmed.length > LABEL_MAX_LENGTH) return `Не более ${LABEL_MAX_LENGTH} символов.`;
-  if (/\p{Cc}/u.test(trimmed) || FORBIDDEN_FORMATTING_PATTERN.test(trimmed)) {
-    return "Уберите скрытые или служебные символы.";
-  }
-  if (LABEL_SCRIPT_PATTERNS.filter((pattern) => pattern.test(trimmed)).length > 1) {
-    return "Не смешивайте визуально похожие символы разных алфавитов в одной подписи.";
-  }
-  return null;
-}
+/** Категория, которая есть всегда: чипы её не показывают и в архив не убирают. */
+export const ALWAYS_ACTIVE_EXPENSE = "Прочее";
 
-function comparisonLabel(value: string): string {
-  return value.normalize("NFKC").trim().toLocaleLowerCase("ru-RU");
-}
+/** Стартовые расходные категории, которых нет в наборе: они лежат в архиве до выбора. */
+export const ARCHIVED_STARTERS: readonly string[] = DEFAULT_EXPENSE_CATEGORIES
+  .map((template) => template.name)
+  .filter((name) => !PRESET_EXPENSES.some((preset) => categoryNameKey(preset) === categoryNameKey(name)));
 
-function moneyError(value: string): string | null {
+/*
+ * Валюта набора (§e; решение ревью R2, L-3). Аудитория — Россия: по умолчанию рубль, и русский с
+ * английским телефоном молча долларов не получает. Другая валюта — только по явному признаку:
+ * регион в теге языка, у которого своя валюта с двумя знаками после запятой (`ru-KZ`, `en-US`,
+ * `de-DE`), или язык, который сам говорит о стране, — казахский (тенге) и белорусский (белорусский
+ * рубль). Тег без региона (`en`, `de`, `zh`, `es`, `pt`) — рубль: страну по языку не угадать.
+ * Базовой бывает только валюта с двумя знаками (D-031, `canBeBaseCurrency`): иена, вона, донг и
+ * исландская крона дают рубль. Выбрать свою валюту можно на первом листе вопросов, пока бюджет пуст.
+ */
+const LANGUAGE_CURRENCY: Readonly<Record<string, CurrencyCode>> = { kk: "KZT", be: "BYN" };
+
+const EURO_REGIONS = ["AT", "BE", "BG", "CY", "DE", "EE", "ES", "FI", "FR", "GR", "HR", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PT", "SI", "SK"] as const;
+
+/** Регион тега — валюта страны. Только явный регион: вероятный регион языка не угадывается. */
+export const REGION_CURRENCY: Readonly<Record<string, CurrencyCode>> = {
+  RU: "RUB", BY: "BYN", KZ: "KZT", UA: "UAH", UZ: "UZS", KG: "KGS", TJ: "TJS", TM: "TMT", AM: "AMD", AZ: "AZN", GE: "GEL", MD: "MDL",
+  US: "USD", GB: "GBP", CA: "CAD", AU: "AUD", CH: "CHF", PL: "PLN", CZ: "CZK", SE: "SEK", NO: "NOK", DK: "DKK", HU: "HUF",
+  RS: "RSD", RO: "RON", TR: "TRY", IL: "ILS", AE: "AED", CN: "CNY", IN: "INR", TH: "THB",
+  JP: "JPY", KR: "KRW", VN: "VND", IS: "ISK",
+  ...Object.fromEntries(EURO_REGIONS.map((region) => [region, "EUR"])),
+};
+
+/** Язык и явный регион тега BCP 47 (`ru-KZ` → ru, KZ; `en` → en, без региона). */
+function localeParts(tag: string): { readonly language: string; readonly region: string | null } | null {
   try {
-    parseMoney(value);
-    return null;
+    const locale = new Intl.Locale(tag.replace(/_/gu, "-"));
+    return { language: locale.language.toLowerCase(), region: locale.region?.toUpperCase() ?? null };
   } catch {
-    return "Введите положительную сумму в рублях, не более двух знаков после запятой.";
+    return null;
   }
 }
 
-function isCalendarDate(value: string): boolean {
-  if (!LOCAL_DATE_PATTERN.test(value)) return false;
-  if (value.startsWith("0000-")) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+/** Базовая валюта набора по тегу языка устройства (`navigator.language`). */
+export function currencyForLocale(tag: string | null | undefined): CurrencyCode {
+  if (typeof tag !== "string" || tag.trim() === "") return DEFAULT_BASE_CURRENCY;
+  const parts = localeParts(tag.trim());
+  if (parts === null) return DEFAULT_BASE_CURRENCY;
+  const byRegion = parts.region !== null && Object.hasOwn(REGION_CURRENCY, parts.region) ? REGION_CURRENCY[parts.region] : undefined;
+  if (byRegion !== undefined && canBeBaseCurrency(byRegion)) return byRegion;
+  const byLanguage = Object.hasOwn(LANGUAGE_CURRENCY, parts.language) ? LANGUAGE_CURRENCY[parts.language] : undefined;
+  if (byLanguage !== undefined && canBeBaseCurrency(byLanguage)) return byLanguage;
+  return DEFAULT_BASE_CURRENCY;
 }
 
-export function validateOnboardingStep(
-  draft: OnboardingDraft,
-  step: OnboardingStep,
-): OnboardingStepValidation {
-  const errors: Record<string, string> = {};
-
-  if (step === 1) {
-    if (!Object.hasOwn(HOUSEHOLD_COMPOSITION_LABELS, draft.composition)) {
-      errors.composition = "Выберите, для кого создаётся план.";
-    }
-    const household = labelError(draft.householdLabel, "название плана");
-    const account = labelError(draft.accountLabel, "название счёта");
-    if (household) errors.householdLabel = household;
-    if (account) errors.accountLabel = account;
-  }
-
-  if (step === 2) {
-    if (draft.currency !== "RUB") errors.currency = "В этой версии бюджет ведётся в рублях.";
-    if (!isCalendarDate(draft.periodStart)) {
-      errors.periodStart = "Выберите календарную дату.";
-    } else if (draft.periodStart > MAX_ONBOARDING_PERIOD_START) {
-      errors.periodStart = `Начало периода — не позднее ${MAX_ONBOARDING_PERIOD_START}.`;
-    } else if (!draft.periodStart.endsWith("-01")) {
-      errors.periodStart = "Бюджетный период начинается с первого числа месяца.";
-    }
-  }
-
-  if (step === 3) {
-    const income = moneyError(draft.monthlyIncome);
-    const mandatoryName = labelError(draft.mandatoryName, "название обязательного платежа");
-    const mandatoryAmount = moneyError(draft.mandatoryAmount);
-    if (income) errors.monthlyIncome = income;
-    if (mandatoryName) errors.mandatoryName = mandatoryName;
-    if (mandatoryAmount) errors.mandatoryAmount = mandatoryAmount;
-  }
-
-  if (step === 4) {
-    if (draft.categories.length < 3 || draft.categories.length > 5) {
-      errors.categories = "Добавьте от 3 до 5 повседневных категорий.";
-    }
-    const names = new Set<string>();
-    draft.categories.forEach((category, index) => {
-      const name = labelError(category.name, "название категории");
-      const limit = moneyError(category.limit);
-      if (name) errors[`category-${index}-name`] = name;
-      if (limit) errors[`category-${index}-limit`] = limit;
-      const normalized = comparisonLabel(category.name);
-      if (normalized && names.has(normalized)) {
-        errors[`category-${index}-name`] = "Названия категорий не должны повторяться.";
-      }
-      if (normalized) names.add(normalized);
-    });
-    const mandatory = comparisonLabel(draft.mandatoryName);
-    const duplicateMandatory = draft.categories.findIndex(
-      (category) => comparisonLabel(category.name) === mandatory,
-    );
-    if (mandatory && duplicateMandatory >= 0) {
-      errors[`category-${duplicateMandatory}-name`] = "Это название уже используется для обязательного платежа.";
-    }
-  }
-
-  return { valid: Object.keys(errors).length === 0, errors };
+/** Язык этого устройства, если браузер его называет. */
+export function deviceLanguage(): string | null {
+  return typeof navigator === "undefined" ? null : navigator.language ?? null;
 }
 
-export function moveOnboardingStep(
-  step: OnboardingStep,
-  direction: "back" | "forward",
-): OnboardingStep {
-  const delta = direction === "forward" ? 1 : -1;
-  return Math.min(4, Math.max(1, step + delta)) as OnboardingStep;
-}
-
-export type OnboardingStepState = "done" | "current" | "upcoming";
-
-/**
- * Состояние шага в индикаторе: пройден, текущий, ещё впереди.
- */
-export function onboardingStepState(
-  target: OnboardingStep,
-  current: OnboardingStep,
-): OnboardingStepState {
-  if (target === current) return "current";
-  return target < current ? "done" : "upcoming";
+export interface PresetOptions {
+  /** Сегодня по календарю семьи (`localToday`): месяц плана — этот. */
+  readonly today: string;
+  readonly currency?: CurrencyCode;
+  readonly makeId?: IdFactory;
 }
 
 /**
- * Индикатор шагов ведёт назад и только назад.
- *
- * Вперёд ведёт «Далее» — и только через проверку текущего шага. Шаг, пройденный раньше, мог стать
- * неверным после правки соседнего поля, поэтому «я тут уже был» — не основание пропустить проверку.
+ * Готовый набор первого запуска — тем же путём, каким бюджет создавал прежний онбординг: один
+ * период на текущий месяц, открытый, с порогом «почти лимит» 80 %, — поэтому вся логика плана,
+ * переноса месяца и «Года» работает как прежде. Лимитов и плана дохода нет: «Можно тратить» честно
+ * говорит «лимитов нет», пока человек их не задаст. Стартовые категории домена заводятся все, а
+ * лишние — сразу в архиве: выбор чипа возвращает ту же строку, а не создаёт вторую.
  */
-export function canReturnToOnboardingStep(
-  target: OnboardingStep,
-  current: OnboardingStep,
-): boolean {
-  return target < current;
-}
-
-/**
- * Подпись шага для читающих с экрана: номер, о чём шаг и можно ли туда вернуться.
- *
- * Видимая подпись — одна цифра, и без этой строки кнопка звучала бы как «один». Номер в ней
- * сохранён, чтобы сказанное вслух совпадало с написанным на экране.
- */
-export function onboardingStepButtonLabel(
-  target: OnboardingStep,
-  current: OnboardingStep,
-): string {
-  const title = ONBOARDING_STEP_TITLES[target];
-  switch (onboardingStepState(target, current)) {
-    case "current":
-      return `Шаг ${target}: ${title}. Текущий шаг`;
-    case "done":
-      return `Шаг ${target}: ${title}. Пройден, можно вернуться`;
-    default:
-      return `Шаг ${target}: ${title}. Ещё не пройден`;
-  }
-}
-
-export interface OnboardingNavigation {
-  readonly step: OnboardingStep;
-  readonly draft: OnboardingDraft;
-}
-
-export function createInitialOnboardingNavigation(
-  draft: OnboardingDraft = createInitialOnboardingDraft(),
-): OnboardingNavigation {
-  return { step: 1, draft };
-}
-
-/**
- * Возврат на пройденный шаг.
- *
- * Черновик переносится тем же объектом, а не собирается заново: возврат существует, чтобы
- * посмотреть и поправить введённое, и потерять его по дороге он не вправе. Шаг вперёд отсюда
- * недостижим — состояние возвращается прежним, и экран не меняется.
- */
-export function returnToOnboardingStep(
-  state: OnboardingNavigation,
-  target: OnboardingStep,
-): OnboardingNavigation {
-  if (!canReturnToOnboardingStep(target, state.step)) return state;
-  return { step: target, draft: state.draft };
-}
-
-export function advanceOnboardingStep(state: OnboardingNavigation): OnboardingNavigation {
-  const next = moveOnboardingStep(state.step, "forward");
-  return next === state.step ? state : { step: next, draft: state.draft };
-}
-
-export function validateCompleteOnboarding(draft: OnboardingDraft): OnboardingStepValidation {
-  const errors: Record<string, string> = {};
-  for (const step of [1, 2, 3, 4] as const) {
-    Object.assign(errors, validateOnboardingStep(draft, step).errors);
-  }
-  return { valid: Object.keys(errors).length === 0, errors };
-}
-
-function endOfMonth(startDate: string): string {
-  const year = Number(startDate.slice(0, 4));
-  const month = Number(startDate.slice(5, 7));
-  const day = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return `${startDate.slice(0, 8)}${String(day).padStart(2, "0")}`;
-}
-
-function safeSum(values: readonly number[], label: string): number {
-  const result = values.reduce((sum, value) => sum + value, 0);
-  if (!Number.isSafeInteger(result)) throw new Error(`${label}: итоговая сумма слишком велика.`);
-  return result;
-}
-
-export function buildOnboardingBudgetState(
-  draft: OnboardingDraft,
-  makeId: IdFactory = () => crypto.randomUUID(),
-): BudgetState {
-  const validation = validateCompleteOnboarding(draft);
-  if (!validation.valid) throw new Error("Заполните все шаги перед созданием бюджета.");
-
-  const issuedIds = new Set<string>();
+export function buildOnboardingBudgetState({ today, currency = DEFAULT_BASE_CURRENCY, makeId = () => crypto.randomUUID() }: PresetOptions): BudgetState {
+  if (!canBeBaseCurrency(currency)) throw new Error("Базовой может быть только валюта с двумя знаками после запятой.");
+  const issued = new Set<string>();
   const id = (): string => {
     const next = makeId();
-    if (!UUID_PATTERN.test(next) || issuedIds.has(next)) throw new Error("Не удалось создать уникальные идентификаторы.");
-    issuedIds.add(next);
+    if (!UUID_PATTERN.test(next) || issued.has(next)) throw new Error("Не удалось создать уникальные идентификаторы.");
+    issued.add(next);
     return next;
   };
 
-  const accountId = id();
-  const budgetId = id();
-  /**
-   * Набор категорий и набор строк бюджета — разные вещи.
-   *
-   * Хозяйство заводится со всем стартовым набором домена: пятнадцать расходных категорий в
-   * четырёх группах и восемь доходных. Лимиты при этом по-прежнему спрашиваются только у трёх-пяти
-   * повседневных — иначе онбординг превратился бы в анкету на двадцать три суммы. Названия,
-   * введённые вручную, сначала ищутся в этом наборе и лишь потом заводят двадцать четвёртую
-   * категорию: «Продукты» из формы и «Продукты» из каталога — одна и та же строка расходов.
-   */
-  const categories: Category[] = [...makeDefaultCategories(id)];
-  const useCategory = (rawName: string, group: CategoryGroup): string => {
-    const name = normalizeOnboardingLabel(rawName);
-    const key = categoryNameKey(name);
-    const existing = categories.find(
-      (item) => item.type === "expense" && categoryNameKey(item.name) === key,
-    );
-    if (existing) return existing.id;
-    const sortOrder = Math.max(0, ...categories.map((item) => item.sortOrder)) + 10;
-    if (!Number.isSafeInteger(sortOrder)) throw new Error("Порядок категорий слишком велик.");
-    const created: Category = { id: id(), name, type: "expense", group, active: true, sortOrder };
-    categories.push(created);
-    return created.id;
-  };
-  const mandatoryCategoryId = useCategory(draft.mandatoryName, "mandatory");
-  const everyday = draft.categories.map((category) => ({
-    id: useCategory(category.name, "everyday"),
-    lineId: id(),
-    limitMinor: parseMoney(category.limit),
+  const accounts: Account[] = PRESET_ACCOUNTS.map((account, index) => ({
+    id: id(),
+    name: account.name,
+    type: account.type,
+    currency: DEFAULT_BASE_CURRENCY,
+    openingBalanceMinor: 0,
+    active: true,
+    sortOrder: (index + 1) * 10,
   }));
-  const everydayTotalMinor = safeSum(everyday.map((category) => category.limitMinor), "Повседневные лимиты");
-  const plannedIncomeMinor = parseMoney(draft.monthlyIncome);
-  const mandatoryAmountMinor = parseMoney(draft.mandatoryAmount);
-  safeSum([everydayTotalMinor, mandatoryAmountMinor], "План на месяц");
+  const budgetId = id();
+  const preset = new Set([...PRESET_EXPENSES, PRESET_INCOME].map(categoryNameKey));
+  // Порядок внутри группы — порядок набора (D-041): «Продукты», «Кафе и доставка», «Транспорт»,
+  // «Дом и хозяйство»… Стартовые в архиве встают следом: вернувшись, они не обгоняют выбранные.
+  const presetOrder = (name: string) => PRESET_EXPENSES.findIndex((item) => categoryNameKey(item) === categoryNameKey(name));
+  const categories: Category[] = makeDefaultCategories(id).map((category, index) => {
+    const order = category.type === "expense" ? presetOrder(category.name) : -1;
+    const sortOrder = category.type !== "expense" ? category.sortOrder : order === -1 ? (PRESET_EXPENSES.length + index + 1) * 10 : (order + 1) * 10;
+    return preset.has(categoryNameKey(category.name)) ? { ...category, sortOrder } : { ...category, sortOrder, active: false };
+  });
+  const month = monthOfDate(today);
 
-  return {
+  const state: BudgetState = {
     activeBudgetId: budgetId,
-    accounts: [{
-      id: accountId,
-      name: `${HOUSEHOLD_COMPOSITION_LABELS[draft.composition]} · ${normalizeOnboardingLabel(draft.householdLabel)} · ${normalizeOnboardingLabel(draft.accountLabel)}`,
-      type: "current",
-      currency: "RUB",
-      openingBalanceMinor: 0,
-      active: true,
-    }],
+    accounts,
     categories,
     budgets: [{
       id: budgetId,
-      startDate: draft.periodStart,
-      endDate: endOfMonth(draft.periodStart),
+      startDate: monthStartDate(month),
+      endDate: monthEndDate(month),
       status: "open",
-      plannedIncomeMinor,
+      plannedIncomeMinor: 0,
       warningThreshold: 0.8,
-      lines: everyday.map((category) => ({
-        id: category.lineId,
-        categoryId: category.id,
-        plannedMinor: category.limitMinor,
-      })),
+      lines: [],
     }],
     goals: [],
     annualCommitments: [],
-    scheduledExpenses: [{
-      id: id(),
-      name: normalizeOnboardingLabel(draft.mandatoryName),
-      categoryId: mandatoryCategoryId,
-      accountId,
-      amountMinor: mandatoryAmountMinor,
-      dueDay: 1,
-      mode: "monthly",
-      active: true,
-    }],
+    scheduledExpenses: [],
     transactions: [],
   };
+  // Рубль — база по умолчанию и записи хозяйства не требует; другая валюта ставится доменом, пока
+  // бюджет пуст, и счета набора переходят в неё вместе с ней.
+  return currency === DEFAULT_BASE_CURRENCY ? state : setBaseCurrency(state, currency);
 }
 
 export interface OnboardingRepository {
@@ -421,7 +216,7 @@ export type OnboardingFailureKind = "save" | "demo";
 export function onboardingFailureMessage(kind: OnboardingFailureKind): string {
   return kind === "save"
     ? "Не удалось сохранить бюджет."
-    : "Не удалось загрузить демонстрационные данные.";
+    : "Не удалось загрузить пример.";
 }
 
 /** A synchronous acquire gate prevents two UI events from starting overlapping writes. */

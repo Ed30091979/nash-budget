@@ -9,8 +9,9 @@ import { plainInputValue } from "../../plain-text";
 export function NoteField({ value, onChange }: { readonly value: string; readonly onChange: (note: string) => void }) {
   return (
     <div className="field">
-      <label htmlFor="entry-note">Комментарий</label>
-      <input id="entry-note" dir="auto" autoComplete="off" maxLength={NOTE_MAX_LENGTH} placeholder="Например, Пятёрочка у дома" value={value} onChange={(event) => onChange(plainInputValue(event.currentTarget))} />
+      {/* Подпись — для диктора и голосового ввода; глазу то же слово говорит образец в пустом поле (макет 07). */}
+      <label htmlFor="entry-note" className="visually-hidden">Комментарий</label>
+      <input id="entry-note" dir="auto" autoComplete="off" maxLength={NOTE_MAX_LENGTH} placeholder="Комментарий" value={value} onChange={(event) => onChange(plainInputValue(event.currentTarget))} />
     </div>
   );
 }

@@ -397,7 +397,7 @@ describe("оболочка спрашивает реестр", () => {
     expect(source).toContain('onPlanning={() => navigate({ name: "plan-month" })}');
     expect(source).toContain('onFamily={() => navigate({ name: "family" })}');
     expect(source).toContain('onImportStatement={() => navigate({ name: "import" })}');
-    expect(source).toContain("<MoreBackButton onBack={back} />");
+    expect(source).toContain('<MoreTitleBar title="План месяца" onBack={back} />');
     // Переход — через роутер; при задержке документа форма записи не открывается вовсе (ревью 2a, п. 6).
     expect(source).toMatch(/const navigate = \(destination: Route\) => \{\s*\/\/[^\n]*\n\s*const refusal = writeFormRefusal\(hold, destination\);\s*if \(refusal !== null\) \{\s*refuseWriteForm\(refusal\.message\);\s*return;\s*\}\s*router\.navigate\(destination\);\s*\};/u);
     expect(source).toContain("const back = () => router.back();");

@@ -1,10 +1,16 @@
 import {
   calculateAnnualPlan,
   calculateBudget,
+  calculateDebts,
+  calculateHoldings,
+  calculateTagExpenses,
   categoryNameKey,
   DEFAULT_CATEGORIES,
+  HOUSEHOLD_ID,
+  householdPaydays,
   makePlanningSeed,
   monthOfDate,
+  PLANNING_IDS,
   type AnnualPlanMetrics,
   type BudgetState,
 } from "@family-budget/domain";
@@ -13,14 +19,21 @@ import { describe, expect, it } from "vitest";
 import { prepareBudgetState } from "../backup";
 import { categoryVisual } from "../category-visual";
 import { paydayDays, periodClock } from "../reach";
-import { buildDemoBudgetState, CANONICAL_DEMO_MONTH } from "./demo";
+import { overviewModel, reachLineModel } from "../features/overview/overview-model";
+import { buildDemoBudgetState, CANONICAL_DEMO_MONTH, DEMO_IDS, demoHoldingsRule } from "./demo";
 
 /** Дни, на которых демо проверяется: разный отступ от канонического июля и разное число месяца. */
 const DAYS = ["2026-07-04", "2026-09-04", "2026-09-30", "2026-12-01", "2027-02-28", "2031-01-15"];
 
-/** Всё, кроме словаря категорий и операций: остальное демо уносит из канонического набора как есть. */
+/**
+ * Каркас плана: период, лимиты, крупные платежи и расписания демо уносит из канонического набора как
+ * есть. Словарь категорий, операции, счета, цель и новые коллекции v5 — свои (проверены ниже).
+ */
 function scene(state: BudgetState) {
-  const { categories: _categories, transactions: _transactions, ...rest } = state;
+  const {
+    categories: _categories, transactions: _transactions, accounts: _accounts, goals: _goals, household: _household,
+    tags: _tags, exchangeRates: _rates, debts: _debts, recurringRules: _rules, ...rest
+  } = state;
   return rest;
 }
 
@@ -86,17 +99,18 @@ describe("демонстрационный бюджет", () => {
         expect(plan.commitments[id]).toEqual(metrics);
       }
 
-      // Итоги месяца — до копейки те же: доход 180 000 ₽ разложен на аванс и получку, а не изменён.
+      // Расходы месяца и каждая категория — до копейки те же: 71 000 ₽ разбиты на покупки по дням,
+      // а не изменены. Доход месяца — то, что уже пришло: выплата, день которой не наступил, ожидается.
       const totals = calculateBudget(demo);
-      expect(totals).toMatchObject({
-        incomeMinor: seedTotals.incomeMinor,
-        expensesMinor: seedTotals.expensesMinor,
-        capitalMinor: seedTotals.capitalMinor,
-        accountBalancesMinor: seedTotals.accountBalancesMinor,
-      });
+      expect(totals).toMatchObject({ expensesMinor: seedTotals.expensesMinor, refundsMinor: seedTotals.refundsMinor });
+      const day = Number(today.slice(8, 10));
+      expect(totals.incomeMinor).toBe((day >= 5 ? 7_000_000 : 0) + (day >= 20 ? 11_000_000 : 0));
+      expect(demo.budgets[0]!.plannedIncomeMinor).toBe(18_000_000);
       for (const [categoryId, metric] of Object.entries(seedTotals.categoryMetrics)) {
         expect(totals.categoryMetrics[categoryId]).toEqual(metric);
       }
+      // «Можно на повседневные» G-002 — 27 000 ₽ в любом месяце сцены.
+      expect(reachLineModel(demo, plan.currentMonth.flexiblePlanMinor).safeToSpendMinor).toBe(2_700_000);
       const added = Object.values(totals.categoryMetrics)
         .filter((metric) => seedTotals.categoryMetrics[metric.categoryId] === undefined);
       const addedExpenses = DEFAULT_CATEGORIES.filter((template) => template.type === "expense").length
@@ -104,6 +118,25 @@ describe("демонстрационный бюджет", () => {
       expect(added).toHaveLength(addedExpenses);
       expect(added.every((metric) => metric.actualMinor === 0 && metric.status === "no_plan")).toBe(true);
     }
+  });
+
+  it("сцена — прошлое: в любой день месяца нет записанной операции позже сегодня, а 27 000 ₽ — те же (ревью R2, L-10)", () => {
+    const seedTotals = calculateBudget(makePlanningSeed());
+    for (const today of ["2026-10-01", "2026-10-15", "2026-10-19", "2026-10-28", "2026-10-31"]) {
+      const demo = buildDemoBudgetState(today);
+      // Будущее бывает только ожидаемым — это выплаты; всё ожидаемое — в будущем.
+      const future = demo.transactions.filter((item) => item.occurredOn > today);
+      expect(future.every((item) => item.kind === "income" && item.status === "pending"), today).toBe(true);
+      expect(demo.transactions.filter((item) => item.status === "pending").every((item) => item.occurredOn > today), today).toBe(true);
+      // Канонические числа месяца — в любой день: расходы, повседневный план и «Можно на повседневные».
+      const plan = calculateAnnualPlan(demo, "2026-10", 24);
+      expect(calculateBudget(demo).expensesMinor, today).toBe(seedTotals.expensesMinor);
+      expect(plan.currentMonth.flexiblePlanMinor, today).toBe(5_300_000);
+      expect(reachLineModel(demo, plan.currentMonth.flexiblePlanMinor).safeToSpendMinor, today).toBe(2_700_000);
+    }
+    // До 5-го вся сцена — сегодняшним числом; с 19-го — по дням макетов.
+    expect(new Set(buildDemoBudgetState("2026-10-01").transactions.filter((item) => item.kind !== "income" && item.occurredOn >= "2026-10-01").map((item) => item.occurredOn))).toEqual(new Set(["2026-10-01"]));
+    expect(buildDemoBudgetState("2026-10-19").transactions.find((item) => item.kind === "debt_out")?.occurredOn).toBe("2026-10-12");
   });
 
   it("помнит регулярные доходы, поэтому ось года и линейка знают про аванс и получку", () => {
@@ -125,13 +158,65 @@ describe("демонстрационный бюджет", () => {
     }
   });
 
-  it("показывает весь стартовый набор, а не семь его категорий", () => {
+  it("данные макетов v5 на 19 октября: четыре счёта на те же 554 000 ₽, курс, метки, долг, цель и ожидаемая получка", () => {
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    const holdings = calculateHoldings(demo, today);
+    const balance = (id: string) => holdings.accountBalancesMinor[id];
+    expect(demo.accounts.map((account) => [account.name, account.currency])).toEqual([
+      ["Карта", "RUB"], ["Резерв платежей", "RUB"], ["Наличные", "RUB"], ["Доллары", "USD"],
+    ]);
+    expect(balance(DEMO_IDS.accounts.card)).toBe(41_800_000);
+    expect(balance(DEMO_IDS.accounts.cash)).toBe(1_000_000);
+    expect(balance(DEMO_IDS.accounts.reserve)).toBe(1_500_000);
+    expect(balance(DEMO_IDS.accounts.dollars)).toBe(120_000);
+    // 1 200 $ по 92,50 — 111 000 ₽, и итог «На счетах» тот же, что в прежнем демо: 554 000 ₽.
+    expect(holdings.totalInBaseMinor).toBe(55_400_000);
+    expect(demo.exchangeRates?.map((rate) => [rate.date, rate.rate.baseMinor])).toEqual([["2026-09-15", 9_310], ["2026-10-01", 9_180], ["2026-10-15", 9_250]]);
+    // Расходы октября 71 000 = Жильё 45 000 + Продукты 22 000 + Транспорт 4 000, по дням макета.
+    const totals = calculateBudget(demo);
+    expect(totals.expensesMinor).toBe(7_100_000);
+    expect(totals.categoryMetrics[PLANNING_IDS.categories.food]?.actualMinor).toBe(2_200_000);
+    expect(totals.categoryMetrics[PLANNING_IDS.categories.transport]?.actualMinor).toBe(400_000);
+    expect(totals.categoryMetrics[PLANNING_IDS.categories.housing]?.actualMinor).toBe(4_500_000);
+    // Доходы октября на сегодня — 70 000: получка 20-го ожидается, а не записана будущей датой.
+    expect(totals.incomeMinor).toBe(7_000_000);
+    const salary20 = demo.transactions.find((item) => item.kind === "income" && item.occurredOn === "2026-10-20");
+    expect(salary20?.status).toBe("pending");
+    expect(demo.transactions.filter((item) => item.status === "posted").every((item) => item.occurredOn <= today)).toBe(true);
+    // Метки: «дача» на двух операциях 18-го, «отпуск» пока пустая.
+    expect(demo.tags?.map((tag) => tag.name)).toEqual(["отпуск", "дача"]);
+    const byTag = calculateTagExpenses(demo).byTag;
+    expect(byTag[DEMO_IDS.tags.dacha]).toMatchObject({ expenseMinor: 590_000, transactionCount: 2 });
+    expect(byTag[DEMO_IDS.tags.vacation]).toMatchObject({ expenseMinor: 0, transactionCount: 0 });
+    // Долг: Саша должен 5 000 ₽ до 1 ноября.
+    expect(demo.debts).toEqual([{ id: DEMO_IDS.debt, counterparty: "Саша", direction: "owed_to_me", currency: "RUB", openingMinor: 0, dueDate: "2026-11-01", active: true }]);
+    expect(calculateDebts(demo, today).debts[0]).toMatchObject({ balanceMinor: 500_000, overdue: false });
+    // Цель «Отпуск»: 45 000 из 150 000 ₽ — прежняя цель набора, взнос по плану тот же.
+    expect(demo.goals.map((goal) => [goal.name, goal.openingContributedMinor, goal.targetMinor, goal.plannedContributionMinor])).toEqual([["Отпуск", 4_500_000, 15_000_000, 1_000_000]]);
+    // Регулярные: зарплата 20-го и аренда 5-го, водяной знак — на конце месяца сцены.
+    expect(demo.recurringRules?.map((rule) => [rule.name, rule.template.amountMinor, rule.startDate.slice(8), rule.materializedThrough])).toEqual([
+      ["Зарплата", 11_000_000, "20", "2026-10-31"], ["Аренда", 4_500_000, "05", "2026-10-31"],
+    ]);
+    // Дни выплат названы: «хватает до 20 октября».
+    expect(demo.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [5, 20] });
+    const budget = activeBudgetOf(demo);
+    expect(periodClock(budget, [], today, demo.household?.paydays).payday.date).toBe("2026-10-20");
+  });
+
+  it("показывает весь стартовый набор расходов, а не семь его категорий; из доходов — только «Зарплату»", () => {
     const demo = buildDemoBudgetState("2026-09-04");
     const catalogue = DEFAULT_CATEGORIES.map((template) => categoryNameKey(template.name));
 
     expect(demo.categories).toHaveLength(DEFAULT_CATEGORIES.length);
     expect(demo.categories.map((category) => categoryNameKey(category.name))).toEqual(catalogue);
-    expect(demo.categories.every((category) => category.active)).toBe(true);
+    expect(demo.categories.filter((category) => category.type === "expense").every((category) => category.active)).toBe(true);
+    // Макет 06: в ряду «Доходы и счета» — «Зарплата» и сразу счета. Источники без единой операции —
+    // в архиве, как у набора; тот, по которому есть записи или регулярная запись, — активен.
+    const income = demo.categories.filter((category) => category.type === "income");
+    expect(income.filter((category) => category.active).map((category) => category.name)).toEqual(["Зарплата"]);
+    const used = new Set(demo.transactions.flatMap((item) => ("categoryId" in item && item.categoryId ? [item.categoryId] : [])));
+    for (const category of income) expect(category.active, category.name).toBe(used.has(category.id));
   });
 
   it("даёт каждой строке демо собственную иконку, а не общий ярлык группы", () => {
@@ -152,6 +237,33 @@ describe("демонстрационный бюджет", () => {
       .sort((left, right) => left.sortOrder - right.sortOrder)
       .map((category) => categoryVisual(category).tone);
     expect(limitTones.some((tone, index) => index > 0 && tone === limitTones[index - 1])).toBe(false);
+  });
+
+  it("правило дня (demo.ts): в любой день 31-дневного месяца и февраля — те же 71 000 и 27 000, «На счетах» по выплатам и курсу, «Хватает до» — до следующей", () => {
+    // Октябрь (31 день), февраль обычного года (28) и високосного (29): каждый день месяца. Прогон
+    // e2e стоит на 19 октября (`e2e/clock.ts`), а здесь держится всё, что демо обещает на любой день.
+    const months = [["2026-10", 31], ["2027-02", 28], ["2028-02", 29]] as const;
+    for (const [month, length] of months) {
+      for (let date = 1; date <= length; date += 1) {
+        const today = `${month}-${String(date).padStart(2, "0")}`;
+        const demo = buildDemoBudgetState(today);
+        const plan = calculateAnnualPlan(demo, month, 24);
+        const model = overviewModel(demo, month, today);
+        // «Расходы» и «Можно тратить» — канонические в любой день: сцена прижата к сегодняшнему числу.
+        expect(model.spentMinor, `${today}: «Расходы»`).toBe(7_100_000);
+        expect(reachLineModel(demo, plan.currentMonth.flexiblePlanMinor).safeToSpendMinor, `${today}: «Можно тратить»`).toBe(2_700_000);
+        // «На счетах» растёт ровно на выплаты, которые уже пришли: аванс 5-го, получка 20-го.
+        expect(model.totalInBaseMinor, `${today}: «На счетах»`).toBe(demoHoldingsRule(today));
+        // 554 000 ₽ — между 15-м и 19-м; до 15-го доллары по 91,80 (на 840 ₽ дешевле), до 5-го нет аванса.
+        expect(demoHoldingsRule(today), today).toBe(date < 5 ? 48_316_000 : date < 15 ? 55_316_000 : date < 20 ? 55_400_000 : 66_400_000);
+        // «Хватает до» меряет до ближайшей названной выплаты: 5-е, 20-е, а с 20-го — 5-е следующего.
+        const incomeDates = demo.transactions.filter((item) => item.kind === "income" && item.status === "posted").map((item) => item.occurredOn);
+        const clock = periodClock(demo.budgets[0]!, incomeDates, today, householdPaydays(demo));
+        const next = date < 5 ? `${month}-05` : date < 20 ? `${month}-20` : `${month === "2026-10" ? "2026-11" : month.replace(/-02$/u, "-03")}-05`;
+        expect(clock.inPeriod, today).toBe(true);
+        expect(clock.payday.date, `${today}: следующая выплата`).toBe(next);
+      }
+    }
   });
 
   it("проходит ту же проверку состояния, что и восстановленная резервная копия", () => {

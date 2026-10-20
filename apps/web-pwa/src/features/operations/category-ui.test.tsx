@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
-import { calculateAnnualPlan, makeDefaultCategories, type BudgetState, type Category } from "@family-budget/domain";
+import { calculateAnnualPlan, categoriesInListOrder, makeDefaultCategories, type BudgetState, type Category } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
 import { blankEntryDraft, endpoints, submitCheck } from "../entry/entry-model";
 import { pickOptions, TargetPicker } from "../entry/TargetPicker";
@@ -62,7 +62,9 @@ function overviewMarkup(state: BudgetState = fullCatalogue()): string {
       onOpenMonth={vi.fn()}
       onOpenSheet={vi.fn()}
       onAddCategory={vi.fn()}
+      onAddAccount={vi.fn()}
       onPlan={vi.fn()}
+      onReports={vi.fn()}
       onEdit={vi.fn()}
     />,
   );
@@ -80,9 +82,12 @@ describe("выбор категории: плитки «Обзора» и выб
     // конвертов прятало всё, у чего лимита нет, за свёрнутой строкой; плитки стоят все — сеткой,
     // по четыре в ряд, и та, у которой лимит есть, отличается полосой, а не местом.
     const state = fullCatalogue();
-    const expense = state.categories.filter((item) => item.type === "expense" && item.active).map((item) => item.name);
+    // Порядок — один на «Обзор» и лист: группа за группой, «Каждый день» первым (D-041).
+    const expense = categoriesInListOrder(state.categories, "expense").map((item) => item.name);
     const income = state.categories.filter((item) => item.type === "income").map((item) => item.name);
     expect(expense.length).toBeGreaterThan(10);
+    expect(expense.length).toBe(state.categories.filter((item) => item.type === "expense" && item.active).length);
+    expect(expense[0]).toBe("Продукты");
     expect(expenseTiles(overviewMarkup(state))).toEqual(expense);
     const picker = pickOptions(state, blankEntryDraft(state, "expense", TODAY), "to", {}).map((option) => option.name);
     expect(picker).toEqual(expense);
@@ -101,7 +106,7 @@ describe("выбор категории: плитки «Обзора» и выб
     const markup = overviewMarkup();
     const grid = markup.slice(markup.indexOf('class="tile-grid tile-grid-grid"'), markup.indexOf("</ul>", markup.indexOf('class="tile-grid tile-grid-grid"')));
     const items = grid.split("<li").slice(1);
-    expect(items.at(-1)).toContain('aria-label="Добавить категорию расходов"');
+    expect(items.at(-1)).toContain('aria-label="Своя категория расходов"');
     const state = fullCatalogue();
     const picker = renderToStaticMarkup(<TargetPicker budget={state} draft={blankEntryDraft(state, "expense", TODAY)} side="to" balances={{}} onPick={vi.fn()} onBack={vi.fn()} onCreate={vi.fn()} />);
     const tiles = picker.split("<li").slice(1);

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { moveCategory, type BudgetState, type Category, type CategoryGroup } from "@family-budget/domain";
 import { categoryVisual, type CategoryTone } from "../../category-visual";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { CATEGORY_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { useBaseCurrency } from "../../components/Money";
 import { ReorderControls, type ReorderDirection } from "../../components/ReorderControls";
+import { TileSquare } from "../../components/tiles/Tile";
 import { TonePicker } from "../../components/TonePicker";
 import { softHyphenate } from "../../hyphenation";
 import { useFormDraft } from "../../navigation/draft-guard";
@@ -76,8 +77,8 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
   };
   return (
     <form className="manage-form" onSubmit={submit} noValidate aria-describedby={error?.field === "form" ? CATEGORY_FORM_ERROR_ID : undefined}>
-      <div className={`tile ${expense ? "tile-expense" : "tile-income"} tone-${expense ? tone : "lilac"} manage-preview`} aria-hidden="true">
-        <span className="tile-top"><span className="tile-glyph"><Icon name={icon} size={20} /></span></span>
+      <div className={`tile ${expense ? "tile-expense" : "tile-income"} manage-preview`} aria-hidden="true">
+        <TileSquare icon={icon} tone={tone} />
         <span className="tile-name"><bdi dir="auto">{softHyphenate(draft.name.trim() === "" ? category.name : draft.name)}</bdi></span>
       </div>
       <div className="field">
@@ -225,9 +226,9 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
 
   return (
     <div className="manage-screen category-screen">
-      <div className="planning-toolbar"><BackButton label={income ? "К источникам дохода" : "К категориям"} onClick={onBack} /></div>
+      {/* К своему списку: вид списка записан в адресе категории, и «назад» ведёт к расходам или доходам. */}
+      <TitleBar back={{ label: income ? "Доходы" : "Расходы", onClick: onBack }} title={<bdi dir="auto">{category.name}</bdi>} />
       <header className="manage-head">
-        <h1><bdi dir="auto">{category.name}</bdi></h1>
         <p>{income ? "Источник дохода" : "Категория расходов"}{category.active ? "" : " · в архиве"}</p>
       </header>
       <p className="manage-status" role="status">{notice}</p>

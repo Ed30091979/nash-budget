@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Icon } from "../../components/Icon";
 import { formatDay } from "../../date-words";
 import { dateChoice, yesterdayOf } from "./entry-model";
 
@@ -18,7 +19,7 @@ export function DateChips({ value, today, onChange }: { readonly value: string; 
         <button className="chip" type="button" aria-pressed={choice === "today"} onClick={() => { setPicking(false); onChange(today); }}><span className="chip-face">Сегодня</span></button>
         <button className="chip" type="button" aria-pressed={choice === "yesterday"} onClick={() => { setPicking(false); onChange(yesterdayOf(today)); }}><span className="chip-face">Вчера</span></button>
         <button className="chip" type="button" aria-pressed={other} aria-expanded={picking} aria-controls="entry-date" onClick={() => setPicking(true)}>
-          <span className="chip-face">{other ? formatDay(value) : "Другой день"}</span>
+          <span className="chip-face">{other ? formatDay(value) : <><Icon name="calendar" size={20} />Другой день</>}</span>
         </button>
       </div>
       {picking || other ? <div className="field">

@@ -37,16 +37,18 @@ function renderOverview(state: BudgetState, today: string, familyNews: readonly 
       onOpenMonth={() => undefined}
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
+      onAddAccount={() => undefined}
       onPlan={() => undefined}
+      onReports={() => undefined}
       onEdit={() => undefined}
     />,
   );
 }
 
-/** Герой «Обзора»: месяц, итоги и строка «Можно на повседневные» — до конца её карточки. */
+/** Герой «Обзора»: месяц, итоги и карточка «Хватает до …» — до её конца. */
 function heroOf(markup: string): string {
   const start = markup.indexOf('<header class="overview-head"');
-  return markup.slice(start, markup.indexOf("</section>", markup.indexOf('class="card reach-line', start)));
+  return markup.slice(start, markup.indexOf("</section>", markup.indexOf('class="card reach-card', start)));
 }
 
 describe("семейная новость на «Обзоре»", () => {
@@ -69,7 +71,7 @@ describe("семейная новость на «Обзоре»", () => {
     // Разметка героя байт в байт одна и та же с новостью и без неё.
     expect(heroOf(spoken)).toBe(heroOf(silent));
     // И герой стоит раньше новости: новость под ним, а не над ним.
-    expect(spoken.indexOf('class="card reach-line')).toBeLessThan(spoken.indexOf('class="family-news"'));
+    expect(spoken.indexOf('class="card reach-card')).toBeLessThan(spoken.indexOf('class="family-news"'));
     // Новость выводится из состояния синхронизации, а герой — нет: оболочка не ждёт её и
     // не входит в ветку загрузки.
     expect(appSource).not.toMatch(/loadState === "loading"[\s\S]{0,300}familyNews/u);

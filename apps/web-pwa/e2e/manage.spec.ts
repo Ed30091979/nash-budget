@@ -20,6 +20,13 @@ async function openMore(page: Page, row: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 }
 
+/** Меток нет — пустое состояние (дизайн v5, 14): поле новой метки открывает «Создать метку». */
+async function startTag(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { level: 2, name: "Меток пока нет" })).toBeVisible();
+  await page.getByRole("button", { name: "Создать метку", exact: true }).click();
+  await expect(page.getByLabel("Новая метка")).toBeFocused();
+}
+
 /** «554 000 ₽» — в копейки, по цифрам. */
 async function totalMinor(page: Page): Promise<number> {
   const text = await page.locator(".overview-total").innerText();
@@ -29,6 +36,9 @@ async function totalMinor(page: Page): Promise<number> {
 
 test("счёт в долларах заведён в «Ещё», курс задан на экране курсов, расход в $: плитка — в $, итог — в ₽", async ({ page }) => {
   await loadDemo(page);
+  // Демо без своего счёта в долларах и без курсов USD: счёт и курс здесь заводятся с нуля.
+  await restoreBudget(page, demoBudget());
+  await goToOverview(page);
   const before = await totalMinor(page);
 
   await openMore(page, "Счета");
@@ -93,8 +103,9 @@ test("категория: имя, иконка, цвет и лимит — од�
   await goToOverview(page);
   const cafe = tile(page, "Кафе");
   await expect(cafe).toHaveAccessibleName(/^Кафе: потрачено 700\s₽ из 5\s000\s₽/u);
-  await expect(cafe).toHaveClass(/tone-lilac/u);
-  await expect(cafe.locator("use")).toHaveAttribute("href", "#glyph-wine");
+  // Тон и глиф — у квадрата плитки (5.0): квадрат окрашен тоном, глиф стоит прямо на нём.
+  await expect(cafe.locator(".tile-square")).toHaveClass(/tone-lilac/u);
+  await expect(cafe.locator(".tile-square > svg use")).toHaveAttribute("href", "#glyph-wine");
 
   // Архив: вопрос приложения, затем плитки на «Обзоре» нет, а операция — на месте.
   await page.getByRole("button", { name: "Изменить категории расходов" }).click();
@@ -116,7 +127,10 @@ test("категория: имя, иконка, цвет и лимит — од�
 
 test("метки: заведена, переименована, в архиве и удалена; используемую удалить нельзя — отказ словами домена", async ({ page }) => {
   await loadDemo(page);
+  // Демо без своих меток: справочник заводится с нуля.
+  await restoreBudget(page, demoBudget());
   await openMore(page, "Метки");
+  await startTag(page);
   const field = page.getByLabel("Новая метка");
   await field.fill("Ремонт");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
@@ -202,10 +216,10 @@ test("форма счёта только с клавиатуры: поля, ра
 test("набранная форма при уходе спрашивает диалогом приложения: «Продолжить ввод» оставляет, «Не сохранять» уводит", async ({ page }) => {
   await loadDemo(page);
   await openMore(page, "Счета");
-  await page.getByRole("button", { name: /^Основной: /u }).click();
+  await page.getByRole("button", { name: /^Карта: /u }).click();
   await page.getByLabel("Название").fill("Зарплатная");
   await page.getByRole("button", { name: "Обзор", exact: true }).click();
-  await expect(leaveDialog(page)).toContainText("правка счёта «Основной»");
+  await expect(leaveDialog(page)).toContainText("правка счёта «Карта»");
   await leaveDialog(page).getByRole("button", { name: "Продолжить ввод" }).click();
   await expect(page.getByLabel("Название")).toHaveValue("Зарплатная");
   // Системное «Назад» — тот же вопрос.
@@ -213,7 +227,7 @@ test("набранная форма при уходе спрашивает ди�
   await expect(leaveDialog(page)).toBeVisible();
   await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Основной: /u })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Карта: /u })).toBeVisible();
 });
 
 test("на 320 pt и при ×2.7 справочники не выезжают за экран, а их цели — не меньше 48", async ({ page }) => {
@@ -223,12 +237,13 @@ test("на 320 pt и при ×2.7 справочники не выезжают �
   // было что мерить (ревью 2c, MEDIUM-2: прежде здесь заводилась одна метка).
   await restoreBudget(page, withDollarExpenseAtOldRate(demoBudget()));
   await openMore(page, "Метки");
+  await startTag(page);
   await page.getByLabel("Новая метка").fill("Подработка для отпуска и дачи");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(page.locator(".tag-row")).toHaveCount(1);
   await openMore(page, "Счета");
   const mainId = await (async () => {
-    await page.getByRole("button", { name: /^Основной: /u }).click();
+    await page.getByRole("button", { name: /^Карта: /u }).click();
     const hash = await page.evaluate(() => window.location.hash);
     expect(hash).toMatch(/^#\/more\/accounts\/[0-9a-f-]{36}$/u);
     return hash;
@@ -390,7 +405,7 @@ test("категория и источник дохода: «Назад», си�
   // Расходы: системное «Назад» с категории — список расходов, ещё раз — «Ещё».
   await openMore(page, "Категории и доходы");
   await page.getByRole("button", { name: /^Продукты: /u }).click();
-  await expect(page.getByRole("button", { name: "К категориям" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Расходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Расходы");
@@ -403,19 +418,19 @@ test("категория и источник дохода: «Назад», си�
   await page.goBack();
   await expect(more).toBeAttached();
 
-  // Доходы: системное «Назад», «К источникам дохода» и «Сохранить» — к списку доходов.
+  // Доходы: системное «Назад», «‹ Доходы» и «Сохранить» — к списку доходов.
   await openCategories();
   await page.getByRole("button", { name: "Доходы", exact: true }).click();
   await shows("Доходы");
   const source = page.locator(".categories-screen .tile").first();
   await source.click();
-  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Доходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Доходы");
   expect(await address()).toBe("#/more/categories?type=income");
   await source.click();
-  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await page.getByRole("button", { name: "Назад: Доходы" }).click();
   await shows("Доходы");
   await page.goBack();
   await expect(more).toBeAttached();
@@ -436,7 +451,7 @@ test("категория и источник дохода: «Назад», си�
   // список доходов.
   await page.goto("about:blank");
   await page.goto(`/${sourceAddress}`);
-  await expect(page.getByRole("button", { name: "К источникам дохода" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Назад: Доходы" })).toBeVisible();
   await page.goBack();
   await expect(list).toBeVisible();
   await shows("Доходы");
@@ -444,7 +459,7 @@ test("категория и источник дохода: «Назад», си�
   await page.goto("about:blank");
   await page.goto(`/${sourceAddress.replace(/\?type=income$/u, "")}`);
   await expect.poll(address).toBe(sourceAddress);
-  await page.getByRole("button", { name: "К источникам дохода" }).click();
+  await page.getByRole("button", { name: "Назад: Доходы" }).click();
   await expect(list).toBeVisible();
   await shows("Доходы");
 });
@@ -474,6 +489,7 @@ test("фокус после действий на месте — на том, ч
   // Метка: «Изменить» — в поле имени; «Отмена» и «Сохранить» — обратно на «Изменить»; «В архив» —
   // на «Вернуть», «Вернуть» — на «В архив».
   await openMore(page, "Метки");
+  await startTag(page);
   await page.getByLabel("Новая метка").fill("Ремонт");
   await page.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(page.locator(".tag-row")).toHaveCount(1);
@@ -507,7 +523,7 @@ test("фокус после действий на месте — на том, ч
   // «Вернуть» в списке: строка уходит из архива в активные — фокус на неё.
   await page.keyboard.press("Enter");
   await expect(page.locator(".manage-status")).toContainText("в архиве");
-  await page.getByRole("button", { name: "К счетам" }).click();
+  await page.getByRole("button", { name: "Назад: Счета" }).click();
   await pressWithKeyboard(page, "Вернуть «Доллары» из архива");
   await expect(page.locator(".manage-status")).toContainText("снова среди активных");
   await expect.poll(() => focused(page)).toMatch(/^button: Доллары: /u);
@@ -525,7 +541,7 @@ test("фокус после действий на месте — на том, ч
   await page.keyboard.press("Enter");
   await pressWithKeyboard(page, "Убрать в архив", page.getByRole("alertdialog"));
   await expect(page.locator(".manage-status")).toContainText("в архиве");
-  await page.getByRole("button", { name: "К категориям" }).click();
+  await page.getByRole("button", { name: "Назад: Расходы" }).click();
   await pressWithKeyboard(page, "Вернуть «Кафе и доставка» из архива");
   await expect(page.locator(".manage-status")).toContainText("снова на «Обзоре»");
   await expect.poll(() => focused(page)).toMatch(/^button: Кафе и доставка: /u);
@@ -563,11 +579,11 @@ test("отказ записи оставляет черновик формы н�
 
   await openMore(page, "Счета");
   await page.getByRole("button", { name: "Новый счёт" }).click();
-  await page.getByLabel("Название").fill("Основной");
+  await page.getByLabel("Название").fill("Карта");
   await page.getByRole("button", { name: "Завести счёт" }).click();
   await expect(page.getByText("Активный счёт с таким названием уже есть.")).toBeVisible();
   await asksAbout("новый счёт");
-  await expect(page.getByLabel("Название")).toHaveValue("Основной");
+  await expect(page.getByLabel("Название")).toHaveValue("Карта");
 
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await leaveDialog(page).getByRole("button", { name: "Не сохранять" }).click();

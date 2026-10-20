@@ -21,6 +21,7 @@ import {
   renameTag,
   SEED_IDS,
   setBaseCurrency,
+  setHouseholdPaydays,
   updateAccount,
   updateCategory,
   type BudgetState,
@@ -375,6 +376,25 @@ describe("валюты как операции журнала", () => {
         fields: { currency: "USD", baseCurrency: "RUB", date: "2026-06-30", rate: { baseMinor: 9_250, quoteMinor: 100 } },
       },
     ]);
+  });
+
+  it("дни выплат (D-039) проходят журнал туда и обратно, правка — update хозяйства, а «Нет постоянной» снимает поле", () => {
+    const state = setHouseholdPaydays(dollars(), [20, 5]);
+    const snapshot = applyJournal(stamp(state));
+    expect(snapshot.integrity).toEqual({ ready: true, problems: [], withheld: [] });
+    expect(snapshot.state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB", paydays: [5, 20] });
+    expect(calculateBudget(snapshot.state)).toEqual(calculateBudget(state));
+
+    const moved = setHouseholdPaydays(state, [10, 25]);
+    expect(budgetJournalDrafts(state, moved, MEMBER)).toEqual([
+      { memberId: MEMBER, entity: "household", action: "update", targetId: HOUSEHOLD_ID, fields: { baseCurrency: "RUB", paydays: [10, 25] } },
+    ]);
+    const cleared = setHouseholdPaydays(moved, null);
+    expect(budgetJournalDrafts(moved, cleared, MEMBER)).toEqual([
+      { memberId: MEMBER, entity: "household", action: "update", targetId: HOUSEHOLD_ID, fields: { baseCurrency: "RUB" } },
+    ]);
+    // Хозяйство без дней уходит в журнал без поля — как всякое записанное до них.
+    expect(applyJournal(stamp(cleared)).state.household).toEqual({ id: HOUSEHOLD_ID, baseCurrency: "RUB" });
   });
 
   it("не удаляет хозяйство, даже если его нет в следующем состоянии", () => {

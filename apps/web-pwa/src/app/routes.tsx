@@ -1,8 +1,16 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { BudgetState, CategoryType, Transaction } from "@family-budget/domain";
 import type { StorageHealth } from "@family-budget/storage";
-import { BackButton } from "../components/BackButton";
+import { TitleBar } from "../components/TitleBar";
 import { createBudgetBackup, describeBackupRepairs, restoreBudgetBackup, type BackupRepair } from "../backup";
+import { downloadTextFile, prepareJsonDownload } from "../features/data-management";
+import { CoachMark } from "../features/onboarding-questions/CoachMark";
+import { HintCards } from "../features/onboarding-questions/HintCards";
+import { PaydaysCard } from "../features/onboarding-questions/PaydaysCard";
+import { coachCategoryId, coachDone, coachVisible, finishCoach } from "../features/onboarding-questions/hints-model";
+import { firstRunStore, type HintId } from "../features/onboarding-questions/memory";
+import { QuestionHost, useFirstRun } from "../features/onboarding-questions/QuestionHost";
+import { finishFirstRun, nextQuestion } from "../features/onboarding-questions/questions-model";
 import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
@@ -12,7 +20,8 @@ import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
 import { PlanningScreen } from "../features/planning";
-import { accountsNote, categoriesNote, MoreScreen, monthNote, tagsNote } from "../features/more/MoreScreen";
+import { accountsNote, categoriesNote, debtsNote, goalsNote, MoreScreen, monthNote, recurringNote, tagsNote } from "../features/more/MoreScreen";
+import { PlaceholderScreen } from "../features/placeholders/PlaceholderScreen";
 import { TagsScreen } from "../features/tags/TagsScreen";
 import { CategoriesScreen } from "../features/categories/CategoriesScreen";
 import { CategoryScreen } from "../features/categories/CategoryScreen";
@@ -73,19 +82,63 @@ export interface AppRouteContext {
   readonly syncIndicator: { readonly text: string; readonly className: string; readonly ariaLabel: string };
 }
 
-/** Кнопка «назад» подэкрана «Ещё»: в iOS-standalone другой нет. */
-function MoreBackButton({ onBack }: { readonly onBack: () => void }) {
-  return <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>;
+/** Строка заголовка подэкрана «Ещё»: «‹ Ещё · заголовок». В iOS-standalone другой кнопки «назад» нет. */
+function MoreTitleBar({ title, onBack }: { readonly title: string; readonly onBack: () => void }) {
+  return <TitleBar back={{ label: "Ещё", onClick: onBack }} title={title} />;
 }
 
 /**
  * «Обзор»: месяц из адреса (без него — текущий), плитки и «+» в рядах. «+» в ряду открывает лист
  * «Своя категория» прямо над плитками; тёзка, которая уже есть, открывает лист ввода в неё.
  */
-function OverviewRoute({ app, month }: { readonly app: AppRouteContext; readonly month: string | undefined }) {
+function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContext; readonly month: string | undefined; readonly sheetOpen: boolean }) {
   const { budget, today, plan, clock, monthToOpen, openingMonth, openMonth, familyNewsText, navigate, openSheet, write, setMessage } = app;
   const [adding, setAdding] = useState<CategoryType | null>(null);
   const thisMonth = currentMonth(today);
+  // Первый запуск (R2, DIRECTION §e): вопросы листами, подсказка на первую трату и карточки в конце.
+  // Ждут, пока поверх «Обзора» лист, показан другой месяц или документ семьи задержан (только чтение).
+  const firstRun = useFirstRun(undefined, budget);
+  const held = app.family.inFamily && (app.family.status?.hold ?? null) !== null;
+  const blocked = adding !== null || sheetOpen || (month ?? thisMonth) !== thisMonth || held;
+  const questionPending = firstRun !== null && nextQuestion(firstRun, today) !== null;
+  const coachTarget = coachCategoryId(budget);
+  const showCoach = !blocked && coachTarget !== null && coachVisible(firstRun, budget, questionPending);
+  // Первая запись — любой: с плитки, с «+», из выписки — снимает подсказку навсегда.
+  useEffect(() => {
+    if (coachDone(firstRun, budget)) void firstRunStore().update(finishCoach);
+  }, [firstRun, budget]);
+  const hintAction = async (id: HintId) => {
+    switch (id) {
+      case "opening-balance": {
+        const account = defaultAccountOf(budget);
+        navigate(account === null ? { name: "accounts" } : { name: "account", id: account.id });
+        return;
+      }
+      case "backup":
+        try {
+          const backup = await createBudgetBackup(app.budgetRef.current ?? budget, async () => undefined);
+          await downloadTextFile(prepareJsonDownload(backup.text));
+          if (backup.restoreWarning !== null) {
+            setMessage(`Резервная копия JSON скачана. ${backup.restoreWarning}`);
+            return;
+          }
+          await app.recordBackup(backup.createdAt);
+          setMessage("Резервная копия JSON скачана.");
+        } catch {
+          setMessage("Не удалось сделать копию. Попробуйте ещё раз в «Ещё» → «Данные».");
+        }
+        return;
+      case "import":
+        navigate({ name: "import" });
+        return;
+      case "goal":
+        navigate({ name: "goals" });
+        return;
+      case "family":
+        navigate({ name: "family" });
+        return;
+    }
+  };
   const choose = (type: CategoryType, categoryId: string) => {
     setAdding(null);
     if (type === "expense") {
@@ -110,9 +163,14 @@ function OverviewRoute({ app, month }: { readonly app: AppRouteContext; readonly
       onOpenMonth={(month) => void openMonth(month)}
       onOpenSheet={(request) => openSheet(sheetOpeningOf(request))}
       onAddCategory={setAdding}
+      onAddAccount={() => navigate({ name: "account-new" })}
       onPlan={() => navigate({ name: "plan-month" })}
-      onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: row === "incomes" ? "income" : "expense" })}
+      onReports={() => navigate({ name: "reports" })}
+      onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: "expense" })}
+      coach={showCoach ? <CoachMark target={`category:${coachTarget}`} onDismiss={() => void firstRunStore().update(finishCoach)} /> : null}
+      hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} syncAvailable={app.family.serverUrl !== null} onAction={hintAction} />}
     />
+    <QuestionHost budget={budget} today={today} write={write} blocked={blocked} onAddAccount={() => navigate({ name: "account-new", type: "savings" })} />
     {adding !== null ? (
       <AddCategorySheet
         budget={budget}
@@ -144,7 +202,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
     familyScreen, syncIndicator,
   } = app;
   return <>
-          {route.name === "overview" ? <OverviewRoute app={app} month={route.month} /> : null}
+          {route.name === "overview" ? <OverviewRoute app={app} month={route.month} sheetOpen={route.sheet !== undefined} /> : null}
           {/* «Операции» — вкладка: строка открывает операцию в листе ввода, и адрес это называет. */}
           {route.name === "operations" ? <HistoryScreen budget={budget} members={members} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}
           {route.name === "reports" ? <ReportsScreen budget={budget} metrics={metrics} /> : null}
@@ -166,11 +224,18 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 () => undefined,
                 (repair) => { repairs.push(repair); },
               );
+              // Восстановленный бюджет — уже не тот, что создал набор: первый запуск над ним закончен,
+              // и через неделю «На что вы тратите?» не откроется над его категориями (ревью R2, M-1).
+              await firstRunStore().update(finishFirstRun);
               // Каждый вид ремонта называется своими словами: снятая метка — не снятый участник.
               const notice = describeBackupRepairs(repairs);
               if (notice !== null) setMessage(notice);
             }}
-            onPersistClear={persistClear}
+            onPersistClear={async () => {
+              await persistClear();
+              // Память первого запуска — тоже данные этого устройства: уходит вместе с бюджетом.
+              await firstRunStore().clear();
+            }}
             onPublishEmpty={publishEmpty}
             onFamily={() => navigate({ name: "family" })}
             onPlanMonth={() => navigate({ name: "plan-month" })}
@@ -182,6 +247,12 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             categoriesNote={categoriesNote(budget)}
             onTags={() => navigate({ name: "tags" })}
             tagsNote={tagsNote(budget)}
+            onDebts={() => navigate({ name: "debts" })}
+            debtsNote={debtsNote(budget)}
+            onGoals={() => navigate({ name: "goals" })}
+            goalsNote={goalsNote(budget)}
+            onRecurring={() => navigate({ name: "recurring" })}
+            recurringNote={recurringNote(budget)}
             onRates={() => navigate({ name: "rates" })}
             ratesNote={ratesNote(budget, app.today)}
             familyNote={family.membership === null
@@ -190,8 +261,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             monthNote={monthNote(budget, paydays)}
             syncIndicator={syncIndicator}
           /> : null}
-          {route.name === "plan-month" ? <><MoreBackButton onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} /></> : null}
-          {route.name === "plan-year" ? <><MoreBackButton onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
+          {route.name === "plan-month" ? <><MoreTitleBar title="План месяца" onBack={back} /><PlanningScreen budget={budget} onChange={(change) => write.run(change)} paydays={<PaydaysCard budget={budget} write={write} onMessage={setMessage} />} /></> : null}
+          {route.name === "plan-year" ? <><MoreTitleBar title="План на год" onBack={back} /><YearScreen budget={budget} plan={plan} paydays={paydays} onPlanning={() => navigate({ name: "plan-month" })} categoryById={categoryById} /></> : null}
           {route.name === "import" ? <ImportScreen budget={budget} memory={importMemory} onChange={(change) => write.run(change)} onBack={back} /> : null}
           {route.name === "family" ? familyScreen(back) : null}
           {/* Справочники «Учёта» (подволна 2c). Запись — по UUID из адреса; имени в адресе нет. */}
@@ -221,17 +292,28 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             />
           ) : null}
           {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}
+          {/* Заглушки до подволны 2e: пустое состояние той же анатомии, что у меток (R2). */}
+          {route.name === "debts" || route.name === "goals" || route.name === "recurring" ? <PlaceholderScreen budget={budget} kind={route.name} onBack={back} /> : null}
           {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
-          {route.name === "account" || route.name === "account-new" ? (
-            <AccountScreen
-              key={route.name === "account" ? route.id : "new"}
-              budget={budget}
-              today={app.today}
-              accountId={route.name === "account" ? route.id : null}
-              write={write}
-              onBack={back}
-              onDone={(message) => { setMessage(message); back(); }}
-            />
-          ) : null}
+          {route.name === "account" || route.name === "account-new" ? (() => {
+            // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
+            // и «назад», и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
+            // по истории), а не в список счетов (ревью R2, L-5).
+            const fromQuestion = route.name === "account-new" && route.type !== undefined;
+            const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
+            return (
+              <AccountScreen
+                key={route.name === "account" ? route.id : "new"}
+                budget={budget}
+                today={app.today}
+                accountId={route.name === "account" ? route.id : null}
+                {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
+                write={write}
+                onBack={leave}
+                {...(fromQuestion ? { backLabel: "Обзор" } : {})}
+                onDone={(message) => { setMessage(message); leave(); }}
+              />
+            );
+          })() : null}
   </>;
 }

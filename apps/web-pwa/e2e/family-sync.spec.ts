@@ -8,10 +8,11 @@
  * половины уже проверяют у себя.
  *
  * Канонические величины G-002, которые сверяются буквально:
- * «Можно на повседневные» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
+ * «Можно тратить» `27 000 ₽`, июльский резерв `19 809 ₽` и свободно `44 191 ₽`,
  * дно горизонта `13 191 ₽` в сентябре 2026.
  */
 import type { APIRequestContext, BrowserContext, Locator, Page, Route } from "@playwright/test";
+import { installE2EClock } from "./clock";
 import { expect, test, watchDialogs } from "./fixtures";
 
 import {
@@ -19,7 +20,7 @@ import {
   makeG002BackupBuffer,
 } from "./canonical-budget";
 import { helloShot } from "./hello-shot";
-import { entrySheet, recordExpense as recordOnSheet, reachAmount } from "./sheet";
+import { entrySheet, recordExpense as recordOnSheet, reachAmount, startDemo } from "./sheet";
 
 const FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const FLEXIBLE_AFTER_TRANSPORT = /23\s*000\s*₽/u;
@@ -59,14 +60,14 @@ async function setSyncServer(
 
 /* ───────────────────────────── Экраны и величины ───────────────────────────── */
 
-/** Строка «Можно на повседневные»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
+/** Итог «Можно тратить»: остаток лимитов месяца плана — идёт этот месяц сейчас или уже закрыт. */
 function flexibleRemaining(page: Page): Locator {
   return reachAmount(page);
 }
 
 async function restoreCanonicalBudget(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await startDemo(page);
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   await page.locator("#backup-file").setInputFiles({
     name: "family-budget-g002.json",
@@ -310,13 +311,16 @@ test("при недоступном сервере приложение оста
  * пометка снята, и тест обязан проходить. Оба браузерных контекста созданы тестом сам, поэтому
  * системные окна в них ловятся явно (`watchDialogs`), как и в странице по умолчанию.
  */
-test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL, nativeDialogs }) => {
+test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL, nativeDialogs, today }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
 
   const annaContext = await browser.newContext();
   const borisContext = await browser.newContext();
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
+  // Свои контексты — свои часы, но день тот же, что у всего прогона (`e2e/clock.ts`).
+  await installE2EClock(annaContext, today);
+  await installE2EClock(borisContext, today);
   try {
     let anna = await annaContext.newPage();
     let boris = await borisContext.newPage();
@@ -340,7 +344,7 @@ test("два клиента одной семьи сходятся до копе
 
     // Второе устройство вступает по коду и получает журнал семьи целиком.
     await boris.goto("/");
-    await boris.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+    await startDemo(boris);
     await signIn(boris, baseURL, "boris-two@example.org");
     await expect(boris.getByRole("heading", { name: "Вступить по коду" })).toBeVisible({
       timeout: 20_000,
@@ -440,7 +444,7 @@ async function formFamily(
   expect(code).toHaveLength(12);
 
   await boris.goto("/");
-  await boris.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
+  await startDemo(boris);
   await signIn(boris, baseURL, emails.boris);
   await expect(boris.getByRole("heading", { name: "Вступить по коду" })).toBeVisible({ timeout: 20_000 });
   await boris.getByLabel("Код приглашения").fill(code);
@@ -529,12 +533,15 @@ function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: stri
  * правильными, следующий круг ничего нового не находил, и экран до перезапуска показывал бюджет
  * без чужой покупки — со «синхронизировано» в шапке и без семейной новости (прогон проверки 2b).
  */
-test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs }) => {
+test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs, today }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
   const annaContext = await browser.newContext();
   const borisContext = await browser.newContext();
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
+  // Свои контексты — свои часы, но день тот же, что у всего прогона (`e2e/clock.ts`).
+  await installE2EClock(annaContext, today);
+  await installE2EClock(borisContext, today);
   try {
     const anna = await annaContext.newPage();
     const firstBoris = await borisContext.newPage();

@@ -15,10 +15,14 @@ import { isDisplayKey, labelKey, normalizeLabel, TextValidationError, type TextE
 /**
  * Groups are a closed set, not free text: the interface prints these titles as headings and
  * sorts by {@link CategoryGroupDefinition.order}, so a new group has to be added here to exist.
+ *
+ * Display order: everyday spending first — it is what a family taps many times a day, so «Продукты»
+ * opens «Обзор», the entry picker and the categories screen — then mandatory payments, then
+ * personal, then «Прочее» (D-041). One order everywhere, as before; only the order changed.
  */
 export const CATEGORY_GROUPS: readonly CategoryGroupDefinition[] = [
-  { key: "mandatory", title: "Обязательные платежи", type: "expense", order: 10 },
-  { key: "everyday", title: "Каждый день", type: "expense", order: 20 },
+  { key: "everyday", title: "Каждый день", type: "expense", order: 10 },
+  { key: "mandatory", title: "Обязательные платежи", type: "expense", order: 20 },
   { key: "personal", title: "Личное и досуг", type: "expense", order: 30 },
   { key: "other", title: "Прочее", type: "expense", order: 40 },
   { key: "income", title: "Доходы", type: "income", order: 50 },

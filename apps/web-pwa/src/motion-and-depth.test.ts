@@ -98,11 +98,11 @@ describe("глубина", () => {
   });
 
   it("не заводит герою собственной тени: герой — карточка, и стоит он на возвышении карточки", () => {
-    // Прежде у героя «Сегодня» был свой тон тени под зелёный градиент. С 2b герой «Обзора» —
-    // строка «Можно на повседневные»: плоскость белая, и вторая тень означала бы вторую ступень
+    // Прежде у героя «Сегодня» был свой тон тени под зелёный градиент. С 5.0 под итогами «Обзора» —
+    // карточка «Хватает до …»: плоскость белая, и вторая тень означала бы вторую ступень
     // возвышения там, где ступеней всего две.
     expect(withoutComments).not.toContain("--shadow-hero");
-    const hero = withoutComments.match(/\n\.reach-line \{([^}]*)\}/u)?.[1] ?? "";
+    const hero = withoutComments.match(/\n\.reach-card \{([^}]*)\}/u)?.[1] ?? "";
     expect(hero).toContain("background: var(--surface)");
     expect(hero).toContain("box-shadow: var(--shadow-card)");
   });
@@ -118,9 +118,9 @@ describe("глубина", () => {
  */
 describe("форма", () => {
   /** Метка-пилюля: её форма — часть роли «короткое слово о состоянии», а не приглашение нажать. */
-  const pillLabels = new Set([".status-chip", ".network-badge", ".sync-badge", ".save-receipt-change"]);
+  const pillLabels = new Set([".status-chip", ".network-badge", ".sync-badge", ".save-receipt-change", ".tile-badge", ".tile-square .tile-check"]);
   /** Оправа группы переключателей: сама не нажимается, но обнимает то, что нажимается. */
-  const controlHousings = new Set([".segmented", '.dashboard-screen > header [role="group"]']);
+  const controlHousings = new Set([".segmented", '.dashboard-screen > header [role="group"]', ".mode-switch"]);
   /** Токен роли → его значение по §5 и то, кому он достаётся. */
   const roles: Record<string, { readonly px: string; readonly owns: (selector: string) => boolean }> = {
     // Пилюля и оправа при системном шрифте ниже 18em выпрямляются в прямоугольник кнопки (§5).
@@ -133,18 +133,18 @@ describe("форма", () => {
       px: "999px",
       owns: (selector) => addressesTouchTarget(selector) || pillLabels.has(selector) || controlHousings.has(selector),
     },
-    "--radius-tile": { px: "16px", owns: (selector) => /\.(?:tile|add-tile)(?![\w-])/u.test(selector) },
-    "--radius-card": { px: "20px", owns: (selector) => /\.(?:card|tile-card)(?![\w-])/u.test(selector) },
+    "--radius-tile": { px: "16px", owns: (selector) => /\.(?:tile|add-tile|tile-square)(?![\w-])/u.test(selector) },
+    "--radius-card": { px: "20px", owns: (selector) => /\.(?:card|tile-card)(?![\w-])|\[data-screen="more"\] \.list-card$/u.test(selector) },
     "--radius-sheet": { px: "24px", owns: (selector) => /\.(?:sheet|sheet-frame)(?![\w-])/u.test(selector) },
-    "--radius-plate": { px: "10px", owns: (selector) => /\.(?:icon-plate|tile-glyph)(?![\w-])/u.test(selector) },
+    "--radius-plate": { px: "10px", owns: (selector) => /\.(?:icon-plate|reach-plate|list-icon|endpoint-plate)(?![\w-])/u.test(selector) },
     "--radius-fab": { px: "18px", owns: (selector) => /\.nav-fab(?![\w-])/u.test(selector) },
   };
   /** Поверхности 3.0, которые остаются прямыми, пока их экран не переписан (§5: роли — с компонентами). */
   const surfaces = [
     ".section-card, .entry-card", ".quick-card",
-    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".onboarding-card", ".horizon-card",
+    ".save-receipt", ".sheet-card", ".confirmation-dialog", ".horizon-card",
     ".list-card", ".explain-card", ".invite-code",
-    ".limit-bar", ".dialog-aside", ".step-progress-bar", ".month-shape, .ladder-block",
+    ".limit-bar", ".dialog-aside", ".month-shape, .ladder-block",
     ".pay-row", ".import-action", ".family-news",
   ];
 

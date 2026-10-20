@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import type { BudgetState, Member, Transaction, TransactionKind, calculateBudget } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { LargeTitle } from "../../components/LargeTitle";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { categoryVisual } from "../../category-visual";
@@ -48,8 +48,6 @@ export interface HistoryScreenProps {
   readonly onEdit: (transaction: Transaction) => void;
   /** Дорога к записи из пустой истории. */
   readonly onAdd: () => void;
-  /** Кнопка «назад» — только там, где история открыта подэкраном; вкладке «Операции» она не нужна. */
-  readonly onBack?: () => void;
   /** Пока приложение пишет, строки не открывают ничего: открытая форма спорила бы с записью. */
   readonly busy?: boolean;
 }
@@ -64,7 +62,7 @@ export interface HistoryScreenProps {
  * держит разметку ограниченной: даже на пятидесяти тысячах операций в DOM попадают только
  * видимые строки.
  */
-export function HistoryScreen({ budget, members, onEdit, onAdd, onBack, busy = false }: HistoryScreenProps) {
+export function HistoryScreen({ budget, members, onEdit, onAdd, busy = false }: HistoryScreenProps) {
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<TransactionKind | "all">("all");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -94,10 +92,9 @@ export function HistoryScreen({ budget, members, onEdit, onAdd, onBack, busy = f
   };
 
   return <div className="history-screen">
-    {onBack ? <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div> : null}
+    {/* Вкладка — крупным заголовком; «назад» у неё нет: с вкладки системное «Назад» ведёт на «Обзор». */}
+    <LargeTitle id={HISTORY_TITLE_ID} title="Операции" />
     <section className="section-card history-card" aria-labelledby={HISTORY_TITLE_ID}>
-      <span className="card-kicker">Все записи</span>
-      <h1 id={HISTORY_TITLE_ID}>Операции</h1>
       <p className="history-count">{operationsCount(budget.transactions.length)}</p>
       <div className="search-controls">
         <label htmlFor="operation-history-search">Поиск по категории, счёту или сумме</label>

@@ -1,7 +1,7 @@
 /**
  * §12: ни одно сообщение не накрывает цель нажатия — измерено, а не отмечено галочкой.
  *
- * Маршруты: с первого шага онбординга до «Выписки», включая «Операции». Лист ввода стоит поверх
+ * Маршруты: со слайдов первого запуска до «Выписки», включая «Операции». Лист ввода стоит поверх
  * экрана и плашек: в нём каждая цель обязана быть доматываемой внутри листа и не накрытой ничем.
  *
  * Пункт стоял пройденным годами, а проверки под ним не было; дефект при этом был: на маршруте
@@ -181,8 +181,8 @@ async function expectMessageClearance(page: Page, label: string): Promise<void> 
 }
 
 /** Лист ввода: каждую цель можно домотать внутри листа, и ни плашка, ни что-то ещё её не накрывает. */
-async function expectSheetClearance(page: Page, label: string): Promise<void> {
-  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM);
+async function expectSheetClearance(page: Page, label: string, sheetSelector?: string): Promise<void> {
+  const geometry = await measureSheetTargets(page, TOUCH_TARGET_MINIMUM, sheetSelector);
   expect(geometry.targets, `${label}: цели листа найдены`).toBeGreaterThan(5);
   expect(geometry.scrollWidth, `${label}: горизонтальная прокрутка`).toBeLessThanOrEqual(geometry.clientWidth);
   expect(geometry.unreachable, `${label}: каждая цель листа доматывается и ничем не накрыта`).toEqual([]);
@@ -203,19 +203,41 @@ async function openFromMore(page: Page, row: RegExp): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
 }
 
-test("плашка сервис-воркера не накрывает ни одной цели — с первого шага онбординга до «Ещё»", async ({ page }) => {
+test("самый высокий лист первого запуска — «На что вы тратите?» — под плашкой сервис-воркера: каждая цель доматывается", async ({ page }) => {
+  // Ревью R2, L-9: прежний онбординг мерил под плашкой свою самую высокую карточку; теперь самая
+  // высокая поверхность первого запуска — лист чипов поверх «Обзора», и плашка стоит под ним.
+  test.setTimeout(240_000);
+  await page.goto("/");
+  const toast = page.locator(".update-toast");
+  await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
+  await page.getByRole("button", { name: "Пропустить" }).click();
+  const chips = page.getByRole("dialog", { name: "На что вы тратите?" });
+  await expect(chips).toBeVisible();
+  await expect(toast).toContainText(OFFLINE_READY);
+  // Мерить — то, что видит палец: лист уже поднялся, затемнение проявилось.
+  await page.locator(".q-backdrop").evaluate((backdrop) => Promise.all(backdrop.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+  for (const scale of FONT_SCALES) {
+    await applyFontScale(page, scale);
+    for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await expectSheetClearance(page, `лист чипов, ${viewport.name} ×${scale}`, "section.q-sheet[role='dialog']");
+    }
+  }
+});
+
+test("плашка сервис-воркера не накрывает ни одной цели — со слайдов первого запуска до «Ещё»", async ({ page }) => {
   test.setTimeout(480_000);
   await page.goto("/");
   const toast = page.locator(".update-toast");
   // Настоящая плашка настоящего сервис-воркера: первая установка в свежем контексте.
   await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
 
-  /* ── Онбординг, шаг 1: поля, которые плашка накрывала. ── */
+  /* ── Слайд 1: «Пропустить», «Дальше» — первые цели, которые видит новичок. ── */
   for (const scale of FONT_SCALES) {
     await applyFontScale(page, scale);
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expectMessageClearance(page, `онбординг, шаг 1, ${viewport.name} ×${scale}`);
+      await expectMessageClearance(page, `слайд 1, ${viewport.name} ×${scale}`);
     }
   }
   await applyFontScale(page, 1);
@@ -224,33 +246,24 @@ test("плашка сервис-воркера не накрывает ни од
   await page.setViewportSize({ width: 390, height: 844 });
   await helloShot(page, "onboarding-toast-after");
 
-  /* ── Онбординг, шаг 4: самая высокая карточка. ── */
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 2 из 4")).toBeVisible();
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 3 из 4")).toBeVisible();
-  await page.getByLabel("Доход в месяц, ₽").fill("180000");
-  await page.getByLabel("Сумма платежа, ₽").fill("53000");
-  await page.getByRole("button", { name: "Далее" }).click();
-  await expect(page.getByText("Шаг 4 из 4")).toBeVisible();
-  for (const [index, limit] of ["30000", "10000", "8000"].entries()) {
-    await page.locator(`#category-${index}-limit`).fill(limit);
-  }
+  /* ── Слайд 3: самый высокий — обещание и две кнопки, «Начать» и «Посмотреть на примере». ── */
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 3 из 3" })).toBeVisible();
   for (const scale of FONT_SCALES) {
     await applyFontScale(page, scale);
     for (const viewport of [...PHONE_VIEWPORTS, ...WIDE_VIEWPORTS]) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await expectMessageClearance(page, `онбординг, шаг 4, ${viewport.name} ×${scale}`);
+      await expectMessageClearance(page, `слайд 3, ${viewport.name} ×${scale}`);
     }
   }
 
   /* ── В приложение — с той же плашкой. ── */
   await applyFontScale(page, 1);
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator(".step-progress-step.done").first().click();
-  await expect(page.getByText("Шаг 1 из 4")).toBeVisible();
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+  await page.getByRole("button", { name: "Посмотреть на примере", exact: true }).click();
+  await expect(page.locator(".reach-card")).toBeVisible();
   // Плашка пережила смену маршрута: сообщение, которое никто не закрывал, не пропало само.
   await expect(toast).toContainText(OFFLINE_READY);
 
@@ -286,7 +299,7 @@ test("плашка сервис-воркера не накрывает ни од
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await expectMessageClearance(page, label("Семья"));
       // На экране семьи вкладка «Ещё» уже подсвечена: назад ведёт кнопка экрана, а не вкладка.
-      await page.getByRole("button", { name: /К разделу «Ещё»/u }).click();
+      await page.getByRole("button", { name: "Назад: Ещё" }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
       await page.getByRole("button", { name: /Загрузить выписку банка/u }).click();
       await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("H1");
@@ -318,4 +331,37 @@ test("плашка сервис-воркера не накрывает ни од
   await expect(message).toHaveCount(0);
   // И спрятанная плашка вернулась — с тем же состоянием.
   await expect(toast).toContainText(OFFLINE_READY);
+});
+
+test("плашка не накрывает и подсказки первого запуска: «Понятно» у пузыря и карточки в конце «Обзора»", async ({ page }) => {
+  // Новичок: слайды, «Начать», три вопроса — и на «Обзоре» сразу пузырь на «Продуктах» и карточки-
+  // подсказки, а плашка «готово работать без интернета» ещё стоит: её поднял первый запуск. Цели
+  // подсказок обязаны быть доматываемыми мимо плашки, как и все остальные.
+  test.setTimeout(240_000);
+  await page.goto("/");
+  const toast = page.locator(".update-toast");
+  await expect(toast).toContainText(OFFLINE_READY, { timeout: 60_000 });
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await page.getByRole("button", { name: "Начать", exact: true }).click();
+  await page.getByRole("dialog", { name: "На что вы тратите?" }).getByRole("button", { name: "Готово" }).click();
+  await page.getByRole("dialog", { name: "Есть ещё места, где лежат деньги?" }).getByRole("button", { name: "Нет, это всё" }).click();
+  const payday = page.getByRole("dialog", { name: "Когда приходит зарплата?" });
+  await payday.getByRole("radio", { name: "5-го и 20-го" }).click();
+  await payday.getByRole("button", { name: "Готово" }).click();
+  await expect(page.locator(".coach-layer[data-placed] .coach-bubble")).toBeVisible();
+  await expect(toast).toContainText(OFFLINE_READY);
+
+  for (const scale of FONT_SCALES) {
+    await applyFontScale(page, scale);
+    for (const viewport of [PHONE_VIEWPORTS[0]!, PHONE_VIEWPORTS[2]!]) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      // Меряются именно подсказки: без них проверка прошла бы и на пустом экране.
+      await expect(page.locator(".coach-bubble").getByRole("button", { name: "Понятно", exact: true })).toBeVisible();
+      await expect(page.locator(".hint-cards .hint-action").first()).toBeVisible();
+      await expect(page.locator(".hint-cards .hint-close").first()).toBeVisible();
+      await expectMessageClearance(page, `первый запуск, «Обзор» с подсказками, ${viewport.name} ×${scale}`);
+    }
+  }
+  await applyFontScale(page, 1);
 });

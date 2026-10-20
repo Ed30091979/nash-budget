@@ -1,5 +1,5 @@
-/* Дизайн-система «Наш бюджет» 4.0 (DESIGN.md). Бумажная палитра 3.0 — тёплый холст, чернила, белые
-   карточки — плюс пастельные тона сущностей, плитки и один акцент действия и выбора (§0, §3). */
+/* Дизайн-система «Наш бюджет» 5.0 (DESIGN.md). Бумажная палитра — светлый холст, чернила, белые
+   карточки, пастельные тона сущностей — и один коралловый акцент главного действия (§0, §3). */
 :root {
   color-scheme: light;
   color: var(--ink);
@@ -16,30 +16,33 @@
   -webkit-text-size-adjust: 100%;
 
   /* §3 Роли цвета. Пары контраста измерены (`palette-contrast.test.ts` пересчитывает таблицу §3),
-     не меняйте их поодиночке. Тон метит сущность, янтарь и красный — сигнал, акцент — действие и
-     выбор. Всё остальное — бумага и чернила. */
-  --canvas: #f0ece3;         /* тёплый холст под карточками */
-  --surface: #ffffff;        /* карточка, поле, нижняя навигация */
-  --surface-sunken: #e6e1d6; /* трек полосы, вложенная плашка, нейтральный чип */
-  --ink: #171410;            /* чернила: 18.36:1 на белом, 15.57:1 на холсте, 14.08:1 на треке */
-  --ink-muted: #5d574c;      /* подпись: 7.16:1 на белом, 6.07:1 на холсте, 5.49:1 на треке */
-  --border: #ddd6c8;         /* разделитель: линия между строками, а не граница элемента */
-  --line: #8d8577;           /* граница того, что нажимают и заполняют: 3.65:1 на белом, 3.10:1 на холсте */
-  --amber-soft: #fbf0d5;     /* «не дотянет» */
-  --amber-ink: #8a5a00;      /* 5.23:1 на `--amber-soft`, 5.93:1 на белом, 4.55:1 к треку */
+     не меняйте их поодиночке. Тон метит сущность, янтарь и красный — сигнал, акцент — главное
+     действие и выбор. Всё остальное — бумага и чернила. */
+  --canvas: #f6f3ee;         /* светлый холст под карточками; он же фон заставок и theme-color */
+  --surface: #ffffff;        /* карточка, поле, лист, нижняя навигация */
+  --surface-sunken: #eee9e1; /* поиск, сегмент, клавиша суммы, вложенная плашка */
+  --ink: #171410;            /* чернила: 18.36:1 на белом, 16.59:1 на холсте */
+  --ink-muted: #5d574c;      /* подпись: 7.16:1 на белом, 6.47:1 на холсте, 5.92:1 на утопленной плашке */
+  --border: #e6e0d5;         /* разделитель: линия между строками, а не граница элемента */
+  --line: #8d8577;           /* граница того, что нажимают и заполняют: 3.65:1 на белом, 3.30:1 на холсте */
+  --track: #e4ded3;          /* трек полосы лимита и линейки: заливка чернилами — 13.71:1 */
+  --amber-soft: #fbf0d5;     /* «почти лимит», «не дотянет» */
+  --amber-ink: #8a5a00;      /* 5.23:1 на `--amber-soft`, 5.36:1 на холсте, 4.43:1 к треку */
   --red-soft: #fbe9e3;       /* «перелимит», ошибка, разрушающее действие */
-  --red-ink: #a3341f;        /* 5.82:1 на `--red-soft`, 6.84:1 на белом, 5.25:1 к треку */
+  --red-ink: #a3341f;        /* 5.82:1 на `--red-soft`, 6.18:1 на холсте, 5.11:1 к треку */
   --orange: #b8471a;         /* только марка: значок, заставки, Android. В интерфейсе не используется */
-  --accent: #d9481f;         /* действие и выбор: «+», кольцо выбора, точка вкладки. Не для мелкого текста: 4.29:1 */
-  --positive-ink: #1f6b48;   /* доход в строке, всегда со знаком «+»: 6.45:1 на белом, 5.47:1 на холсте */
-  --focus: #0b57d0;          /* кольцо фокуса: 6.39:1 на белом, 5.42:1 на холсте */
+  --accent: #c4421a;         /* главное действие и выбор: «+», «Записать», кольцо выбора, точка вкладки */
+  --on-accent: #ffffff;      /* текст и глиф на акценте: 5.07:1 — белый текст основной кнопки */
+  --positive-ink: #1f6b48;   /* доход в строке, всегда со знаком «+»: 6.45:1 на белом, 5.83:1 на холсте */
+  --focus: #0b57d0;          /* кольцо фокуса: 6.39:1 на белом, 5.77:1 на холсте */
   --on-ink: #ffffff;         /* текст и глиф на чернильной плоскости: 18.36:1 */
   --scrim: rgb(23 20 16 / 55%);
 
-  /* §3 Тона сущностей. Пастельная заливка плитки и строки; подпись на ней — `--ink` (14.76–15.44:1),
-     глиф — `--tone-*-ink` на подложке `--icon-plate` (5.88–7.50:1). Тон метит сущность, а не
-     величину: пары измерены и меняются только вместе. Ключи прежние — `color` категории хранится
-     в синхронизируемых данных. */
+  /* §3 Тона сущностей. Пастельная заливка квадрата плитки, подложки строки и чипа; глиф на ней —
+     её собственные чернила `--tone-*-ink` (5.05–6.50:1), подпись рядом — `--ink`. Тон метит
+     сущность, а не величину: пары измерены и меняются только вместе. Ключи прежние — `color`
+     категории хранится в синхронизируемых данных. Доход своего цвета не имеет: его плитка
+     окрашена тоном своей категории. */
   --tone-mint: #ddefe5;
   --tone-mint-ink: #1f6b48;
   --tone-lilac: #ece6f7;
@@ -52,25 +55,13 @@
   --tone-sage-ink: #46613a;
   --tone-coral: #f8e1e4;
   --tone-coral-ink: #9b2c3f;
-  --icon-plate: #ffffffb3;            /* подложка глифа на тоне: белый 70 % */
-  --tile-track: rgb(23 20 16 / 8%);   /* трек полосы лимита на плитке */
+  --tone-neutral: #e9e4da;            /* «Прочее» и всё без тона: отличается от утопленных плашек */
 
-  /* §3 Плитки счёта и дохода. Счёт — тёмная плитка: на ней только белый и его приглушение; красного
-     текста на ней нет (2.25:1) — отрицательный остаток набирается белым с U+2212 и глифом. */
+  /* §3 Счёт — графитовый квадрат: на нём только белый и его приглушение; красного на нём нет
+     (2.25:1) — отрицательный остаток набирается со знаком U+2212 и глифом. */
   --tile-account: #22252a;
   --on-tile-account: #ffffff;         /* 15.37:1 */
   --on-tile-account-muted: #d5d8de;   /* 10.77:1 */
-  --tile-income: #e9e7fb;
-  --income-ink: #3f3fb0;              /* 6.78:1 на плитке дохода */
-
-  /* §3 Серии графиков: каждая ≥ 3:1 на белом; седьмая — «Остальное» и прочие месяцы. */
-  --chart-1: #1f6b48;
-  --chart-2: #8a5a00;
-  --chart-3: #5b3f9e;
-  --chart-4: #d9481f;
-  --chart-5: #9b2c3f;
-  --chart-6: #2f6f9f;
-  --chart-7: #8d8577;
 
   /* §4 Типографика. Ступеней пять, начертаний два — 400 и 700, третьего нет.
      Заголовок один на все уровни: восемь ступеней кегля — это восемь уровней, которые читателю
@@ -85,10 +76,14 @@
   --lh-body: 22px;
   --size-caption: 13px;
   --lh-caption: 19px;
-  --size-label: 11px;     /* капс-метка: эйбрау, кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ», пилюля резерва */
+  --size-label: 11px;     /* капс-метка: кикеры рядов «ДОХОДЫ И СЧЕТА / РАСХОДЫ», эйбрау, пилюля резерва */
   --lh-label: 14px;
-  --size-tile: 12px;      /* подпись плитки: имя до двух строк */
+  --size-tile: 12px;      /* имя под квадратом плитки, начертание 400 */
   --lh-tile: 15px;
+  --size-tile-amount: 13px; /* сумма плитки, начертание 700 */
+  --lh-tile-amount: 17px;
+  --size-display: 22px;   /* вопрос листа, пустое состояние, цифра клавиши суммы */
+  --lh-display: 28px;
   /* Оси вариативного SF. Ширина 92 % отыгрывает ~15 % на длинной сумме, но она бонус, а не
      несущая: поведение осей на Android и Windows не проверено, и герой обязан помещаться и при
      обычной ширине. `font-optical-sizing` не пишем — Chromium его игнорирует, ось задаётся прямо. */
@@ -109,6 +104,10 @@
   --radius-sheet: 24px;    /* лист и диалог */
   --radius-plate: 10px;    /* подложка глифа на плитке */
   --radius-fab: 18px;      /* «+» нижней навигации */
+
+  /* §5 Размеры 5.0: строка заголовка подэкрана — 52, квадрат плитки — 52 с глифом 24. */
+  --titlebar-height: 52px;
+  --tile-square: 52px;
 
   /* §5 Глубина. Тень — накопительный стек полупрозрачных слоёв: каждая ступень добавляет слой, а
      не заменяет его, поэтому тень остаётся мягкой. Ступеней ровно две: карточка — 1,
@@ -136,12 +135,13 @@
   /* §6 Место под навигацию и шапку. Отступ оболочки, полоса записи и тост считаются отсюда, а не
      от `--nav-height`: панель растёт с системным шрифтом — при ×2.7 подписи переносятся, и на
      320 pt она занимает 188 pt, на 390 — 150, а не проектные, — и полоса на 56 уводила кнопку записи под
-     навигацию. На широком экране навигация липнет под шапку, и та при ×2.7 — 79, а не 56.
-     Значения здесь — проектные, на первый кадр; настоящие высоты снимает с разметки
-     `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены не читают, иначе
-     измерение кормило бы само себя. */
+     навигацию. На широком экране навигация липнет под шапку, а итоги «Обзора» — под неё на любом:
+     шапки-марки в 5.0 нет, и проектная высота шапки — безопасная зона, но с индикатором
+     синхронизации она растёт (при ×2.7 — 79). Значения здесь — проектные, на первый кадр; настоящие
+     высоты снимает с разметки `layout-space.ts` и пишет поверх них. Сама панель и шапка эти токены
+     не читают, иначе измерение кормило бы само себя. */
   --nav-space: calc(var(--nav-height) + env(safe-area-inset-bottom));
-  --header-space: calc(56px + env(safe-area-inset-top));
+  --header-space: env(safe-area-inset-top);
 
   /* §10 Движение. Длительности и кривые — Material 3, взятые как есть (§5 исследования).
      Пружины берутся standard (демпфирование 0.9), а не expressive: наш тон спокойный, не
@@ -165,7 +165,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-.segmented label:has(input:focus-visible), .composition-options label:has(input:focus-visible),
+.segmented label:has(input:focus-visible),
 .month-checkboxes label:has(input:focus-visible), .file-button:focus-within {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -255,19 +255,43 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Появление и уход идут разной парой (§5: появление — decelerate, уход — accelerate), и фон
    приходит быстрее, чем уходит: пока он полупрозрачен, под шапкой просвечивает содержимое, и
    каждая лишняя сотня миллисекунд — это сотня миллисекунд нечитаемой шапки. */
-/* Шапка называет план и больше ничего. Слоган «видим месяц и будущее» — приём лендинга: он
-   продаёт продукт тому, кто его уже открыл, и делал это на каждом экране за 70 pt высоты. */
-.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 56px; padding: calc(8px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left)); color: var(--ink); background: transparent; border-bottom: 1px solid transparent; transition: background-color var(--motion-screen) var(--ease-exit), border-bottom-color var(--motion-screen) var(--ease-exit); }
+/* Шапки-марки «Наш бюджет» нет (5.0, §6 «Строка заголовка»): экран называет себя сам. Шапка — полоса
+   безопасной зоны над содержимым, и в ней живёт только индикатор синхронизации, когда семья вошла.
+   Пустая, она высотой с безопасную зону (на большинстве экранов — ноль) и без границы. */
+.app-header { position: sticky; top: 0; z-index: 20; display: flex; gap: 12px; align-items: center; justify-content: flex-end; min-height: 0; padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); color: var(--ink); background: transparent; border-bottom: 1px solid transparent; transition: background-color var(--motion-screen) var(--ease-exit), border-bottom-color var(--motion-screen) var(--ease-exit); }
+.app-header:not(:empty) { min-height: 56px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: 8px; }
+.app-header:empty { border-bottom-width: 0; }
 .app-header[data-scrolled] { background: var(--surface); border-bottom-color: var(--border); transition-duration: var(--motion-press); transition-timing-function: var(--ease-enter); }
-.brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
+/* Знак марки — только на онбординге (R2 переводит его на слайды). */
 .brand-mark { display: grid; width: 32px; height: 32px; flex: none; place-items: center; color: var(--ink); background: var(--surface-sunken); }
-.brand strong { display: block; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 /* Состояния сети в шапке нет: без синхронизации приложение к сети не обращается, а с ней о
    сети говорит индикатор синхронизации. Пилюля «в сети» была сведением ни о чём. */
 
 /* §5 Контейнер контента: 480 на телефоне, 960 на широком экране, поля 16 + safe-area. */
-.content { width: min(480px, 100%); min-width: 0; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left)); }
+.content { width: min(480px, 100%); min-width: 0; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-right)) 40px max(16px, env(safe-area-inset-left)); }
 .route-screen, .route-screen > *, [data-layout-contract="no-action-overflow"] { min-width: 0; max-width: 100%; }
+
+/* ── Дизайн 5.0, R1: строка заголовка подэкрана и крупный заголовок вкладки (§6). ──
+   Строка заголовка — «‹ Родитель · Заголовок · действие» высотой 52: заменяет кнопку-рамку
+   «← К разделу «Ещё»» и шапку-марку. Цели — по 48; строка выходит в поля экрана на 12, чтобы
+   шеврон стоял у края, как в системной навигации. Заголовок — единственный `h1` экрана, по центру
+   между «назад» и действием; длинное имя переносится по слогам, а не обрезается. */
+.title-bar { display: grid; grid-template-columns: minmax(48px, max-content) minmax(0, 1fr) minmax(48px, max-content); gap: 0 4px; align-items: center; min-height: var(--titlebar-height); margin: 0 -12px; }
+.title-bar h1 { margin: 0; padding: 0 4px; text-align: center; overflow-wrap: anywhere; hyphens: auto; }
+button.title-bar-back { display: inline-flex; min-width: 48px; min-height: 48px; gap: 0; align-items: center; padding: 0 8px 0 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+button.title-bar-back > span { min-width: 0; }
+.title-bar-action { display: flex; justify-content: flex-end; }
+button.icon-button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
+/* Крупный заголовок вкладки: 28/32 слева, справа — одно действие-иконка 48. */
+.large-title { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 56px; padding-top: 4px; margin-right: -12px; }
+.large-title h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; overflow-wrap: anywhere; hyphens: auto; }
+.screen-lead { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* При крупном шрифте заголовок встаёт под «назад» во всю ширину: рядом с ним ему осталась бы буква в строке. */
+@media (max-width: 18em) {
+  .title-bar { grid-template-columns: minmax(0, 1fr) minmax(48px, max-content); }
+  .title-bar h1 { grid-column: 1 / -1; grid-row: 2; padding: 0 12px 8px; text-align: left; }
+  button.title-bar-back { justify-self: start; }
+}
 .route-screen button, .route-screen label, .route-screen strong, .route-screen span { overflow-wrap: anywhere; }
 .route-screen > * + * { margin-top: 24px; }
 /* §4 Капс 11 с трекингом 0.08em остался ровно в двух местах: эйбрау месяца и пилюля резерва.
@@ -277,8 +301,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .eyebrow { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .card-kicker { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; letter-spacing: 0; }
 .screen-heading { display: flex; gap: 16px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px; }
-.screen-heading h1, .screen-heading p { margin: 0; }
-.screen-heading h1 { margin-top: 8px; font-size: var(--size-title); line-height: var(--lh-title); }
+.screen-heading h1, .screen-heading h2, .screen-heading p { margin: 0; }
+.screen-heading h1, .screen-heading h2 { margin-top: 8px; font-size: var(--size-title); line-height: var(--lh-title); }
 .screen-heading p { max-width: 620px; margin-top: 8px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
 
 /* §6 Плитка-статистика. */
@@ -293,8 +317,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 /* §6 Семейная новость: чужие записи с прошлого раза. Плашка в потоке под героем, той же
    анатомии, что обещание приватности на импорте: глиф 40 на белом, две строки текста.
    Поверхность прямая; цвета нет — новость сообщает, а не поздравляет (§3: цвет появляется,
-   когда есть что сказать, а здесь сказано словами). Контраст: `--ink` на плашке 14.08:1,
-   `--ink-muted` на ней 5.49:1. */
+   когда есть что сказать, а здесь сказано словами). Контраст: `--ink` на плашке 15.19:1,
+   `--ink-muted` на ней 5.92:1. */
 .family-news { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 24px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
 .family-news-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }
 .family-news > div { min-width: 0; }
@@ -351,11 +375,11 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Разрыв не зависит ни от того, ни от другого: стойки стоят вне полосы, а гнездо между ними —
    цвета карточки. Скругления у полосы нет: полоса — поверхность, а поверхности прямые (§5).
 
-   Цвет заливки: чернила — деньги дотягивают до выплаты (14.08:1 к треку), янтарь — не дотягивают
-   (4.55:1), красный обрубок в нуле — конверт исчерпан (5.25:1). Все три выше 3:1, которых §9
+   Цвет заливки: чернила — деньги дотягивают до выплаты (13.71:1 к треку), янтарь — не дотягивают
+   (4.43:1), красный обрубок в нуле — конверт исчерпан (5.11:1). Все три выше 3:1, которых §9
    требует от нетекстовой графики, и ни одно состояние не остаётся одному только цвету: его
    говорят слово в чипе, положение заливки относительно насечки и объявление полосы. */
-.limit-bar { --limit-ink: var(--ink); --fill: var(--limit-fill, 0%); --bar-height: 10px; --post-height: 6px; display: block; width: 100%; height: calc(var(--bar-height) + var(--post-height) * 2); margin: 2px 0; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 3px), var(--surface) calc(var(--reach-mark) - 3px) calc(var(--reach-mark) + 3px), transparent calc(var(--reach-mark) + 3px)), linear-gradient(to right, var(--limit-ink) 0 var(--fill), var(--surface-sunken) var(--fill)); background-size: 100% var(--post-height), 100% var(--post-height), 100% var(--bar-height), 100% var(--bar-height); background-position: 0 0, 0 100%, 0 var(--post-height), 0 var(--post-height); }
+.limit-bar { --limit-ink: var(--ink); --fill: var(--limit-fill, 0%); --bar-height: 10px; --post-height: 6px; display: block; width: 100%; height: calc(var(--bar-height) + var(--post-height) * 2); margin: 2px 0; background-repeat: no-repeat; background-image: linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 1px), var(--ink) calc(var(--reach-mark) - 1px) calc(var(--reach-mark) + 1px), transparent calc(var(--reach-mark) + 1px)), linear-gradient(to right, transparent 0 calc(var(--reach-mark) - 3px), var(--surface) calc(var(--reach-mark) - 3px) calc(var(--reach-mark) + 3px), transparent calc(var(--reach-mark) + 3px)), linear-gradient(to right, var(--limit-ink) 0 var(--fill), var(--track) var(--fill)); background-size: 100% var(--post-height), 100% var(--post-height), 100% var(--bar-height), 100% var(--bar-height); background-position: 0 0, 0 100%, 0 var(--post-height), 0 var(--post-height); }
 /* Полоса героя толще: это главная линейка экрана, а не строка списка. */
 .limit-bar.short { --limit-ink: var(--amber-ink); }
 
@@ -418,7 +442,9 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .segmented label:has(input:checked) { color: var(--ink); background: var(--surface); box-shadow: var(--shadow-pill); }
 .primary-button, .secondary-button { display: inline-grid; min-height: 48px; padding: 13px 24px; place-items: center; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; border-radius: var(--radius-control); }
 .back-button, .icon-label { display: inline-flex; gap: 8px; align-items: center; justify-content: center; }
-.primary-button { color: var(--on-ink); background: var(--ink); border: 1px solid var(--ink); }
+/* §6 Основная кнопка — акцент с белым (5.07:1): один цвет у главного действия на всех экранах.
+   Чернилами заливаются только выбранный чип, пузырь подсказки и тост — чёрных плит больше нет. */
+.primary-button { color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); }
 .secondary-button { color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
 .wide { width: 100%; }
 
@@ -462,10 +488,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .bottom-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 30; display: grid; min-height: calc(var(--nav-height) + env(safe-area-inset-bottom)); grid-template-columns: repeat(2, minmax(0, 1fr)) 56px repeat(2, minmax(0, 1fr)); gap: 8px; align-items: center; padding: 8px max(8px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); background: var(--surface); border-top: 0; box-shadow: 0 -1px 0 var(--border); }
 /* Подпись вкладки переносится, а не выталкивает соседей: при системном увеличении шрифта
    «Операции» шире пятой части экрана, и без переноса навигация выезжала бы за его край. */
-.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; text-align: center; overflow-wrap: anywhere; hyphens: auto; background: transparent; border: 0; border-radius: var(--radius-control); }
-/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (4.29:1 — графика, порог 3:1),
+.nav-button { position: relative; display: grid; min-width: 0; min-height: 52px; gap: 2px; place-items: center; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 400; text-align: center; overflow-wrap: anywhere; hyphens: manual; background: transparent; border: 0; border-radius: var(--radius-control); }
+/* «+» — действие, а не вкладка: коралловый акцент, белый глиф (5.07:1),
    радиус своей роли. Имя ему даёт `aria-label` «Записать», глиф декоративен. */
-.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-ink); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
+.nav-fab { display: grid; width: 56px; height: 56px; min-height: 56px; padding: 0; place-items: center; justify-self: center; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--radius-fab); }
 .nav-fab svg { width: 24px; height: 24px; }
 /* При обычном кегле подпись вкладки — одна строка: на 320 pt «Операции» шире своей колонки на
    пару пунктов, перенос по слогам поднимал панель на 8 pt, и при открытой клавиатуре суммы под
@@ -476,10 +502,10 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 }
 .nav-icon { position: relative; display: grid; place-items: center; height: 24px; }
 .nav-icon svg { width: 24px; height: 24px; }
-/* Активная вкладка — это текст, а не графика, и порог у него 4.5:1, а не 3:1: подпись набрана
-   чернилами (18.36:1), а «вы здесь» говорит точка акцента под глифом — графика, 4.29:1 на белом.
+/* Активная вкладка — это текст, а не графика: подпись набрана чернилами (18.36:1), а «вы здесь»
+   говорит точка акцента под глифом — графика, 5.07:1 на белом.
    Акцент мелким текстом не бывает (§3), а оранжевый марки в интерфейсе больше не живёт. */
-.nav-button.active { color: var(--ink); background: transparent; }
+.nav-button.active { color: var(--ink); font-weight: 700; background: transparent; }
 .nav-button.active .nav-icon::after { position: absolute; bottom: -5px; left: 50%; width: 4px; height: 4px; margin-left: -2px; content: ""; background: var(--accent); border-radius: 50%; }
 
 /* §6 Тост. */
@@ -512,71 +538,18 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .storage-error-state h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
 .storage-error-state p { margin: 12px 0 20px; color: var(--ink-muted); font-weight: 400; }
 
-/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: карточка и плашка
-   сервис-воркера стоят в ней друг под другом и центрируются вместе. Пока высоту экрана держала
-   сама оболочка, плашка оказывалась вне потока карточки и накрывала её поля. */
+/* §8 Онбординг. Колонка на весь экран — это маршрут, а не оболочка формы: слайды и плашка
+   сервис-воркера стоят в ней друг под другом. Пока высоту экрана держала сама оболочка, плашка
+   оказывалась вне потока и накрывала цели первого экрана. Слайды — в блоке R2 в конце файла. */
 .onboarding-route { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100dvh; align-content: center; padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--canvas); }
-/* Колонки онбординга объявлены с нулевым минимумом — те же грабли, что у `.field`: у поля ввода
-   есть собственная ширина (`size=20`, при ×2.7 — 440 pt), неявная колонка `auto` растягивалась
-   под неё, и вся карточка при ×2.7 на 320 pt была шире экрана: `width: min(680px, 100%)`
-   считался от колонки, а не от экрана. Найдено измерением сообщений на онбординге. */
-.onboarding-shell { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; }
-/* §1 «ничего не обрезается» — и на первом экране тоже. Правила переноса маршрута (`.route-screen`)
-   на онбординг не распространяются, и при ×2.7 на 320 pt «демонстрационный» в текстовой кнопке
-   был шире экрана на полсотни пунктов: страница получала горизонтальную прокрутку — у новичка,
-   на первом шаге, в режиме, который включают ради читаемости. Найдено измерением сообщений. */
-.onboarding-shell button, .onboarding-shell label, .onboarding-shell strong, .onboarding-shell span, .onboarding-shell legend { overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-card { width: min(680px, 100%); padding: 24px; background: var(--surface); border: 0; box-shadow: var(--shadow-card); }
-.onboarding-heading { display: flex; gap: 12px; align-items: center; }
-.onboarding-heading .brand-mark { flex: none; color: var(--ink); background: var(--surface-sunken); }
-.onboarding-heading h1, .onboarding-heading p { margin: 0; }
-/* Текстовый блок шапки шага — flex-элемент, и без нулевого минимума он не ужимается ниже
-   самого длинного слова: «Повседневные» при ×2.7 на 320 pt — 300 pt, и заголовок выносил всю
-   карточку за экран. Слово переносится по слогам (§1), а не выталкивает край. */
-.onboarding-heading > div { min-width: 0; }
-.onboarding-heading h1 { margin-top: 4px; font-size: var(--size-title); line-height: var(--lh-title); overflow-wrap: anywhere; hyphens: auto; }
-.onboarding-kicker { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.step-progress { margin: 20px 0; }
-.step-progress ol { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 0; margin: 0; list-style: none; }
-.step-progress-step { display: grid; width: 100%; min-height: 48px; gap: 8px; align-content: center; padding: 8px 4px; background: transparent; border: 0; border-radius: var(--radius-control); }
-.step-progress-step:disabled { cursor: default; }
-.step-progress-bar { display: block; height: 8px; background: var(--surface-sunken); }
-.step-progress-step.done .step-progress-bar { background: var(--ink-muted); }
-.step-progress-step.current .step-progress-bar { background: var(--ink); }
-.step-progress-number { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
-.step-progress-step.done .step-progress-number { color: var(--ink); }
-.step-progress-step.current .step-progress-number { color: var(--ink); }
-.onboarding-form { display: grid; gap: 16px; }
-.onboarding-fields { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 16px; padding: 0; margin: 0; border: 0; }
-.onboarding-help { margin: 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
-.composition-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 12px; margin: 0; background: var(--canvas); border: 1px solid var(--border); }
-.composition-options legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.composition-options label { display: flex; min-height: 48px; gap: 8px; align-items: center; justify-content: center; padding: 13px 8px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control); }
-.composition-options label:has(input:checked) { color: var(--ink); background: var(--surface-sunken); border-color: var(--ink); }
-.composition-options .field-error { grid-column: 1 / -1; }
-.onboarding-form .field small { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
 .field-error { color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.onboarding-form input[aria-invalid="true"] { border-color: var(--red-ink); }
-.onboarding-form input[readonly] { color: var(--ink-muted); background: var(--surface-sunken); }
-.onboarding-actions { display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-top: 4px; }
-.onboarding-actions button { min-width: 116px; }
 .primary-button:disabled, .secondary-button:disabled, .text-button:disabled, .quiet-button:disabled { cursor: wait; opacity: .62; }
 /* Кнопка, которая во время записи молчит, а не выключается (`aria-disabled`): выключенная теряет
    фокус, и он падал на <body> (ревью 2c, MEDIUM-3). Выглядит так же, как выключенная. */
 .primary-button[aria-disabled="true"], .secondary-button[aria-disabled="true"], .quiet-button[aria-disabled="true"] { cursor: default; opacity: .62; }
 .primary-button[aria-disabled="true"][aria-busy="true"] { cursor: wait; }
-.demo-option { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
-.demo-option p { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.demo-option p strong { color: var(--ink); }
 .text-button { min-height: 48px; padding: 13px 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; text-align: left; text-decoration: underline; text-underline-offset: 3px; background: transparent; border: 0; border-radius: 0; }
-.category-edit-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-.category-edit-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; padding: 16px; background: var(--canvas); border: 1px solid var(--border); }
-.category-edit-row legend { padding: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.remove-category { width: fit-content; min-height: 48px; color: var(--red-ink); font-size: var(--size-caption); }
-.onboarding-save-error { margin: 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); border: 0; }
-#categories:focus-visible, #composition:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 
-.planning-toolbar { display: flex; margin-bottom: 16px; }
 .planning-screen { min-width: 0; }
 .planning-screen > .screen-heading { margin-bottom: 4px; }
 .planning-screen .section-card > h2, .planning-screen .section-card > p { margin: 0; }
@@ -613,15 +586,13 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Цифры — кегль заголовка весом 700, знаки — 400 и `--ink-muted` (7.16:1): цифры набирают,
    знаки — реже, и вес это говорит. Ноль шире вдвое, как на калькуляторе. */
 .keypad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.keypad button { display: grid; min-height: 48px; padding: 8px; place-items: center; color: var(--ink); font-size: var(--size-display); line-height: var(--lh-display); font-weight: 700; background: var(--surface-sunken); border: 0; border-radius: var(--radius-control); }
 .keypad button.key-wide { grid-column: span 2; }
 .keypad button.key-op { color: var(--ink-muted); font-weight: 400; }
 /* Итог выражения под полем: число, которое запишет кнопка, пока в поле стоит «1200+350». */
 .amount-total { display: block; margin-top: 4px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 /* §8 «Вся история» — маршрут внутри «Ещё»: заголовок, число операций, поиск над списком. */
-.history-screen > .planning-toolbar { margin-bottom: 4px; }
-.history-card > h1 { margin: 4px 0 0; }
-.history-count { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.history-count { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .history-card > .transaction-list { margin-top: 8px; }
 .history-card > .secondary-button { margin-top: 12px; }
 .history-card > p[role="status"] { margin-top: 12px; }
@@ -649,8 +620,8 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    Под ним строй месяца и лестница месяцев; крупного числа отдельной карточкой нет — самое тесное
    место горизонта названо в выводе и выделено весом в лестнице. */
 .horizon-card { margin-top: 0; }
-.horizon-card > h1 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
-.horizon-card.danger > h1 { color: var(--red-ink); }
+.horizon-card > h2 { margin: 0; font-size: var(--size-title); line-height: var(--lh-title); }
+.horizon-card.danger > h2 { color: var(--red-ink); }
 .horizon-detail { margin: 4px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .horizon-card > .primary-button { margin-top: 16px; }
 .month-shape, .ladder-block { margin: 20px 0 0; }
@@ -783,6 +754,25 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .list-fact[open] > summary .row-chevron { transform: rotate(90deg); }
 .list-fact > p { margin: 0 0 12px 36px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .list-fact > p:last-child { margin-bottom: 16px; }
+
+/* ── Дизайн 5.0, R1: «Ещё» (макет 10). Экран переписан, и его карточки скруглены ролью карточки;
+   у строки — подложка 36 с глифом 20: тон сущности (как квадрат плитки «Обзора»), графит счёта
+   или углублённая поверхность у служебных строк «Данных» и «О приложении». Кикер группы — 13/18
+   полужирный. Списки других экранов остаются прямыми, пока их экраны не перепишут (§5). */
+.route-screen[data-screen="more"] .list-group { margin-top: 16px; }
+.route-screen[data-screen="more"] .list-kicker { margin: 0 0 6px 20px; font-weight: 700; }
+.route-screen[data-screen="more"] .list-card { overflow: hidden; border-radius: var(--radius-card); }
+.route-screen[data-screen="more"] .list-card > li + li { border-top: 0; background: linear-gradient(var(--border), var(--border)) 48px 0 / calc(100% - 48px) 1px no-repeat; }
+.route-screen[data-screen="more"] .list-row, .route-screen[data-screen="more"] .list-fact > summary { grid-template-columns: 36px minmax(0, 1fr) auto; }
+.route-screen[data-screen="more"] .list-icon { width: 36px; height: 36px; border-radius: var(--radius-plate); }
+.route-screen[data-screen="more"] .list-icon:not(.account, [class*="tone-"]) { background: var(--surface-sunken); }
+.route-screen[data-screen="more"] .list-icon.account { color: var(--on-tile-account); background: var(--tile-account); }
+.route-screen[data-screen="more"] .list-row.danger .list-icon { background: var(--red-soft); }
+.route-screen[data-screen="more"] .list-icon > svg { width: 20px; height: 20px; }
+.route-screen[data-screen="more"] .list-fact > p { margin-left: 48px; }
+@media (max-width: 18em) {
+  .route-screen[data-screen="more"] .list-row, .route-screen[data-screen="more"] .list-fact > summary { grid-template-columns: 36px minmax(0, 1fr); }
+}
 /* Выбор файла — та же строка списка; поле файла спрятано, кольцо фокуса рисует строка. */
 .file-button { position: relative; overflow: hidden; cursor: pointer; }
 .file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -800,7 +790,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .dialog-actions button { min-height: 48px; padding: 13px 20px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
 .dialog-actions .danger-button { color: var(--red-ink); background: var(--red-soft); border-color: var(--red-soft); border-radius: var(--radius-control); }
 /* `.dialog-actions button` перебивает `.primary-button` по специфичности — как и `.danger-button` выше. */
-.dialog-actions .primary-button { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.dialog-actions .primary-button { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 /* Вопрос перед вступлением в семью несёт с собой и выход: копию можно сделать не уходя с него. */
 .dialog-aside { padding: 16px; margin: 16px 0; background: var(--surface-sunken); }
 .dialog-aside > p { margin: 0 0 12px; }
@@ -905,161 +895,202 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .tone-amber { background: var(--tone-amber); }
 .tone-sage { background: var(--tone-sage); }
 .tone-coral { background: var(--tone-coral); }
-.tone-neutral { color: var(--ink); background: var(--surface-sunken); }
+.tone-neutral { color: var(--ink); background: var(--tone-neutral); }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-/* §8 «Обзор» (план волны 2, §1.1): месяц, итоги, строка «Можно на повседневные» и три ряда плиток.
-   Плитки плоские — их отделяет тон, а не тень (§5); карточка — только строка «Можно…». */
-.overview-screen { display: grid; min-width: 0; gap: 20px; }
-.overview-head { display: grid; min-width: 0; gap: 8px; }
-.month-switch { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; align-items: center; }
+/* ── Дизайн 5.0, R1: «Обзор» (§8, макеты v5 06). ──
+   Месяц со стрелками и три итога «На счетах · Расходы · Можно тратить» закреплены при прокрутке;
+   под ними карточка «Хватает до …», одна полоса «Доходы и счета» и сетка «Расходы» в 4 колонки.
+   Плитки плоские — их отделяет тон квадрата, а не тень (§5); карточка — только «Хватает до …». */
+.overview-screen { display: grid; min-width: 0; gap: 12px; }
+.overview-sentinel { display: block; height: 0; }
+/* Шапка «Обзора» липнет под измеренную шапку приложения и стоит на холсте во всю ширину экрана.
+   Линия под ней появляется, когда под неё поехали плитки (`data-stuck`). */
+.overview-head { position: sticky; top: var(--header-space); z-index: 15; display: grid; min-width: 0; gap: 0; margin: -12px -16px 0; padding: 0 16px 6px; background: var(--canvas); }
+.overview-head[data-stuck] { box-shadow: 0 1px 0 var(--border); }
+.month-switch { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; align-items: center; margin: 0 -12px; }
 .month-switch h1 { margin: 0; text-align: center; }
 .month-switch > button { display: grid; width: 48px; height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
-/* Итоги шапки — одна колонка по левому краю: «Всего на счетах» крупно, под ним за тонкой линией —
-   вторичный блок «Потрачено N», а под ним «по лимитам N из M». Прежде «Потрачено» стоял правой
-   колонкой и, не уместившись рядом с итогом, падал строкой ниже по центру — оторванным от всего.
-   Одна колонка держит и 320 pt, и ×2.7: строки переносятся, а не съезжают (2c, п. 7). */
-.overview-totals { display: grid; min-width: 0; gap: 8px; margin: 0; }
-.overview-totals > div { min-width: 0; }
-.overview-totals dt { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
-.overview-totals dd { margin: 0; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: normal; }
-.overview-totals .overview-total { font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; }
-.overview-spent { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; padding-top: 8px; border-top: 1px solid var(--border); }
-.overview-spent > dt { color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); }
-/* «по лимитам N из M» — своей строкой под «Потрачено»: чернила приглушения на холсте — 6.07:1 (§3). */
-.overview-totals .overview-limits { flex-basis: 100%; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+/* Три итога в ряд, каждый — кнопка к экрану, где число раскладывается. Подпись над суммой, между
+   итогами — тонкая линия `--border` (направляющая, а не граница элемента). */
+.totals-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0 -4px; }
+.totals-strip > button.total { position: relative; display: flex; min-width: 0; min-height: 52px; flex-direction: column; align-items: center; justify-content: flex-end; padding: 2px 4px 4px; color: var(--ink); text-align: center; background: transparent; border: 0; border-radius: var(--radius-control); }
+.totals-strip > button.total + button.total::before { position: absolute; top: 10px; bottom: 10px; left: 0; width: 1px; content: ""; background: var(--border); }
+.total-label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); overflow-wrap: break-word; hyphens: auto; }
+.total-value { font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
+.total-none { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.overview-notes { display: grid; gap: 4px; }
 .overview-note { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .overview-note .icon { color: var(--amber-ink); }
-.pick-hint { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.tile-section { min-width: 0; }
-/* §4 Кикеры рядов «ДОХОДЫ / СЧЕТА / РАСХОДЫ» — капс-метка, одно из трёх мест, где капс есть. */
-.row-kicker { margin: 0 0 8px; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-/* Кикер ряда и «Изменить» справа (§5.1: у каждого ряда — «Изменить», ничего только долгим нажатием).
-   Цель 48 при тихой кнопке; поле справа отдано кольцу фокуса. */
-.row-head { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
-.row-head > .row-kicker { margin: 0; }
-.row-head > .row-edit { min-height: 48px; padding: 0 8px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); }
 
-/* §6 Строка «Можно на повседневные» — карточка-переход в «План месяца»: глиф состояния, число, голос. */
+/* Карточка «Хватает до …» — переход в «План месяца»: подложка с глифом состояния, заголовок,
+   подпись, шеврон; под ними во всю ширину — полоса дней до выплаты с насечкой на 75 %. */
 .card { border-radius: var(--radius-card); }
-.reach-line { display: grid; gap: 12px; padding: 4px 16px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-card); }
-.reach-line.closed { padding-bottom: 16px; }
-.reach-line.empty { padding: 16px; }
-.reach-line > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.reach-line > button.reach-open { display: grid; grid-template-columns: 40px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 8px 0; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
-.reach-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
-.reach-line.short .reach-mark { color: var(--amber-ink); }
-.reach-line.out .reach-mark { color: var(--red-ink); }
-.reach-copy { min-width: 0; }
-.reach-copy > span, .reach-copy > strong { display: block; }
-.reach-copy > span { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
-.reach-copy > strong { color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; overflow-wrap: normal; }
-.reach-copy > .reach-voice { color: var(--ink); }
-.reach-line.out .reach-voice { color: var(--red-ink); }
+.reach-card { display: grid; gap: 12px; padding: 0 8px 0 12px; color: var(--ink); background: var(--surface); box-shadow: var(--shadow-card); }
+.reach-card.closed { padding-bottom: 16px; }
+.reach-card > p { margin: 0 4px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.reach-card > button.reach-open { display: grid; grid-template-columns: 36px minmax(0, 1fr) 24px; gap: 12px; align-items: center; width: 100%; min-height: 56px; padding: 12px 0 14px; color: var(--ink); text-align: left; background: transparent; border: 0; border-radius: var(--radius-control); }
+.reach-plate { display: grid; width: 36px; height: 36px; place-items: center; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-plate); }
+.reach-card.short .reach-plate { color: var(--amber-ink); background: var(--amber-soft); }
+.reach-card.out .reach-plate { color: var(--red-ink); background: var(--red-soft); }
+.reach-copy { display: grid; min-width: 0; }
+.reach-title { font-weight: 700; }
+.reach-caption { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.reach-card.out .reach-caption { color: var(--red-ink); }
+/* Полоса тоньше прежней линейки героя: 6 pt со стойками насечки по 5 сверху и снизу. */
+.reach-card .reach-bar { --bar-height: 6px; --post-height: 5px; grid-column: 1 / -1; margin: 0 4px 0 0; }
 
-/* §6 Плитки. Сетка — `repeat(auto-fill, minmax(max(4.5em, 64px), 1fr))` в кегле подписи плитки: на
-   320 pt четыре колонки по 66, при ×2.7 колонок меньше. Ряд доходов прокручивается внутри себя;
-   поле вокруг ряда оставляет место кольцу фокуса, которое иначе срезала бы прокрутка. */
-.tile-grid { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: var(--size-tile); line-height: var(--lh-tile); }
-.tile-grid > li { display: flex; min-width: 0; }
+.pick-hint { margin: 0; }
+/* Выбран счёт или доход: подсказка — чернильным пузырём над навигацией (§3: пузырь подсказки —
+   чернила). Она в конце потока, поэтому, появившись, не сдвигает плитки под пальцем. */
+.pick-hint:not(.visually-hidden) { position: sticky; bottom: calc(var(--nav-space) + 8px); z-index: 16; padding: 10px 14px; color: var(--on-ink); font-size: var(--size-caption); line-height: var(--lh-caption); background: var(--ink); box-shadow: var(--shadow-sheet); }
+.tile-section { min-width: 0; }
+/* §4 Кикеры рядов «ДОХОДЫ И СЧЕТА / РАСХОДЫ» — капс-метка. Справа — карандаш 48 к справочнику ряда. */
+.row-kicker { margin: 0; color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.row-head { display: flex; gap: 8px; align-items: center; justify-content: space-between; min-height: 48px; margin: 0 -12px 4px 4px; }
+
+/* §6 Плитка 5.0: квадрат 52 (радиус плитки) с глифом 24, под ним имя 12/15, сумма 13/17 700,
+   «из лимита» 11/14 и полоса на треке холста. Нажимается вся колонка — не меньше 48×48. Сетка —
+   `repeat(auto-fill, minmax(max(4.5em, 64px), 1fr))` в кегле подписи: на 320 pt четыре колонки по 66,
+   при крупном шрифте колонок меньше. */
+.tile-grid { display: grid; gap: 12px 8px; margin: 0; padding: 0; list-style: none; font-size: var(--size-tile); line-height: var(--lh-tile); }
+.tile-grid > li { display: flex; min-width: 0; justify-content: center; }
 .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px), 1fr)); }
 /* До 400 pt — не больше четырёх колонок: на пяти по 65 имени оставалось 49 pt (ревью 2b, LOW-9).
    Четверть ширины — нижняя граница колонки; при крупном шрифте 4.5em больше, и колонок меньше. */
 @media (max-width: 400px) {
   .tile-grid-grid { grid-template-columns: repeat(auto-fill, minmax(max(4.5em, 64px, calc((100% - 24px) / 4)), 1fr)); }
 }
-.tile-grid-accounts { grid-template-columns: repeat(auto-fill, minmax(max(8.5em, 104px), 1fr)); }
-.tile-grid-row { display: flex; min-width: 0; margin: -8px; padding: 8px; overflow-x: auto; overscroll-behavior-x: contain; }
-.tile-grid-row > li { flex: none; width: max(104px, 8.5em); }
-.tile-grid-row > li:last-child { width: max(64px, 5.3em); }
-.tile { position: relative; display: flex; width: 100%; min-width: 0; min-height: 92px; flex-direction: column; gap: 4px; justify-content: space-between; padding: 8px; color: var(--ink); font-size: var(--size-tile); line-height: var(--lh-tile); font-weight: 400; text-align: left; border: 0; border-radius: var(--radius-tile); }
-.tile-top { display: flex; gap: 4px; align-items: flex-start; justify-content: space-between; }
-.tile-glyph { display: grid; width: 32px; height: 32px; flex: none; place-items: center; color: var(--ink); background: var(--icon-plate); border-radius: var(--radius-plate); }
-.tile.tone-mint .tile-glyph { color: var(--tone-mint-ink); }
-.tile.tone-lilac .tile-glyph { color: var(--tone-lilac-ink); }
-.tile.tone-peach .tile-glyph { color: var(--tone-peach-ink); }
-.tile.tone-amber .tile-glyph { color: var(--tone-amber-ink); }
-.tile.tone-sage .tile-glyph { color: var(--tone-sage-ink); }
-.tile.tone-coral .tile-glyph { color: var(--tone-coral-ink); }
-/* Имя — до двух строк с переносом по слогам; полное — в доступном имени плитки и в листе (§6). */
-/* Перенос — по мягким переносам, которые ставит `hyphenation.ts`, и рисуется дефисом; словарь
-   браузера не нужен. `overflow-wrap: anywhere` — последнее средство для слова без гласных или
-   слога шире плитки: ни одно имя стартового набора до него не доходит (e2e `overview.spec.ts`). */
-.tile-name { display: -webkit-box; overflow: hidden; font-weight: 700; overflow-wrap: anywhere; hyphens: manual; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.tile-sum { font-weight: 700; overflow-wrap: normal; }
-.tile-sum small { color: var(--ink-muted); font-size: inherit; font-weight: 400; }
-.tile-note { color: var(--on-tile-account-muted); font-size: inherit; }
-.tile-state { display: grid; flex: none; place-items: center; }
-.tile-state.near { color: var(--amber-ink); }
-.tile-state.over { color: var(--red-ink); }
-/* Полоса потрачено/лимит — прямая (§5: полоса — поверхность). Трек — чернила 8 % поверх тона, заливка —
-   глиф тона, янтарь у «почти», красный у «перелимит»; лимит читается подписью «3 500 / 3 000». */
-.tile-bar { --bar-ink: var(--ink); --fill: 0%; display: block; height: 4px; margin-top: 2px; background-image: linear-gradient(to right, var(--bar-ink) 0 var(--fill), var(--tile-track) var(--fill)); }
-.tile.tone-mint .tile-bar { --bar-ink: var(--tone-mint-ink); }
-.tile.tone-lilac .tile-bar { --bar-ink: var(--tone-lilac-ink); }
-.tile.tone-peach .tile-bar { --bar-ink: var(--tone-peach-ink); }
-.tile.tone-amber .tile-bar { --bar-ink: var(--tone-amber-ink); }
-.tile.tone-sage .tile-bar { --bar-ink: var(--tone-sage-ink); }
-.tile.tone-coral .tile-bar { --bar-ink: var(--tone-coral-ink); }
-.tile .tile-bar.near { --bar-ink: var(--amber-ink); }
-.tile .tile-bar.over { --bar-ink: var(--red-ink); }
+/* Полоса «Доходы и счета» листается вбок внутри себя, а не страница, и выходит в поля экрана:
+   пятая плитка выглядывает из-за края. Поле сверху и снизу оставляет место кольцу фокуса. */
+.tile-row { display: flex; min-width: 0; align-items: stretch; margin: -8px -16px 0; padding: 8px 16px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.tile-row > .tile-grid { display: flex; flex: none; gap: 8px; }
+.tile-row > .tile-grid > li { flex: none; width: max(76px, 6.3em); }
+.tile-row-divider { flex: none; width: 1px; margin: 8px 8px 26px; background: var(--border); }
+.tile { position: relative; display: flex; width: 100%; min-width: 0; min-height: 48px; flex-direction: column; align-items: center; gap: 0; padding: 4px 0 6px; color: var(--ink); font-size: var(--size-tile); line-height: var(--lh-tile); font-weight: 400; text-align: center; background: transparent; border: 0; border-radius: var(--radius-tile); }
+.tile-square { position: relative; display: grid; width: var(--tile-square); height: var(--tile-square); flex: none; place-items: center; border-radius: var(--radius-tile); }
+.tile-square.account { color: var(--on-tile-account); background: var(--tile-account); }
+.tile-square.add { color: var(--ink-muted); background: transparent; border: 1px dashed var(--line); }
+/* Глиф на тоне — собственные чернила тона (5.05–6.50:1, §3). */
+.tile-square.tone-mint, .list-icon.tone-mint, .endpoint-plate.tone-mint { color: var(--tone-mint-ink); }
+.tile-square.tone-lilac, .list-icon.tone-lilac, .endpoint-plate.tone-lilac { color: var(--tone-lilac-ink); }
+.tile-square.tone-peach, .list-icon.tone-peach, .endpoint-plate.tone-peach { color: var(--tone-peach-ink); }
+.tile-square.tone-amber, .list-icon.tone-amber, .endpoint-plate.tone-amber { color: var(--tone-amber-ink); }
+.tile-square.tone-sage, .list-icon.tone-sage, .endpoint-plate.tone-sage { color: var(--tone-sage-ink); }
+.tile-square.tone-coral, .list-icon.tone-coral, .endpoint-plate.tone-coral { color: var(--tone-coral-ink); }
+/* Имя — под квадратом, переносится по мягким переносам, которые ставит `hyphenation.ts`, и рисуется
+   дефисом; не обрезается — на 320 pt длинное имя занимает три строки. `overflow-wrap: anywhere` —
+   последнее средство для слова без гласных: ни одно имя стартового набора до него не доходит. */
+/* Имя занимает не меньше двух строк: суммы в ряду стоят на одной линии, у «Жилья» и у «Связи и
+   подписок» (макеты 06, 06b); имя в три строки опускает только свою сумму. */
+.tile-name { display: block; max-width: 100%; min-height: calc(var(--lh-tile) * 2); margin-top: 6px; padding: 0 2px; overflow-wrap: anywhere; hyphens: manual; }
+.tile-sum { margin-top: 2px; font-size: var(--size-tile-amount); line-height: var(--lh-tile-amount); font-weight: 700; overflow-wrap: normal; }
+.tile-sum.quiet { color: var(--ink-muted); }
+.tile-limit { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); overflow-wrap: normal; }
+.tile-note { color: var(--ink-muted); font-size: var(--size-label); line-height: var(--lh-label); }
+/* Знак в углу квадрата: треугольник — почти лимит, круг — перелимит или отрицательный остаток,
+   карандаш — плитка справочника. Пилюля состояния на холсте, отбитая кольцом холста от квадрата. */
+.tile-badge { position: absolute; top: -6px; right: -6px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--ink); background: var(--surface-sunken); border-radius: var(--radius-pill); box-shadow: 0 0 0 2px var(--canvas); }
+.tile-badge.near { color: var(--amber-ink); background: var(--amber-soft); }
+.tile-badge.over, .tile-badge.negative { color: var(--red-ink); background: var(--red-soft); }
+.tile-badge svg, .tile-square .tile-check svg { width: 14px; height: 14px; }
+/* Полоса потрачено/лимит — прямая (§5: полоса — поверхность), под квадратом на треке холста.
+   Заливка — чернила (13.71:1 к треку), янтарь у «почти» (4.43:1), красный у «перелимит» (5.11:1);
+   лимит читается подписью «из 30 000 ₽». */
+.tile-bar { --bar-ink: var(--ink); --fill: 0%; display: block; width: var(--tile-square); height: 4px; margin-top: 5px; background-image: linear-gradient(to right, var(--bar-ink) 0 var(--fill), var(--track) var(--fill)); }
+.tile-bar.near { --bar-ink: var(--amber-ink); }
+.tile-bar.over { --bar-ink: var(--red-ink); }
 .tile-bar[data-fill="0"] { --fill: 0%; } .tile-bar[data-fill="5"] { --fill: 5%; } .tile-bar[data-fill="10"] { --fill: 10%; } .tile-bar[data-fill="15"] { --fill: 15%; } .tile-bar[data-fill="20"] { --fill: 20%; } .tile-bar[data-fill="25"] { --fill: 25%; } .tile-bar[data-fill="30"] { --fill: 30%; } .tile-bar[data-fill="35"] { --fill: 35%; } .tile-bar[data-fill="40"] { --fill: 40%; } .tile-bar[data-fill="45"] { --fill: 45%; } .tile-bar[data-fill="50"] { --fill: 50%; } .tile-bar[data-fill="55"] { --fill: 55%; } .tile-bar[data-fill="60"] { --fill: 60%; } .tile-bar[data-fill="65"] { --fill: 65%; } .tile-bar[data-fill="70"] { --fill: 70%; } .tile-bar[data-fill="75"] { --fill: 75%; } .tile-bar[data-fill="80"] { --fill: 80%; } .tile-bar[data-fill="85"] { --fill: 85%; } .tile-bar[data-fill="90"] { --fill: 90%; } .tile-bar[data-fill="95"] { --fill: 95%; } .tile-bar[data-fill="100"] { --fill: 100%; }
-/* Тёмная плитка счёта: на ней только белый и его приглушение (§3). */
-.tile-account { min-height: 76px; color: var(--on-tile-account); background: var(--tile-account); --money-currency-ink: var(--on-tile-account-muted); }
-.tile-account .tile-glyph { color: var(--on-tile-account-muted); background: transparent; }
-/* Тон счёта (D-036) — подложка глифа на тёмной плитке: заливка тона, глиф его чернилами (§3). */
-.tile-account .tile-glyph.tone-mint { color: var(--tone-mint-ink); background: var(--tone-mint); }
-.tile-account .tile-glyph.tone-lilac { color: var(--tone-lilac-ink); background: var(--tone-lilac); }
-.tile-account .tile-glyph.tone-peach { color: var(--tone-peach-ink); background: var(--tone-peach); }
-.tile-account .tile-glyph.tone-amber { color: var(--tone-amber-ink); background: var(--tone-amber); }
-.tile-account .tile-glyph.tone-sage { color: var(--tone-sage-ink); background: var(--tone-sage); }
-.tile-account .tile-glyph.tone-coral { color: var(--tone-coral-ink); background: var(--tone-coral); }
-.tile-account .tile-glyph.tone-neutral { color: var(--ink); background: var(--surface-sunken); }
-.tile-account .tile-name { color: var(--on-tile-account-muted); font-weight: 400; }
-.tile-account .tile-sum { color: var(--on-tile-account); }
-.tile-account .tile-state { color: var(--on-tile-account); }
-/* Плитка источника дохода — 64 × 104, сиреневая, имя — чернилами дохода. */
-.tile-income { min-height: 64px; background: var(--tile-income); }
-.tile-income .tile-label { display: flex; min-width: 0; gap: 4px; align-items: center; color: var(--income-ink); font-weight: 700; }
-.tile-income .tile-label .icon { flex: none; }
-/* Источник в архиве — итог, а не кнопка: подпись «в архиве» чернилами дохода на его фоне (§3). */
-.tile-static .tile-archived { color: var(--income-ink); font-size: inherit; }
-/* Выбор — кольцо акцента внутри плитки и галочка; цвет — не единственный знак: ещё `aria-pressed`. */
-.tile.picked { box-shadow: inset 0 0 0 3px var(--accent); }
-.tile .tile-check { position: absolute; top: 4px; right: 4px; display: grid; width: 24px; height: 24px; place-items: center; color: var(--on-ink); background: var(--accent); border-radius: var(--radius-pill); }
-.tile .tile-check svg { width: 16px; height: 16px; }
+/* Выбор — кольцо акцента вокруг квадрата (4.58:1 к холсту, 3.03–4.27 к заливке рядом) и галочка
+   на его углу; цвет — не единственный знак: ещё `aria-pressed`. */
+.tile.picked .tile-square { box-shadow: 0 0 0 3px var(--accent); }
+.tile-square .tile-check { position: absolute; top: -6px; right: -6px; display: grid; width: 22px; height: 22px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); box-shadow: 0 0 0 2px var(--canvas); }
 .tile[draggable="true"] { cursor: grab; }
-/* «+» — пунктир `--line`: 3.10:1 на холсте. */
-.add-tile { display: grid; width: 100%; min-height: 92px; padding: 0; place-items: center; color: var(--ink-muted); background: transparent; border: 1px dashed var(--line); border-radius: var(--radius-tile); }
-.tile-grid-row .add-tile { min-height: 64px; }
+/* «+» — та же колонка: пунктирный квадрат и короткая подпись. */
+.add-tile { display: flex; width: 100%; min-width: 0; min-height: 48px; flex-direction: column; align-items: center; padding: 4px 0 6px; color: var(--ink-muted); font-size: var(--size-tile); line-height: var(--lh-tile); text-align: center; background: transparent; border: 0; border-radius: var(--radius-tile); }
+.add-tile .tile-name { color: var(--ink); }
+/* Итоги при крупном шрифте — строками «подпись — сумма», а шапка «Обзора» в поток: прилипшая, она
+   при ×2.7 заняла бы полэкрана. */
+@media (max-width: 18em), (max-height: 34em) {
+  .overview-head { position: static; }
+}
+@media (max-width: 18em) {
+  /* Карточка «Хватает до …» при крупном шрифте: глиф над словами, шеврон уходит — «октября» в
+     колонке рядом с подложкой и шевроном не помещалось и рвалось посередине. */
+  .reach-card > button.reach-open { grid-template-columns: minmax(0, 1fr); }
+  .reach-card > button.reach-open > .row-chevron { display: none; }
+  .totals-strip { grid-template-columns: minmax(0, 1fr); margin: 0; }
+  .totals-strip > button.total { flex-direction: row; flex-wrap: wrap; gap: 0 8px; align-items: baseline; justify-content: space-between; min-height: 48px; text-align: left; }
+  .totals-strip > button.total + button.total::before { top: 0; right: 0; bottom: auto; width: auto; height: 1px; }
+}
 
 /* §6 Лист ввода суммы — поверх экрана, с которого его открыли. Висит над краем экрана на 8 pt
    со всех сторон: скругление листа — роль, и у края оно тоже видно. */
-.sheet-backdrop.entry-backdrop { padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+/* Лист ввода — лист снизу во всю ширину (5.0, макет 07): скругление роли листа сверху, низ стоит на
+   краю экрана, и безопасная зона снизу — внутри подвала, под кнопкой записи. */
+.sheet-backdrop.entry-backdrop { padding: 8px 0 0; }
+.entry-sheet { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.entry-sheet .sheet-foot { padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: calc(16px + env(safe-area-inset-bottom)); padding-left: max(16px, env(safe-area-inset-left)); }
 .sheet { display: flex; width: min(520px, 100%); min-height: 0; max-height: calc(100dvh - 16px); flex-direction: column; overflow: hidden; color: var(--ink); background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
 .sheet-form { display: flex; min-height: 0; flex: 1; flex-direction: column; }
-.sheet-head { display: flex; gap: 8px; align-items: center; padding: 8px 12px 0; }
+/* Голова листа (5.0, макет 07): «Закрыть» 48 слева, по центру — сегмент вида или слово вида, справа —
+   место той же ширины, чтобы центр стоял по центру. */
+.sheet-head { display: flex; gap: 4px; align-items: center; padding: 8px 4px 0; }
 .sheet-head h2 { min-width: 0; margin: 0; }
-.sheet-head > button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: var(--surface-sunken); border: 0; border-radius: var(--radius-control); }
-.sheet-kind { margin: 0; }
+.sheet-head > button { display: grid; width: 48px; height: 48px; flex: none; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-control); }
+.sheet-head-end { width: 48px; flex: none; }
+.sheet-head > .sheet-kind { flex: 1; min-width: 0; margin: 0; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; letter-spacing: 0; text-align: center; text-transform: none; }
 .sheet-body { display: grid; min-height: 0; flex: 1; gap: 12px; align-content: start; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px; }
 .sheet-body > p { margin: 0; }
-.sheet-foot { display: grid; gap: 8px; padding: 8px 16px 16px; border-top: 1px solid var(--border); }
+.sheet-foot { display: grid; gap: 8px; padding: 8px 16px 16px; }
 .entry-sheet .keypad button { min-height: 52px; }
-.from-to { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: 8px; align-items: stretch; }
+/* Карточки «откуда → куда»: на холсте, подложка 40 с глифом (графит счёта или тон категории), над
+   именем — короткое слово стороны. Вся карточка — цель нажатия, открывающая выбор стороны. */
+.from-to { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); gap: 4px; align-items: stretch; }
 .from-to-arrow { display: grid; place-items: center; color: var(--ink-muted); pointer-events: none; }
-.tile.endpoint { min-height: 64px; justify-content: flex-start; gap: 2px; }
-.endpoint-word { color: var(--ink-muted); }
-.tile-account .endpoint-word, .tile-account .endpoint-balance { color: var(--on-tile-account-muted); }
+button.endpoint, .endpoint.fixed { display: flex; min-width: 0; min-height: 64px; gap: 10px; align-items: center; padding: 8px 10px; color: var(--ink); text-align: left; background: var(--canvas); border: 0; }
+/* Скруглено то, что нажимают (§5): карточка-кнопка — радиусом кнопки; неизменяемая сторона возврата —
+   плашка в потоке, прямая. */
+button.endpoint { border-radius: var(--radius-control); }
+.endpoint-plate { display: grid; width: 40px; height: 40px; flex: none; place-items: center; border-radius: var(--radius-plate); }
+.endpoint-plate.account { color: var(--on-tile-account); background: var(--tile-account); }
+.endpoint-copy { display: grid; min-width: 0; }
+.endpoint-word { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .endpoint-name { min-width: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; overflow-wrap: anywhere; hyphens: manual; }
-.endpoint-balance { font-size: inherit; }
 /* The amount sticks to the edge of the scrolling body: on a short screen, typing never pushes it out of sight. */
+/* Сумма — героем без рамки, с кареткой цвета фокуса; знак валюты светлее цифр рядом с числом (§7.7).
+   Поле растёт по содержимому (`field-sizing`), и знак стоит сразу за суммой; без этой возможности
+   поле во всю ширину, а знак — справа. */
 .entry-amount-field { position: sticky; top: 0; bottom: 0; z-index: 1; background: var(--surface); }
-.entry-amount-field input { min-height: 68px; padding: 8px 12px; font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; }
-.entry-amount-field input::placeholder { font-weight: 400; }
+.entry-amount-row { display: flex; min-width: 0; align-items: baseline; justify-content: center; }
+.entry-amount-field input { min-width: 48px; min-height: 68px; padding: 8px 2px; color: var(--ink); font-size: var(--size-hero); line-height: var(--lh-hero); font-weight: 700; letter-spacing: -0.03em; font-variation-settings: var(--hero-axes); text-align: center; caret-color: var(--focus); background: transparent; border: 0; border-radius: 0; }
+@supports (field-sizing: content) {
+  .entry-amount-field input { width: auto; max-width: 100%; field-sizing: content; }
+}
+@supports not (field-sizing: content) {
+  .entry-amount-field input { width: 100%; }
+}
+.entry-amount-field input::placeholder { color: var(--ink-muted); font-weight: 400; }
+/* Фокус суммы — подчёркивание 3 pt цветом фокуса под числом и каретка, а не рамка вокруг героя:
+   рамка вокруг «2400» читалась артефактом браузера (§9, второе исключение из кольца). Контраст
+   `--focus` к белому листу — 6.39:1 (§3). Кольцо не снято, а прозрачно: в режиме принудительных
+   цветов система рисует его видимой рамкой. */
+.entry-amount-field input:focus-visible { outline: 3px solid transparent; outline-offset: 0; box-shadow: inset 0 -3px 0 var(--focus); }
+.entry-amount-sign { flex: none; margin-left: 6px; color: var(--ink-muted); font-size: var(--size-hero-step); line-height: var(--lh-hero-step); font-weight: 400; }
 .entry-amount-field .amount-total { text-align: center; }
-.entry-effect, .entry-foreign > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); text-align: center; }
+.entry-foreign > p { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); text-align: center; }
+/* Плашка «останется»: глиф и слово состояния, плашка в потоке — прямая (§5). Норма и остаток счёта —
+   утопленная плашка с чернилами (15.19:1), «почти» — янтарь (5.23:1), перелимит — красный (5.82:1). */
+.entry-state { display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; color: var(--ink); background: var(--surface-sunken); --money-currency-ink: currentColor; }
+.entry-state.near { color: var(--amber-ink); background: var(--amber-soft); }
+.entry-state.over { color: var(--red-ink); background: var(--red-soft); }
+.entry-state .icon { flex: none; }
+.entry-state > p { margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* Строка «Сегодня · Комментарий, метки» — только на коротком экране, где дата, комментарий и метки
+   свёрнуты. На обычном она не нужна: всё и так на виду. */
+.entry-more-row { display: none; }
+.entry-extras { display: grid; min-width: 0; gap: 4px; }
 .entry-foreign { display: grid; gap: 4px; justify-items: center; }
 .entry-notice { display: grid; gap: 8px; margin: 0; padding: 12px; color: var(--amber-ink); background: var(--amber-soft); }
 .entry-notice > p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: var(--size-caption); line-height: var(--lh-caption); }
@@ -1075,7 +1106,6 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .target-picker { display: grid; gap: 12px; }
 .target-picker-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .target-picker-head h3 { margin: 0; }
-.tile.pick-option { min-height: 76px; }
 .rate-quick { display: grid; gap: 12px; padding: 16px; background: var(--surface-sunken); }
 .rate-quick h3 { margin: 0; }
 .rate-quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1083,9 +1113,37 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
    целями 8 (§9). Выбранный чип — чернильная пилюля: выбор говорит ещё и `aria-pressed`. */
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-grid; min-width: 48px; min-height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; border-radius: var(--radius-pill); }
-.chip .chip-face { display: inline-flex; align-items: center; padding: 7px 14px; color: var(--ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill); }
+.chip .chip-face { display: inline-flex; gap: 6px; align-items: center; padding: 6px 14px 6px 12px; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-pill); }
 .chip[aria-pressed="true"] .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
-.add-chip .chip-face { color: var(--ink-muted); border-style: dashed; }
+.add-chip .chip-face { color: var(--ink); border-style: dashed; }
+/* ── Дизайн 5.0, R1: лист ввода (§6, макет 07). ──
+   Сегмент вида «Расход / Доход / Перевод» — пилюля на утопленной плоскости, выбранный — белый с тенью
+   пилюли (§6 «Сегмент-переключатель»). Те же кнопки-чипы с `aria-pressed`: выбор говорит и не цвет. */
+/* Цель — вся высота пилюли, 48; видимая пилюля выбранного — 40 внутри неё, с полем 4. */
+.mode-switch { display: flex; flex: 1; min-width: 0; gap: 4px; padding: 0 4px; background: var(--surface-sunken); border-radius: var(--radius-pill); }
+.mode-switch > .chip { flex: 1; min-width: 0; }
+.mode-switch > .chip .chip-face { justify-content: center; width: 100%; padding: 9px 6px; color: var(--ink-muted); background: transparent; border: 0; }
+.mode-switch > .chip[aria-pressed="true"] .chip-face { color: var(--ink); font-weight: 700; background: var(--surface); box-shadow: var(--shadow-pill); }
+/* Клавиши — на утопленной плоскости без рамки (опознаются цифрой: §3, «Запреты»), 52 в высоту. */
+.entry-submit { min-height: 52px; font-size: var(--size-title); line-height: var(--lh-title); }
+/* Узкий экран: слова «Со счёта / В категорию» прячутся, имя остаётся (макет 07, 320). */
+@media (max-width: 22.4375em) {
+  .endpoint-word { display: none; }
+  button.endpoint, .endpoint.fixed { gap: 8px; padding: 8px; }
+}
+/* Короткий экран (ниже 700 pt): подписи сторон спрятаны, карточки и клавиши ниже, дата, комментарий и
+   метки свёрнуты в одну строку — сумма, клавиатура и «Записать» целиком на экране (макет 07, 320×640). */
+@media (max-height: 43.75em) {
+  .endpoint-word { display: none; }
+  button.endpoint, .endpoint.fixed { min-height: 52px; padding: 6px 8px; }
+  .entry-amount-field input { min-height: 60px; padding-top: 4px; padding-bottom: 4px; }
+  .entry-more-row { display: flex; flex-wrap: wrap; gap: 0 6px; }
+  .entry-more-row .chip .chip-face { padding-right: 8px; padding-left: 8px; }
+  .entry-more-row .chip-current .chip-face { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+  .entry-extras:not([data-open]) { display: none; }
+  .entry-sheet .keypad button { min-height: 48px; }
+  .sheet-body { gap: 8px; padding-top: 8px; }
+}
 /* Тост с действием и числом, которое сдвинула запись. */
 .message-toast { --money-currency-ink: currentColor; }
 .toast-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -1094,7 +1152,7 @@ button:active, .file-button:active { transform: scale(0.98); transition: transfo
 .toast-receipt-value { --odometer-line: var(--lh-title); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
 
 /* §6 Выбор иконки и тона (подволна 2c): радиогруппа плиток 48 × 48 со словом под образцом. Выбор —
-   кольцо акцента (4.29:1 на белом), галочка и полужирное слово; образец тона на белом почти не виден
+   кольцо акцента (5.07:1 на белом), галочка и полужирное слово; образец тона на белом почти не виден
    краем (1.19–1.24:1, §3 «Запреты») и опознаётся словом. Подложка глифа — роль `--radius-plate`. */
 .picker { display: grid; min-width: 0; gap: 8px; margin: 0; padding: 0; border: 0; }
 .picker > legend { margin-bottom: 8px; padding: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
@@ -1107,7 +1165,7 @@ label.picker-option:has(input:focus-visible) { outline: 3px solid var(--focus); 
 .picker-option .icon-plate { display: grid; width: 40px; height: 40px; place-items: center; border-radius: var(--radius-plate); }
 .picker-option:has(input:checked) .icon-plate { box-shadow: 0 0 0 3px var(--accent); }
 .picker-option:has(input:checked) .picker-word { font-weight: 700; }
-label.picker-option .picker-check { position: absolute; top: 0; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-ink); background: var(--accent); border-radius: var(--radius-pill); }
+label.picker-option .picker-check { position: absolute; top: 0; right: 4px; display: grid; width: 20px; height: 20px; place-items: center; color: var(--on-accent); background: var(--accent); border-radius: var(--radius-pill); }
 label.picker-option .picker-check svg { width: 14px; height: 14px; }
 /* Глиф на подложке тона — его собственные чернила (5.05–6.50:1, §3). */
 .icon-plate.tone-mint { color: var(--tone-mint-ink); }
@@ -1127,11 +1185,8 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
    на 320 pt им не хватило бы места с именем и остатком. Карточка прямая (§5), скруглено то, что
    нажимают, и подложка глифа. */
 .manage-screen { display: grid; min-width: 0; gap: 16px; }
-.manage-screen > .planning-toolbar { margin-bottom: 0; }
 .manage-head { display: grid; min-width: 0; gap: 4px; }
-.manage-head h1, .manage-head p { margin: 0; }
-.manage-head h1 { overflow-wrap: anywhere; }
-.manage-head p { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.manage-head p, .manage-lead { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .manage-add { justify-self: start; }
 .manage-status { margin: 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .manage-status:empty { margin-top: -16px; }
@@ -1172,7 +1227,6 @@ label.picker-option .picker-check svg { width: 14px; height: 14px; }
 .base-currency-form { display: grid; gap: 12px; }
 /* «Категории и доходы»: та же плитка, что на «Обзоре», — с лимитом месяца плана вместо трат и
    карандашом в углу: касание открывает категорию для правки. Над формой — плитка-образец. */
-.tile-edit { display: grid; flex: none; place-items: center; color: var(--ink-muted); }
 .manage-preview { width: max(104px, 8.5em); justify-self: start; }
 .manage-row .row-open:only-child { grid-column: 1 / -1; }
 /* «Метки»: строка — знак «#», имя и число операций; под ней «Изменить», «В архив», «Удалить».
@@ -1231,9 +1285,8 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
    прямые, скруглено только то, что нажимают. */
 .import-screen { min-width: 0; }
 .import-screen > * + * { margin-top: 12px; }
-.import-screen > .planning-toolbar { margin-bottom: 4px; }
 .import-screen > .section-card:first-child { margin-top: 0; }
-.import-card > h1 { margin-top: 4px; }
+.import-card > .body-copy:first-child { margin-top: 0; }
 .import-card > .body-copy, .import-card > .field-hint { margin: 8px 0 0; }
 .import-privacy { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: start; margin-top: 16px; padding: 16px; color: var(--ink); background: var(--surface-sunken); }
 .import-privacy-mark { display: grid; width: 40px; height: 40px; place-items: center; color: var(--ink); background: var(--surface); }
@@ -1279,9 +1332,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
   .nav-button.active .nav-icon::after { bottom: -4px; }
   .app-shell > .update-toast, .app-shell > .message-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
-  .onboarding-card { padding: 32px; }
-  .category-edit-row { grid-template-columns: minmax(0, 1.45fr) minmax(130px, .75fr); align-items: start; }
-  .category-edit-row legend, .category-edit-row .remove-category { grid-column: 1 / -1; }
   .import-action { bottom: 0; padding-bottom: 16px; }
   /* Справочники: на широком экране «Выше / Ниже» встают в строку справа от записи. */
   .manage-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -1291,7 +1341,6 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .screen-heading { align-items: flex-start; flex-direction: column; }
   .plan-row { grid-template-columns: 40px 1fr; }
   .plan-row > p { grid-column: 2; text-align: left; }
-  .composition-options { grid-template-columns: 1fr; }
   .planning-screen .section-card > form > fieldset { grid-template-columns: 1fr; padding: 12px; }
   .planning-screen .section-card > form > fieldset > .field-error, .planning-screen #schedule-months { grid-column: 1; }
   .month-checkboxes { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1414,6 +1463,171 @@ label.check-row:has(input:focus-visible) { outline: 3px solid var(--focus); outl
   .app-shell > .update-toast, .app-shell > .message-toast { position: static; }
 }
 
+/* При крупном шрифте пять мест в одну строку дают вкладке 56 pt — меньше слога «Опе-» в кегле ×2.7,
+   и подпись рвалась по букве. Панель встаёт в три колонки: «Обзор · Операции · +» и «Отчёты · Ещё» —
+   в том же порядке, что и для диктора; подписи переносятся по слогам, цели остаются 48 с зазором 8.
+   Правило стоит после короткого экрана: при ×2.7 любой телефон ниже 38em, и колонки там — его. */
+@media (max-width: 18em) {
+  .bottom-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* ═════════════ R2: первый запуск, вопросы, пустые состояния ═════════════
+   Дизайн v5, DIRECTION §e и §f. Блок пользуется токенами `:root` и не объявляет своих. Вопрос листа
+   и заголовок пустого состояния — ступень `display` (22/28, §4). Главные кнопки слайдов, листов и
+   пустых состояний — 52 и кегль заголовка, как «Записать» листа ввода (макеты 01–04, 14). */
+
+/* Слайды первого запуска (01, 02, 02b): марка и «Пропустить», иллюстрация, точки, заголовок,
+   строка и одна главная кнопка. Колонка во всю высоту экрана; при крупном шрифте слайд
+   прокручивается, а кнопка стоит в потоке, а не прилипает поверх текста. */
+.intro { display: flex; flex-direction: column; width: min(480px, 100%); min-height: calc(100dvh - 40px); margin: 0 auto; }
+.intro-top { display: flex; min-height: 56px; flex-wrap: wrap; gap: 0 8px; align-items: center; justify-content: space-between; }
+.intro-brand { display: inline-flex; min-width: 0; gap: 8px; align-items: center; color: var(--ink); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.intro-brand-mark { flex: none; }
+.intro-skip { min-height: 48px; padding: 0 12px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; background: transparent; border: 0; }
+button.intro-skip { border-radius: var(--radius-control); }
+/* Горизонтальный взмах — слайду, вертикальная прокрутка — браузеру: без `pan-y` браузер забирал жест
+   и присылал `pointercancel` вместо `pointerup`, и пальцем слайды не листались (ревью R2, M-3). */
+.intro-slide { display: flex; flex: 1; flex-direction: column; min-height: 0; touch-action: pan-y; animation: route-fade var(--motion-screen) var(--ease-enter); }
+.intro-art { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; padding: 8px 0; }
+.intro-art svg { width: 100%; max-width: 330px; height: auto; max-height: 42dvh; }
+.intro-dots { display: flex; gap: 8px; justify-content: center; margin: 8px 0 28px; }
+.intro-dots span { display: block; }
+.intro-dots span::before { content: ""; display: block; width: 8px; height: 8px; border-radius: var(--radius-pill); background: var(--line); }
+.intro-dots span.current::before { width: 24px; background: var(--ink); }
+.intro-slide h1 { margin: 0; font-size: var(--size-hero-step); line-height: var(--lh-hero-step); letter-spacing: -0.02em; text-align: center; text-wrap: balance; }
+.intro-text { margin: 10px 0 0; color: var(--ink-muted); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 400; text-align: center; text-wrap: pretty; }
+.intro-actions { display: grid; gap: 8px; margin: 28px 0 8px; }
+.intro-actions > button, .q-foot .primary-button, .q-actions > button, .empty-state .empty-action { min-height: 52px; font-size: var(--size-title); line-height: var(--lh-title); }
+/* При крупном шрифте подпись — кеглем текста: «Посмотреть на примере» кеглем заголовка при ×2.7 шире 320 pt. */
+@media (max-width: 18em) {
+  .intro-actions > button, .q-foot .primary-button, .q-actions > button, .empty-state .empty-action { font-size: var(--size-body); line-height: var(--lh-body); }
+}
+.intro-error { margin: 8px 0 0; padding: 12px 16px; color: var(--red-ink); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; background: var(--red-soft); }
+@media (max-width: 18em) {
+  .intro-skip { margin-left: auto; font-size: var(--size-body); line-height: var(--lh-body); }
+}
+.hyphenated { hyphens: manual; overflow-wrap: normal; }
+.hyphenated .hy-soft { display: none; }
+@media (max-width: 18em) {
+  .hyphenated .hy-plain { display: none; }
+  .hyphenated .hy-soft { display: inline; }
+}
+
+/* Листы-вопросы поверх «Обзора» (03, 03b, 04): лист 24 снизу, вопрос крупно, одна строка
+   пояснения, крестик «Спросить позже». Лист прокручивается целиком, а кнопки ответа прилипают к
+   его низу — у длинного листа чипов «Готово» видно всегда. Ниже 18em варианты встают в колонку. */
+.sheet-backdrop.q-backdrop { padding: 8px 0 0; }
+.sheet-backdrop.q-backdrop[hidden] { display: none; }
+/* Лист поверх «Обзора» стоит в потоке маршрута, и правило ритма `.route-screen > * + *` давало
+   затемнению отступ 24 сверху: полоса над листом оставалась светлой, шапка — незатемнённой. */
+.route-screen > .sheet-backdrop { margin-top: 0; }
+.sheet.q-sheet { position: relative; display: flex; flex-direction: column; width: min(560px, 100%); max-height: min(94dvh, 820px); padding: 0 max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; color: var(--ink); text-align: left; background: var(--surface); border-radius: var(--radius-sheet); box-shadow: var(--shadow-sheet); animation: sheet-in var(--motion-surface) var(--ease-enter); }
+/* Лист во всю ширину телефона и скруглён только сверху: низ стоит на краю экрана (макеты 03–04). */
+.sheet.q-sheet { border-bottom-right-radius: 0; border-bottom-left-radius: 0; }
+.q-grab { display: block; flex: none; margin: 8px auto 0; }
+.q-grab::before { content: ""; display: block; width: 36px; height: 5px; border-radius: var(--radius-pill); background: var(--border); }
+.q-head { display: flex; gap: 8px; align-items: flex-start; justify-content: space-between; padding: 12px 0 4px 4px; }
+.q-head h2 { min-width: 0; margin: 0; padding-top: 10px; font-size: var(--size-display); line-height: var(--lh-display); }
+.q-head .q-later { display: grid; flex: none; width: 48px; min-height: 48px; padding: 0; place-items: center; color: var(--ink); background: transparent; border: 0; }
+.q-sub { margin: 0 4px 12px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; }
+.q-body { min-width: 0; }
+.q-group { margin: 4px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 700; }
+/* «Валюта бюджета: ₽ · Поменять» (ревью R2, L-3): одна строка над чипами, на узком экране — в две. */
+.q-currency { display: flex; flex-wrap: wrap; column-gap: 4px; align-items: center; margin: 0 4px 4px; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); }
+.q-currency strong { color: var(--ink); }
+.q-currency .q-currency-change { min-height: 48px; padding: 13px 4px; }
+.q-currency-form { display: grid; gap: 8px; margin: 0 4px 12px; min-width: 0; }
+.q-currency-form select { width: 100%; max-width: 100%; }
+.q-currency-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.q-chips { display: flex; flex-wrap: wrap; column-gap: 8px; margin: 0 0 8px; padding: 0; list-style: none; }
+.q-chip .chip-face { gap: 6px; padding: 7px 14px 7px 10px; font-size: var(--size-body); line-height: var(--lh-body); }
+.q-chip .chip-face .icon { flex: none; color: var(--ink-muted); }
+/* Чип, который снять нельзя (ревью R2, L-7): отмечен, а пометка говорит почему. */
+.q-chip-lock { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.q-chip[aria-pressed="true"] .chip-face { color: var(--ink); background: var(--surface-sunken); border-color: transparent; }
+.q-chip[aria-pressed="true"] .chip-face.tone-mint { background: var(--tone-mint); }
+.q-chip[aria-pressed="true"] .chip-face.tone-lilac { background: var(--tone-lilac); }
+.q-chip[aria-pressed="true"] .chip-face.tone-peach { background: var(--tone-peach); }
+.q-chip[aria-pressed="true"] .chip-face.tone-amber { background: var(--tone-amber); }
+.q-chip[aria-pressed="true"] .chip-face.tone-sage { background: var(--tone-sage); }
+.q-chip[aria-pressed="true"] .chip-face.tone-coral { background: var(--tone-coral); }
+.q-chip[aria-pressed="true"] .tone-mint .icon { color: var(--tone-mint-ink); }
+.q-chip[aria-pressed="true"] .tone-lilac .icon { color: var(--tone-lilac-ink); }
+.q-chip[aria-pressed="true"] .tone-peach .icon { color: var(--tone-peach-ink); }
+.q-chip[aria-pressed="true"] .tone-amber .icon { color: var(--tone-amber-ink); }
+.q-chip[aria-pressed="true"] .tone-sage .icon { color: var(--tone-sage-ink); }
+.q-chip[aria-pressed="true"] .tone-coral .icon { color: var(--tone-coral-ink); }
+.q-chip[aria-pressed="true"] .tone-neutral .icon { color: var(--ink); }
+.q-chip-own .chip-face { background: transparent; border-style: dashed; }
+.q-foot { position: sticky; bottom: 0; margin: 8px -16px 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); background: var(--surface); }
+.q-tall .q-foot { box-shadow: 0 -1px 0 var(--border); }
+.q-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.q-error { margin: 8px 4px 0; }
+.q-minis { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 4px 4px 8px; }
+.q-minis-label { color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+.q-minis ul { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 0; list-style: none; }
+.q-mini { display: inline-flex; min-width: 0; gap: 8px; align-items: center; font-weight: 700; }
+.icon-plate.q-mini-plate { display: grid; width: 40px; height: 40px; flex: none; place-items: center; color: var(--on-tile-account); background: var(--tile-account); }
+.q-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0; }
+.q-options button { display: flex; min-width: 0; min-height: 60px; gap: 8px; align-items: center; justify-content: center; padding: 6px 10px; color: var(--ink); font-size: var(--size-title); line-height: var(--lh-title); text-align: center; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.q-options button[aria-checked="true"] { font-weight: 700; border: 2px solid var(--accent); }
+.q-options button[aria-checked="true"] .icon { flex: none; color: var(--accent); }
+.q-days { margin-top: 12px; }
+.q-day-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 8px; margin: 8px 0; padding: 0; list-style: none; }
+.q-day-grid button { width: 100%; min-height: 48px; padding: 0; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.q-day-grid button[aria-pressed="true"] { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
+.q-day-grid button[aria-disabled="true"] { opacity: .5; }
+.q-days-status { margin: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+@media (max-width: 18em) {
+  .q-actions, .q-options { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Подсказка на первую трату (05): кольцо акцента на квадрате плитки и пузырь чернилами под ней.
+   Координаты — переменными, их ставит `CoachMark` по плитке; до первого замера слой невидим. */
+.coach-layer { position: absolute; top: 0; left: 0; z-index: 5; width: 0; height: 0; }
+.coach-layer:not([data-placed]) { visibility: hidden; }
+.coach-ring { position: absolute; top: var(--coach-ring-top, 0); left: var(--coach-ring-left, 0); width: var(--coach-ring-width, 0); height: var(--coach-ring-height, 0); pointer-events: none; }
+.coach-ring::before { content: ""; position: absolute; inset: 0; border: 3px solid var(--accent); border-radius: var(--radius-card); }
+.coach-bubble.card { position: absolute; top: var(--coach-bubble-top, 0); left: var(--coach-bubble-left, 16px); width: min(17.5em, calc(100vw - 32px)); padding: 14px 8px 4px 16px; color: var(--on-ink); background: var(--ink); box-shadow: var(--shadow-sheet); }
+.coach-arrow { position: absolute; top: -8px; left: var(--coach-arrow-left, 24px); width: 18px; height: 18px; background: var(--ink); transform: rotate(45deg); }
+.coach-text { position: relative; margin: 0; padding-right: 8px; color: var(--on-ink); font-size: var(--size-title); line-height: var(--lh-title); font-weight: 700; }
+.coach-bubble .coach-ok { position: relative; margin-left: -8px; padding: 0 8px; color: var(--on-ink); font-weight: 400; text-decoration: underline; text-underline-offset: 3px; }
+.coach-bubble .coach-ok:focus-visible { outline: 3px solid var(--on-ink); outline-offset: 0; }
+
+/* Карточки-подсказки в конце «Обзора» (06b): не больше двух, ряд листается вбок, вторая
+   выглядывает из-за края. При крупном шрифте карточки встают друг под другом. Карточка —
+   опора для текста «для слуха» (`.sr-only` в `Hyphenated`): без неё он выпадал из прокрутки ряда
+   и раздвигал страницу вбок. */
+.hint-cards { min-width: 0; max-width: 100%; margin-top: 16px; }
+.hint-cards ul { display: grid; min-width: 0; max-width: 100%; grid-auto-columns: calc(100% - 40px); grid-auto-flow: column; gap: 8px; margin: 0; padding: 0 0 4px; overflow-x: auto; list-style: none; scroll-snap-type: x mandatory; }
+.hint-cards ul:has(> li:only-child) { grid-auto-columns: 100%; }
+.hint.card { position: relative; display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: start; padding: 14px 4px 12px 16px; background: var(--surface); box-shadow: var(--shadow-card); scroll-snap-align: start; }
+.hint h3 { display: flex; gap: 8px; align-items: center; margin: 0; font-size: var(--size-body); line-height: var(--lh-body); font-weight: 700; }
+.hint h3 .icon { flex: none; color: var(--ink-muted); }
+.hint p { margin: 2px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.hint .hint-action { margin-top: 10px; }
+.hint .hint-close { width: 48px; padding: 0; margin-top: -10px; color: var(--ink-muted); }
+@media (max-width: 18em) {
+  .hint-cards ul { grid-auto-columns: auto; grid-auto-flow: row; overflow-x: visible; }
+}
+
+/* Пустое состояние (14, 15): иллюстрация или глиф 64, название состояния крупно, одна строка,
+   одна основная кнопка и быстрые шаблоны — у меток и у заглушек «Долгов», «Целей», «Регулярных». */
+.empty-state { display: flex; min-width: 0; flex-direction: column; align-items: center; padding: 24px 12px 0; text-align: center; }
+.empty-state h2 { color: var(--ink); }
+.empty-art svg { width: 200px; max-width: 100%; height: auto; }
+.icon-plate.empty-glyph { display: grid; width: 64px; height: 64px; place-items: center; color: var(--ink); background: var(--surface-sunken); }
+.empty-state h2 { margin: 20px 0 0; font-size: var(--size-display); line-height: var(--lh-display); }
+.empty-state .empty-text { max-width: 30ch; margin: 8px 0 0; color: var(--ink-muted); font-size: var(--size-body); line-height: var(--lh-body); font-weight: 400; text-wrap: pretty; }
+.empty-state .empty-action { max-width: 480px; margin-top: 24px; }
+.empty-quick { width: 100%; margin-top: 24px; }
+.empty-quick p { margin: 0 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.empty-quick .chip-row { justify-content: center; margin: 0; padding: 0; list-style: none; }
+.empty-quick .chip-face { gap: 6px; font-size: var(--size-body); line-height: var(--lh-body); }
+.empty-note { margin: 20px 0 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); font-weight: 400; }
+.placeholder-list { margin: 16px 0 0; padding: 0; font-weight: 700; list-style: none; }
+.placeholder-list li + li { margin-top: 4px; }

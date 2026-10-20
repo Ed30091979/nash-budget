@@ -1,6 +1,6 @@
-import { type ChangeEvent, type RefObject, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type BudgetState, type CategoryType } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { categoryVisual } from "../../category-visual";
@@ -280,14 +280,20 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
 
   return (
     <div className="import-screen" aria-busy={busy}>
-      <div className="planning-toolbar">
-        <BackButton label={stage.kind === "review" ? "Другой файл" : "К разделу «Ещё»"} onClick={stage.kind === "review" ? forget : onBack} />
-      </div>
-      {stage.kind === "pick" ? <PickStage busy={busy} error={error} notice={stage.notice} titleRef={titleRef} onPick={(event) => void pick(event)} /> : null}
+      {/* Заголовок стадии — `h1` строки заголовка: при смене стадии фокус приходит на него. В
+          предпросмотре «назад» — к выбору файла: разобранное забывается, бюджет не тронут. */}
+      <TitleBar
+        back={stage.kind === "review" ? { label: "Другой файл", name: "Другой файл", onClick: forget } : { label: "Ещё", onClick: onBack }}
+        title={stage.kind === "review" ? `Разобрано: ${plural(stage.classified.summary.total, OPERATIONS)}` : stage.kind === "done" ? `Добавлено: ${plural(stage.count, OPERATIONS)}` : "Выписка банка"}
+        titleId={IMPORT_TITLE_ID}
+        titleRef={titleRef}
+        titleFocusable
+      />
+      {stage.kind === "pick" ? <PickStage busy={busy} error={error} notice={stage.notice} onPick={(event) => void pick(event)} /> : null}
       {stage.kind === "review" && plan !== null ? (
-        <ReviewStage budget={budget} stage={stage} plan={plan} busy={busy} error={error} titleRef={titleRef} onChoices={patchChoices} onAssign={assign} onConfirm={() => void confirm()} onForget={forget} />
+        <ReviewStage budget={budget} stage={stage} plan={plan} busy={busy} error={error} onChoices={patchChoices} onAssign={assign} onConfirm={() => void confirm()} onForget={forget} />
       ) : null}
-      {stage.kind === "done" ? <DoneStage stage={stage} busy={busy} error={error} titleRef={titleRef} onUndo={() => void undo()} onAnother={forget} onBack={onBack} /> : null}
+      {stage.kind === "done" ? <DoneStage stage={stage} busy={busy} error={error} onUndo={() => void undo()} onAnother={forget} onBack={onBack} /> : null}
     </div>
   );
 }
@@ -295,7 +301,6 @@ export function ImportScreen({ budget, onChange, onBack, memory, initialStage, n
 interface StageProps {
   readonly busy: boolean;
   readonly error: string | null;
-  readonly titleRef: RefObject<HTMLHeadingElement | null>;
 }
 
 function ErrorLine({ message }: { readonly message: string | null }) {
@@ -306,11 +311,9 @@ function ErrorLine({ message }: { readonly message: string | null }) {
  * Выбор файла. Обещание приватности стоит здесь плашкой — там, где палец выбирает файл, — а не
  * в свёрнутой строке политики: выписка — самое чувствительное, что человек может дать приложению.
  */
-export function PickStage({ busy, error, notice, titleRef, onPick }: StageProps & { readonly notice: string | null; readonly onPick: (event: ChangeEvent<HTMLInputElement>) => void }) {
+export function PickStage({ busy, error, notice, onPick }: StageProps & { readonly notice: string | null; readonly onPick: (event: ChangeEvent<HTMLInputElement>) => void }) {
   return (
     <section className="section-card import-card" aria-labelledby={IMPORT_TITLE_ID}>
-      <span className="card-kicker">Данные</span>
-      <h1 id={IMPORT_TITLE_ID} ref={titleRef} tabIndex={-1}>Выписка банка</h1>
       <p className="body-copy">Выгрузите операции из Т-Банка в CSV и выберите файл. Приложение разберёт его на покупки, доходы и переводы и разложит по вашим категориям; незнакомое покажет списком и спросит.</p>
       <div className="import-privacy" role="note">
         <span className="import-privacy-mark" aria-hidden="true"><Icon name="shield" size={24} /></span>
@@ -355,7 +358,7 @@ function SummaryRow({ label, count, minor, note, tone }: { readonly label: strin
  * покупки, приходы, переводы себе, пропущенное; потом незнакомые продавцы с выбором категории;
  * потом узнанное — свёрнутым списком. Кнопка добавления называет число операций словами.
  */
-export function ReviewStage({ budget, stage, plan, busy, error, titleRef, onChoices, onAssign, onConfirm, onForget }: StageProps & {
+export function ReviewStage({ budget, stage, plan, busy, error, onChoices, onAssign, onConfirm, onForget }: StageProps & {
   readonly budget: BudgetState;
   readonly stage: ReviewStage;
   readonly plan: ImportPlan;
@@ -388,7 +391,6 @@ export function ReviewStage({ budget, stage, plan, busy, error, titleRef, onChoi
   return <>
     <section className="section-card import-card" aria-labelledby={IMPORT_TITLE_ID}>
       <span className="card-kicker">Выписка{period ? ` · ${period}` : ""}</span>
-      <h1 id={IMPORT_TITLE_ID} ref={titleRef} tabIndex={-1}>Разобрано: {plural(classified.summary.total, OPERATIONS)}</h1>
       <p className="body-copy">Файл прочитан на устройстве и уже забыт — дальше только эти операции. В бюджет они попадут, когда вы нажмёте кнопку внизу; до этого ничего не меняется.</p>
       <dl className="import-summary">
         <SummaryRow label="Покупки" count={counts.expenses} minor={totals.expenseMinor} />
@@ -490,7 +492,7 @@ export function ReviewStage({ budget, stage, plan, busy, error, titleRef, onChoi
  * Квитанция импорта — и выход из него. Отмена удаляет ровно добавленные операции одним изменением;
  * то же место предлагает следующую выписку и дорогу назад.
  */
-export function DoneStage({ stage, busy, error, titleRef, onUndo, onAnother, onBack }: StageProps & {
+export function DoneStage({ stage, busy, error, onUndo, onAnother, onBack }: StageProps & {
   readonly stage: DoneStage;
   readonly onUndo: () => void;
   readonly onAnother: () => void;
@@ -504,7 +506,6 @@ export function DoneStage({ stage, busy, error, titleRef, onUndo, onAnother, onB
   return (
     <section className="section-card import-card import-done" aria-labelledby={IMPORT_TITLE_ID}>
       <span className="card-kicker">Выписка</span>
-      <h1 id={IMPORT_TITLE_ID} ref={titleRef} tabIndex={-1}>Добавлено: {plural(stage.count, OPERATIONS)}</h1>
       <div className="save-receipt" role="status">
         <span className="save-receipt-mark" aria-hidden="true"><Icon name="circle-check" size={24} /></span>
         <div className="save-receipt-copy">

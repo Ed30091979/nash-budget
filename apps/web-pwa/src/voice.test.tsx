@@ -13,14 +13,14 @@ import { OverviewScreen } from "./features/overview/OverviewScreen";
 import { periodClock, reach } from "./reach";
 
 const design = readFileSync(new URL("../../../DESIGN.md", import.meta.url), "utf8");
-const reachLineSource = readFileSync(new URL("./features/overview/ReachLine.tsx", import.meta.url), "utf8");
+const reachCardSource = readFileSync(new URL("./features/overview/ReachCard.tsx", import.meta.url), "utf8");
 
 /**
  * Голос о нехватке — факт и путь (§6 `DESIGN.md`).
  *
  * Нехватка никогда не называется без числа, которым её закрывают: «до 20-го не дотягивает» и
  * сразу «чтобы дотянуть — 2 077 ₽ в день». Прежде это держали герой «Сегодня», строка лимита и
- * конверт табло; с 2b нехватку называет одна строка «Можно на повседневные» на «Обзоре», а плитки
+ * конверт табло; с 5.0 нехватку называет карточка «Хватает до …» под итогами «Обзора», а плитки
  * говорят состояние лимита словом и числами — и проверка держит правило на всём экране.
  */
 function textOf(markup: string): string {
@@ -50,7 +50,9 @@ function renderOverview(state: BudgetState): string {
       onOpenMonth={() => undefined}
       onOpenSheet={() => undefined}
       onAddCategory={() => undefined}
+      onAddAccount={() => undefined}
       onPlan={() => undefined}
+      onReports={() => undefined}
       onEdit={() => undefined}
     />,
   );
@@ -68,13 +70,14 @@ describe("голос о нехватке: факт и путь", () => {
     expect(line.state).toBe("short");
   });
 
-  it("строка «Можно на повседневные»: за «не дотягивает» сразу идёт «чтобы дотянуть — N ₽ в день»", () => {
+  it("карточка «Хватает до …»: за «не дотянет» сразу идёт «чтобы дотянуть — N ₽ в день»", () => {
     const markup = renderOverview(makeSeedBudget());
-    const line = markup.slice(markup.indexOf('<section class="card reach-line'), markup.indexOf("</section>", markup.indexOf('<section class="card reach-line')));
-    expect(line).toContain('class="card reach-line short"');
-    expect(textOf(line)).toMatch(/хватает до \S+ \S+, а до \S+ \S+ не дотягивает · чтобы дотянуть — \d[\d ]* ₽ в день/u);
-    // Правило держится на самой строке, а не на удаче образца.
-    expect(reachLineSource).toContain("а до {until} не дотягивает · чтобы дотянуть — <Money value={needPerDay} /> в день");
+    const card = markup.slice(markup.indexOf('<section class="card reach-card'), markup.indexOf("</section>", markup.indexOf('<section class="card reach-card')));
+    expect(card).toContain('class="card reach-card short"');
+    // Факт — где кончатся деньги, путь — сразу за ним, в тех же единицах, что и темп.
+    expect(textOf(card)).toMatch(/^Хватает до \S+ \S+ до (?:\S+ \S+|конца \S+) не дотянет · чтобы дотянуть — \d[\d ]* ₽ в день$/u);
+    // Правило держится на самой карточке, а не на удаче образца.
+    expect(reachCardSource).toContain("до {until} не дотянет · чтобы дотянуть — <Money value={needPerDay} /> в день");
   });
 
   it("на всём «Обзоре» — тексте и доступных именах — нехватка не стоит без пути", () => {

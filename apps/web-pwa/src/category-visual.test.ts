@@ -67,8 +67,10 @@ describe("иконка и тон категории", () => {
 
     for (const tone of TONES) {
       if (tone === "neutral") {
-        // Нейтральная плитка берёт уже объявленную поверхность, своего токена ей не нужно.
-        expect(styles).toContain(".tone-neutral { color: var(--ink); background: var(--surface-sunken); }");
+        // 5.0: у нейтрального тона свой токен — «Прочее» отличается от утопленных плашек; глиф — чернила.
+        expect(styles).toMatch(/--tone-neutral: #[0-9a-f]{6};/u);
+        expect(styles).toContain(".tone-neutral { color: var(--ink); background: var(--tone-neutral); }");
+        expect(design).toContain("`--tone-neutral`");
         continue;
       }
       expect(styles).toMatch(new RegExp(`--tone-${tone}: #[0-9a-f]{6};`, "u"));

@@ -36,7 +36,9 @@ function propsFor(budget: BudgetState, overrides: Partial<OverviewScreenProps> =
     onOpenMonth: vi.fn(),
     onOpenSheet: vi.fn(),
     onAddCategory: vi.fn(),
+    onAddAccount: vi.fn(),
     onPlan: vi.fn(),
+    onReports: vi.fn(),
     onEdit: vi.fn(),
     ...overrides,
   };
@@ -49,20 +51,33 @@ function render(overrides: Partial<OverviewScreenProps> = {}, budget = state()):
 const plain = (markup: string) => markup.replace(/<[^>]+>/gu, "").replace(/[\u00a0\u202f]/gu, " ");
 
 describe("«Обзор»: разметка", () => {
-  it("месяц заголовком экрана, итоги и строка «Можно на повседневные» G-002", () => {
+  it("кольцо подсказки первого запуска опирается на квадрат категории, а не на всю колонку (макет 05)", () => {
+    const markup = render();
+    const categorySquares = [...markup.matchAll(/data-tile="category:[^"]+"[^>]*><span class="tile-square[^"]*" aria-hidden="true"( data-coach-anchor="")?>/gu)];
+    expect(categorySquares.length).toBeGreaterThan(3);
+    expect(categorySquares.every((match) => match[1] !== undefined)).toBe(true);
+    // Счёт и доход — не опора: подсказка говорит о категории.
+    expect(markup).not.toMatch(/data-tile="(?:account|income):[^"]+"[^>]*><span class="tile-square[^"]*" aria-hidden="true" data-coach-anchor/u);
+  });
+
+  it("месяц заголовком экрана, три итога и карточка «Хватает до …» G-002", () => {
     const markup = render();
     expect(markup).toMatch(/<h1><span class="visually-hidden">Обзор, <\/span>Июль 2026<\/h1>/u);
     expect(markup).toContain('aria-label="Предыдущий месяц: июнь 2026"');
     expect(markup).toContain('aria-label="Следующий месяц: август 2026"');
-    const text = plain(markup);
-    expect(text).toContain("Всего на счетах");
-    // «Потрачено» — весь расход месяца; доля по лимитам — своей подписью (MEDIUM-8).
-    expect(text).toContain("Потрачено71 000 ₽по лимитам 26 000 ₽ из 53 000 ₽");
-    expect(text).toContain("Можно на повседневные27 000 ₽");
-    expect(markup).toMatch(/class="card reach-line [a-z]+"/u);
-    // Одно число в строке — то, что ищут проверки и e2e (`.reach-line strong`).
-    const reachLine = /<section class="card reach-line[^"]*"[\s\S]*?<\/section>/u.exec(markup)?.[0] ?? "";
-    expect([...reachLine.matchAll(/<strong>/gu)]).toHaveLength(1);
+    const strip = plain(/<div class="totals-strip"[\s\S]*?<\/div>/u.exec(markup)?.[0] ?? "");
+    expect(strip).toContain("На счетах");
+    // «Расходы» — весь расход месяца; доля по лимитам — в карточке своей подписью (MEDIUM-8).
+    expect(strip).toContain("Расходы71 000 ₽");
+    expect(strip).toContain("Можно тратить27 000 ₽");
+    expect(markup).toMatch(/class="card reach-card [a-z]+"/u);
+    // Июль образца не дотягивает до выплаты: карточка называет факт и путь (DESIGN §6).
+    const card = plain(/<section class="card reach-card[^"]*"[\s\S]*?<\/section>/u.exec(markup)?.[0] ?? "");
+    expect(card).toMatch(/^Хватает до \d+ июля.*не дотянет · чтобы дотянуть — [\d ]+ ₽ в день$/u);
+    // «Можно тратить» — одно число на экране, и стоит оно в итогах (его ищет e2e: `.total-can-spend .total-value`).
+    const canSpend = /<button class="total total-can-spend"[\s\S]*?<\/button>/u.exec(markup)?.[0] ?? "";
+    expect([...canSpend.matchAll(/class="money"/gu)]).toHaveLength(1);
+    expect(card).not.toContain("27 000 ₽");
   });
 
   it("плитка категории: полное имя, суммы и слово состояния — в доступном имени; глиф — на плитке", () => {
@@ -76,14 +91,14 @@ describe("«Обзор»: разметка", () => {
     };
     const overMarkup = render({}, over);
     expect(overMarkup).toMatch(/aria-label="Продукты: потрачено 31[\u00a0 ]000[\u00a0 ]₽ из 30[\u00a0 ]000[\u00a0 ]₽, перелимит 1[\u00a0 ]000[\u00a0 ]₽\. Записать расход"/u);
-    expect(overMarkup).toContain('class="tile-state over"');
+    expect(overMarkup).toContain('class="tile-badge over"');
     expect(overMarkup).toContain('#glyph-circle-alert');
     expect(overMarkup).toContain('class="tile-bar over" data-fill="100"');
     // Плитки категорий не выбираются: у них нет `aria-pressed`.
     expect(/<button class="tile tile-expense[^>]*aria-pressed/u.test(markup)).toBe(false);
   });
 
-  it("счета — выбираемые плитки с `aria-pressed`, доходы — ряд, «+» — с именем того, что добавится", () => {
+  it("счета — выбираемые плитки с `aria-pressed`, доходы — ряд, «+» — с именем того, что добавится, в конце ряда", () => {
     const markup = render();
     expect(markup).toMatch(/<button class="tile tile-account" type="button" aria-label="Основной: остаток [^"]+" aria-pressed="false"/u);
     expect(markup).toContain('class="tile-grid tile-grid-accounts"');
@@ -91,12 +106,16 @@ describe("«Обзор»: разметка", () => {
     // Длинное имя целиком — в доступном имени, на плитке — до двух строк.
     expect(markup).toMatch(/aria-label="Подработка и самозанятость: 0[\u00a0 ]₽ за июль\. Затем выберите счёт"/u);
     expect(markup).toMatch(/aria-label="Без категории: 180[\u00a0 ]000[\u00a0 ]₽ за июль\. Затем выберите счёт"/u);
-    expect(markup).toContain('aria-label="Добавить источник дохода"');
-    expect(markup).toContain('aria-label="Добавить категорию расходов"');
-    expect(markup).toMatch(/<p class="pick-hint" role="status">Коснитесь категории/u);
-    // Сетка — та, что из §5; кикеры рядов — заголовки секций.
+    // «+» ряда «Доходы и счета» — последней плиткой за счетами, «Счёт» (макеты v5 03b, 05).
+    expect(markup).toMatch(/<ul class="tile-grid tile-grid-accounts"[^>]*>[\s\S]*<button class="add-tile" type="button" aria-label="Новый счёт">[\s\S]*?<\/button><\/li><\/ul>/u);
+    expect(markup).not.toContain('aria-label="Добавить источник дохода"');
+    expect(markup).toContain('aria-label="Своя категория расходов"');
+    // Постоянного абзаца над плитками нет: пока ничего не выбрано, подсказка — только для диктора.
+    expect(markup).toMatch(/<p class="pick-hint visually-hidden" role="status">Коснитесь категории/u);
+    // Сетка — та, что из §5; кикеры рядов — заголовки секций: доходы и счета — одной полосой.
     expect(markup).toContain('class="tile-grid tile-grid-grid" aria-label="Категории расходов"');
-    for (const kicker of ["Доходы", "Счета", "Расходы"]) expect(markup).toContain(`class="row-kicker">${kicker}</h2>`);
+    for (const kicker of ["Доходы и счета", "Расходы"]) expect(markup).toContain(`class="row-kicker">${kicker}</h2>`);
+    expect(markup).toMatch(/<div class="tile-row"><ul class="tile-grid tile-grid-row"[\s\S]*?<\/ul><span class="tile-row-divider" aria-hidden="true"><\/span><ul class="tile-grid tile-grid-accounts"/u);
   });
 
   it("итоги и плитки — в базовой валюте семьи, которую ставит оболочка, а не в рублях по умолчанию", () => {
@@ -118,7 +137,7 @@ describe("«Обзор»: разметка", () => {
     expect(text).toContain("Июль закрыт: осталось от повседневных лимитов июля");
     expect(text).toContain("27 000 ₽");
     expect(text).toContain("Открыть октябрь");
-    expect(text).toContain("Потрачено0 ₽");
+    expect(text).toContain("Расходы0 ₽");
     expect(markup).not.toMatch(/\sstyle=/u);
   });
 });
@@ -136,11 +155,11 @@ describe("«Обзор»: месяц на краю календаря", () => {
   });
 });
 
-describe("«Обзор»: «Потрачено» — весь расход месяца", () => {
-  it("демо, октябрь 2026: 71 000 ₽ — столько же, сколько в «Отчётах»; по лимитам — 26 000 из 53 000 под своей подписью", () => {
+describe("«Обзор»: «Расходы» — весь расход месяца", () => {
+  it("демо, октябрь 2026: 554 000 · 71 000 — столько же, сколько в «Отчётах» · 27 000; лимиты — 26 000 из 53 000 в карточке", () => {
     // Ревью 2b, MEDIUM-8: шапка говорила «Потрачено 26 000 ₽ из 53 000 ₽», а расход октября —
-    // 71 000 ₽ (Жильё 45 000 + Продукты 22 000 + Транспорт 4 000). Слово «Потрачено» читают как весь
-    // расход; доля лимитов — другое число и названа словами «по лимитам».
+    // 71 000 ₽ (Жильё 45 000 + Продукты 22 000 + Транспорт 4 000). Итог «Расходы» — весь расход;
+    // доля лимитов — другое число и названа словами «лимиты: … из …» в карточке под итогами.
     const today = "2026-10-19";
     const demo = buildDemoBudgetState(today);
     const active = demo.budgets.find((item) => item.id === demo.activeBudgetId)!;
@@ -151,13 +170,14 @@ describe("«Обзор»: «Потрачено» — весь расход ме�
       clock: periodClock(active, [], today),
       flexiblePlanMinor: plan.currentMonth.flexiblePlanMinor,
     })} />);
-    const totals = plain(/<dl class="overview-totals">[\s\S]*?<\/dl>/u.exec(markup)?.[0] ?? "");
+    const totals = plain(/<div class="totals-strip"[\s\S]*?<\/div>/u.exec(markup)?.[0] ?? "");
     const reports = categorySpend(demo, calculateBudget(demo)).reduce((sum, row) => sum + row.spentMinor, 0);
     expect(reports).toBe(7_100_000);
     expect(calculateBudget(demo).expensesMinor).toBe(reports);
-    expect(totals).toContain(`Потрачено${plain(formatMoney(reports))}`);
-    expect(totals).toContain("по лимитам 26 000 ₽ из 53 000 ₽");
-    expect(plain(markup)).toContain("Можно на повседневные27 000 ₽");
+    // Демо, три итога: 554 000 на счетах, 71 000 расходов (столько же, сколько в «Отчётах»), 27 000 можно тратить.
+    expect(totals).toBe(`На счетах554 000 ₽Расходы${plain(formatMoney(reports))}Можно тратить27 000 ₽`);
+    const card = plain(/<section class="card reach-card[^"]*"[\s\S]*?<\/section>/u.exec(markup)?.[0] ?? "");
+    expect(card).toContain("лимиты: 26 000 из 53 000 ₽");
   });
 });
 
@@ -190,7 +210,7 @@ describe("«Обзор»: имена, набранные семьёй, — из�
     const markup = render({}, named);
     expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">مطبخ</bdi></span>');
     expect(markup).toContain('<span class="tile-name" aria-hidden="true"><bdi dir="auto">حساب 2</bdi></span>');
-    expect(markup).toContain(`<span class="tile-name"><bdi dir="auto">${softHyphenate("Подработка и самозанятость")}</bdi></span>`);
+    expect(markup).toContain(`<span class="tile-name" aria-hidden="true"><bdi dir="auto">${softHyphenate("Подработка и самозанятость")}</bdi></span>`);
     expect(markup).toContain('«<bdi dir="auto">حساب 2</bdi>» — нет курса USD');
     const selected = { ...PICK_IDLE, selected: { kind: "account" as const, id: RTL_ACCOUNT } };
     const hint = renderToStaticMarkup(<PickHintText parts={pickHintParts(selected, { account: () => "حساب 2", income: () => "" })} />);

@@ -41,9 +41,10 @@ function throughBackup(state: BudgetState): BudgetState {
 
 describe("category groups", () => {
   it("is a closed set of four expense groups and one income group, in display order", () => {
+    // Everyday spending first, then mandatory payments (D-041).
     expect(CATEGORY_GROUPS.map((group) => group.key)).toEqual([
-      "mandatory",
       "everyday",
+      "mandatory",
       "personal",
       "other",
       "income",
@@ -54,8 +55,8 @@ describe("category groups", () => {
       .map((group) => group.order)
       .sort((left, right) => left - right));
     expect(CATEGORY_GROUPS.map((group) => group.title)).toEqual([
-      "Обязательные платежи",
       "Каждый день",
+      "Обязательные платежи",
       "Личное и досуг",
       "Прочее",
       "Доходы",

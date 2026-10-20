@@ -162,8 +162,8 @@ export const PWA_MANIFEST = {
   start_url: PWA_BASE,
   scope: PWA_BASE,
   display: "standalone",
-  background_color: "#F0ECE3",
-  theme_color: "#F0ECE3",
+  background_color: "#F6F3EE",
+  theme_color: "#F6F3EE",
   categories: ["finance", "productivity"],
   icons: [
     {

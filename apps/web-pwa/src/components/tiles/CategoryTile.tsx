@@ -1,5 +1,4 @@
 import { DEFAULT_BASE_CURRENCY } from "@family-budget/domain";
-import { Icon } from "../Icon";
 import { Money, useBaseCurrency } from "../Money";
 import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
@@ -24,24 +23,20 @@ export function categoryTileLabel(tile: CategoryTileModel, currency: string = DE
 }
 
 /**
- * Плитка категории расхода: тон категории, глиф на белой подложке, имя до двух строк, потрачено и
- * лимит, полоса потрачено/лимит. Состояние «почти» и «перелимит» — глиф в углу (треугольник и круг),
- * цифры «3 500 / 3 000» и слово в доступном имени; цвет полосы — третьим.
+ * Плитка категории расхода (DESIGN 5.0 §6): квадрат тона с глифом, имя под ним, потрачено, «из
+ * лимита» и полоса потрачено/лимит на треке холста. Состояние «почти» и «перелимит» — бейдж в углу
+ * квадрата (треугольник и круг), цифры «3 500 ₽ / из 3 000 ₽» и слово в доступном имени; цвет полосы
+ * — четвёртым. Без лимита нет ни полосы, ни бейджа, а нулевой расход набран приглушённо.
  */
 export function CategoryTile({ tile, onPick, drag }: { readonly tile: CategoryTileModel; readonly onPick: () => void; readonly drag?: TileDrag }) {
   const currency = useBaseCurrency();
+  const badge = tile.status === "near" || tile.status === "over" ? tile.status : undefined;
+  const quiet = tile.limitMinor === null && tile.spentMinor === 0;
   return (
-    <Tile variant="expense" tone={tile.visual.tone} label={categoryTileLabel(tile, currency)} onClick={onPick} drag={drag} tileKey={`category:${tile.id}`}>
-      <span className="tile-top">
-        <span className="tile-glyph" aria-hidden="true"><Icon name={tile.visual.icon} size={20} /></span>
-        {tile.status === "near" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="triangle-alert" size={20} /></span> : null}
-        {tile.status === "over" ? <span className={`tile-state ${tile.status}`} aria-hidden="true"><Icon name="circle-alert" size={20} /></span> : null}
-      </span>
+    <Tile variant="expense" icon={tile.visual.icon} tone={tile.visual.tone} badge={badge} label={categoryTileLabel(tile, currency)} onClick={onPick} drag={drag} tileKey={`category:${tile.id}`}>
       <span className="tile-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(tile.name)}</bdi></span>
-      <span className="tile-sum" aria-hidden="true">
-        <Money value={tile.spentMinor} />
-        {tile.limitMinor === null ? null : <small> / <Money value={tile.limitMinor} /></small>}
-      </span>
+      <span className={quiet ? "tile-sum quiet" : "tile-sum"} aria-hidden="true"><Money value={tile.spentMinor} /></span>
+      {tile.limitMinor === null ? null : <span className="tile-limit" aria-hidden="true">из <Money value={tile.limitMinor} /></span>}
       {tile.limitMinor === null ? null : <span className={`tile-bar ${tile.status}`} data-fill={tile.fill} aria-hidden="true" />}
     </Tile>
   );

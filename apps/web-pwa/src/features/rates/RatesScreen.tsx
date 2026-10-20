@@ -9,7 +9,7 @@ import {
   type ExchangeRateCreation,
   type ExchangeRateDraft,
 } from "@family-budget/domain";
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { CurrencySelect, currencyLabel, currencyName } from "../../components/CurrencySelect";
 import { useFocusAfterRender } from "../../components/focus-after-render";
@@ -112,9 +112,8 @@ export function RatesScreen({ budget, today, write, onBack }: RatesScreenProps) 
 
   return (
     <div className="manage-screen rates-screen">
-      <div className="planning-toolbar"><BackButton label="К разделу «Ещё»" onClick={onBack} /></div>
+      <TitleBar back={{ label: "Ещё", onClick: onBack }} title="Курсы валют" />
       <header className="manage-head">
-        <h1>Курсы валют</h1>
         <p>Курс задаётся вручную и действует с его даты, пока не задан новый. Он не переоценивает записанное: у каждой операции — свой курс на день записи.</p>
       </header>
 

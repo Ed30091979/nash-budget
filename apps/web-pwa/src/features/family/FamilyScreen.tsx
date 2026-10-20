@@ -16,7 +16,7 @@ import { createPortal } from "react-dom";
 import type { SyncStatusReport } from "@family-budget/sync-client";
 import type { JournalIntegrity } from "@family-budget/sync-protocol";
 
-import { BackButton } from "../../components/BackButton";
+import { TitleBar } from "../../components/TitleBar";
 import { Icon } from "../../components/Icon";
 import { activateDialogEnvironment, handleDialogKeyboard } from "../data-management/dialog-accessibility";
 import type { DeviceRecord, MemberRecord, MembershipSnapshot } from "./api";
@@ -260,14 +260,10 @@ export function FamilyScreen(props: FamilyScreenProps) {
 
   return (
     <section className="family-screen" aria-busy={props.busy}>
-      <div className="planning-toolbar">
-        <BackButton label="К разделу «Ещё»" onClick={props.onBack} />
-      </div>
+      <TitleBar back={{ label: "Ещё", onClick: props.onBack }} title="Семья" />
 
       <div className="screen-heading">
         <div>
-          <span className="card-kicker">Совместный доступ</span>
-          <h1>Семья</h1>
           <p>
             Синхронизация необязательна. Пока вы не вошли, приложение работает как раньше: локально,
             без сети и без учётной записи.

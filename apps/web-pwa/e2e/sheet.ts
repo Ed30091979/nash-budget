@@ -4,20 +4,32 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * «Обзор» и лист ввода в прогоне — одни слова на все проверки.
  *
  * Плитка находится по доступному имени — тому, что слышит читающий с экрана: «Продукты: потрачено
- * …», «Основной: остаток …». Лист — модальный диалог с полем суммы; запись — кнопкой, которая
+ * …», «Карта: остаток …». Лист — модальный диалог с полем суммы; запись — кнопкой, которая
  * называет действие и сумму.
  */
 
-/** Демо загружено и «Обзор» стоит: строка «Можно на повседневные» на месте. */
-export async function loadDemo(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.getByRole("button", { name: "Загрузить демонстрационный бюджет" }).click();
-  await expect(page.locator(".reach-line")).toBeVisible();
+/**
+ * Первый запуск (дизайн v5): два «Дальше» по слайдам и «Посмотреть на примере» на третьем — демо.
+ * Слайды стоят, пока на устройстве нет бюджета; страница уже открыта.
+ */
+export async function startDemo(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 2 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Дальше", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Шаг 3 из 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Посмотреть на примере", exact: true }).click();
 }
 
-/** Число «Можно на повседневные» — одно на строку (`overview-ui.test.tsx` держит это). */
+/** Демо загружено и «Обзор» стоит: карточка «Хватает до …» под итогами на месте. */
+export async function loadDemo(page: Page): Promise<void> {
+  await page.goto("/");
+  await startDemo(page);
+  await expect(page.locator(".reach-card")).toBeVisible();
+}
+
+/** Число «Можно тратить» — третий итог шапки, одно на экран (`overview-ui.test.tsx` держит это). */
 export function reachAmount(page: Page): Locator {
-  return page.locator(".reach-line strong");
+  return page.locator(".total-can-spend .total-value");
 }
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -100,10 +112,10 @@ export interface SheetTargets {
  * прокрутки три — цель по центру, у нижнего края и у верхнего: на коротком экране сумма липнет к
  * краю тела листа, и цель достаточно увидеть хотя бы в одном из них, как это сделал бы палец.
  */
-export async function measureSheetTargets(page: Page, minimum: number): Promise<SheetTargets> {
-  return page.evaluate((min) => {
-    const sheet = document.querySelector<HTMLElement>("section.entry-sheet[role='dialog']");
-    if (!sheet) throw new Error("Лист ввода не открыт.");
+export async function measureSheetTargets(page: Page, minimum: number, sheetSelector = "section.entry-sheet[role='dialog']"): Promise<SheetTargets> {
+  return page.evaluate(({ min, sheetSelector: selectorOfSheet }) => {
+    const sheet = document.querySelector<HTMLElement>(selectorOfSheet);
+    if (!sheet) throw new Error(`Лист не открыт: ${selectorOfSheet}.`);
     const selector = [
       "button:not(:disabled)",
       "input:not(:disabled):not([type='file']):not([type='radio']):not([type='checkbox'])",
@@ -157,5 +169,5 @@ export async function measureSheetTargets(page: Page, minimum: number): Promise<
       undersized,
       targets: targets.length,
     };
-  }, minimum);
+  }, { min: minimum, sheetSelector });
 }

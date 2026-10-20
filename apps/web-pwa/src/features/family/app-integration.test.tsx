@@ -66,7 +66,8 @@ describe("приложение с экраном семьи", () => {
     expect(source).toContain('<button className={`nav-fab${adding ? " active" : ""}`} type="button" aria-label="Записать"');
     // Вход на экран — строкой списка «Ещё», названной словами.
     expect(source).toMatch(/onClick=\{props\.onFamily\}>[\s\S]{0,200}Семья и синхронизация/u);
-    expect(source).toContain("<BackButton label=");
+    // Возврат с подэкранов — строкой заголовка «‹ Ещё», одной на все подэкраны.
+    expect(source).toContain('<TitleBar back={{ label: "Ещё", onClick: onBack }} title={title} />');
   });
 
   it("индикатор синхронизации — единственное слово шапки о сети, и только после входа", () => {

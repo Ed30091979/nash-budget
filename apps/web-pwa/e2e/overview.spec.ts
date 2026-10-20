@@ -11,8 +11,11 @@ import type { BudgetState } from "@family-budget/domain";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { demoBudget, restoreBudget } from "./budgets";
+import { CANONICAL_E2E_DAY, e2eNow } from "./clock";
+import { demoHoldingsRule } from "../src/onboarding/demo";
+import { formatMoney } from "../src/money";
 import { applyFontScale } from "./font-scale";
-import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, tile, toast } from "./sheet";
+import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, recordExpense, tile, toast } from "./sheet";
 
 const TOUCH_TARGET_MINIMUM = designTouchTargetMinimum();
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -35,7 +38,7 @@ test("четыре последовательности касаний — че�
   // 1. Категория — расход с основного счёта.
   await tile(page, "Продукты").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=expense&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Расход: Основной → Продукты$/u);
+  await expectSheet(page, /^Расход: Карта → Продукты$/u);
 
   // 2. Счёт, затем категория — расход с этого счёта.
   await tile(page, "Резерв платежей").click();
@@ -49,24 +52,24 @@ test("четыре последовательности касаний — че�
   await tile(page, "Зарплата").click();
   await expect(tile(page, "Зарплата")).toHaveAttribute("aria-pressed", "true");
   await expect(hint(page)).toHaveText(/^Выбран доход «Зарплата»/u);
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=income&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Доход: Зарплата → Основной$/u);
+  await expectSheet(page, /^Доход: Зарплата → Карта$/u);
 
   // 4. Счёт, затем другой счёт — перевод.
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await tile(page, "Резерв платежей").click();
   expect(await hash(page)).toMatch(new RegExp(`^#/\\?sheet=entry&op=transfer&src=${UUID}&dst=${UUID}$`, "u"));
-  await expectSheet(page, /^Перевод: Основной → Резерв платежей$/u);
+  await expectSheet(page, /^Перевод: Карта → Резерв платежей$/u);
 
   // Тот же счёт ещё раз — снять выбор; Esc — тоже.
-  await tile(page, "Основной").click();
-  await tile(page, "Основной").click();
-  await expect(tile(page, "Основной")).toHaveAttribute("aria-pressed", "false");
+  await tile(page, "Карта").click();
+  await tile(page, "Карта").click();
+  await expect(tile(page, "Карта")).toHaveAttribute("aria-pressed", "false");
   await expect(hint(page)).toHaveText(/^Коснитесь категории/u);
-  await tile(page, "Основной").click();
+  await tile(page, "Карта").click();
   await page.keyboard.press("Escape");
-  await expect(tile(page, "Основной")).toHaveAttribute("aria-pressed", "false");
+  await expect(tile(page, "Карта")).toHaveAttribute("aria-pressed", "false");
   expect(await hash(page)).toBe("#/");
 });
 
@@ -96,10 +99,10 @@ test("перетаскивание мышью — те же переходы, ч
 
   await drag(page, tile(page, "Резерв платежей"), tile(page, "Продукты"));
   await expectSheet(page, /^Расход: Резерв платежей → Продукты$/u);
-  await drag(page, tile(page, "Зарплата"), tile(page, "Основной"));
-  await expectSheet(page, /^Доход: Зарплата → Основной$/u);
-  await drag(page, tile(page, "Основной"), tile(page, "Резерв платежей"));
-  await expectSheet(page, /^Перевод: Основной → Резерв платежей$/u);
+  await drag(page, tile(page, "Зарплата"), tile(page, "Карта"));
+  await expectSheet(page, /^Доход: Зарплата → Карта$/u);
+  await drag(page, tile(page, "Карта"), tile(page, "Резерв платежей"));
+  await expectSheet(page, /^Перевод: Карта → Резерв платежей$/u);
   // Категорию не берут: она — только цель.
   await expect(tile(page, "Продукты")).not.toHaveAttribute("draggable", "true");
 });
@@ -332,7 +335,7 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
     await applyFontScale(page, scale);
     await page.setViewportSize({ width, height });
     const overview = await page.evaluate((minimum) => {
-      const tiles = [...document.querySelectorAll<HTMLElement>(".overview-screen .tile, .overview-screen .add-tile, .month-switch > button, .reach-line > button")];
+      const tiles = [...document.querySelectorAll<HTMLElement>(".overview-screen .tile, .overview-screen .add-tile, .month-switch > button, .totals-strip > button, .reach-card > button, .row-edit")];
       return {
         scrollWidth: document.documentElement.scrollWidth,
         clientWidth: document.documentElement.clientWidth,
@@ -360,14 +363,14 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
 test("месяц плана закрыт — «Открыть …» залитой кнопкой в одну строку, на телефоне и на широком экране", async ({ page }) => {
   await loadDemo(page);
   // Демо строит план на текущий месяц; через два месяца он закрыт, и строка предлагает открыть новый.
-  const later = new Date();
+  const later = e2eNow();
   later.setMonth(later.getMonth() + 2, 10);
-  await page.clock.install({ time: later });
+  await page.clock.setSystemTime(later);
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
     await page.setViewportSize(viewport);
     await page.reload();
     await goToOverview(page);
-    const open = page.locator(".reach-line.closed").getByRole("button", { name: /^Открыть / });
+    const open = page.locator(".reach-card.closed").getByRole("button", { name: /^Открыть / });
     await expect(open).toBeVisible();
     const box = await open.boundingBox();
     const label = await open.locator(".icon-label").boundingBox();
@@ -376,7 +379,138 @@ test("месяц плана закрыт — «Открыть …» залито
     expect(box.height, `${viewport.width}px: высота кнопки`).toBeLessThan(TOUCH_TARGET_MINIMUM * 1.5);
     expect(label.width, `${viewport.width}px: ширина подписи`).toBeGreaterThan(120);
     // Кнопка — основное действие карточки, а не прозрачная строка-ссылка.
-    const fill = await open.evaluate((element) => getComputedStyle(element).backgroundColor);
-    expect(fill, `${viewport.width}px: заливка`).not.toBe("rgba(0, 0, 0, 0)");
+    // Основная кнопка — акцент с белым, а не чернильная плита (дизайн 5.0, §g).
+    const colors = await open.evaluate((element) => [getComputedStyle(element).backgroundColor, getComputedStyle(element).color]);
+    expect(colors, `${viewport.width}px: заливка и подпись`).toEqual(["rgb(196, 66, 26)", "rgb(255, 255, 255)"]);
   }
+});
+
+/** Текст итога «На счетах» / «Расходы» / «Можно тратить» без неразрывных пробелов. */
+async function totalText(page: Page, label: string): Promise<string> {
+  const total = page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") });
+  return (await total.innerText()).replace(/[\u00a0\u202f\s]+/gu, " ").trim();
+}
+
+/*
+ * Числа макетов v5 и приёмки сняты 19 октября 2026 года: на этот день тест и встаёт сам, а не берёт
+ * день прогона. Демо считает от сегодня (правило дня — `demo.ts`): 20-го «На счетах» уже 664 000 ₽.
+ */
+test.describe("канонический день демо — 19 октября", () => {
+  test.use({ today: CANONICAL_E2E_DAY });
+
+  test("три итога на демо — 554 000 · 71 000 · 27 000; каждый ведёт туда, где число раскладывается", async ({ page }) => {
+    // Дизайн 5.0, §d: «На счетах» — к счетам, «Расходы» — к отчётам (тот же расход, ревью 2b,
+    // MEDIUM-8), «Можно тратить» — к плану месяца. Лимиты — в карточке: «лимиты: 26 000 из 53 000 ₽».
+    await loadDemo(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await totalText(page, "На счетах")).toBe("На счетах 554 000 ₽");
+    expect(await totalText(page, "Расходы")).toBe("Расходы 71 000 ₽");
+    expect(await totalText(page, "Можно тратить")).toBe("Можно тратить 27 000 ₽");
+    const card = page.locator(".reach-card");
+    await expect(card).toHaveClass(/reaches/u);
+    await expect(card.locator(".reach-title")).toHaveText(/^Хватает до 20\sоктября$/u);
+    await expect(card.locator(".reach-caption")).toHaveText(/^лимиты: 26\s000 из 53\s000\s₽$/u);
+    for (const [label, address, heading] of [["На счетах", "#/more/accounts", "Счета"], ["Расходы", "#/reports", "Отчёты"], ["Можно тратить", "#/more/plan-month", "План месяца"]] as const) {
+      await goToOverview(page);
+      await page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") }).click();
+      expect(await hash(page), label).toBe(address);
+      await expect(page.getByRole("heading", { level: 1, name: heading })).toBeFocused();
+    }
+  });
+});
+
+test("итоги демо в день прогона следуют правилу дня: «Расходы» и «Можно тратить» — те же, «На счетах» — по выплатам и курсу", async ({ page, today }) => {
+  // День — любой (`E2E_TODAY` сдвигает его на весь прогон): экран обязан совпасть с правилом, записанным
+  // в `demo.ts`, а не с числами одного дня.
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const holdings = formatMoney(demoHoldingsRule(today)).replace(/[\u00a0\u202f\s]+/gu, " ");
+  expect(await totalText(page, "На счетах")).toBe(`На счетах ${holdings}`);
+  expect(await totalText(page, "Расходы")).toBe("Расходы 71 000 ₽");
+  expect(await totalText(page, "Можно тратить")).toBe("Можно тратить 27 000 ₽");
+});
+
+test("месяц и итоги закреплены при прокрутке; при крупном шрифте — в потоке", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const head = page.locator(".overview-head");
+  await expect(head).not.toHaveAttribute("data-stuck", "true");
+  await page.evaluate(() => window.scrollTo(0, 600));
+  await expect(head).toHaveAttribute("data-stuck", "true");
+  const pinned = await head.boundingBox();
+  expect(pinned?.y ?? -1, "шапка «Обзора» у верхнего края").toBeGreaterThanOrEqual(-0.5);
+  expect(pinned?.y ?? 99, "шапка «Обзора» у верхнего края").toBeLessThanOrEqual(1);
+  await expect(page.locator(".totals-strip")).toBeInViewport();
+  await expect(page.getByRole("heading", { level: 1 })).toBeInViewport();
+  // Плитку под закреплёнными итогами можно нажать: она доматывается из-под них.
+  await tile(page, "Прочее").click();
+  await expect(entrySheet(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(entrySheet(page)).toHaveCount(0);
+  // ×2.7: закреплённые итоги заняли бы полэкрана — шапка уезжает вместе с содержимым.
+  await applyFontScale(page, 2.7);
+  await page.evaluate(() => window.scrollTo(0, 900));
+  const flowing = await head.boundingBox();
+  expect(flowing?.y ?? 0, "при ×2.7 шапка в потоке").toBeLessThan(-100);
+  await applyFontScale(page, 1);
+});
+
+test("карточка «Хватает до …»: лимиты исчерпаны — словами и кругом; без лимитов — «Сколько можно тратить?», а итог не выдумывает «0 ₽»", async ({ page }) => {
+  await loadDemo(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Перерасход повседневных лимитов: факт и срок до выплаты, без «хватает».
+  await recordExpense(page, { category: "Развлечения и хобби", amount: "40000" });
+  const card = page.locator(".reach-card");
+  await expect(card).toHaveClass(/\bout\b/u);
+  await expect(card.locator(".reach-title")).toHaveText("Повседневные лимиты исчерпаны");
+  await expect(card.locator(".reach-plate use")).toHaveAttribute("href", "#glyph-circle-alert");
+  expect(await totalText(page, "Можно тратить")).toMatch(/^Можно тратить −13 000 ₽$/u);
+  // Месяц без лимитов: карточка называет состояние и ведёт в план; «Можно тратить» — «лимитов нет».
+  const withoutLimits = demoBudget();
+  await restoreBudget(page, {
+    ...withoutLimits,
+    budgets: withoutLimits.budgets.map((budget) => ({ ...budget, lines: [] })),
+  });
+  await goToOverview(page);
+  // Макеты 03b, 05: компактная строка — вопрос и что сделать; состояние названо итогом над ней и,
+  // для диктора, в начале имени кнопки.
+  expect(await totalText(page, "Можно тратить")).toBe("Можно тратить лимитов нет");
+  const plan = page.locator(".reach-card.empty").getByRole("button", { name: /^Лимитов на этот месяц нет\.\s*Сколько можно тратить\?\s*Задайте лимиты — покажем, хватит ли до /u });
+  await expect(plan.locator(".reach-title")).toHaveText("Сколько можно тратить?");
+  await expect(plan.locator(".reach-plate use")).toHaveAttribute("href", "#glyph-circle-dashed");
+  await plan.click();
+  expect(await hash(page)).toBe("#/more/plan-month");
+});
+
+test("подписи итогов, кикеров, карточки и вкладок не рвутся посреди слова на 320 pt и при ×2.7", async ({ page }) => {
+  test.setTimeout(120_000);
+  await loadDemo(page);
+  for (const [width, scale] of [[320, 1], [390, 1], [320, 2.7], [390, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    expect(await wordSplits(page, ".total-label, .row-kicker, .reach-title, .reach-caption, .nav-button > span[aria-hidden]"), `${width} pt ×${scale}`).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${width} pt ×${scale}: без горизонтальной прокрутки`).toBe(true);
+  }
+  await applyFontScale(page, 1);
+});
+
+test("имена плиток не обрезаются: ни многоточия, ни строк под краем — на 320 и 390 pt при ×1 и ×2.7, «Развлечения и хобби» целиком", async ({ page }) => {
+  // Ревью R2: на старой плитке имя резалось двумя строками — «Развлече-ния и хо…». Плитка 5.0
+  // переносит имя по слогам на столько строк, сколько нужно, и ничего не прячет.
+  test.setTimeout(120_000);
+  await loadDemo(page);
+  for (const [width, scale] of [[320, 1], [390, 1], [320, 2.7], [390, 2.7]] as const) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    const clipped = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".overview-screen .tile-name")].flatMap((name) => {
+      const style = getComputedStyle(name);
+      const hidden = name.scrollHeight > name.clientHeight + 1 || name.scrollWidth > name.clientWidth + 1;
+      const cut = style.textOverflow === "ellipsis" || style.webkitLineClamp !== "none" || /hidden|clip/u.test(style.overflowY);
+      return hidden || cut ? [`${name.textContent?.replace(/\u00ad/gu, "")}`] : [];
+    }));
+    expect(clipped, `${width} pt ×${scale}`).toEqual([]);
+    await expect(tile(page, "Развлечения и хобби").locator(".tile-name")).toHaveText(/^Раз.*хоб.*би$/u);
+  }
+  await applyFontScale(page, 1);
 });

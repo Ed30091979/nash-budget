@@ -150,7 +150,7 @@ export function DashboardScreen({ budget, startMonth, onPlanning, paydays = [] }
       </header>
 
       <section className={`section-card horizon-card${model.tightest.shortfall ? " danger" : ""}`}>
-        <h1 id="dashboard-title">{model.verdict.title}</h1>
+        <h2 id="dashboard-title">{model.verdict.title}</h2>
         <p className="horizon-detail">{model.verdict.detail}</p>
         <MonthShape rows={shape} paydays={paydays} />
         <MonthLadder months={model.months} floorMinor={model.tightest.freeMinor} />

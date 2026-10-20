@@ -27,7 +27,7 @@ describe("dashboard UI", () => {
     expect(html).toContain("24 месяца");
 
     // §4 исследования, пункт 23: заголовок экрана — вывод, а не подпись осей. Это жанр.
-    expect(html).toMatch(/<h1 id="dashboard-title">Плана хватает во все 12 месяцев<\/h1>/u);
+    expect(html).toMatch(/<h2 id="dashboard-title">Плана хватает во все 12 месяцев<\/h2>/u);
     expect(text).toContain("Свободно от 13 191 ₽ в сентябре 2026 до 48 750 ₽ в июне 2027.");
     expect(html).toContain("Настроить план");
 
