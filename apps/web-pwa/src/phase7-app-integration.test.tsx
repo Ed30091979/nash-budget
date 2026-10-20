@@ -21,7 +21,6 @@ import {
 import {
   createDashboardModel,
   DashboardScreen,
-  searchOperations,
 } from "./features/dashboard";
 import { FeedScreen } from "./features/feed/FeedScreen";
 import { blankEntryDraft } from "./features/entry/entry-model";
@@ -433,8 +432,6 @@ describe("phase 7 App composition", () => {
       filename: "family-budget-operations-2026-07-24.csv",
       mediaType: "text/csv;charset=utf-8",
     });
-    expect(searchOperations(state, { query: "продукты" })).toHaveLength(2);
-    expect(searchOperations(state, { query: "", kind: "all" })).toHaveLength(6);
     expect(calculateBudget(state)).toEqual(before);
     expect(state).toEqual(snapshot);
   });

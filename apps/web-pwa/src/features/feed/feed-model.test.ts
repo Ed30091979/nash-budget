@@ -1,13 +1,16 @@
+import { readFileSync } from "node:fs";
 import { G003, toDomainBudgetState } from "@family-budget/test-fixtures";
 import { addDays, materializeRecurring, type BudgetState, type Transaction } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 import {
   dayHeading,
   feedIndex,
+  feedIndexBuilds,
   feedRowView,
   filterFeed,
   filtersOfRoute,
   groupByDay,
+  listedAccounts,
   matchesSearch,
   normalizeSearchText,
   parseSearch,
@@ -214,8 +217,26 @@ describe("лента: строка операции", () => {
   });
 });
 
+describe("лист «Счёт»: архивный счёт с операциями — в списке (LOW-8)", () => {
+  it("активные по порядку, за ними архивные с операциями и выбранный; одни и те же в «Операциях» и «Отчётах»", () => {
+    const state = ledger();
+    const savings = G003.state.accounts[2]!;
+    const archived: BudgetState = { ...state, accounts: state.accounts.map((account) => (account.id === card!.id ? account : { ...account, active: false })) };
+    // «Доллары» в архиве, но с операциями августа — в списке; у «Копилки» операций нет — её нет.
+    expect(listedAccounts(archived, undefined).map((account) => account.name)).toEqual(["Карта", "Доллары"]);
+    // Выбранный архивный счёт без операций — тоже в списке: выбор виден и снимается.
+    // Порядок — порядок списка (`sortOrder`: у «Долларов» 20, у «Копилки» его нет).
+    expect(listedAccounts(archived, savings.id.toUpperCase()).map((account) => account.name)).toEqual(["Карта", "Копилка", "Доллары"]);
+    expect(listedAccounts(state, undefined).map((account) => account.name)).toEqual(["Карта", "Копилка", "Доллары"]);
+    // Оба листа берут счета отсюда.
+    for (const file of ["./FeedScreen.tsx", "../reports/ReportsScreen.tsx"]) {
+      expect(readFileSync(new URL(file, import.meta.url), "utf8"), file).toMatch(/listedAccounts\(budget, (?:routed|fields)\.acc\)/u);
+    }
+  });
+});
+
 describe("лента: 50 000 операций", () => {
-  it("индекс строится один раз за разумное время, и поиск по нему — быстрый", () => {
+  it("индекс строится один раз на бюджет: поиск и фильтры идут по готовому, новый бюджет — новый индекс", () => {
     const base = ledger();
     const notes = ["Пятёрочка у дома", "рынок", "бензин", "кофе с собой", "аптека"];
     const transactions: Transaction[] = Array.from({ length: 50_000 }, (_, index) => ({
@@ -230,22 +251,26 @@ describe("лента: 50 000 операций", () => {
       ...(index % 7 === 0 ? { tagIds: [home!.id] } : {}),
     }));
     const state: BudgetState = { ...base, transactions };
+    const before = feedIndexBuilds();
     const started = performance.now();
     const index = feedIndex(state);
     const built = performance.now() - started;
     expect(index.entries).toHaveLength(50_000);
-    expect(built, `индекс 50 000 операций: ${Math.round(built)} мс`).toBeLessThan(4_000);
-    // Второй раз — та же ссылка, без работы.
-    const again = performance.now();
+    expect(feedIndexBuilds()).toBe(before + 1);
+    // Грубая граница — только от сборки, которая вдруг стала квадратичной: время на машине проверок
+    // скачет, поэтому память индекса проверяет счёт сборок ниже, а не секундомер.
+    expect(built, `индекс 50 000 операций: ${Math.round(built)} мс`).toBeLessThan(20_000);
+    // Второй раз — та же ссылка, без сборки; поиск и фильтры на каждое нажатие — по готовому индексу.
     expect(feedIndex(state)).toBe(index);
-    expect(performance.now() - again).toBeLessThan(5);
-    // Поиск по готовому индексу — на каждое нажатие клавиши.
-    const searched = performance.now();
-    const found = filterFeed(index, { categoryIds: [food!.id] }, parseSearch("кофе"));
-    const amount = filterFeed(index, {}, parseSearch("1 100"));
-    const tagged = filterFeed(index, {}, parseSearch("#дом"));
-    const spent = performance.now() - searched;
-    expect(spent, `три поиска по 50 000: ${Math.round(spent)} мс`).toBeLessThan(1_500);
+    const found = filterFeed(feedIndex(state), { categoryIds: [food!.id] }, parseSearch("кофе"));
+    const amount = filterFeed(feedIndex(state), {}, parseSearch("1 100"));
+    const tagged = filterFeed(feedIndex(state), {}, parseSearch("#дом"));
+    expect(feedIndexBuilds()).toBe(before + 1);
+    // Новый бюджет — новая ссылка — новый индекс, ровно один.
+    const next: BudgetState = { ...state };
+    expect(feedIndex(next)).not.toBe(index);
+    feedIndex(next);
+    expect(feedIndexBuilds()).toBe(before + 2);
     expect(found.entries.length).toBeGreaterThan(0);
     expect(found.entries.every((entry) => entry.transaction.kind === "expense" && entry.categoryId === food!.id && matchesSearch(entry, parseSearch("кофе")))).toBe(true);
     expect(amount.entries.every((entry) => entry.transaction.amountMinor === 110_000)).toBe(true);

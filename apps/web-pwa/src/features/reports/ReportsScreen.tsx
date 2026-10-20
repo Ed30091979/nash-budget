@@ -7,7 +7,7 @@ import { LargeTitle } from "../../components/LargeTitle";
 import { Money } from "../../components/Money";
 import { formatMoney } from "../../money";
 import { REPORT_VIEWS, type OperationsFilterFields, type ReportsFields, type ReportView } from "../../navigation/routes";
-import { monthLabel } from "../feed/feed-model";
+import { listedAccounts, monthLabel } from "../feed/feed-model";
 import { FilterSheet, type FilterChoice } from "../feed/FilterSheet";
 import { PeriodForm } from "../feed/PeriodForm";
 import { Donut } from "./Donut";
@@ -19,6 +19,7 @@ import {
   reportsFieldsForDays,
   reportsFieldsForPeriod,
   reportsFieldsWith,
+  percentText,
   shareText,
   viewWords,
   type ReportModel,
@@ -108,11 +109,12 @@ export function ReportsScreen({ budget, today, fields, onFields, onFeed, onAdd }
             segments={model.segments}
             totalMinor={model.totalMinor}
             currency={model.baseCurrency}
-            label={`${words.title} ${period.forWords}, ${formatMoney(model.totalMinor, model.baseCurrency)}: ${model.segments.map((segment) => `${segment.name} ${shareText(segment.share)}`).join(", ")}`}
+            label={`${words.title} ${period.forWords}, ${formatMoney(model.totalMinor, model.baseCurrency)}: ${model.segments.map((segment) => `${segment.name} ${percentText(segment.percent, segment.amountMinor)}`).join(", ")}`}
           />
           <ReportLegend
             segments={model.segments}
             currency={model.baseCurrency}
+            allLabel={model.view === "income" ? "Показать все источники" : "Показать все категории"}
             onOpen={(segment) => { if (segment.feed !== null) onFeed(segment.feed); }}
             onRest={() => setTableOpen(true)}
           />
@@ -157,8 +159,8 @@ export function ReportsScreen({ budget, today, fields, onFields, onFeed, onAdd }
           key: "accounts",
           choices: [
             { key: "all", label: "Все счета", selected: fields.acc === undefined, onSelect: () => choose(reportsFieldsWith(fields, { acc: null })) },
-            ...[...budget.accounts].filter((item) => item.active || item.id.toLowerCase() === fields.acc)
-              .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
+            // Те же счета, что в листе «Операций»: архивный с операциями — тоже (ревью 2d, LOW-8).
+            ...listedAccounts(budget, fields.acc)
               .map((item): FilterChoice => ({
                 key: item.id,
                 label: item.name,

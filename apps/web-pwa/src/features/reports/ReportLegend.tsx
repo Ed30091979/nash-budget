@@ -3,16 +3,19 @@ import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { formatMoney } from "../../money";
 import { chartToneClass } from "./Donut";
-import { shareText, type ReportSegment, type ReportTableRow } from "./report-model";
+import { percentText, type ReportSegment, type ReportTableRow } from "./report-model";
 
 /**
  * Легенда кольца (макет 09): строка-кнопка 48 на сектор — образец цвета, имя, «сумма · доля» и
- * шеврон. Касание ведёт в «Операции» с фильтром этой категории и периода; «Остальное» раскрывает
- * таблицу всех категорий. Доступное имя называет всё, что видно, и куда ведёт.
+ * шеврон. Касание ведёт в «Операции» с фильтром этой категории и периода; «Остальное» и доход без
+ * категории раскрывают таблицу всех категорий: фильтра «без категории» у ленты нет (ревью 2d,
+ * LOW-1). Доступное имя называет всё, что видно, и куда ведёт; доли в сумме — ровно 100 %.
  */
-export function ReportLegend({ segments, currency, onOpen, onRest }: {
+export function ReportLegend({ segments, currency, allLabel, onOpen, onRest }: {
   readonly segments: readonly ReportSegment[];
   readonly currency: CurrencyCode;
+  /** Куда ведёт строка без ленты: «Показать все категории» или «Показать все источники». */
+  readonly allLabel: string;
   readonly onOpen: (segment: ReportSegment) => void;
   readonly onRest: () => void;
 }) {
@@ -23,13 +26,13 @@ export function ReportLegend({ segments, currency, onOpen, onRest }: {
           <button
             className="legend-row"
             type="button"
-            aria-label={`${segment.name}: ${formatMoney(segment.amountMinor, currency)}, ${shareText(segment.share)}. ${segment.rest ? "Показать все категории" : "Показать операции"}`}
-            onClick={() => (segment.rest ? onRest() : onOpen(segment))}
+            aria-label={`${segment.name}: ${formatMoney(segment.amountMinor, currency)}, ${percentText(segment.percent, segment.amountMinor)}. ${segment.feed === null ? allLabel : "Показать операции"}`}
+            onClick={() => (segment.feed === null ? onRest() : onOpen(segment))}
           >
             <span className={`legend-swatch ${chartToneClass(segment)}`} aria-hidden="true" />
             <span className="legend-text">
               <b><bdi dir="auto">{segment.name}</bdi></b>
-              <span><Money value={segment.amountMinor} currency={currency} /> · {shareText(segment.share)}</span>
+              <span><Money value={segment.amountMinor} currency={currency} /> · {percentText(segment.percent, segment.amountMinor)}</span>
             </span>
             <Icon name="chevron-right" size={20} className="legend-chevron" />
           </button>
@@ -56,7 +59,7 @@ export function CategoryTable({ rows, totalMinor, currency, caption, nameHeader 
           <tr key={row.key}>
             <th scope="row"><bdi dir="auto">{row.name}</bdi>{row.archived ? " (в архиве)" : ""}</th>
             <td><Money value={row.amountMinor} currency={currency} /></td>
-            <td>{shareText(row.share)}</td>
+            <td>{percentText(row.percent, row.amountMinor)}</td>
           </tr>
         ))}
       </tbody>

@@ -19,6 +19,7 @@ import {
   groupByDay,
   hasFilters,
   KIND_PLURAL,
+  listedAccounts,
   monthLabel,
   parseSearch,
   periodLabel,
@@ -227,9 +228,7 @@ function sheetGroups(
       }];
     }
     case "account": {
-      const used = new Set(budget.transactions.flatMap((item) => (item.kind === "transfer" || item.kind === "goal_contribution" ? [item.fromAccountId, item.toAccountId] : [item.accountId])));
-      const order = [...budget.accounts].sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0));
-      const listed = [...order.filter((item) => item.active), ...order.filter((item) => !item.active && (used.has(item.id) || same(item.id, routed.acc)))];
+      const listed = listedAccounts(budget, routed.acc);
       return [{
         key: "accounts",
         choices: [

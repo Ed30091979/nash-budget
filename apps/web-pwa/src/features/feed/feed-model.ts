@@ -20,9 +20,9 @@ import { debtVerb, kindLabels, kindSign, operationLabel, transactionCurrency } f
  * итогами и слова строк. Чистые функции бюджета — экран ничего не считает сам, и проверки сверяют
  * числа здесь.
  *
- * Индекс строится один раз на бюджет и помнится по ссылке на него (`WeakMap`): на пятидесяти тысячах
- * операций он собирается за доли секунды (`feed-model.test.ts` это мерит), а каждое нажатие клавиши в
- * поиске идёт по готовым строкам, а не собирает их заново. Новый бюджет — новая ссылка — новый индекс.
+ * Индекс строится один раз на бюджет и помнится по ссылке на него (`WeakMap`): каждое нажатие клавиши
+ * в поиске идёт по готовым строкам, а не собирает их заново (`feed-model.test.ts` считает сборки на
+ * пятидесяти тысячах операций). Новый бюджет — новая ссылка — новый индекс.
  */
 
 /** Сколько строк показывает страница ленты; «Показать ещё» добавляет столько же. */
@@ -79,6 +79,21 @@ export function routeOfFilters(filters: FeedFilters): OperationsFilterFields {
 /** Задан ли хоть один фильтр. */
 export function hasFilters(filters: FeedFilters): boolean {
   return Object.keys(routeOfFilters(filters)).length > 0;
+}
+
+/**
+ * Счета листа «Счёт» — в «Операциях» и в «Отчётах» одни и те же (ревью 2d, LOW-8): активные по
+ * порядку списка, за ними архивные, по которым есть операции, и выбранный, даже если операций по
+ * нему нет. Архивный счёт с историей должен находиться: его операции в ленте и в отчёте остались.
+ */
+export function listedAccounts(state: BudgetState, selected: string | undefined): readonly BudgetState["accounts"][number][] {
+  const used = new Set(state.transactions.flatMap((item) => (item.kind === "transfer" || item.kind === "goal_contribution" ? [item.fromAccountId, item.toAccountId] : [item.accountId])).map((id) => id.toLowerCase()));
+  const order = state.accounts
+    .map((account, index) => ({ account, index }))
+    .sort((left, right) => (left.account.sortOrder ?? 0) - (right.account.sortOrder ?? 0) || left.index - right.index)
+    .map(({ account }) => account);
+  const chosen = (id: string) => selected !== undefined && id.toLowerCase() === selected.toLowerCase();
+  return [...order.filter((item) => item.active), ...order.filter((item) => !item.active && (used.has(item.id.toLowerCase()) || chosen(item.id)))];
 }
 
 /* ───────────────────────────── Индекс ───────────────────────────── */
@@ -143,7 +158,19 @@ function categoryOf(transaction: Transaction): string | null {
   return transaction.kind === "expense" || transaction.kind === "refund" || transaction.kind === "income" ? transaction.categoryId ?? null : null;
 }
 
+let builds = 0;
+
+/**
+ * Сколько раз индекс ленты собирался с начала работы модуля. Память индекса проверяется этим
+ * счётом, а не временем второго вызова: время на общей машине проверок скачет, а счёт — нет (ревью
+ * 2d, LOW-4).
+ */
+export function feedIndexBuilds(): number {
+  return builds;
+}
+
 function buildIndex(state: BudgetState): FeedIndex {
+  builds += 1;
   const base = baseCurrencyOf(state);
   const accounts = new Map(state.accounts.map((account) => [account.id, account]));
   const categories = new Map(state.categories.map((category) => [category.id, category.name]));

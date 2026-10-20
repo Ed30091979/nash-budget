@@ -7,6 +7,7 @@ import { donutArcs } from "./Donut";
 import {
   compactAmount,
   DONUT_TOP,
+  percentText,
   reportModel,
   reportsFieldsForDays,
   reportsFieldsForMonth,
@@ -14,6 +15,7 @@ import {
   reportsFieldsWith,
   resolveReportPeriod,
   shareText,
+  wholePercents,
 } from "./report-model";
 import { ReportsScreen } from "./ReportsScreen";
 
@@ -103,7 +105,7 @@ describe("«Отчёты» на G-003: август 2026", () => {
     expect(plain(screen(twice, { view: "tags" }, "2026-08-31"))).toContain("доли могут дать больше 100 %");
   });
 
-  it("доходы: «Зарплата» 12 000 000; доход без категории — своя строка, ведёт в доходы периода", () => {
+  it("доходы: «Зарплата» 12 000 000; доход без категории — своя строка, ведёт к таблице, а не в ленту (LOW-1)", () => {
     const state = ledger();
     expect(reportModel(state, { view: "income" }, "2026-08-31").segments.map((segment) => [segment.name, segment.amountMinor])).toEqual([["Зарплата", 12_000_000]]);
     const loose: BudgetState = {
@@ -111,8 +113,14 @@ describe("«Отчёты» на G-003: август 2026", () => {
       transactions: [...state.transactions, { id: "85555555-5555-4555-8555-555555555570", occurredOn: "2026-08-15", status: "posted", kind: "income", amountMinor: 30_000_000, accountId: G003.state.accounts[0]!.id }],
     };
     const model = reportModel(loose, { view: "income" }, "2026-08-31");
-    expect(model.segments[0]).toMatchObject({ name: "Без категории", categoryId: null, feed: { from: "2026-08-01", to: "2026-08-31", kind: "income" } });
+    // Фильтра «без категории» у ленты нет, а «все доходы августа» — не то, что названо строкой: она,
+    // как «Остальное», раскрывает таблицу всех источников.
+    expect(model.segments[0]).toMatchObject({ name: "Без категории", categoryId: null, feed: null, rest: false });
+    expect(model.segments[1]).toMatchObject({ name: "Зарплата", feed: { from: "2026-08-01", to: "2026-08-31", cat: G003.state.categories[2]!.id } });
     expect(model.headline).toBe("Больше всего пришло без категории");
+    const markup = nbsp(screen(loose, { view: "income" }, "2026-08-31"));
+    expect(markup).toContain('aria-label="Без категории: 300 000 ₽, 71 %. Показать все источники"');
+    expect(markup).toContain('aria-label="Зарплата: 120 000 ₽, 29 %. Показать операции"');
   });
 
   it("счёт: только долларовый — «Путешествия» с возвратом", () => {
@@ -140,7 +148,7 @@ describe("«Отчёты»: кольцо — шесть секторов и «О
   });
 
   it("дуги: доля — доля окружности, между секторами — разрыв 2 px; единственный сектор — полный круг", () => {
-    const half = { key: "a", categoryId: "a", name: "A", amountMinor: 1, share: 0.5, tone: "mint" as const, rest: false, feed: null };
+    const half = { key: "a", categoryId: "a", name: "A", amountMinor: 1, share: 0.5, percent: 50, tone: "mint" as const, rest: false, feed: null };
     const circumference = 2 * Math.PI * 54;
     const arcs = donutArcs([half, { ...half, key: "b", tone: "sage" }]);
     expect(arcs[0]?.length).toBeCloseTo(circumference / 2 - 2, 1);
@@ -150,12 +158,58 @@ describe("«Отчёты»: кольцо — шесть секторов и «О
     expect(donutArcs([{ ...half, rest: true, tone: null }])[0]?.toneClass).toBe("chart-rest");
   });
 
-  it("подписи: «76 тыс.», «1,6 млн»; доля меньше процента — «меньше 1 %»", () => {
+  it("подписи: «76 тыс.», «1,6 млн», минус — U+2212 (LOW-10); доля меньше процента — «меньше 1 %»", () => {
     expect(nbsp(compactAmount(7_620_000, "RUB"))).toBe("76 тыс.");
     expect(nbsp(compactAmount(155_000_000, "RUB"))).toBe("1,6 млн");
+    // Месяц, в котором возвратов больше трат: столбец ниже нуля подписан минусом, а не дефисом.
+    expect(nbsp(compactAmount(-500_000, "RUB"))).toBe("\u22125 тыс.");
+    expect(compactAmount(-500_000, "RUB")).not.toContain("-");
+    expect(nbsp(compactAmount(-155_000_000, "RUB"))).toBe("\u22121,6 млн");
     expect(nbsp(shareText(0.004))).toBe("меньше 1 %");
     expect(nbsp(shareText(0.63))).toBe("63 %");
     expect(shareText(null)).toBe("—");
+    expect(nbsp(percentText(0, 1))).toBe("меньше 1 %");
+    expect(nbsp(percentText(0, 0))).toBe("0 %");
+    expect(nbsp(percentText(34, 1))).toBe("34 %");
+    expect(percentText(null, -1)).toBe("—");
+  });
+
+  it("доли легенды и таблицы — целыми процентами, в сумме ровно 100 (LOW-3)", () => {
+    expect(wholePercents([1, 1, 1])).toEqual([34, 33, 33]);
+    expect(wholePercents([12.5, 12.5, 12.5, 12.5, 50])).toEqual([13, 13, 12, 12, 50]);
+    expect(wholePercents([2, 1])).toEqual([67, 33]);
+    expect(wholePercents([1, 0, -5])).toEqual([100, 0, 0]);
+    expect(wholePercents([0, 0])).toEqual([0, 0]);
+    expect(wholePercents([1_000_000, 1])).toEqual([100, 0]);
+    // Три равные категории: подписи «34 · 33 · 33 %», а не трижды «33 %», которые дают 99.
+    const seed = buildDemoBudgetState(TODAY);
+    const card = seed.accounts[0]!.id;
+    const three = seed.categories.filter((item) => item.type === "expense").slice(0, 3);
+    const spends: Transaction[] = three.map((category, index) => ({
+      id: `85555555-5555-4555-8555-5555555558${String(index).padStart(2, "0")}`, occurredOn: "2026-03-10", status: "posted", kind: "expense", amountMinor: 100_000, accountId: card, categoryId: category.id,
+    }));
+    const state = { ...seed, transactions: [...seed.transactions, ...spends] };
+    const model = reportModel(state, { period: "month", from: "2026-03-01" }, TODAY);
+    expect(model.segments.map((segment) => segment.percent)).toEqual([34, 33, 33]);
+    expect(model.table.map((row) => row.percent)).toEqual([34, 33, 33]);
+    const markup = nbsp(screen(state, { period: "month", from: "2026-03-01" }));
+    expect(markup).toContain(`aria-label="Расходы за март, 3 000 ₽: ${three[0]!.name} 34 %, ${three[1]!.name} 33 %, ${three[2]!.name} 33 %"`);
+    expect([...markup.matchAll(/<td>(\d+) %<\/td>/gu)].map((match) => Number(match[1]))).toEqual([34, 33, 33]);
+  });
+
+  it("в таблице доля — только у положительных сумм; их проценты дают 100, отрицательная — «—»", () => {
+    const seed = buildDemoBudgetState(TODAY);
+    const card = seed.accounts[0]!.id;
+    const [first, second, third] = seed.categories.filter((item) => item.type === "expense");
+    const operations: Transaction[] = [
+      { id: "85555555-5555-4555-8555-555555555810", occurredOn: "2026-03-10", status: "posted", kind: "expense", amountMinor: 100_000, accountId: card, categoryId: first!.id },
+      { id: "85555555-5555-4555-8555-555555555811", occurredOn: "2026-03-11", status: "posted", kind: "expense", amountMinor: 200_000, accountId: card, categoryId: second!.id },
+      // Возврат в марте за февральскую покупку: у категории в марте — минус.
+      { id: "85555555-5555-4555-8555-555555555813", occurredOn: "2026-02-20", status: "posted", kind: "expense", amountMinor: 100_000, accountId: card, categoryId: third!.id },
+      { id: "85555555-5555-4555-8555-555555555812", occurredOn: "2026-03-12", status: "posted", kind: "refund", amountMinor: 50_000, accountId: card, categoryId: third!.id, originalTransactionId: "85555555-5555-4555-8555-555555555813" },
+    ];
+    const model = reportModel({ ...seed, transactions: [...seed.transactions, ...operations] }, { period: "month", from: "2026-03-01" }, TODAY);
+    expect(model.table.map((row) => [row.amountMinor, row.percent])).toEqual([[200_000, 67], [100_000, 33], [-50_000, null]]);
   });
 });
 

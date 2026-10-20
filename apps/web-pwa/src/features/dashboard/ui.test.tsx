@@ -123,9 +123,8 @@ describe("dashboard UI", () => {
     // Донатов и пирогов на экране нет и быть не может: количество передают длина и положение
     // (§4 исследования, пункт 19). Заодно и любой круговой заливки в разметке.
     expect(source).not.toMatch(/conic-gradient|<circle|stroke-dasharray/);
-    // Поиск по операциям переехал на экран «Записать» — к списку, который он фильтрует.
-    // Здесь остаётся его модель: сравнение подстрокой, без сборки регулярного выражения.
-    expect(source).toContain(".includes(query)");
-    expect(source).not.toContain("OperationsSearch");
+    // Поиска по операциям здесь нет вовсе: он живёт в «Операциях» (`features/feed/feed-model.ts`),
+    // а прежняя модель поиска этого экрана удалена как мёртвая (ревью 2d, LOW-9).
+    expect(source).not.toMatch(/searchOperations|buildOperationSearchIndex|OPERATION_PAGE_SIZE|OperationsSearch/u);
   });
 });

@@ -259,12 +259,21 @@ export interface ReportSegment {
   readonly categoryId: string | null;
   readonly name: string;
   readonly amountMinor: number;
-  /** Доля от суммы положительных величин периода, 0…1. */
+  /** Доля от суммы положительных величин периода, 0…1: длина дуги кольца. */
   readonly share: number;
+  /**
+   * Доля целыми процентами для подписи. Проценты всех секторов в сумме — ровно 100 (метод
+   * наибольшего остатка, `wholePercents`): «34 · 33 · 33 %», а не «33 · 33 · 33 %» (ревью 2d, LOW-3).
+   */
+  readonly percent: number;
   /** Тон категории — цвет сектора и образца; у «Остального» — `null` (`--line`). */
   readonly tone: CategoryTone | null;
   readonly rest: boolean;
-  /** Куда ведёт строка легенды: лента с фильтром периода; у «Остального» — таблица (`null`). */
+  /**
+   * Куда ведёт строка легенды: лента с фильтром категории и периода. `null` — к таблице всех
+   * категорий: у «Остального» и у дохода без категории. Фильтра «без категории» у ленты нет, а
+   * «все доходы периода» были бы не тем, что назвала строка (ревью 2d, LOW-1).
+   */
   readonly feed: OperationsFilterFields | null;
 }
 
@@ -276,6 +285,8 @@ export interface ReportTableRow {
   readonly amountMinor: number;
   /** Доля от суммы положительных величин; `null` — у отрицательной суммы доли нет. */
   readonly share: number | null;
+  /** Та же доля целыми процентами; проценты строк с долей в сумме — ровно 100. */
+  readonly percent: number | null;
 }
 
 export interface ReportTagRow {
@@ -373,28 +384,32 @@ export function reportModel(state: BudgetState, fields: ReportsFields, today: st
       name: nameOf(row.categoryId),
       amountMinor: row.netMinor,
       share: positiveSum === 0 ? 0 : row.netMinor / positiveSum,
+      percent: 0,
       tone: category === undefined ? "neutral" : categoryVisual(category).tone,
       rest: false,
-      feed: row.categoryId === null ? { ...days, kind: "income" } : { ...days, cat: row.categoryId },
+      feed: row.categoryId === null ? null : { ...days, cat: row.categoryId },
     };
   };
   const top = positive.slice(0, DONUT_TOP).map(segmentOf);
   const restRows = positive.slice(top.length);
   const restMinor = restRows.reduce((sum, row) => sum + row.netMinor, 0);
-  const segments = view === "tags" ? [] : restRows.length === 0 ? top : [
+  const drawn: readonly ReportSegment[] = view === "tags" ? [] : restRows.length === 0 ? top : [
     ...top,
-    { key: "rest", categoryId: null, name: "Остальное", amountMinor: restMinor, share: positiveSum === 0 ? 0 : restMinor / positiveSum, tone: null, rest: true, feed: null },
+    { key: "rest", categoryId: null, name: "Остальное", amountMinor: restMinor, share: positiveSum === 0 ? 0 : restMinor / positiveSum, percent: 0, tone: null, rest: true, feed: null },
   ];
+  const segmentPercents = wholePercents(drawn.map((segment) => segment.amountMinor));
+  const segments = drawn.map((segment, at) => ({ ...segment, percent: segmentPercents[at]! }));
 
-  const table: ReportTableRow[] = view === "tags" ? [] : side.categories
-    .filter((row) => row.netMinor !== 0)
-    .map((row) => ({
-      key: row.categoryId ?? "uncategorized",
-      name: nameOf(row.categoryId),
-      archived: row.categoryId !== null && categories.get(row.categoryId)?.active === false,
-      amountMinor: row.netMinor,
-      share: row.netMinor > 0 && positiveSum > 0 ? row.netMinor / positiveSum : null,
-    }));
+  const tableRows = view === "tags" ? [] : side.categories.filter((row) => row.netMinor !== 0);
+  const tablePercents = wholePercents(tableRows.map((row) => Math.max(0, row.netMinor)));
+  const table: ReportTableRow[] = tableRows.map((row, at) => ({
+    key: row.categoryId ?? "uncategorized",
+    name: nameOf(row.categoryId),
+    archived: row.categoryId !== null && categories.get(row.categoryId)?.active === false,
+    amountMinor: row.netMinor,
+    share: row.netMinor > 0 && positiveSum > 0 ? row.netMinor / positiveSum : null,
+    percent: row.netMinor > 0 && positiveSum > 0 ? tablePercents[at]! : null,
+  }));
 
   const expenseTotal = breakdown.expense.totalMinor;
   const tagRows: ReportTagRow[] = breakdown.tags
@@ -466,7 +481,41 @@ export function reportModel(state: BudgetState, fields: ReportsFields, today: st
 
 const percentFormat = new Intl.NumberFormat("ru-RU", { style: "percent", maximumFractionDigits: 0 });
 
-/** «63 %»; доля меньше процента — «меньше 1 %», а не «0 %». */
+/**
+ * Целые проценты долей, которые в сумме дают ровно 100, — метод наибольшего остатка: каждой доле —
+ * её процент вниз, а недостающие до 100 единицы — долям с наибольшими дробными остатками, при
+ * равных — тем, что идут раньше (они крупнее). Три равные доли — «34 · 33 · 33», а не «33 · 33 · 33»,
+ * четыре по 12,5 % и одна 50 % — «13 · 13 · 12 · 12 · 50». Неположительные величины — ноль; все
+ * нулевые — нули. Метки так не считаются: операция с двумя метками входит в обе, и их доли от
+ * расходов законно дают больше 100 % (ревью 2d, LOW-3).
+ */
+export function wholePercents(values: readonly number[]): number[] {
+  const positive = values.map((value) => (value > 0 ? value : 0));
+  const total = positive.reduce((sum, value) => sum + value, 0);
+  if (total === 0) return positive.map(() => 0);
+  const exact = positive.map((value) => (value * 100) / total);
+  const percents = exact.map((value) => Math.floor(value));
+  let missing = 100 - percents.reduce((sum, value) => sum + value, 0);
+  const byRemainder = exact
+    .map((value, at) => ({ at, remainder: value - percents[at]! }))
+    .filter(({ remainder, at }) => remainder > 0 && positive[at]! > 0)
+    .sort((left, right) => right.remainder - left.remainder || left.at - right.at);
+  for (const { at } of byRemainder) {
+    if (missing <= 0) break;
+    percents[at] = percents[at]! + 1;
+    missing -= 1;
+  }
+  return percents;
+}
+
+/** «63 %» из целых процентов `wholePercents`; ненулевая доля, которой досталось 0, — «меньше 1 %». */
+export function percentText(percent: number | null, amountMinor: number): string {
+  if (percent === null) return "—";
+  if (percent === 0 && amountMinor > 0) return `меньше ${percentFormat.format(0.01)}`;
+  return percentFormat.format(percent / 100);
+}
+
+/** Доля метки: «63 %»; доля меньше процента — «меньше 1 %», а не «0 %». */
 export function shareText(share: number | null): string {
   if (share === null) return "—";
   if (share > 0 && share < 0.005) return `меньше ${percentFormat.format(0.01)}`;
@@ -475,9 +524,12 @@ export function shareText(share: number | null): string {
 
 const compactFormat = new Intl.NumberFormat("ru-RU", { notation: "compact", compactDisplay: "short" });
 
-/** Подпись столбца: «76 тыс.», «1,6 млн» — в целых единицах базовой валюты, без знака валюты. */
+/**
+ * Подпись столбца: «76 тыс.», «1,6 млн» — в целых единицах базовой валюты, без знака валюты.
+ * Минус — типографский U+2212, как у всех сумм приложения (`Money`), а не дефис (ревью 2d, LOW-10).
+ */
 export function compactAmount(minor: number, currency: CurrencyCode): string {
-  return compactFormat.format(minor / 10 ** currencyExponent(currency));
+  return compactFormat.format(minor / 10 ** currencyExponent(currency)).replace(/^[-\u2212]/u, "\u2212");
 }
 
 const MONTH_SHORT = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"] as const;
