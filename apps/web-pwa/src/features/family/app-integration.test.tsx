@@ -144,10 +144,11 @@ describe("приложение с экраном семьи", () => {
     expect(source).toMatch(/<FeedScreen\s+budget=\{budget\}/u);
     expect(source).not.toContain("setMemberFilter");
     expect(feed).toContain("transactionAuthorLabel(byId, memberId)");
-    expect(feed).toContain('{ key: "member", label: member?.name ?? "Участник"');
+    expect(feed).toContain('{ key: "member", label: memberName ?? "Участник"');
     expect(model).toContain("if (member !== undefined && transaction.memberId?.toLowerCase() !== member) return false;");
     // Без участников в бюджете экран остаётся ровно таким, каким был: ни фильтра, ни автора.
-    expect(feed).toContain("const showMembers = activeMembers.length > 0;");
+    // Чип остаётся, пока фильтр по участнику задан, — даже по вышедшему из семьи (ревью 2d, LOW-7).
+    expect(feed).toContain("const showMembers = activeMembers.length > 0 || routed.member !== undefined;");
   });
 
   it("адрес сервера читается из конфигурации сборки, а не зашит", () => {

@@ -1,6 +1,10 @@
 import { expect, test } from "./fixtures";
 import { applyFontScale } from "./font-scale";
+import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
+import { restoreBudget } from "./budgets";
+import { G003_CATEGORIES, G003_EXPENSES_MINOR, G003_INCOME_MINOR, G003_LEDGER, G003_MONTH_FROM, G003_TAGS } from "./canonical-ledger";
 import { loadDemo } from "./sheet";
+import { formatMoney } from "../src/money";
 import type { Page } from "@playwright/test";
 
 /**
@@ -58,6 +62,16 @@ test("строка легенды — «Операции» с категорие
   await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
   expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-01-01&to=\d{4}-12-31&cat=[0-9a-f-]{36}$/u);
+  // Лента поверх «Отчётов» — со строкой «‹ Отчёты»: она возвращает к той же их записи истории,
+  // а не кладёт новую (LOW-6); фокус — на заголовке «Отчётов».
+  const length = await page.evaluate(() => window.history.length);
+  await page.getByRole("button", { name: "Назад: Отчёты" }).click();
+  await expect(heading(page)).toBeFocused();
+  expect(await hash(page)).toBe("#/reports?period=year");
+  expect(await page.evaluate(() => window.history.length)).toBe(length);
+  // Снова в ленту — и системное «Назад» ведёт туда же.
+  await page.getByRole("button", { name: /^Жильё: .+\. Показать операции$/u }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
   await page.goBack();
   expect(await hash(page)).toBe("#/reports?period=year");
   // Месяц — без ключей, как у вкладки; его легенда — числа октября макета.
@@ -67,7 +81,7 @@ test("строка легенды — «Операции» с категорие
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeFocused();
   expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&cat=[0-9a-f-]{36}$/u);
   const feed = page.getByRole("region", { name: "Операции" });
-  await expect(feed.getByRole("button", { name: "Продукты", exact: true })).toHaveAttribute("data-set", "true");
+  await expect(feed.getByRole("button", { name: "Категория: Продукты", exact: true })).toHaveAttribute("data-set", "true");
   await expect(feed.locator(".feed-row")).toHaveCount(6);
   await expect(feed.locator(".feed-sum")).toContainText(/Расходы 22\s000\s₽/u);
   await page.goBack();
@@ -83,7 +97,7 @@ test("строка легенды — «Операции» с категорие
   await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Метки" }).click();
   await expect(page.getByRole("heading", { level: 2, name: /^Больше всего потрачено с меткой «.+»$/u })).toBeVisible();
   await page.getByRole("button", { name: /^#дача: / }).click();
-  await expect(page.getByRole("region", { name: "Операции" }).getByRole("button", { name: "#дача", exact: true })).toHaveAttribute("data-set", "true");
+  await expect(page.getByRole("region", { name: "Операции" }).getByRole("button", { name: "Метка: #дача", exact: true })).toHaveAttribute("data-set", "true");
   expect(await hash(page)).toMatch(/&tag=[0-9a-f-]{36}$/u);
   await page.goBack();
   expect(await hash(page)).toBe("#/reports?view=tags&period=quarter");
@@ -143,6 +157,107 @@ test("прошлый месяц на «Обзоре»: траты истории
   await expect(expenses).toContainText(/88\s900\s₽/u);
   await page.getByRole("button", { name: /^Предыдущий месяц: /u }).click();
   await expect(expenses).toContainText(/74\s300\s₽/u);
+});
+
+test("«Отчёты» у начала календаря: пять адресов ревью открывают экран, а не белую страницу (HIGH-1)", async ({ page }) => {
+  await loadDemo(page);
+  // «Обзор» января 1900 года → «Расходы» — «Отчёты» того же месяца.
+  await page.goto("/#/?month=1900-01");
+  await page.locator(".totals-strip").getByRole("button", { name: /^Расходы/u }).click();
+  await expect(heading(page)).toBeFocused();
+  expect(await hash(page)).toBe("#/reports?period=month&from=1900-01-01");
+  await expect(page.getByRole("heading", { level: 2, name: "В январе 1900 расходов нет" })).toBeVisible();
+  const today = await page.evaluate(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  });
+  for (const address of [
+    "#/reports?period=month&from=1900-01-01",
+    "#/reports?period=quarter&from=1900-02-01",
+    "#/reports?period=year&from=1900-06-01",
+    `#/reports?period=custom&from=1960-01-01&to=${today}`,
+  ]) {
+    await page.goto(`/${address}`);
+    await expect(heading(page), address).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Экран не открылся" }), address).toHaveCount(0);
+    expect(await hash(page), address).toBe(address);
+  }
+  // Свой период с 1960 года по сегодня — вся история демо, и сравнивать её не с чем: слова, а не падение.
+  await expect(page.locator(".report-compare")).toContainText(/сравнить не с чем — записи ведутся с 1900 года$/u);
+  await expect(page.getByRole("heading", { level: 2, name: "Больше всего ушло на категорию «Жильё»" })).toBeVisible();
+});
+
+test("G-003 из копии: C1, C2 и T1–T3 контракта — в «Отчётах» за август 2026", async ({ page }) => {
+  await loadDemo(page);
+  await restoreBudget(page, G003_LEDGER);
+  // Сумма словами приложения (`formatMoney`): неразрывные пробелы — любым пробелом.
+  const money = (minor: number) => new RegExp(formatMoney(minor, "RUB").replace(/[\s\u00a0\u202f]/gu, "\\s"), "u");
+  await page.goto(`/#/reports?period=month&from=${G003_MONTH_FROM}`);
+  await expect(heading(page)).toBeVisible();
+  // Расходы августа — за вычетом возврата; C1 и C2 — строки легенды с суммой.
+  await expect(page.locator(".report-compare")).toContainText(money(G003_EXPENSES_MINOR));
+  for (const category of G003_CATEGORIES) {
+    await expect(page.getByRole("button", { name: new RegExp(`^${category.name}: `, "u") }), category.name).toHaveAccessibleName(new RegExp(`^${category.name}: ${money(category.actualMinor).source}, \\d+\\s%\\. Показать операции$`, "u"));
+  }
+  // Доходы — «Зарплата».
+  await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Доходы" }).click();
+  await expect(page.locator(".report-compare")).toContainText(money(G003_INCOME_MINOR));
+  // Метки: T1 «Отпуск», T2 «Дом» — расходами; T3 «Старое» в архиве — только доходом.
+  await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Метки" }).click();
+  for (const tag of G003_TAGS) {
+    const row = page.getByRole("button", { name: new RegExp(`^#${tag.name}${tag.archived ? " \\(в архиве\\)" : ""}: `, "u") });
+    await expect(row, tag.name).toHaveAccessibleName(new RegExp(`^#${tag.name}${tag.archived ? " \\(в архиве\\)" : ""}: ${money(tag.actualMinor).source}, `, "u"));
+    if (tag.incomeMinor > 0) await expect(row, tag.name).toHaveAccessibleName(new RegExp(`доходы ${money(tag.incomeMinor).source}\\. Показать операции$`, "u"));
+  }
+  // Легенда C1 — «Операции» с той же суммой за август.
+  await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: "Расходы" }).click();
+  await page.getByRole("button", { name: new RegExp(`^${G003_CATEGORIES[0]!.name}: `, "u") }).click();
+  await expect(page.getByRole("region", { name: "Операции" }).locator(".feed-sum")).toContainText(money(G003_CATEGORIES[0]!.actualMinor));
+});
+
+test("имена легенды и меток не рвутся посреди слова, а доступные имена — без мягких переносов (LOW-5)", async ({ page }) => {
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  // Год — все категории истории демо: «Развлечения», «Подарки», «Транспорт» — в легенде.
+  await page.goto("/#/reports?period=year");
+  await expect(heading(page)).toBeVisible();
+  for (const view of ["Расходы", "Метки"] as const) {
+    await page.getByRole("group", { name: "Что показать" }).getByRole("button", { name: view }).click();
+    for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+      await applyFontScale(page, scale);
+      await page.setViewportSize({ width, height: 844 });
+      expect(await nameSplits(page, ".legend-text b"), `${view} ${width} pt ×${scale}`).toEqual([]);
+    }
+    await applyFontScale(page, 1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await softHyphenedNames(page), view).toEqual([]);
+  }
+});
+
+test("«Свой период» на 320 pt при ×2.7: дни в полях видны целиком, с годом", async ({ page }) => {
+  await loadDemo(page);
+  await tab(page, "Отчёты").click();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await applyFontScale(page, 2.7);
+  await page.getByRole("group", { name: "Период и счёт" }).locator('button[aria-haspopup="dialog"]').first().click();
+  const sheet = page.getByRole("dialog", { name: "Период" });
+  for (const label of ["С", "По"]) {
+    const field = sheet.getByLabel(label, { exact: true });
+    await field.scrollIntoViewIfNeeded();
+    // Поле дня шире своего текста и значка выбора даты: «20.10.2026» не обрезан справа ни цифрой года.
+    const fits = await field.evaluate((input: HTMLInputElement) => {
+      const style = getComputedStyle(input);
+      const context = document.createElement("canvas").getContext("2d")!;
+      // Сокращение `font` вычисленный стиль отдаёт не всегда — шрифт собирается по частям.
+      context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      // Самый широкий вид дня: «88/88/8888» (разделитель зависит от языка браузера).
+      const text = context.measureText("88/88/8888").width;
+      const box = input.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+      return { text: Math.ceil(text), icon: Math.ceil(parseFloat(style.fontSize) * 1.25), box: Math.floor(box) };
+    });
+    expect(fits.box, `${label}: ${JSON.stringify(fits)}`).toBeGreaterThanOrEqual(fits.text + fits.icon);
+  }
+  await applyFontScale(page, 1);
 });
 
 test("на 320 pt и при ×2.7 «Отчёты» не выезжают за экран, цели — не меньше 48", async ({ page }) => {

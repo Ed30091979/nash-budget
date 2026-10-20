@@ -407,6 +407,10 @@ describe("маршруты 2d: фильтры «Операций» и перио
       { name: "operations", from: "2026-02-30" },
       { name: "operations", from: "1899-12-31" },
       { name: "operations", from: "2026-10-31", to: "2026-10-01" },
+      // Период «Операций» — словом из перечня или днями, но не тем и другим сразу (LOW-11).
+      { name: "operations", period: "year" },
+      { name: "operations", period: "all", from: "2026-10-01" },
+      { name: "operations", period: "all", to: "2026-10-31" },
       { name: "reports", view: "chart" },
       { name: "reports", period: "week" },
       { name: "reports", month: "2026-10" },
@@ -418,6 +422,14 @@ describe("маршруты 2d: фильтры «Операций» и перио
     expect(parseRoute("#/operations?kind=кофе")).toEqual({ route: { name: "operations" }, notFound: true });
     expect(parseRoute("#/operations?from=2026-10-31&to=2026-10-01&kind=income")).toEqual({ route: { name: "operations", kind: "income" }, notFound: true });
     expect(parseRoute("#/reports?view=income&period=month&from=2026-09-01")).toEqual({ route: { name: "reports", view: "income", period: "month", from: "2026-09-01" }, notFound: false });
+    // «Вся история»: слово из перечня; вместе с днями дни уходят, слово остаётся.
+    expect(formatRoute({ name: "operations", period: "all", acc: ACCOUNT })).toBe(`#/operations?period=all&acc=${ACCOUNT}`);
+    expect(parseRoute(`#/operations?acc=${ACCOUNT}&period=all`)).toEqual({ route: { name: "operations", period: "all", acc: ACCOUNT }, notFound: false });
+    expect(parseRoute("#/operations?period=all&from=2026-10-01&to=2026-10-31")).toEqual({ route: { name: "operations", period: "all" }, notFound: true });
+    expect(parseRoute("#/operations?period=month")).toEqual({ route: { name: "operations" }, notFound: true });
+    // «Вся история» — фильтр, а не вкладка: на вкладку «Операции» — снова текущий месяц.
+    expect(isTab({ name: "operations", period: "all" })).toBe(false);
+    expect(screenKey({ name: "operations", period: "all" })).toBe("#/operations");
   });
 
   it("лента с фильтром — не вкладка: кладётся поверх «Отчётов»; экран тот же при любом фильтре и периоде", () => {

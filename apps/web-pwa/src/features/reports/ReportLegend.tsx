@@ -1,4 +1,5 @@
 import type { CurrencyCode } from "@family-budget/domain";
+import { Hyphenated } from "../../components/Hyphenated";
 import { Icon } from "../../components/Icon";
 import { Money } from "../../components/Money";
 import { formatMoney } from "../../money";
@@ -31,7 +32,7 @@ export function ReportLegend({ segments, currency, allLabel, onOpen, onRest }: {
           >
             <span className={`legend-swatch ${chartToneClass(segment)}`} aria-hidden="true" />
             <span className="legend-text">
-              <b><bdi dir="auto">{segment.name}</bdi></b>
+              <b><bdi dir="auto"><Hyphenated text={segment.name} /></bdi></b>
               <span><Money value={segment.amountMinor} currency={currency} /> · {percentText(segment.percent, segment.amountMinor)}</span>
             </span>
             <Icon name="chevron-right" size={20} className="legend-chevron" />

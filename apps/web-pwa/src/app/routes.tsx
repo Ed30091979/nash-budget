@@ -32,7 +32,7 @@ import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
 import { ReportsScreen } from "../features/reports/ReportsScreen";
 import { reportsFieldsForMonth } from "../features/reports/report-model";
-import type { Route } from "../navigation/routes";
+import { isTab, type Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
 import type { BudgetWriter } from "../write/useBudgetWrite";
@@ -58,6 +58,8 @@ export interface AppRouteContext {
   readonly navigate: (route: Route) => void;
   /** Кнопка «назад» экрана: к родителю маршрута. */
   readonly back: () => void;
+  /** Маршрут записи истории под текущей: «‹ Отчёты» у ленты, открытой из «Отчётов». */
+  readonly beneath: Route | null;
   /** Тот же экран в другом виде (список расходов или доходов): запись истории заменяется, а не копится. */
   readonly replace: (route: Route) => void;
   /** Лист ввода поверх экрана, на котором стоишь: с плиток, с «+», из «Операций» (`sheet-address.ts`). */
@@ -203,7 +205,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
   return <>
           {route.name === "overview" ? <OverviewRoute app={app} month={route.month} sheetOpen={route.sheet !== undefined} /> : null}
           {/* «Операции» — вкладка: фильтры в адресе, смена фильтра заменяет запись истории; строка
-              открывает операцию в листе ввода поверх ленты, и строка поиска экрана при этом остаётся. */}
+              открывает операцию в листе ввода поверх ленты, и строка поиска экрана при этом остаётся.
+              Лента с фильтром поверх «Отчётов» — со строкой «‹ Отчёты»: назад к той же их записи. */}
           {route.name === "operations" ? (
             <FeedScreen
               budget={budget}
@@ -213,6 +216,7 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onEdit={openEdit}
               onAdd={() => openSheet({ op: "expense" })}
               onImport={() => navigate({ name: "import" })}
+              {...(app.beneath?.name === "reports" && !isTab(route) ? { back: { label: "Отчёты", onClick: () => navigate(app.beneath!) } } : {})}
             />
           ) : null}
           {/* «Отчёты»: вкладка и период — тот же экран (замена записи), строка легенды — «Операции»

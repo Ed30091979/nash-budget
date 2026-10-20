@@ -5,6 +5,7 @@ import {
   currencyExponent,
   isSupportedCurrency,
   monthEndDate,
+  monthOfDate,
   monthStartDate,
   type BudgetState,
   type CurrencyCode,
@@ -12,7 +13,7 @@ import {
 } from "@family-budget/domain";
 import { categoryVisual, type CategoryTone } from "../../category-visual";
 import type { IconName } from "../../components/Icon";
-import { FEED_FILTER_KEYS, type FeedKind, type OperationsFilterFields } from "../../navigation/routes";
+import { FEED_FILTER_KEYS, type FeedKind, type FeedPeriod, type OperationsFilterFields } from "../../navigation/routes";
 import { debtVerb, kindLabels, kindSign, operationLabel, transactionCurrency } from "../operations/transaction-words";
 
 /**
@@ -28,8 +29,13 @@ import { debtVerb, kindLabels, kindSign, operationLabel, transactionCurrency } f
 /** Сколько строк показывает страница ленты; «Показать ещё» добавляет столько же. */
 export const FEED_PAGE_SIZE = 50;
 
-/** Фильтры ленты. Адрес несёт по одному значению на ключ; модель принимает и списки. */
+/**
+ * Фильтры ленты. Адрес несёт по одному значению на ключ; модель принимает и списки. Без периода и
+ * без дней лента — текущий месяц (`feedScope`), `period: "all"` — вся история.
+ */
 export interface FeedFilters {
+  /** `all` — вся история; дни тогда не задаются. */
+  readonly period?: FeedPeriod;
   /** Первый день, включительно. */
   readonly from?: string;
   /** Последний день, включительно. */
@@ -43,9 +49,10 @@ export interface FeedFilters {
   readonly kind?: FeedKind;
 }
 
-/** Фильтры из адреса «Операций». */
+/** Фильтры из адреса «Операций» — как они записаны: месяц по умолчанию подставляет `feedScope`. */
 export function filtersOfRoute(route: OperationsFilterFields): FeedFilters {
   return {
+    ...(route.period === undefined ? {} : { period: route.period }),
     ...(route.from === undefined ? {} : { from: route.from }),
     ...(route.to === undefined ? {} : { to: route.to }),
     ...(route.acc === undefined ? {} : { accountIds: [route.acc] }),
@@ -60,6 +67,7 @@ export function filtersOfRoute(route: OperationsFilterFields): FeedFilters {
 export function routeOfFilters(filters: FeedFilters): OperationsFilterFields {
   const first = (values: readonly string[] | undefined) => values?.[0];
   const fields: Record<string, string | undefined> = {
+    period: filters.period,
     from: filters.from,
     to: filters.to,
     acc: first(filters.accountIds),
@@ -76,9 +84,64 @@ export function routeOfFilters(filters: FeedFilters): OperationsFilterFields {
   return route as OperationsFilterFields;
 }
 
-/** Задан ли хоть один фильтр. */
+/** Задан ли хоть один фильтр — и «вся история» тоже: она отличается от ленты по умолчанию. */
 export function hasFilters(filters: FeedFilters): boolean {
   return Object.keys(routeOfFilters(filters)).length > 0;
+}
+
+/**
+ * Что лента показывает на самом деле: без периода и без дней — текущий месяц (лента по умолчанию —
+ * месяц с итогами дней и строкой итогов, ревью 2d, LOW-11), «вся история» — без границ, свои дни —
+ * как заданы.
+ */
+export function feedScope(filters: FeedFilters, today: string): FeedFilters {
+  if (filters.period === "all") {
+    const { period: _period, from: _from, to: _to, ...rest } = filters;
+    return rest;
+  }
+  if (filters.from !== undefined || filters.to !== undefined) return filters;
+  const month = monthOfDate(today);
+  return { ...filters, from: monthStartDate(month), to: monthEndDate(month) };
+}
+
+/** Подпись чипа периода: «Октябрь» по умолчанию, «Весь период», свои дни словами. */
+export function feedPeriodLabel(filters: FeedFilters, today: string): string {
+  if (filters.period === "all") return "Весь период";
+  if (filters.from === undefined && filters.to === undefined) return monthLabel(monthOfDate(today), today);
+  return periodLabel(filters.from, filters.to, today);
+}
+
+/** Меньше стольких найденных за месяц или свои дни — рядом «Искать за всё время». */
+export const FEW_FOUND = 5;
+
+/**
+ * Предложить ли «Искать за всё время»: идёт поиск, период — не вся история, а найдено мало или
+ * ничего. Набранное при этом остаётся в памяти экрана, меняется только период в адресе.
+ */
+export function offersAllTime(search: FeedSearch, filters: FeedFilters, found: number): boolean {
+  return search.kind !== "none" && filters.period !== "all" && found < FEW_FOUND;
+}
+
+/**
+ * Перемена фильтров ленты: ключи из `change` поверх прежних, `undefined` снимает ключ. Период — либо
+ * словом, либо днями: новые дни снимают «всю историю», «вся история» снимает дни.
+ */
+export function patchFilters(
+  route: OperationsFilterFields,
+  change: Partial<Record<keyof OperationsFilterFields, string | undefined>>,
+): OperationsFilterFields {
+  const merged: Record<string, string | undefined> = { ...routeOfFilters(filtersOfRoute(route)), ...change };
+  if (change.from !== undefined || change.to !== undefined) merged.period = undefined;
+  if (change.period !== undefined) {
+    merged.from = undefined;
+    merged.to = undefined;
+  }
+  const next: Record<string, string> = {};
+  for (const key of FEED_FILTER_KEYS) {
+    const value = merged[key];
+    if (value !== undefined) next[key] = value;
+  }
+  return next as OperationsFilterFields;
 }
 
 /**

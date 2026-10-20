@@ -40,6 +40,8 @@ describe("задержка документа: форма записи не от
       "#/operations?from=2026-10-01&to=2026-10-31",
       `#/operations?acc=${ACCOUNT}&cat=${CATEGORY}&tag=7e888888-8888-4888-8888-888888888882&member=c6666666-6666-4666-8666-666666666601&kind=expense`,
       "#/operations?to=2026-10-19&kind=debt_out",
+      "#/operations?period=all",
+      `#/operations?period=all&acc=${ACCOUNT}&kind=income`,
       "#/reports", "#/reports?view=income", "#/reports?view=tags&period=quarter", "#/reports?period=month&from=2026-09-01",
       `#/reports?period=custom&from=2026-10-01&to=2026-10-15&acc=${ACCOUNT}`,
       "#/more", "#/more/plan-year", "#/more/family",

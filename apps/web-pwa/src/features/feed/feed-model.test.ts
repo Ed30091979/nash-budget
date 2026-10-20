@@ -6,6 +6,8 @@ import {
   dayHeading,
   feedIndex,
   feedIndexBuilds,
+  feedPeriodLabel,
+  feedScope,
   feedRowView,
   filterFeed,
   filtersOfRoute,
@@ -13,7 +15,9 @@ import {
   listedAccounts,
   matchesSearch,
   normalizeSearchText,
+  offersAllTime,
   parseSearch,
+  patchFilters,
   periodLabel,
   routeOfFilters,
   type FeedFilters,
@@ -133,6 +137,38 @@ describe("лента: фильтры", () => {
     expect(routeOfFilters(filtersOfRoute(route))).toEqual(route);
     expect(Object.keys(routeOfFilters({ ...filtersOfRoute(route), query: "кофе" } as FeedFilters)).sort()).toEqual(["acc", "cat", "from", "kind", "member", "tag", "to"]);
     expect(routeOfFilters({})).toEqual({});
+    expect(routeOfFilters(filtersOfRoute({ period: "all", acc: card!.id }))).toEqual({ period: "all", acc: card!.id });
+  });
+
+  it("период ленты: по умолчанию — текущий месяц, «вся история» — без границ, свои дни — как заданы (LOW-11)", () => {
+    const today = "2026-10-19";
+    expect(feedScope({}, today)).toEqual({ from: "2026-10-01", to: "2026-10-31" });
+    expect(feedScope({ cat: food!.id } as FeedFilters, today)).toEqual({ cat: food!.id, from: "2026-10-01", to: "2026-10-31" });
+    expect(feedScope({ period: "all", accountIds: [card!.id] }, today)).toEqual({ accountIds: [card!.id] });
+    expect(feedScope({ from: "2026-08-01", to: "2026-08-31" }, today)).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+    expect(feedScope({ from: "2026-08-15" }, today)).toEqual({ from: "2026-08-15" });
+    expect(feedPeriodLabel({}, today)).toBe("Октябрь");
+    expect(feedPeriodLabel({ period: "all" }, today)).toBe("Весь период");
+    expect(feedPeriodLabel({ from: "2026-10-01", to: "2026-10-15" }, today)).toBe("1–15\u00a0октября");
+    // Август G-003 за «текущий месяц» сентября — ничего; за всю историю — все операции.
+    expect(filterFeed(feedIndex(ledger()), feedScope({}, "2026-09-10"), parseSearch("")).entries).toHaveLength(0);
+    expect(filterFeed(feedIndex(ledger()), feedScope({ period: "all" }, "2026-09-10"), parseSearch("")).entries).toHaveLength(ledger().transactions.length);
+  });
+
+  it("перемена фильтров: дни снимают «всю историю», «вся история» — дни; лист и строка поиска в адрес не идут", () => {
+    expect(patchFilters({ period: "all", acc: card!.id }, { from: "2026-08-01", to: "2026-08-31" })).toEqual({ from: "2026-08-01", to: "2026-08-31", acc: card!.id });
+    expect(patchFilters({ from: "2026-08-01", to: "2026-08-31", kind: "expense" }, { period: "all" })).toEqual({ period: "all", kind: "expense" });
+    expect(patchFilters({ period: "all" }, { period: undefined })).toEqual({});
+    const route = { name: "operations", sheet: "entry", edit: "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", cat: food!.id, query: "кофе" } as unknown as Parameters<typeof patchFilters>[0];
+    expect(patchFilters(route, { acc: card!.id })).toEqual({ acc: card!.id, cat: food!.id });
+  });
+
+  it("«Искать за всё время» — когда поиск за месяц или свои дни нашёл меньше пяти", () => {
+    expect(offersAllTime(parseSearch("кофе"), {}, 0)).toBe(true);
+    expect(offersAllTime(parseSearch("кофе"), { from: "2026-08-01", to: "2026-08-31" }, 4)).toBe(true);
+    expect(offersAllTime(parseSearch("кофе"), {}, 5)).toBe(false);
+    expect(offersAllTime(parseSearch("кофе"), { period: "all" }, 0)).toBe(false);
+    expect(offersAllTime(parseSearch(""), {}, 0)).toBe(false);
   });
 
   it("итоги найденного: расходы за вычетом возвратов и доходы, в рублях, без переводов и долгов", () => {

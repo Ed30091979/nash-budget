@@ -1672,6 +1672,11 @@ button.feed-open:focus-visible { outline-offset: -3px; }
 .feed-more { margin-top: 16px; }
 .feed-status { margin: 12px 4px 0; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
 .feed-body > .empty-state { margin-top: 8px; }
+/* «Искать за всё время» под тем немногим, что поиск нашёл за месяц (ревью 2d, LOW-11). */
+.feed-widen { display: grid; min-width: 0; gap: 8px; margin-top: 16px; }
+.feed-widen p { margin: 0 4px; color: var(--ink-muted); font-size: var(--size-caption); line-height: var(--lh-caption); }
+/* Экран, который не открылся (граница ошибок маршрута, ревью 2d, HIGH-1): крупный заголовок и пустое состояние. */
+.route-failure { display: grid; min-width: 0; }
 
 /* Лист выбора фильтра: снизу, скруглён сверху ролью листа; вариант — строка 48 с галочкой акцентом. */
 .sheet-backdrop.filter-backdrop { padding: 8px 0 0; }
@@ -1775,6 +1780,9 @@ button.legend-row { display: flex; gap: 8px; align-items: center; width: 100%; m
   .filter-chips { flex-direction: column; margin: 4px 0 0; padding: 0; overflow-x: visible; }
   .filter-chips .chip-face { white-space: normal; }
   .period-fields { grid-template-columns: minmax(0, 1fr); }
+  /* День в поле — целиком, с годом и значком выбора: при ×2.7 на 320 pt «20.10.2026» кеглем
+     основного текста шире поля, и год обрезался (ревью 2d, LOW-5). Кегль подписи и поля тоньше. */
+  .period-form .field input[type="date"] { padding-right: 8px; padding-left: 10px; font-size: var(--size-caption); line-height: var(--lh-caption); }
   .donut-center { display: none; }
   .month-bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; }
   .report-views { flex-direction: column; padding: 0; background: transparent; }

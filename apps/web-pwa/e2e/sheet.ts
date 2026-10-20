@@ -171,3 +171,18 @@ export async function measureSheetTargets(page: Page, minimum: number, sheetSele
     };
   }, { min: minimum, sheetSelector });
 }
+
+/**
+ * «Операции» за весь период. Лента по умолчанию — текущий месяц (ревью 2d, LOW-11), а у канонических
+ * бюджетов (G-002 — июль 2026) и у записей других месяцев операции не в нём: прогон берёт всю
+ * историю тем же путём, что человек, — чипом периода и «Весь период» в его листе.
+ */
+export async function showWholeHistory(page: Page): Promise<void> {
+  const feed = page.getByRole("region", { name: "Операции" });
+  await expect(feed).toBeVisible();
+  const chip = feed.getByRole("button", { name: /^Период: /u });
+  if ((await chip.getAttribute("aria-label")) === "Период: весь период") return;
+  await chip.click();
+  await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: "Весь период", exact: true }).click();
+  await expect(feed.getByRole("button", { name: "Период: весь период" })).toHaveAttribute("data-set", "true");
+}

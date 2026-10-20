@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { monthOfDate, monthStartDate, shiftMonth, type BudgetState } from "@family-budget/domain";
 import { accountIcon, accountTone } from "../../category-visual";
 import { EmptyState } from "../../components/EmptyState";
+import { Hyphenated } from "../../components/Hyphenated";
 import { Icon } from "../../components/Icon";
 import { LargeTitle } from "../../components/LargeTitle";
 import { Money } from "../../components/Money";
@@ -86,7 +87,8 @@ export function ReportsScreen({ budget, today, fields, onFields, onFeed, onAdd }
         <span className="chip-face"><Icon name="calendar" size={20} />{period.kind === "custom" ? period.label : "Свой период"}</span>
       </button>
       {/* Счёт — последним в том же ряду: «Отчёты» по одному счёту, как в «Операциях». */}
-      <button className="chip filter-chip" type="button" aria-haspopup="dialog" aria-expanded={sheet === "account"} data-set={fields.acc === undefined ? undefined : "true"} onClick={() => setSheet("account")}>
+      {/* Доступное имя — что чип фильтрует: «Счёт: Карта», «Счёт: все счета» (ревью 2d, LOW-11). */}
+      <button className="chip filter-chip" type="button" aria-haspopup="dialog" aria-expanded={sheet === "account"} aria-label={account === undefined ? "Счёт: все счета" : `Счёт: ${account.name}`} data-set={fields.acc === undefined ? undefined : "true"} onClick={() => setSheet("account")}>
         <span className="chip-face"><bdi dir="auto">{account?.name ?? "Все счета"}</bdi><Icon name="chevron-down" size={20} /></span>
       </button>
     </div>
@@ -218,7 +220,7 @@ function TagsCard({ model, onFeed }: { readonly model: ReportModel; readonly onF
               onClick={() => onFeed(row.feed)}
             >
               <span className="legend-text">
-                <b>#<bdi dir="auto">{row.name}</bdi>{row.archived ? <span className="tag-archived"> · в архиве</span> : null}</b>
+                <b>#<bdi dir="auto"><Hyphenated text={row.name} /></bdi>{row.archived ? <span className="tag-archived"> · в архиве</span> : null}</b>
                 <span>
                   <Money value={row.expenseMinor} currency={currency} /> · {shareText(row.share)}
                   {row.incomeMinor > 0 ? <> · доходы <Money value={row.incomeMinor} currency={currency} /></> : null}

@@ -61,13 +61,22 @@ export type FeedKind = (typeof FEED_KINDS)[number];
 const FEED_KINDS_COMPLETE: Exclude<TransactionKind, FeedKind> extends never ? true : never = true;
 void FEED_KINDS_COMPLETE;
 
+/** Период «Операций» словом: `all` — вся история. Без него и без дней — текущий месяц. */
+export const FEED_PERIODS = ["all"] as const;
+export type FeedPeriod = (typeof FEED_PERIODS)[number];
+
 /**
- * Фильтры «Операций» (подволна 2d, план волны 2, §1.3) — только закрытые типы: дни `ГГГГ-ММ-ДД`,
- * UUID счёта, категории, метки и участника и вид операции из перечня. Строки поиска среди них нет и
- * быть не может: это свободный текст — сумма, заметка, имя, — и он живёт в памяти экрана
- * (`features/feed/FeedScreen.tsx`), а не в адресе и не в состоянии записи истории (SECURITY §7.3).
+ * Фильтры «Операций» (подволна 2d, план волны 2, §1.3) — только закрытые типы: период из перечня,
+ * дни `ГГГГ-ММ-ДД`, UUID счёта, категории, метки и участника и вид операции из перечня. Строки поиска
+ * среди них нет и быть не может: это свободный текст — сумма, заметка, имя, — и он живёт в памяти
+ * экрана (`features/feed/FeedScreen.tsx`), а не в адресе и не в состоянии записи истории (SECURITY §7.3).
+ *
+ * Период: без ключей — текущий месяц (лента по умолчанию — месяц с итогами дней и строкой итогов,
+ * ревью 2d, LOW-11), `period=all` — вся история, `from`/`to` — свои дни. Слово и дни вместе не бывают.
  */
 export interface OperationsFilterFields {
+  /** `all` — вся история; не вместе с днями. */
+  readonly period?: FeedPeriod;
   /** Первый день периода, включительно. */
   readonly from?: string;
   /** Последний день периода, включительно; не раньше `from`. */
@@ -80,7 +89,7 @@ export interface OperationsFilterFields {
 }
 
 /** Ключи фильтров «Операций» в каноническом порядке. */
-export const FEED_FILTER_KEYS = ["from", "to", "acc", "cat", "tag", "member", "kind"] as const satisfies readonly (keyof OperationsFilterFields)[];
+export const FEED_FILTER_KEYS = ["period", "from", "to", "acc", "cat", "tag", "member", "kind"] as const satisfies readonly (keyof OperationsFilterFields)[];
 
 /** Вкладки «Отчётов»: расходы, доходы, метки. */
 export const REPORT_VIEWS = ["expense", "income", "tags"] as const;
@@ -307,8 +316,9 @@ const SHEET_GRAMMAR = {
   edit: { kind: "uuid", invalid: "close-sheet" },
 } as const satisfies { readonly [K in keyof SheetFields]-?: QuerySpec };
 
-/** Фильтры «Операций» (2d): дни, идентификаторы записей и вид из перечня — ничего свободного. */
+/** Фильтры «Операций» (2d): период и вид из перечней, дни, идентификаторы записей — ничего свободного. */
 const OPERATIONS_GRAMMAR = {
+  period: { kind: "enum", values: FEED_PERIODS },
   from: { kind: "day" },
   to: { kind: "day" },
   acc: { kind: "uuid" },
@@ -364,8 +374,12 @@ function sheetFieldsCoherent(fields: Readonly<Record<string, unknown>>): boolean
   return !(fields.edit !== undefined && fields.op !== undefined);
 }
 
-/** Период — от `from` до `to` включительно: последний день не раньше первого. */
+/**
+ * Период — от `from` до `to` включительно: последний день не раньше первого. У «Операций» период —
+ * либо словом («вся история»), либо днями, но не тем и другим сразу.
+ */
 function periodCoherent(fields: Readonly<Record<string, unknown>>): boolean {
+  if (fields.name === "operations" && fields.period !== undefined && (fields.from !== undefined || fields.to !== undefined)) return false;
   return typeof fields.from !== "string" || typeof fields.to !== "string" || fields.from <= fields.to;
 }
 
@@ -439,7 +453,7 @@ export function formatRoute(route: Route): string {
     pairs.push(`${key}=${text}`);
   }
   if (!sheetFieldsCoherent(fields)) throw new Error("A sheet key is outside an open sheet, or an edit names tiles too.");
-  if (!periodCoherent(fields)) throw new Error("A period ends before it starts.");
+  if (!periodCoherent(fields)) throw new Error("A period ends before it starts, or names the whole history and days at once.");
   const path = pathOf(route);
   return pairs.length === 0 ? path : `${path}?${pairs.join("&")}`;
 }
@@ -557,6 +571,7 @@ export function parseRoute(hash: string): ParsedRoute {
   if (fields.edit !== undefined) delete fields.op;
   if (fields.op === undefined) for (const key of ["src", "dst"] as const) delete fields[key];
   // Период, который кончается раньше, чем начался, — не период: оба дня уходят, и это «Запись не найдена».
+  // «Вся история» вместе с днями — тоже: дни уходят, остаётся слово.
   if (!periodCoherent(fields)) {
     delete fields.from;
     delete fields.to;

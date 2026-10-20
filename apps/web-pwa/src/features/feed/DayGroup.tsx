@@ -1,4 +1,5 @@
 import type { BudgetState, Transaction } from "@family-budget/domain";
+import { Hyphenated } from "../../components/Hyphenated";
 import { Money } from "../../components/Money";
 import { dayHeading, feedRowView, type FeedDay } from "./feed-model";
 import { FeedRow } from "./FeedRow";
@@ -25,7 +26,7 @@ export function DayGroup({ day, budget, today, authors, onEdit, busy }: {
   return (
     <section className="feed-day" aria-labelledby={id}>
       <div className="feed-day-head">
-        <h2 id={id}>{dayHeading(day.date, today)}</h2>
+        <h2 id={id}><Hyphenated text={dayHeading(day.date, today)} /></h2>
         {day.pendingOnly ? <p className="feed-day-total">ожидается</p> : day.totalMinor === null ? null : (
           <p className="feed-day-total">
             <span className="visually-hidden">Итог дня: </span>

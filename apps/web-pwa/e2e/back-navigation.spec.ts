@@ -10,7 +10,7 @@
 import type { Page } from "@playwright/test";
 import { G002_UPPER_CASE_IDS, makeG002UpperCaseIdsBackupBuffer } from "./canonical-budget";
 import { expect, test } from "./fixtures";
-import { amountField, entrySheet, loadDemo, submitButton, tile, toast } from "./sheet";
+import { amountField, entrySheet, loadDemo, showWholeHistory, submitButton, tile, toast } from "./sheet";
 
 const tab = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
@@ -219,13 +219,15 @@ test("операция с идентификатором в верхнем ре�
   await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
 
   await tab(page, "Операции").click();
+  // G-002 — июль 2026, а лента по умолчанию — текущий месяц: вся история чипом периода.
+  await showWholeHistory(page);
   const row = page.locator('button[aria-label^="Изменить операцию «Расход"]').first();
   await row.click();
   await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
   await expect(page.locator(".message-toast")).toHaveCount(0);
   const address = await hash(page);
-  expect(address).toMatch(/^#\/operations\?sheet=entry&edit=[0-9a-f-]{36}$/u);
-  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/operations?sheet=entry&edit=".length));
+  expect(address).toMatch(/^#\/operations\?period=all&sheet=entry&edit=[0-9a-f-]{36}$/u);
+  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/operations?period=all&sheet=entry&edit=".length));
   await expect(amountField(page)).not.toHaveValue("");
 
   // Правится: сумма меняется и сохраняется той же операции, найденной без учёта регистра.
@@ -240,7 +242,7 @@ test("операция с идентификатором в верхнем ре�
   await page.reload();
   await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
   await expect(entrySheet(page)).toHaveCount(0);
-  expect(await hash(page)).toBe("#/operations");
+  expect(await hash(page)).toBe("#/operations?period=all");
 });
 
 /** Кнопка «назад» строки заголовка: её прямоугольник — цель нажатия, не меньше 48 в обе стороны. */

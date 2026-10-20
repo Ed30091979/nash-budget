@@ -11,9 +11,11 @@ export async function nameSplits(page: Page, selector: string): Promise<readonly
     const splits: string[] = [];
     for (const name of document.querySelectorAll<HTMLElement>(names)) {
       // Текст «только для слуха» (`.sr-only`, `.visually-hidden`) на экране не переносится — он
-      // сжат в точку, и его символы стоят не на строках видимого текста (`Hyphenated`).
+      // сжат в точку, и его символы стоят не на строках видимого текста (`Hyphenated`). Скрытая
+      // копия `Hyphenated` (`display: none`) — тоже не текст строки: иначе её последняя буква
+      // встала бы «перед переносом» у видимой копии следующей части подписи (ревью 2d, LOW-5).
       const walker = document.createTreeWalker(name, NodeFilter.SHOW_TEXT, {
-        acceptNode: (node) => (node.parentElement?.closest(".sr-only, .visually-hidden") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+        acceptNode: (node) => (node.parentElement?.closest(".sr-only, .visually-hidden") || node.parentElement?.checkVisibility() === false ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
       });
       const chars: { readonly char: string; readonly top: number | null }[] = [];
       for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {

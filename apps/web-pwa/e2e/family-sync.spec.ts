@@ -19,7 +19,7 @@ import {
   makeG002BackupBuffer,
 } from "./canonical-budget";
 import { helloShot } from "./hello-shot";
-import { entrySheet, recordExpense as recordOnSheet, reachAmount, startDemo } from "./sheet";
+import { entrySheet, recordExpense as recordOnSheet, reachAmount, showWholeHistory, startDemo } from "./sheet";
 
 const FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const FLEXIBLE_AFTER_TRANSPORT = /23\s*000\s*₽/u;
@@ -101,12 +101,14 @@ async function expectOperationCount(page: Page, count: number): Promise<void> {
   ).toBeVisible();
 }
 
-/** История операций — вкладка «Операции» нижней навигации. */
+/** История операций — вкладка «Операции» нижней навигации, за весь период: G-002 — июль 2026. */
 async function openHistory(page: Page): Promise<void> {
   const history = page.getByRole("region", { name: "Операции" });
-  if (await history.count()) return;
-  await page.getByRole("button", { name: "Операции", exact: true }).click();
-  await expect(history).toBeVisible();
+  if (!(await history.count())) {
+    await page.getByRole("button", { name: "Операции", exact: true }).click();
+    await expect(history).toBeVisible();
+  }
+  await showWholeHistory(page);
 }
 
 /** План на год — подэкран «Ещё»: отдельной вкладки «Год» в навигации из пяти мест нет. */

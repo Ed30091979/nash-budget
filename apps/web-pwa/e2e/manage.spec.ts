@@ -122,8 +122,9 @@ test("категория: имя, иконка, цвет и лимит — од�
   await goToOverview(page);
   await expect(tile(page, "Кафе")).toHaveCount(0);
   await page.getByRole("button", { name: "Операции", exact: true }).click();
-  // Записанная покупка — в «Операциях» под новым именем (у демо в истории есть и другие визиты в кафе).
-  await expect(page.locator(".feed-row").filter({ has: page.locator(".feed-title", { hasText: /^Кафе$/u }) }).filter({ hasText: /−700\s₽/u })).toHaveCount(1);
+  // Записанная покупка — в «Операциях» под новым именем (у демо в истории есть и другие визиты в кафе):
+  // строка находится по своему доступному имени — название в ней набрано с местами переноса.
+  await expect(page.getByRole("button", { name: /^Изменить операцию «Расход 700\s₽ от \d{4}-\d{2}-\d{2}»: Кафе, /u })).toHaveCount(1);
 });
 
 test("метки: заведена, переименована, в архиве и удалена; используемую удалить нельзя — отказ словами домена", async ({ page }) => {

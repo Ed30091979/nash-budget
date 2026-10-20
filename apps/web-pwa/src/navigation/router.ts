@@ -129,6 +129,11 @@ export interface Router {
   /** Кнопка «назад» внутри экрана: к родителю маршрута. */
   back(): void;
   /**
+   * Маршрут записи истории под текущей, если она наша: «‹ Отчёты» у ленты, открытой строкой легенды,
+   * ведёт к ней, а не к родителю (ревью 2d, LOW-6). `null` — под текущей ничего нет (корень).
+   */
+  beneath(): Route | null;
+  /**
    * Переход без вопроса о черновике: маршрут, которого больше нет (операция удалена), уходит к
    * родителю, а адрес правки, которая кончилась, сменяется адресом записи, — спрашивать там нечего.
    */
@@ -455,6 +460,10 @@ export function createRouter(options: RouterOptions): Router {
     back: () => {
       const parent = parentRoute(route);
       if (parent !== null) navigate(parent);
+    },
+    beneath: () => {
+      const key = stack.length < 2 ? undefined : stack[stack.length - 2];
+      return key === undefined ? null : parseRoute(key).route;
     },
     redirect: (target, redirectOptions = {}) => perform(target, redirectOptions.replace === true),
     start,

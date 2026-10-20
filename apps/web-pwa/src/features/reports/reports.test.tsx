@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { G003, toDomainBudgetState } from "@family-budget/test-fixtures";
 import { materializeRecurring, type BudgetState, type Transaction } from "@family-budget/domain";
 import { describe, expect, it, vi } from "vitest";
-import { buildDemoBudgetState } from "../../onboarding/demo";
+import { softHyphenate } from "../../hyphenation";
+import { buildDemoBudgetState, DEMO_IDS } from "../../onboarding/demo";
 import { donutArcs } from "./Donut";
 import {
   compactAmount,
@@ -225,6 +226,9 @@ describe("«Отчёты» на демо: октябрь 2026, доступно�
     // Кольцо — role="img" с выводом и долями; легенда — кнопки с суммой и долей.
     expect(nbsp(markup)).toContain('<div class="donut" role="img" aria-label="Расходы за октябрь, 71 000 ₽: Жильё 63 %, Продукты 31 %, Транспорт 6 %">');
     expect(nbsp(markup)).toContain('aria-label="Жильё: 45 000 ₽, 63 %. Показать операции"');
+    // Имя в легенде — с местами переноса для глаз (LOW-5), доступное имя строки — без них.
+    expect(markup).toContain(`<b><bdi dir="auto"><span class="hyphenated" aria-hidden="true"><span class="hy-plain">Продукты</span><span class="hy-soft">${softHyphenate("Продукты")}</span></span><span class="sr-only">Продукты</span></bdi></b>`);
+    expect([...markup.matchAll(/aria-label="([^"]*)"/gu)].filter((match) => match[1]!.includes("\u00ad"))).toEqual([]);
     expect(markup).toMatch(/<circle class="donut-seg chart-tone-[a-z]+"[^>]*stroke-dasharray="[\d.]+ [\d.]+"/u);
     // Таблица всех категорий — с подписью, заголовками столбцов и итогом.
     expect(markup).toContain("<summary>Все категории и таблица</summary>");
@@ -242,6 +246,9 @@ describe("«Отчёты» на демо: октябрь 2026, доступно�
     // Сегмент вкладок и чипы периода — выбор словами и `aria-pressed`, а не только цветом.
     expect(markup).toMatch(/<button class="chip" type="button" aria-pressed="true"><span class="chip-face">Расходы<\/span><\/button>/u);
     expect(markup).toMatch(/<button class="chip" type="button" aria-pressed="true"><span class="chip-face">Октябрь<\/span><\/button>/u);
+    // Чип счёта называет, что фильтрует (LOW-11).
+    expect(markup).toContain('aria-label="Счёт: все счета"><span class="chip-face"><bdi dir="auto">Все счета</bdi>');
+    expect(screen(demo, { acc: DEMO_IDS.accounts.card })).toContain('aria-label="Счёт: Карта" data-set="true"><span class="chip-face"><bdi dir="auto">Карта</bdi>');
   });
 
   it("итог месяца — тот же, что «Расходы» на «Обзоре»: один источник (MEDIUM-8)", () => {

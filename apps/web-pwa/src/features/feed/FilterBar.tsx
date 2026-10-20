@@ -4,6 +4,12 @@ export interface FilterChipModel {
   readonly key: string;
   /** Видимая подпись — она же выбранное: «Все счета» или «Карта». */
   readonly label: string;
+  /**
+   * Доступное имя — что чип фильтрует и что выбрано: «Счёт: Карта», «Категория: все категории»,
+   * «Период: октябрь». Видимая подпись стоит в нём целиком (WCAG 2.5.3), а на слух чип «Карта» не
+   * путается со строкой ленты «Карта» (ревью 2d, LOW-11).
+   */
+  readonly name: string;
   /** Фильтр задан: чип — чернильной пилюлей. */
   readonly set: boolean;
   readonly expanded: boolean;
@@ -25,6 +31,7 @@ export function FilterBar({ label, chips }: { readonly label: string; readonly c
           type="button"
           aria-haspopup="dialog"
           aria-expanded={chip.expanded}
+          aria-label={chip.name}
           data-set={chip.set ? "true" : undefined}
           onClick={chip.onOpen}
         >

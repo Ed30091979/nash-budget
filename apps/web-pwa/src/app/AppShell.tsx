@@ -675,6 +675,8 @@ export default function App() {
   };
   shellNavigate.current = navigate;
   const back = () => router.back();
+  // Запись истории под текущей — по маршруту, который сейчас показан: перерисовка приходит с ним.
+  const beneath = router.beneath();
   const replace = (destination: Route) => router.navigate(destination, { replace: true });
   /**
    * Лист ввода поверх экрана, на котором стоишь: с плиток — вид и плитки, с «+» — ничего, из
@@ -760,7 +762,7 @@ export default function App() {
   };
   const routeContext: AppRouteContext = {
     budget, today, plan, clock, paydays, categoryById, monthToOpen,
-    openingMonth, openMonth, familyNewsText, navigate, back, replace, openSheet, openEdit, write, budgetRef,
+    openingMonth, openMonth, familyNewsText, navigate, back, beneath, replace, openSheet, openEdit, write, budgetRef,
     storageHealth, isIos, isStandalone,
     lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family, familyScreen,
     syncIndicator,

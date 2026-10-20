@@ -39,6 +39,8 @@ export const ROUTE_FIXTURES = {
     { name: "operations", acc: ACCOUNT, cat: CATEGORY, tag: TAG, member: MEMBER, kind: "expense" },
     { name: "operations", from: "2026-10-01", to: "2026-10-31", cat: CATEGORY, sheet: "entry", edit: OPERATION },
     { name: "operations", to: "2026-10-19", kind: "debt_out" },
+    { name: "operations", period: "all" },
+    { name: "operations", period: "all", acc: ACCOUNT, kind: "income" },
   ],
   // «Отчёты» (2d): вкладка, период, дни периода и счёт.
   reports: [
@@ -162,9 +164,9 @@ function inOrder(pairs: readonly string[]): string {
   return `(?:${pairs.map((first, at) => `${first}${pairs.slice(at + 1).map((next) => `(?:&${next})?`).join("")}`).join("|")})`;
 }
 
-/** «Операции» (2d): the period's days, a record by UUID, a kind of operation from the list — then the sheet. */
+/** «Операции» (2d): the whole history or the period's days, a record by UUID, a kind of operation from the list — then the sheet. */
 const OPERATIONS_QUERY = inOrder([
-  `from=${DAY}`, `to=${DAY}`, `acc=${UUID}`, `cat=${UUID}`, `tag=${UUID}`, `member=${UUID}`,
+  "period=all", `from=${DAY}`, `to=${DAY}`, `acc=${UUID}`, `cat=${UUID}`, `tag=${UUID}`, `member=${UUID}`,
   "kind=(?:income|expense|refund|transfer|goal_contribution|debt_out|debt_in)", SHEET,
 ]);
 /** «Отчёты» (2d): a view and a period from their lists, the period's days, an account — then the sheet. */

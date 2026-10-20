@@ -1,5 +1,6 @@
 import { expect, test } from "./fixtures";
 import { applyFontScale } from "./font-scale";
+import { LINE_BREAK_LAYOUTS, nameSplits, softHyphenedNames } from "./line-breaks";
 import { entrySheet, loadDemo, measureSheetTargets, recordExpense } from "./sheet";
 import type { Page } from "@playwright/test";
 
@@ -7,6 +8,8 @@ import type { Page } from "@playwright/test";
  * «Операции» (подволна 2d, макет 08) на демо: поиск по сумме в любом виде, фильтр в адресе, правка
  * из строки и возврат к ленте с тем же поиском. Строка поиска — память экрана: её нет ни в адресе,
  * ни в состоянии записи истории; лист правки она переживает, а уход с экрана и перезагрузку — нет.
+ * По умолчанию лента — текущий месяц; «Весь период» и «Искать за всё время» — вся история (ревью 2d,
+ * LOW-11), и набранное при этом остаётся.
  */
 
 const hash = (page: Page) => page.evaluate(() => window.location.hash);
@@ -50,16 +53,32 @@ test("поиск «2400»: сумма в любом виде находит за
     expect(await historyState(page), query).not.toMatch(/2400|2 400|search|query/u);
   }
   await expect(page.getByRole("status").filter({ hasText: /^Найдено 1 из \d+\. Показано 1 из 1$/u })).toBeVisible();
-  // «#дача» — по метке: две покупки этого месяца и три из истории демо; очистка возвращает всё.
+  // «#дача» — по метке: за месяц по умолчанию — две покупки; нашлось мало — «Искать за всё время»,
+  // и с ним — ещё три из истории демо. Набранное остаётся, в адресе — только период.
   await search(page).fill("#дача");
+  await expect(rows(page)).toHaveCount(2);
+  await page.getByRole("button", { name: "Искать за всё время" }).click();
   await expect(rows(page)).toHaveCount(5);
+  await expect(search(page)).toHaveValue("#дача");
+  expect(await hash(page)).toBe("#/operations?period=all");
+  expect(await historyState(page)).not.toMatch(/дача|search|query/u);
+  await expect(feed(page).getByRole("button", { name: "Период: весь период" })).toHaveAttribute("data-set", "true");
+  // Очистка — вся история, по 50 строк; «Этот месяц» — снова лента по умолчанию.
   await page.getByRole("button", { name: "Очистить поиск" }).click();
+  await expect(rows(page)).toHaveCount(50);
+  await feed(page).getByRole("button", { name: "Период: весь период" }).click();
+  await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: /^Этот месяц/u }).click();
+  expect(await hash(page)).toBe("#/operations");
   await expect(rows(page)).toHaveCount(all);
-  // Ничего не нашлось — своими словами и с выходом.
+  // Ничего не нашлось за месяц — дорога за всё время; и там ничего — «Сбросить фильтры».
   await search(page).fill("тапочки");
   await expect(page.getByRole("heading", { name: "Ничего не нашлось" })).toBeVisible();
+  await page.getByRole("button", { name: "Искать за всё время" }).click();
+  await expect(page.getByRole("heading", { name: "Ничего не нашлось" })).toBeVisible();
+  await expect(search(page)).toHaveValue("тапочки");
   await page.getByRole("button", { name: "Сбросить фильтры" }).click();
   await expect(search(page)).toHaveValue("");
+  expect(await hash(page)).toBe("#/operations");
   await expect(rows(page)).toHaveCount(all);
 });
 
@@ -101,14 +120,15 @@ test("фильтр по категории — в адресе: правка п�
   await loadDemo(page);
   await openFeed(page);
   await search(page).fill("#дача");
-  await feed(page).getByRole("button", { name: "Все категории", exact: true }).click();
+  // Чип называет, что фильтрует: «Категория: все категории» (LOW-11).
+  await feed(page).getByRole("button", { name: "Категория: все категории", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Категория" });
   await expect(sheet).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Все категории" })).toBeFocused();
   await sheet.getByRole("button", { name: "Продукты", exact: true }).click();
   await expect(sheet).toHaveCount(0);
   // Фокус вернулся на чип, и чип называет выбранное.
-  const chip = feed(page).getByRole("button", { name: "Продукты", exact: true });
+  const chip = feed(page).getByRole("button", { name: "Категория: Продукты", exact: true });
   await expect(chip).toBeFocused();
   await expect(chip).toHaveAttribute("data-set", "true");
   expect(await hash(page)).toMatch(/^#\/operations\?cat=[0-9a-f-]{36}$/u);
@@ -129,14 +149,37 @@ test("фильтр по категории — в адресе: правка п�
   await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeVisible();
   expect(await hash(page)).toBe(filtered);
   await expect(search(page)).toHaveValue("");
-  // «Продукты» за всё время: шесть покупок этого месяца и по шесть — в каждом из пяти прошлых.
+  // «Продукты» этого месяца — шесть покупок; за весь период — ещё по шесть в каждом из пяти прошлых.
+  await expect(rows(page)).toHaveCount(6);
+  // Чип периода по умолчанию называет текущий месяц: «Период: октябрь».
+  await feed(page).getByRole("button", { name: /^Период: [а-яё]+$/u }).click();
+  await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: "Весь период" }).click();
+  expect(await hash(page)).toMatch(/^#\/operations\?period=all&cat=[0-9a-f-]{36}$/u);
   await expect(rows(page)).toHaveCount(36);
   // Сменить фильтр — тот же экран: запись истории заменяется, «Назад» ведёт на «Обзор».
-  await feed(page).getByRole("button", { name: "Весь период", exact: true }).click();
-  await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: /^Этот месяц/u }).click();
+  await feed(page).getByRole("button", { name: "Период: весь период" }).click();
+  await page.getByRole("dialog", { name: "Период" }).getByRole("button", { name: /^Прошлый месяц/u }).click();
   expect(await hash(page)).toMatch(/^#\/operations\?from=\d{4}-\d{2}-01&to=\d{4}-\d{2}-\d{2}&cat=[0-9a-f-]{36}$/u);
+  await expect(rows(page)).toHaveCount(6);
   await page.goBack();
   await expect(page.locator(".reach-card")).toBeVisible();
+});
+
+test("названия, подписи и дни ленты не рвутся посреди слова, а доступные имена — без мягких переносов (LOW-5)", async ({ page }) => {
+  // Контракт переносов 2b: видимое — с местами переноса и скрыто от читающих с экрана, доступное
+  // имя строки — её `aria-label`, чистое. Вся история — чтобы в ленте были «Подарки», «Развлечения» и дни недели.
+  test.setTimeout(240_000);
+  await loadDemo(page);
+  await page.goto("/#/operations?period=all");
+  await expect(rows(page).first()).toBeVisible();
+  for (const [width, scale] of LINE_BREAK_LAYOUTS) {
+    await applyFontScale(page, scale);
+    await page.setViewportSize({ width, height: 844 });
+    expect(await nameSplits(page, ".feed-title, .feed-meta, .feed-day-head h2"), `лента ${width} pt ×${scale}`).toEqual([]);
+  }
+  await applyFontScale(page, 1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await softHyphenedNames(page), "лента").toEqual([]);
 });
 
 test("на 320 pt и при ×2.7 лента не выезжает за экран, цели — не меньше 48, лист фильтра доматывается", async ({ page }) => {
@@ -148,7 +191,7 @@ test("на 320 pt и при ×2.7 лента не выезжает за экра
       await applyFontScale(page, scale);
       await expect(page.getByRole("heading", { level: 1, name: "Операции" })).toBeVisible();
       await expectContained(page, `${width} ×${scale}`);
-      await feed(page).getByRole("button", { name: "Все счета", exact: true }).click();
+      await feed(page).getByRole("button", { name: "Счёт: все счета", exact: true }).click();
       const sheet = page.locator("section.filter-sheet[role='dialog']");
       await expect(sheet).toBeVisible();
       const targets = await measureSheetTargets(page, 48, "section.filter-sheet[role='dialog']");
