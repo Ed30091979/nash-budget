@@ -30,6 +30,17 @@ import { buildDemoBudgetState, CANONICAL_DEMO_MONTH, DEMO_IDS } from "./demo";
 /** Дни, на которых демо проверяется: разный отступ от канонического июля и разное число месяца. */
 const DAYS = ["2026-07-04", "2026-09-04", "2026-09-30", "2026-12-01", "2027-02-28", "2031-01-15"];
 
+/** Каждый день месяца: октябрь 2026 (31 день), февраль 2027 и високосный февраль 2028 — и дни выплат 5 и 20. */
+function everyDayOf(month: string): string[] {
+  const last = Number(monthEndDateOf(month).slice(8));
+  return Array.from({ length: last }, (_, index) => `${month}-${String(index + 1).padStart(2, "0")}`);
+}
+function monthEndDateOf(month: string): string {
+  const [year, number] = month.split("-").map(Number);
+  return `${month}-${String(new Date(Date.UTC(year!, number!, 0)).getUTCDate()).padStart(2, "0")}`;
+}
+const EVERY_DAY = [...everyDayOf("2026-10"), ...everyDayOf("2027-02"), ...everyDayOf("2028-02")];
+
 /**
  * Каркас плана: период, лимиты, крупные платежи и расписания демо уносит из канонического набора как
  * есть. Словарь категорий, операции, счета, цель и новые коллекции v5 — свои (проверены ниже).
@@ -125,9 +136,10 @@ describe("демонстрационный бюджет", () => {
     }
   });
 
-  it("сцена — прошлое: в любой день месяца нет записанной операции позже сегодня, а 27 000 ₽ — те же (ревью R2, L-10)", () => {
+  it("сцена — прошлое: в каждый день месяца нет записанной операции позже сегодня, а 27 000 ₽ — те же (ревью R2, L-10)", () => {
     const seedTotals = calculateBudget(makePlanningSeed());
-    for (const today of ["2026-10-01", "2026-10-15", "2026-10-19", "2026-10-28", "2026-10-31"]) {
+    expect(EVERY_DAY).toHaveLength(31 + 28 + 29);
+    for (const today of EVERY_DAY) {
       const demo = buildDemoBudgetState(today);
       // Будущее бывает только ожидаемым — это выплаты; всё ожидаемое — в будущем.
       const future = demo.transactions.filter((item) => item.occurredOn > today);
@@ -256,8 +268,8 @@ describe("демонстрационный бюджет", () => {
 });
 
 describe("демо: пять прошлых месяцев трат — история «Отчётов» (макет 09)", () => {
-  /** Дни проверки: начало, середина, 19-е макетов, конец месяца — и другие месяцы и годы сцены. */
-  const MONTH_DAYS = ["2026-10-01", "2026-10-15", "2026-10-19", "2026-10-28", "2026-10-31", "2027-02-28", "2031-01-15"];
+  /** Дни проверки: каждый день трёх месяцев сцены — и другой год. */
+  const MONTH_DAYS = [...EVERY_DAY, "2031-01-15"];
 
   it("на 19 октября «По месяцам» — 76 200 · 81 500 · 74 300 · 88 900 · 79 400 · 71 000 ₽, доход прошлых месяцев — 180 000", () => {
     const demo = buildDemoBudgetState("2026-10-19");
@@ -292,7 +304,38 @@ describe("демо: пять прошлых месяцев трат — исто
     }
   });
 
-  it("«На счетах» на 19-е — те же 554 000 ₽ и та же карта: история сходится в остатках на начало", () => {
+  it("в каждый день месяца: выплата в свой день проведена, позже — ожидается; остатки сходятся с выплатами, а не с одним днём", () => {
+    for (const today of EVERY_DAY) {
+      const demo = buildDemoBudgetState(today);
+      const month = monthOfDate(today);
+      const day = Number(today.slice(8));
+      const salaries = demo.transactions.filter((item) => item.kind === "income" && monthOfDate(item.occurredOn) === month);
+      // Аванс 5-го и получка 20-го: в сам день выплаты она проведена, до него — ожидается.
+      for (const [payday, amount] of [[5, 7_000_000], [20, 11_000_000]] as const) {
+        const salary = salaries.find((item) => item.occurredOn === `${month}-${String(payday).padStart(2, "0")}`);
+        expect(salary, `${today} ${payday}`).toMatchObject({ amountMinor: amount, status: day >= payday ? "posted" : "pending" });
+      }
+      // «Всего на счетах» зависит от дня — выплатами и курсом доллара этого дня, — а не равно одному
+      // числу: рублёвые счета минус проведённые выплаты месяца — всегда 373 000 ₽, долларов — 1 200 $.
+      const holdings = calculateHoldings(demo, today);
+      const balances = holdings.accountBalancesMinor;
+      const rubles = [DEMO_IDS.accounts.card, DEMO_IDS.accounts.cash, DEMO_IDS.accounts.reserve].reduce((sum, id) => sum + (balances[id] ?? 0), 0);
+      const posted = salaries.filter((item) => item.status === "posted").reduce((sum, item) => sum + item.amountMinor, 0);
+      expect(rubles - posted, today).toBe(37_300_000);
+      expect(balances[DEMO_IDS.accounts.dollars], today).toBe(120_000);
+      const rate = [...demo.exchangeRates!].filter((item) => item.date <= today).sort((left, right) => left.date.localeCompare(right.date)).at(-1)!;
+      expect(holdings.totalInBaseMinor, today).toBe(rubles + convertMinor(120_000, rate.rate));
+      // 554 000 ₽ макетов — с 15-го (курс 92,50) по 19-е; с получки 20-го — на 110 000 ₽ больше.
+      if (day >= 15 && day <= 19) expect(holdings.totalInBaseMinor, today).toBe(55_400_000);
+      if (day >= 20) expect(holdings.totalInBaseMinor, today).toBe(66_400_000);
+      // Ни один счёт ни в один день месяца по сегодня не уходит в минус.
+      for (const at of everyDayOf(month).filter((date) => date <= today)) {
+        for (const [id, value] of Object.entries(calculateHoldings(demo, at).accountBalancesMinor)) expect(value ?? 0, `${today}: ${at} ${id}`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("«На счетах» на 19-е — 554 000 ₽ и та же карта: история сходится в остатках на начало", () => {
     for (const today of ["2026-10-19", "2027-02-19", "2031-01-19"]) {
       const demo = buildDemoBudgetState(today);
       const holdings = calculateHoldings(demo, today);
