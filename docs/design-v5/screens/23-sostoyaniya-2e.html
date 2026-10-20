@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Состояния: долги и регулярные</title>
+<style>
+:root{
+  --canvas:#F6F3EE; --surface:#FFFFFF; --sunken:#EEE9E1; --ink:#171410; --muted:#5D574C;
+  --border:#E6E0D5; --line:#8D8577; --accent:#C4421A; --on-accent:#FFFFFF; --focus:#0B57D0;
+  --amber-soft:#FBF0D5; --amber-ink:#8A5A00; --red-soft:#FBE9E3; --red-ink:#A3341F; --positive:#1F6B48;
+  --mint:#DDEFE5; --mint-ink:#1F6B48; --lilac:#ECE6F7; --lilac-ink:#5B3F9E; --peach:#FBE3D3; --peach-ink:#9A4A1C;
+  --amber:#F5EBCF; --amber-ink-t:#7A5A00; --sage:#E3EBDD; --sage-ink:#46613A; --coral:#F8E1E4; --coral-ink:#9B2C3F;
+  --neutral:#E9E4DA; --neutral-ink:#171410;
+  --graphite:#22252A; --on-graphite:#FFFFFF; --on-graphite-muted:#D5D8DE;
+  --track:#E4DED3;
+  --scrim:rgb(23 20 16 / 45%);
+  --shadow-card:0 4px 8px rgb(23 20 16 / 6%), 0 0 1px rgb(23 20 16 / 10%);
+  --shadow-sheet:0 -12px 24px rgb(23 20 16 / 10%), 0 0 1px rgb(23 20 16 / 10%);
+  --font:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", Roboto, "Segoe UI", system-ui, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--canvas)}
+body{width:max-content}
+.phone{width:390px;height:844px;position:relative;overflow:hidden;background:var(--canvas);color:var(--ink);
+  font-family:var(--font);font-size:15px;line-height:22px;font-weight:400;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:inherit}
+h1,h2,h3,p{margin:0}
+.i{fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none;display:block}
+.m,.tv,.amount,.key,.bars,.big,.tnum{font-variant-numeric:tabular-nums}
+.pad{padding:0 16px}
+.pn{font-variant-numeric:normal}
+.cur{font-weight:400;color:var(--muted)}
+.on-dark .cur{color:inherit}
+.cap{font-size:13px;line-height:18px;color:var(--muted)}
+.label{font-size:11px;line-height:14px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.b{font-weight:700}
+.muted{color:var(--muted)}
+.pos{color:var(--positive)}
+.hy{hyphens:manual;-webkit-hyphens:manual;overflow-wrap:break-word}
+
+/* iOS chrome */
+.status{position:absolute;top:0;left:0;right:0;height:47px;display:flex;align-items:center;justify-content:space-between;
+  padding:4px 26px 0 36px;font-size:16px;font-weight:700;letter-spacing:-.01em;z-index:30}
+.status .sys{display:flex;gap:6px;align-items:center}
+.homebar{position:absolute;left:50%;bottom:8px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--ink);z-index:40}
+.scroll{position:absolute;top:47px;left:0;right:0;bottom:106px;overflow:hidden}
+.scroll.nonav{bottom:34px}
+
+/* bottom navigation */
+.nav{position:absolute;left:0;right:0;bottom:0;height:106px;background:var(--surface);border-top:1px solid var(--border);
+  padding:4px 4px 34px;display:grid;grid-template-columns:1fr 1fr 72px 1fr 1fr;align-items:center;z-index:20}
+.tab{height:60px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;line-height:14px;color:var(--muted)}
+.tab .dot{width:4px;height:4px;border-radius:2px;background:transparent}
+.tab.on{color:var(--ink);font-weight:700}
+.tab.on .dot{background:var(--accent)}
+.fab{width:56px;height:56px;border-radius:18px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;justify-self:center;
+  box-shadow:0 6px 14px rgb(196 66 26 / 28%)}
+
+/* title bars */
+.tbar{height:52px;display:grid;grid-template-columns:minmax(48px,1fr) auto minmax(48px,1fr);align-items:center;padding:0 4px}
+.tbar h1{font-size:17px;line-height:23px;font-weight:700;text-align:center;padding:0 4px}
+.tbar .right{justify-self:end;display:flex}
+.back{height:48px;display:flex;align-items:center;gap:0;padding:0 8px 0 4px;font-size:17px;justify-self:start}
+.ib{width:48px;height:48px;display:grid;place-items:center;border-radius:14px;flex:none}
+.ltitle{height:56px;display:flex;align-items:center;justify-content:space-between;padding:4px 4px 0 16px}
+.ltitle h1{font-size:28px;line-height:32px;font-weight:700;letter-spacing:-.02em}
+
+/* surfaces */
+.card{background:var(--surface);border-radius:20px;box-shadow:var(--shadow-card)}
+.list{background:var(--surface);border-radius:20px;box-shadow:var(--shadow-card);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 8px 8px 16px;position:relative;width:100%}
+.row + .row::before{content:"";position:absolute;top:0;left:64px;right:0;height:1px;background:var(--border)}
+.row .txt{flex:1;min-width:0;display:flex;flex-direction:column}
+.row .t{font-weight:700}
+.row .chev{color:var(--muted);margin-right:4px}
+.plate{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;flex:none}
+.plate.p40{width:40px;height:40px;border-radius:12px}
+.kicker{display:flex;align-items:center;justify-content:space-between;padding:0 4px 0 20px;height:40px}
+.section-gap{height:20px}
+
+/* tones */
+.t-mint{background:var(--mint);color:var(--mint-ink)} .t-lilac{background:var(--lilac);color:var(--lilac-ink)}
+.t-peach{background:var(--peach);color:var(--peach-ink)} .t-amber{background:var(--amber);color:var(--amber-ink-t)}
+.t-sage{background:var(--sage);color:var(--sage-ink)} .t-coral{background:var(--coral);color:var(--coral-ink)}
+.t-neutral{background:var(--neutral);color:var(--neutral-ink)} .t-graphite{background:var(--graphite);color:var(--on-graphite)}
+.t-sunken{background:var(--sunken);color:var(--ink)}
+
+/* buttons */
+.btn{min-height:52px;border-radius:14px;font-size:17px;line-height:22px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:0 16px;text-align:center}
+.btn-primary{background:var(--accent);color:var(--on-accent)}
+.btn-secondary{background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.btn-quiet{color:var(--ink)}
+.btn-sm{min-height:48px;font-size:15px;width:auto;padding:0 4px}
+.btn-sm>span{height:36px;border-radius:999px;padding:0 14px;display:inline-flex;align-items:center;box-shadow:inset 0 0 0 1px var(--line);background:var(--surface)}
+
+/* chips (48 target, 36 pill) */
+.chips{display:flex;flex-wrap:wrap;column-gap:8px}
+.chip{min-height:48px;display:inline-flex;align-items:center;flex:none}
+.chip>span{min-height:36px;border-radius:999px;padding:7px 14px 7px 12px;display:inline-flex;align-items:center;gap:6px;font-size:15px;line-height:22px;
+  background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);color:var(--ink)}
+.chip.on>span{background:var(--ink);color:#fff;box-shadow:none}
+.chip.dash>span{box-shadow:none;outline:1.5px dashed var(--line);outline-offset:-1.5px;background:transparent}
+
+/* segmented */
+.seg{display:flex;background:var(--sunken);border-radius:999px;padding:4px;gap:4px}
+.seg button{flex:1;min-height:40px;border-radius:999px;font-size:15px;color:var(--muted);text-align:center;padding:0 10px;display:flex;align-items:center;justify-content:center}
+.seg button.on{background:var(--surface);color:var(--ink);font-weight:700;box-shadow:0 1px 2px rgb(23 20 16 / 12%), 0 0 1px rgb(23 20 16 / 10%)}
+
+/* sheet */
+.scrim{position:absolute;inset:0;background:var(--scrim);z-index:50}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:24px 24px 0 0;box-shadow:var(--shadow-sheet);z-index:60;display:flex;flex-direction:column}
+.grab{width:36px;height:5px;border-radius:3px;background:#CFC8BB;margin:8px auto 0;flex:none}
+
+/* tiles */
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 8px;padding:0 16px}
+.tile{display:flex;flex-direction:column;align-items:center;text-align:center;min-height:48px;padding:4px 0 6px;border-radius:16px;position:relative}
+.sq{width:52px;height:52px;border-radius:16px;display:grid;place-items:center;position:relative;flex:none}
+.tile .nm{font-size:12px;line-height:15px;margin-top:6px;min-height:30px;display:flex;align-items:flex-start;justify-content:center;
+  hyphens:manual;-webkit-hyphens:manual;max-width:100%;padding:0 2px}
+.tile .am{font-size:13px;line-height:17px;font-weight:700;margin-top:2px}
+.tile .lim{font-size:11px;line-height:14px;color:var(--muted)}
+.tile .bar{width:52px;height:4px;border-radius:2px;background:var(--track);margin-top:5px;overflow:hidden;display:block}
+.tile .bar i{display:block;height:100%;background:var(--ink);border-radius:2px}
+.tile .bar.amber i{background:var(--amber-ink)} .tile .bar.red i{background:var(--red-ink)}
+.badge{position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:11px;display:grid;place-items:center;box-shadow:0 0 0 2px var(--canvas)}
+.badge.amber{background:var(--amber-soft);color:var(--amber-ink)} .badge.red{background:var(--red-soft);color:var(--red-ink)}
+.sq.add{background:transparent;outline:1.5px dashed var(--line);outline-offset:-1.5px;color:var(--muted)}
+.hrow{display:flex;gap:8px;padding:0 16px;overflow:hidden}
+.hrow .tile{width:76px;flex:none}
+.vsep{width:1px;background:var(--border);margin:8px 0 26px;flex:none}
+
+/* fields */
+.field{min-height:52px;border-radius:14px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);display:flex;align-items:center;padding:0 16px;gap:8px;font-size:17px}
+.field .ph{color:var(--muted)}
+.flabel{font-size:13px;line-height:18px;color:var(--muted);margin:0 4px 6px}
+.search{height:48px;border-radius:14px;background:var(--sunken);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted);font-size:17px}
+
+/* switch */
+.switch{width:51px;height:31px;border-radius:16px;background:var(--accent);position:relative;flex:none}
+.switch::after{content:"";position:absolute;top:2px;right:2px;width:27px;height:27px;border-radius:14px;background:#fff;box-shadow:0 2px 4px rgb(0 0 0 / 20%)}
+.switch.off{background:var(--line)} .switch.off::after{right:auto;left:2px}
+@media (max-width:300px){.nav{grid-template-columns:1fr 1fr 64px 1fr 1fr;height:auto;min-height:106px}.tab{height:auto;min-height:56px;padding:4px 0}.tab span:last-child{font-size:10px;line-height:12px;text-align:center;hyphens:manual;-webkit-hyphens:manual}}
+
+.empty{display:flex;flex-direction:column;align-items:center;text-align:center;padding:24px 28px 0}
+.empty>svg{width:200px;height:auto}
+.empty h2{font-size:22px;line-height:28px;font-weight:700;margin-top:20px}
+.empty p{font-size:15px;line-height:22px;color:var(--muted);margin-top:8px;max-width:30ch;text-wrap:pretty}
+.empty .btn{margin-top:24px}
+.quick{margin-top:24px;width:100%}
+.quick .cap{margin-bottom:4px}
+.quick .chips{justify-content:center}
+
+.ov-month{height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 4px}
+.ov-month h1{font-size:17px;line-height:23px;font-weight:700}
+.totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0 12px}
+.tot{min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;text-align:center;padding:2px 4px 4px;position:relative}
+.tot+.tot::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:1px;background:var(--border)}
+.tv{font-size:17px;line-height:22px;font-weight:700}
+.reach{margin:12px 16px 0;width:calc(100% - 32px);display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:12px;row-gap:12px;
+  padding:12px 8px 14px 12px;align-items:center}
+.reach .rt{display:flex;flex-direction:column}
+.reach .plate{width:36px;height:36px}
+.rbar{grid-column:1 / -1;height:6px;border-radius:3px;background:var(--track);position:relative;margin:0 4px 0 0}
+.rbar i{position:absolute;left:0;top:0;bottom:0;background:var(--ink);border-radius:3px}
+.rbar .notch{position:absolute;left:75%;top:-5px;bottom:-5px;width:6px;margin-left:-3px;background:var(--surface)}
+.rbar .notch::before,.rbar .notch::after{content:"";position:absolute;left:2px;width:2px;height:4px;background:var(--ink);border-radius:1px}
+.rbar .notch::before{top:0}.rbar .notch::after{bottom:0}
+.pinned{position:absolute;top:0;left:0;right:0;background:var(--canvas);z-index:5;box-shadow:0 1px 0 var(--border), 0 6px 12px rgb(23 20 16 / 5%);padding-bottom:6px}
+.hints{display:flex;gap:8px;padding:0 16px;overflow:hidden}
+.hint{width:calc(100% - 56px);flex:none;display:grid;grid-template-columns:1fr auto;column-gap:4px;padding:14px 4px 8px 16px;align-items:start}
+.ht{display:flex;align-items:center;gap:8px}.ht .i{color:var(--muted)}
+.hint .plate{margin-top:2px}
+.hint .x{margin:-10px 0 0 0;color:var(--muted)}
+@media (max-width:300px){
+  .grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .totals{grid-template-columns:1fr;margin:0 16px}
+  .tot{flex-direction:row;justify-content:space-between;align-items:baseline;min-height:48px;gap:8px;text-align:left}
+  .tot+.tot::before{left:0;right:0;top:0;bottom:auto;width:auto;height:1px}
+  .ov-month h1{text-align:center}
+}
+
+.grp{margin:16px 16px 0}
+.grp h2{font-size:13px;line-height:18px;font-weight:700;color:var(--muted);margin:0 4px 6px}
+.list .row .cap{overflow:hidden;text-overflow:ellipsis}
+
+.il{display:inline-block;vertical-align:-2px;margin-right:3px}
+.amt{text-align:right;display:flex;flex-direction:column;align-items:flex-end;padding-right:8px;flex:none}
+.amt b{font-weight:700}
+.note1{font-size:13px;line-height:18px;color:var(--muted);padding:12px 20px 0}
+.overdue{color:var(--red-ink);font-weight:700}
+.dplate{position:relative}
+.dplate .badge{top:-6px;right:-6px;width:20px;height:20px;border-radius:10px;box-shadow:0 0 0 2px var(--surface)}
+.grp h2 .cnt{font-weight:400}
+
+.dsum{margin:4px 16px 0;padding:10px 0 8px}
+.dsum .totals{margin:0 4px}
+.dsum .tot{min-height:48px;justify-content:center}
+.dsum .cap.rate{text-align:center;margin-top:4px;padding:0 12px}
+.row.debt .txt .cap{white-space:normal}
+
+html,body{background:#E9E4DA}
+body{display:flex;gap:24px;padding:24px;align-items:flex-start;width:max-content}
+.board-col{display:flex;flex-direction:column;gap:10px}
+.board-col>p{font:700 13px/18px var(--font);color:#5D574C;margin:0 4px}
+.phone.small{width:320px;height:640px}
+.phone.small .nav{grid-template-columns:1fr 1fr 64px 1fr 1fr}
+</style>
+</head>
+<body>
+<div class="board-col"><p>Долги: пусто (390×844)</p><div class="phone"><div class="status" aria-hidden="true"><span>9:41</span><span class="sys"><svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg><svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 11.2 5.6 8.6a3.4 3.4 0 0 1 4.8 0z" fill="currentColor"/><path d="M2.9 5.9a7.4 7.4 0 0 1 10.2 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M.6 3.4a10.7 10.7 0 0 1 14.8 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".45"/></svg></span></div><main class="scroll"><header class="tbar"><button class="back" aria-label="Назад, к разделу «Ещё»"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>Ещё</span></button><h1>Долги</h1><span class="right"><button class="ib" aria-label="Новый долг"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></span></header><div class="empty"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200" height="160" role="img" aria-label="Плитка человека и плитка счёта: деньги ушли и возвращаются"><g fill="none" stroke="#3A332B" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="8" width="172" height="144" rx="48" fill="#EFE8DC" stroke="none"/><rect x="30" y="62" width="50" height="50" rx="15" fill="#FBE3D3"/><g transform="translate(43.0 75.0) scale(1.0)" stroke="#3A332B" stroke-width="2.00"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></g><rect x="120" y="62" width="50" height="50" rx="15" fill="#22252A"/><g transform="translate(133 75) scale(1.0)" stroke="#FFFFFF" stroke-width="2.20"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></g><path d="M60 54 C 74 30, 112 28, 136 50"/><path d="M127 50 L137 51 L135 41"/><path d="M138 122 C 122 144, 80 146, 62 124" stroke="#C4421A" stroke-dasharray="2 7" stroke-width="3"/><path d="M71 125 L61 123 L62 133" stroke="#C4421A" stroke-width="3"/><rect x="160" y="24" width="10" height="10" rx="3.0" fill="#DDEFE5" transform="rotate(14 165.0 29.0)"/><rect x="28" y="30" width="8" height="8" rx="2.4" fill="#ECE6F7" transform="rotate(-12 32.0 34.0)"/></g></svg><h2>Долгов нет</h2><p>Запишите, кому дали в долг или у кого взяли. Покажем, кто сколько должен и до какого числа.</p><button class="btn btn-primary">Записать долг</button><div class="quick"><p class="cap">Или сразу:</p><div class="chips"><button class="chip"><span><svg class="i " width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>Дал в долг</span></button><button class="chip"><span><svg class="i " width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></svg>Взял в долг</span></button></div></div></div></main><nav class="nav" aria-label="Разделы"><button class="tab" aria-label="Обзор"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="dot"></span><span aria-hidden="true">Об&shy;зор</span></button><button class="tab" aria-label="Операции"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="dot"></span><span aria-hidden="true">Опе&shy;ра&shy;ции</span></button><button class="fab" aria-label="Записать"><svg class="i " width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.25"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button><button class="tab" aria-label="Отчёты"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></svg><span class="dot"></span><span aria-hidden="true">От&shy;чё&shy;ты</span></button><button class="tab on" aria-current="page" aria-label="Ещё"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg><span class="dot"></span><span aria-hidden="true">Ещё</span></button></nav><div class="homebar" aria-hidden="true"></div></div></div><div class="board-col"><p>Регулярные: пусто (390×844)</p><div class="phone"><div class="status" aria-hidden="true"><span>9:41</span><span class="sys"><svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg><svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 11.2 5.6 8.6a3.4 3.4 0 0 1 4.8 0z" fill="currentColor"/><path d="M2.9 5.9a7.4 7.4 0 0 1 10.2 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M.6 3.4a10.7 10.7 0 0 1 14.8 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".45"/></svg></span></div><main class="scroll"><header class="tbar"><button class="back" aria-label="Назад, к разделу «Ещё»"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>Ещё</span></button><h1>Регулярные</h1><span class="right"><button class="ib" aria-label="Новый регулярный платёж"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></span></header><div class="empty"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200" height="160" role="img" aria-label="Месяц с отмеченным днём и плитка повтора"><g fill="none" stroke="#3A332B" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="14" y="8" width="172" height="144" rx="48" fill="#EFE8DC" stroke="none"/><rect x="36" y="30" width="104" height="96" rx="18" fill="#FFFFFF"/><path d="M36 54 H140"/><path d="M60 22 V36 M116 22 V36"/><rect x="48" y="64" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="68" y="64" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="88" y="64" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="108" y="64" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="48" y="82" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="68" y="82" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="88" y="82" width="14" height="12" rx="4" fill="#C4421A" stroke="none"/><rect x="108" y="82" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="48" y="100" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="68" y="100" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="88" y="100" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="108" y="100" width="14" height="12" rx="4" fill="#EEE9E1" stroke="none"/><rect x="118" y="92" width="48" height="48" rx="14" fill="#E3EBDD"/><g transform="translate(130.48 104.48) scale(0.96)" stroke="#3A332B" stroke-width="2.08"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></g><rect x="158" y="30" width="10" height="10" rx="3.0" fill="#FBE3D3" transform="rotate(16 163.0 35.0)"/><rect x="24" y="112" width="8" height="8" rx="2.4" fill="#ECE6F7" transform="rotate(-14 28.0 116.0)"/></g></svg><h2>Регулярных пока нет</h2><p>Аренда, связь, зарплата — отметьте «Повторять» при записи, и они запишутся сами.</p><button class="btn btn-primary">Добавить платёж</button><div class="quick"><p class="cap">Или начните с готового:</p><div class="chips"><button class="chip"><span><svg class="i " width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Аренда</span></button><button class="chip"><span><svg class="i " width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Связь</span></button><button class="chip"><span><svg class="i " width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Зарплата</span></button></div></div></div></main><nav class="nav" aria-label="Разделы"><button class="tab" aria-label="Обзор"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="dot"></span><span aria-hidden="true">Об&shy;зор</span></button><button class="tab" aria-label="Операции"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="dot"></span><span aria-hidden="true">Опе&shy;ра&shy;ции</span></button><button class="fab" aria-label="Записать"><svg class="i " width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.25"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button><button class="tab" aria-label="Отчёты"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></svg><span class="dot"></span><span aria-hidden="true">От&shy;чё&shy;ты</span></button><button class="tab on" aria-current="page" aria-label="Ещё"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg><span class="dot"></span><span aria-hidden="true">Ещё</span></button></nav><div class="homebar" aria-hidden="true"></div></div></div><div class="board-col"><p>Долги: просроченный долг на 320×640</p><div class="phone small"><div class="status" aria-hidden="true"><span>9:41</span><span class="sys"><svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="currentColor"/><rect x="5" y="5.5" width="3" height="6.5" rx="1" fill="currentColor"/><rect x="10" y="3" width="3" height="9" rx="1" fill="currentColor"/><rect x="15" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg><svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 11.2 5.6 8.6a3.4 3.4 0 0 1 4.8 0z" fill="currentColor"/><path d="M2.9 5.9a7.4 7.4 0 0 1 10.2 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M.6 3.4a10.7 10.7 0 0 1 14.8 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="18" height="9" rx="2" fill="currentColor"/><path d="M25 4.5v4a2 2 0 0 0 0-4z" fill="currentColor" opacity=".45"/></svg></span></div><main class="scroll"><header class="tbar"><button class="back" aria-label="Назад, к разделу «Ещё»"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>Ещё</span></button><h1>Долги</h1><span class="right"><button class="ib" aria-label="Новый долг"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button></span></header><div class="card dsum"><div class="totals"><div class="tot"><span class="cap">К получению</span><span class="tv"><span class="m">14&#8239;250&nbsp;<span class="cur">₽</span></span></span></div><div class="tot"><span class="cap">К оплате</span><span class="tv"><span class="m">12&#8239;000&nbsp;<span class="cur">₽</span></span></span></div><div class="tot"><span class="cap">Итог</span><span class="tv pos"><span class="m">+2&#8239;250&nbsp;<span class="cur">₽</span></span></span></div></div><p class="cap rate">доллары — по курсу 92,50&nbsp;₽ от 15 октября</p></div><section class="grp"><h2>Мне должны</h2><div class="list"><button class="row debt" aria-label="Олег должен 100 $, около 9 250 ₽. Просрочен: срок был 15 сентября. Открыть долг"><span class="plate p40 t-peach dplate"><svg class="i " width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg><span class="badge red" aria-hidden="true"><svg class="i " width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.25"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span></span><span class="txt"><span class="t">Олег</span><span class="cap"><span class="overdue"><svg class="i il" width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.25"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>просрочен</span> · срок был 15 сентября</span></span><span class="amt"><b><span class="m">100&nbsp;<span class="cur">$</span></span></b><span class="cap">≈&nbsp;9&#8239;250&nbsp;₽</span></span></button><button class="row debt" aria-label="Саша должен 5 000 ₽, вернёт до 1 ноября. Открыть долг"><span class="plate p40 t-peach dplate"><svg class="i " width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg></span><span class="txt"><span class="t">Саша</span><span class="cap">вернёт до 1 ноября</span></span><span class="amt"><b><span class="m">5&#8239;000&nbsp;<span class="cur">₽</span></span></b></span></button></div></section><section class="grp"><h2>Я должен</h2><div class="list"><button class="row debt" aria-label="Дима: я должен 12 000 ₽, вернуть до 15 ноября. Открыть долг"><span class="plate p40 t-peach dplate"><svg class="i " width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg></span><span class="txt"><span class="t">Дима</span><span class="cap">вернуть до 15 ноября</span></span><span class="amt"><b><span class="m">12&#8239;000&nbsp;<span class="cur">₽</span></span></b></span></button></div></section><section class="grp"><div class="list"><button class="row"><span class="plate t-sunken"><svg class="i " width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></span><span class="txt"><span class="t">Архив</span><span class="cap">1 долг · закрытые и отложенные</span></span><span class="chev"><svg class="i " width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></span></button></div></section><p class="note1">Долг — не расход и не доход: в «Отчётах» его нет.</p></main><nav class="nav" aria-label="Разделы"><button class="tab" aria-label="Обзор"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="dot"></span><span aria-hidden="true">Об&shy;зор</span></button><button class="tab" aria-label="Операции"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span class="dot"></span><span aria-hidden="true">Опе&shy;ра&shy;ции</span></button><button class="fab" aria-label="Записать"><svg class="i " width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2.25"><path d="M5 12h14"/><path d="M12 5v14"/></svg></button><button class="tab" aria-label="Отчёты"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 0 0-8.953-8.951c-.55-.055-.998.398-.998.95v8a1 1 0 0 0 1 1z"/><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></svg><span class="dot"></span><span aria-hidden="true">От&shy;чё&shy;ты</span></button><button class="tab on" aria-current="page" aria-label="Ещё"><svg class="i " width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" style="stroke-width:2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg><span class="dot"></span><span aria-hidden="true">Ещё</span></button></nav><div class="homebar" aria-hidden="true"></div></div></div>
+</body>
+</html>
