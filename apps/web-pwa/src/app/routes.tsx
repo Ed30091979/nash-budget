@@ -188,6 +188,37 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
 }
 
 /**
+ * «Обзор» под листом счёта, открытым вопросом первого запуска «Есть ещё места…»: та же картинка, куда
+ * вернут крестик и «Сохранить» (ревью R3, LOW-4). Он выключен вместе со всем вокруг листа, поэтому
+ * без вопросов, подсказок и действий — только плитки текущего месяца.
+ */
+function OverviewUnderSheet({ app }: { readonly app: AppRouteContext }) {
+  const { budget, today, plan, clock, monthToOpen, openingMonth } = app;
+  const idle = () => undefined;
+  return (
+    <OverviewScreen
+      budget={budget}
+      today={today}
+      month={currentMonth(today)}
+      onMonth={idle}
+      clock={clock}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
+      // Семейная новость — момент настоящего «Обзора» (потолок моментов): под листом её нет.
+      familyNews={[]}
+      monthToOpen={monthToOpen}
+      openingMonth={openingMonth}
+      onOpenMonth={idle}
+      onOpenSheet={idle}
+      onAddCategory={idle}
+      onAddAccount={idle}
+      onPlan={idle}
+      onReports={idle}
+      onEdit={idle}
+    />
+  );
+}
+
+/**
  * Экран маршрута. Плашки задержки и тревоги ключа стоят над ним и принадлежат оболочке, лист ввода
  * — поверх него (`EntrySheetHost` в оболочке).
  *
@@ -307,7 +338,8 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
             const fromQuestion = route.name === "account-new" && route.type !== undefined;
             const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
             // Лист счёта (дизайн 5.0, макет 12) — поверх списка: лист первым, чтобы `h1` маршрута был
-            // его заголовком; список под затемнением выключен вместе со всем вокруг листа.
+            // его заголовком; список под затемнением выключен вместе со всем вокруг листа. Из вопроса
+            // первого запуска под листом — «Обзор», куда лист и вернёт.
             return <>
               <AccountScreen
                 key={route.name === "account" ? route.id : "new"}
@@ -320,7 +352,9 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 onDone={(message) => { setMessage(message); leave(); }}
               />
               <div className="dir-under" inert aria-hidden="true">
-                <AccountsScreen background budget={budget} today={app.today} write={write} onBack={back} onOpen={() => undefined} onCreate={() => undefined} />
+                {fromQuestion
+                  ? <OverviewUnderSheet app={app} />
+                  : <AccountsScreen background budget={budget} today={app.today} write={write} onBack={back} onOpen={() => undefined} onCreate={() => undefined} />}
               </div>
             </>;
           })() : null}

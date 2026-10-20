@@ -99,6 +99,12 @@ test("первый запуск целиком: слайды → «Начать�
   await expect(page.getByRole("heading", { level: 1, name: "Новый счёт" })).toBeVisible();
   expect(await page.evaluate(() => window.location.hash)).toBe("#/more/accounts/new?type=savings");
   await expect(page.getByRole("radio", { name: "Накопления" })).toBeChecked();
+  // Под листом — «Обзор», куда крестик и «Сохранить» вернут, а не список счетов (ревью R3, LOW-4).
+  const under = page.locator(".dir-under");
+  await expect(under).toHaveAttribute("inert", "");
+  await expect(under.locator(".overview-screen")).toHaveCount(1);
+  await expect(under.locator(".accounts-screen")).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
   await page.getByLabel("Название").fill("Вклад");
   await page.getByLabel(/^Сколько сейчас на счёте/u).fill("50000");
   await page.getByRole("dialog", { name: "Новый счёт" }).getByRole("button", { name: "Сохранить", exact: true }).click();
