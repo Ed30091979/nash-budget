@@ -38,6 +38,7 @@ const deleteId = (tagId: string) => `tag-delete-${tagId}`;
 const ADD_ID = "tags-add";
 const CREATE_ID = "tags-create";
 const NEW_NAME_ID = "tag-new-name";
+const EMPTY_NAME_TEXT = "Введите название.";
 
 /** Быстрые метки пустого состояния (14): одним касанием, без набора. */
 export const QUICK_TAGS: readonly string[] = ["отпуск", "дача", "ремонт", "подарки"];
@@ -137,7 +138,13 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
   };
 
   const create = async () => {
-    if (busy || name.trim() === "") return;
+    if (busy) return;
+    // Пустое имя — отказ у поля, а не тишина; фокус остаётся в поле (ревью R3, LOW-7).
+    if (name.trim() === "") {
+      setSheetError(EMPTY_NAME_TEXT);
+      focusAfterRender(NEW_NAME_ID);
+      return;
+    }
     const typed = name.trim();
     const ticket = creating.begin();
     setBusy(true);
@@ -282,7 +289,7 @@ export function TagsScreen({ budget, write, onBack }: TagsScreenProps) {
           busy={busy}
           onSubmit={() => void create()}
           initialFocus={NEW_NAME_ID}
-          footer={<button className="primary-button wide dir-save" type="submit" aria-disabled={busy || name.trim() === "" || undefined} aria-busy={busy}>Сохранить</button>}
+          footer={<button className="primary-button wide dir-save" type="submit" aria-disabled={busy || undefined} aria-busy={busy}>Сохранить</button>}
         >
           <div className="field dir-field">
             <label htmlFor={NEW_NAME_ID}>Название</label>

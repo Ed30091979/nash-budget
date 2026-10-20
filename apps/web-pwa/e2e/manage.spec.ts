@@ -275,6 +275,34 @@ test("лист метки: набранное не пропадает молча
   await expect(page.getByRole("button", { name: "дача: ни одной операции. Изменить" })).toBeFocused();
 });
 
+test("«Новая метка» с пустым именем не молчит: Enter и «Сохранить» — отказ у поля, фокус остаётся в поле (ревью R3, LOW-7)", async ({ page }) => {
+  await loadDemo(page);
+  await restoreBudget(page, demoBudget());
+  await openMore(page, "Метки");
+  await startTag(page);
+  const sheet = tagSheet(page, "Новая метка");
+  const field = sheet.getByLabel("Название");
+  const refusal = sheet.getByRole("alert");
+  await page.keyboard.press("Enter");
+  await expect(refusal).toHaveText("Введите название.");
+  await expect(field).toBeFocused();
+  await expect(field).toHaveAttribute("aria-invalid", "true");
+  await expect(field).toHaveAttribute("aria-describedby", "tag-sheet-error");
+  // Набор снимает отказ; пробелы — тоже пустое имя, и «Сохранить» возвращает фокус в поле.
+  await field.fill("дача");
+  await expect(refusal).toHaveCount(0);
+  await field.fill("   ");
+  await sheet.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(refusal).toHaveText("Введите название.");
+  await expect(field).toBeFocused();
+  await expect(sheet).toBeVisible();
+  // Имя набрано — метка заведена, отказа нет.
+  await field.fill("дача");
+  await page.keyboard.press("Enter");
+  await expect(sheet).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "дача: ни одной операции. Изменить" })).toBeFocused();
+});
+
 test("лист счёта только с клавиатуры: поля, радиогруппы и чипы валюты стрелками, переключатель пробелом, запись — Enter", async ({ page }) => {
   await loadDemo(page);
   await openMore(page, "Счета");
