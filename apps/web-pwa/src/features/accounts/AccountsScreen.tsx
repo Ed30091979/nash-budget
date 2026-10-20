@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { moveAccount, restoreAccount, type BudgetState } from "@family-budget/domain";
+import { moveAccount, restoreAccount, type BudgetState, type CurrencyCode } from "@family-budget/domain";
 import { TitleBar, TitleBarAction } from "../../components/TitleBar";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
@@ -24,10 +24,13 @@ export interface AccountsScreenProps {
   readonly background?: boolean;
 }
 
-/** Доступное имя строки: имя, остаток в валюте счёта (и в базе — у чужой валюты), вид и что сделает касание. */
-export function accountRowLabel(row: AccountRow): string {
+/**
+ * Доступное имя строки: имя, остаток в валюте счёта (и в базовой валюте бюджета `base` — у чужой
+ * валюты), вид и что сделает касание.
+ */
+export function accountRowLabel(row: AccountRow, base: CurrencyCode): string {
   const balance = row.balanceMinor === null ? "остаток не представим" : formatMoney(row.balanceMinor, row.account.currency);
-  const inBase = row.baseMinor === null ? "" : ` (≈ ${formatMoney(row.baseMinor)})`;
+  const inBase = row.baseMinor === null ? "" : ` (≈ ${formatMoney(row.baseMinor, base)})`;
   // Строчная — только первая буква вида счёта: код валюты пишется и читается прописными («USD»).
   const meta = row.meta.charAt(0).toLocaleLowerCase("ru-RU") + row.meta.slice(1);
   return `${row.account.name}: ${balance}${inBase}, ${meta}. Изменить`;
@@ -125,7 +128,7 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate,
         />
       ) : (
         <ul className="card dir-card" aria-label="Активные счета">
-          {list.active.map((row) => <li key={row.account.id}><AccountRowButton row={row} onOpen={() => onOpen(row.account.id)} /></li>)}
+          {list.active.map((row) => <li key={row.account.id}><AccountRowButton row={row} base={total.base} onOpen={() => onOpen(row.account.id)} /></li>)}
         </ul>
       )}
       {list.active.length > 1 ? (
@@ -140,7 +143,7 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate,
           <ul className="card dir-card">
             {list.archived.map((row) => (
               <li key={row.account.id} className="dir-archived">
-                <button id={accountRowId(row.account.id)} className="dir-row" type="button" aria-label={accountRowLabel(row)} onClick={() => onOpen(row.account.id)}>
+                <button id={accountRowId(row.account.id)} className="dir-row" type="button" aria-label={accountRowLabel(row, total.base)} onClick={() => onOpen(row.account.id)}>
                   <AccountPlate row={row} />
                   <span className="dir-copy" aria-hidden="true"><strong><bdi dir="auto">{softHyphenate(row.account.name)}</bdi></strong><small>{row.meta}</small></span>
                 </button>
@@ -156,9 +159,9 @@ export function AccountsScreen({ budget, today, write, onBack, onOpen, onCreate,
   );
 }
 
-function AccountRowButton({ row, onOpen }: { readonly row: AccountRow; readonly onOpen: () => void }) {
+function AccountRowButton({ row, base, onOpen }: { readonly row: AccountRow; readonly base: CurrencyCode; readonly onOpen: () => void }) {
   return (
-    <button id={accountRowId(row.account.id)} className="dir-row" type="button" aria-label={accountRowLabel(row)} onClick={onOpen}>
+    <button id={accountRowId(row.account.id)} className="dir-row" type="button" aria-label={accountRowLabel(row, base)} onClick={onOpen}>
       <AccountPlate row={row} />
       <span className="dir-copy" aria-hidden="true">
         <strong><bdi dir="auto">{softHyphenate(row.account.name)}</bdi></strong>
@@ -166,7 +169,7 @@ function AccountRowButton({ row, onOpen }: { readonly row: AccountRow; readonly 
       </span>
       <span className="dir-amount" aria-hidden="true">
         <b>{row.balanceMinor === null ? "—" : <Money value={row.balanceMinor} currency={row.account.currency} />}</b>
-        {row.baseMinor === null ? null : <small>≈ <Money value={row.baseMinor} /></small>}
+        {row.baseMinor === null ? null : <small>≈ <Money value={row.baseMinor} currency={base} /></small>}
       </span>
     </button>
   );

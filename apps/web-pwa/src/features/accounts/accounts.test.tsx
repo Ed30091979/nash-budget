@@ -1,5 +1,6 @@
 import {
   AccountValidationError,
+  HOUSEHOLD_ID,
   makePlanningSeed,
   PLANNING_IDS,
   SEED_IDS,
@@ -211,7 +212,7 @@ describe("форма счёта: модель", () => {
     expect(valued.rates.map(totalRateWords)).toEqual(["доллар — по курсу 92,50\u00a0₽ от 15\u00a0июля"]);
     // Строка счёта в чужой валюте — и в базе, по тому же курсу.
     expect(accountsList(withRate(state()), TODAY).active.find((row) => row.account.id === DOLLARS)).toMatchObject({ balanceMinor: 50_000, baseMinor: 4_625_000 });
-    expect(accountRowLabel(accountsList(withRate(state()), TODAY).active.find((row) => row.account.id === DOLLARS)!)).toBe("Доллары: 500\u00a0$ (≈ 46\u00a0250\u00a0₽), наличные · USD. Изменить");
+    expect(accountRowLabel(accountsList(withRate(state()), TODAY).active.find((row) => row.account.id === DOLLARS)!, "RUB")).toBe("Доллары: 500\u00a0$ (≈ 46\u00a0250\u00a0₽), наличные · USD. Изменить");
   });
 
   it("пересчёт набранного в базу: «≈ 111 000 ₽ по курсу 92,50 ₽ от 15 июля»; база и валюта без курса — без строки", () => {
@@ -230,8 +231,8 @@ describe("форма счёта: модель", () => {
     expect(dollars).toMatchObject({ icon: "dollar-sign", tone: "lilac", balanceMinor: 50_000, baseMinor: null, meta: "Наличные · USD" });
     expect(list.archived[0]).toMatchObject({ meta: "Карта или счёт · вне итога", tone: null, icon: "credit-card" });
     // Код валюты — как его пишут и читают: «USD», а не «usd» (ревью 2c, LOW-7).
-    expect(accountRowLabel(dollars)).toBe("Доллары: 500\u00a0$, наличные · USD. Изменить");
-    expect(accountRowLabel(list.archived[0]!)).toMatch(/, карта или счёт · вне итога\. Изменить$/u);
+    expect(accountRowLabel(dollars, "RUB")).toBe("Доллары: 500\u00a0$, наличные · USD. Изменить");
+    expect(accountRowLabel(list.archived[0]!, "RUB")).toMatch(/, карта или счёт · вне итога\. Изменить$/u);
   });
 });
 
@@ -421,6 +422,28 @@ describe("ревью R3: «Сколько сейчас», имя строки в
     const sheet = renderToStaticMarkup(<AccountScreen budget={budget} today={TODAY} accountId={MAIN} write={{ run: vi.fn() }} onBack={vi.fn()} onDone={vi.fn()} />);
     expect(sheet).toMatch(/<input id="account-opening"[^>]* value="−1500"/u);
     expect(sheet).toMatch(/<input id="account-negative" type="checkbox"\/>/u);
+  });
+
+  it("M-2: имя строки называет пересчёт в базовой валюте бюджета — €, KZT, а не ₽", () => {
+    // Знак — тот же, каким сумму пишет `formatMoney`: у тенге это код.
+    for (const [base, sign] of [["EUR", "€"], ["KZT", "KZT"]] as const) {
+      const seed = state();
+      const budget: BudgetState = {
+        ...seed,
+        household: { ...seed.household, id: HOUSEHOLD_ID, baseCurrency: base } as BudgetState["household"],
+        accounts: seed.accounts.map((account) => (account.currency === "RUB" ? { ...account, currency: base } : account)),
+        exchangeRates: [{ id: RATE_ID, currency: "USD", baseCurrency: base, date: "2026-07-15", rate: { baseMinor: base === "EUR" ? 90 : 48_000, quoteMinor: 100 } }],
+        transactions: [],
+        budgets: [],
+      };
+      const row = accountsList(budget, TODAY).active.find((item) => item.account.id === DOLLARS)!;
+      expect(row.baseMinor).not.toBeNull();
+      const label = accountRowLabel(row, base);
+      expect(label).toMatch(new RegExp(`^Доллары: 500\u00a0\\$ \\(≈ [\\d\u00a0,]+\u00a0${sign}\\), наличные · USD\\. Изменить$`, "u"));
+      expect(label).not.toContain("₽");
+      const markup = renderToStaticMarkup(<AccountsScreen budget={budget} today={TODAY} write={{ run: vi.fn() }} onBack={vi.fn()} onOpen={vi.fn()} onCreate={vi.fn()} />);
+      expect(markup).toContain(`aria-label="${label}"`);
+    }
   });
 
   it("LOW-1: остаток сегодня больше ста миллионов не мешает правке имени — нетронутое поле не разбирается и не пишется", () => {
