@@ -32,7 +32,7 @@ import {
   type TransactionStatus,
 } from "@family-budget/domain";
 import { BACKUP_LIMITS } from "../../backup";
-import { positiveAmountMessage } from "../../components/CurrencySelect";
+import { positiveAmountMessage } from "../../components/CurrencyPicker";
 import { parseMoney } from "../../money";
 import { BudgetWriteRefusal } from "../../write-refusal";
 

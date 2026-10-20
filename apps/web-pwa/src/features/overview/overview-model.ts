@@ -3,9 +3,11 @@ import {
   baseCurrencyOf,
   calculateBudget,
   calculateHoldings,
+  calculatePeriodBreakdown,
   categoriesInListOrder,
   findBudgetForMonth,
   monthEndDate,
+  monthStartDate,
   monthOfDate,
   shiftMonth,
   type Account,
@@ -23,7 +25,11 @@ import { percentStep } from "../../reach";
  *
  * Месяц календарный. Его лимиты — строки бюджета этого месяца (`findBudgetForMonth`), их расход —
  * тот же расчёт, что у плана (`calculateBudget`); у месяца без бюджета лимитов нет, а расход
- * считается по операциям его дней. Суммы бюджета — в базовой валюте, по снимку каждой операции.
+ * считается по операциям его дней. Итог «Расходы» — весь расход календарного месяца, той же
+ * функцией, что итог «Отчётов» (`calculatePeriodBreakdown`, ревью 2b, MEDIUM-8): у плана, который
+ * открывает приложение, окно и есть календарный месяц, и числа совпадают с суммой плиток; у окна из
+ * копии, которое короче месяца, итог остаётся календарным, как в «Отчётах». Суммы — в базовой
+ * валюте, по снимку каждой операции.
  */
 
 /** Состояние лимита на плитке: цвет — третий носитель после глифа и цифр (DESIGN §9). */
@@ -81,8 +87,28 @@ export interface UnvaluedAccount {
   readonly archived: boolean;
 }
 
+/**
+ * Окно плана, которое не равно календарному месяцу (копия или другое устройство: «7–20 октября»).
+ * Лимиты, «Можно тратить» и траты на плитках категорий считаются по окну, а итог «Расходы» и
+ * «Отчёты» — по календарю, и экран называет окно словами, чтобы числа не спорили молча (ревью 2d,
+ * LOW-2). `null` — план и есть календарный месяц или плана нет.
+ */
+export interface PlanWindow {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** Окно бюджета, если оно не календарный месяц его начала. */
+export function planWindowOf(budget: { readonly startDate: string; readonly endDate: string } | undefined): PlanWindow | null {
+  if (budget === undefined) return null;
+  const month = monthOfDate(budget.startDate);
+  return budget.startDate === monthStartDate(month) && budget.endDate === monthEndDate(month) ? null : { from: budget.startDate, to: budget.endDate };
+}
+
 export interface OverviewModel {
   readonly month: string;
+  /** Окно плана этого месяца, когда оно не календарный месяц: плитки категорий считаются по нему. */
+  readonly planWindow: PlanWindow | null;
   readonly baseCurrency: CurrencyCode;
   /** День, на который считаются остатки: сегодня или последний день прошедшего месяца. */
   readonly asOf: string;
@@ -100,7 +126,7 @@ export interface OverviewModel {
   /** «по лимитам N из M»: N — расход категорий с лимитом, M — сумма их лимитов; `null` — лимитов нет. */
   readonly spentWithLimitMinor: number;
   readonly limitsMinor: number | null;
-  /** «Потрачено» — весь расход месяца, тот же, что в «Отчётах» (`calculateBudget(...).expensesMinor`). */
+  /** «Расходы» — весь расход календарного месяца, тот же, что в «Отчётах» (`calculatePeriodBreakdown`). */
   readonly spentMinor: number;
   readonly incomes: readonly IncomeTile[];
   readonly accounts: readonly AccountTile[];
@@ -195,7 +221,8 @@ export function overviewModel(state: BudgetState, month: string, today: string):
       };
     });
   const limited = categories.filter((tile) => tile.limitMinor !== null);
-  const spentMinor = metrics?.expensesMinor ?? [...spentByCategory.values()].reduce((sum, value) => sum + value, 0);
+  // Один источник с «Отчётами»: календарный месяц, расходы за вычетом возвратов (MEDIUM-8).
+  const spentMinor = calculatePeriodBreakdown(state, { from: monthStartDate(month), to: monthEndDate(month) }).expense.totalMinor;
 
   // Активные источники — в порядке списка; архивный с доходом месяца — после них.
   const incomeCategories = [
@@ -227,7 +254,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     id: account.id,
     name: account.name,
     currency: account.currency,
-    icon: accountIcon(account),
+    icon: accountIcon(account, baseCurrency),
     tone: accountTone(account),
     balanceMinor: holdings.accountBalancesMinor[account.id] ?? null,
     includeInTotal: account.includeInTotal !== false,
@@ -237,6 +264,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
 
   return {
     month,
+    planWindow: planWindowOf(budget),
     baseCurrency,
     asOf,
     totalInBaseMinor: holdings.totalInBaseMinor,
@@ -281,6 +309,8 @@ export interface ReachLineModel {
   readonly flexibleSpentMinor: number;
   /** Есть ли у месяца плана хоть один повседневный лимит: без них «можно» не из чего считать. */
   readonly hasLimits: boolean;
+  /** Окно плана, когда оно не календарный месяц: «лимиты на 7–20 октября». */
+  readonly window: PlanWindow | null;
 }
 
 export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): ReachLineModel {
@@ -295,5 +325,6 @@ export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): R
     limitsMinor: flexiblePlanMinor,
     flexibleSpentMinor,
     hasLimits: limited.length > 0,
+    window: planWindowOf(budget),
   };
 }

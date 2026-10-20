@@ -17,7 +17,7 @@ export const DOLLARS_NAME = "Доллары";
 
 /**
  * Демо на день прогона (`e2e/clock.ts`) — без своих долларов и меток: счёт «Доллары», курсы USD, покупка
- * долларов с карты и метки «отпуск» и «дача» убраны. Прогоны про счёт в другой валюте, отсутствующий
+ * долларов с карты, покупка в долларах из истории и метки «отпуск» и «дача» убраны. Прогоны про счёт в другой валюте, отсутствующий
  * курс и справочник меток заводят их сами (`withDollarAccount`, экран «Метки»), а у демо макетов v5
  * всё это уже есть.
  */
@@ -29,6 +29,7 @@ export function demoBudget(): BudgetState {
     accounts: demo.accounts.filter((account) => account.id !== dollars),
     transactions: demo.transactions
       .filter((item) => !(item.kind === "transfer" && item.toAccountId === dollars))
+      .filter((item) => !(item.kind === "expense" && item.accountId === dollars))
       .map(({ tagIds: _tagIds, ...item }) => item as BudgetState["transactions"][number]),
   };
 }

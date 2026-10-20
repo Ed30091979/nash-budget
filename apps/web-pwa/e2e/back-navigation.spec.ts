@@ -10,7 +10,7 @@
 import type { Page } from "@playwright/test";
 import { G002_UPPER_CASE_IDS, makeG002UpperCaseIdsBackupBuffer } from "./canonical-budget";
 import { expect, test } from "./fixtures";
-import { amountField, entrySheet, loadDemo, submitButton, tile, toast } from "./sheet";
+import { amountField, entrySheet, loadDemo, showWholeHistory, submitButton, tile, toast } from "./sheet";
 
 const tab = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 const hash = (page: Page) => page.evaluate(() => location.hash);
@@ -64,7 +64,7 @@ test("лист «+» кладётся поверх вкладки, и «Наза
   await tab(page, "Записать").click();
   await expect(entrySheet(page)).toBeVisible();
   // Под листом — тот же экран (скрытый от диктора, пока лист открыт): адрес называет его и лист.
-  await expect(page.locator(".history-card")).toBeAttached();
+  await expect(page.locator(".feed-screen")).toBeAttached();
   expect(await hash(page)).toBe("#/operations?sheet=entry");
   await back(page);
   await expect(entrySheet(page)).toHaveCount(0);
@@ -219,13 +219,15 @@ test("операция с идентификатором в верхнем ре�
   await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
 
   await tab(page, "Операции").click();
+  // G-002 — июль 2026, а лента по умолчанию — текущий месяц: вся история чипом периода.
+  await showWholeHistory(page);
   const row = page.locator('button[aria-label^="Изменить операцию «Расход"]').first();
   await row.click();
   await expect(entrySheet(page)).toHaveAccessibleName(/^Изменить: /u);
   await expect(page.locator(".message-toast")).toHaveCount(0);
   const address = await hash(page);
-  expect(address).toMatch(/^#\/operations\?sheet=entry&edit=[0-9a-f-]{36}$/u);
-  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/operations?sheet=entry&edit=".length));
+  expect(address).toMatch(/^#\/operations\?period=all&sheet=entry&edit=[0-9a-f-]{36}$/u);
+  expect(G002_UPPER_CASE_IDS.map((id) => id.toLowerCase())).toContain(address.slice("#/operations?period=all&sheet=entry&edit=".length));
   await expect(amountField(page)).not.toHaveValue("");
 
   // Правится: сумма меняется и сохраняется той же операции, найденной без учёта регистра.
@@ -240,7 +242,7 @@ test("операция с идентификатором в верхнем ре�
   await page.reload();
   await expect(page.getByRole("region", { name: "Операции" })).toBeVisible();
   await expect(entrySheet(page)).toHaveCount(0);
-  expect(await hash(page)).toBe("#/operations");
+  expect(await hash(page)).toBe("#/operations?period=all");
 });
 
 /** Кнопка «назад» строки заголовка: её прямоугольник — цель нажатия, не меньше 48 в обе стороны. */
@@ -284,12 +286,18 @@ test("строка заголовка: «‹ Ещё» на каждом подэ
     expect(await hash(page), `${title} → «Ещё»`).toBe("#/more");
     await expect(page.getByRole("heading", { level: 1, name: "Ещё" })).toBeFocused();
   }
-  // Вглубь — к своему родителю: форма счёта → «‹ Счета», категория → «‹ Расходы».
+  // Вглубь — к своему родителю: лист счёта (R3, макет 12) поверх списка, его крестик — к «Счетам».
   await page.getByRole("button", { name: /^Счета/u }).click();
   await page.getByRole("button", { name: /^Резерв платежей: .*Изменить$/u }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Резерв платежей" })).toBeFocused();
-  await expectTitleBarBack(page, "Назад: Счета");
-  await page.getByRole("button", { name: "Назад: Счета", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Счёт" })).toBeFocused();
+  await expect(page.getByRole("heading", { level: 1 }), "лист: заголовок экрана один").toHaveCount(1);
+  const close = page.getByRole("dialog", { name: "Счёт" }).getByRole("button", { name: "Закрыть", exact: true });
+  // Мерить — после въезда листа: в середине `sheet-in` сдвиг даёт дробные края, а цель та же.
+  await page.locator(".dir-backdrop").evaluate((backdrop) => Promise.all(backdrop.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+  const box = await close.boundingBox();
+  expect(box?.width ?? 0, "крестик листа: ширина цели").toBeGreaterThanOrEqual(48);
+  expect(box?.height ?? 0, "крестик листа: высота цели").toBeGreaterThanOrEqual(48);
+  await close.click();
   expect(await hash(page)).toBe("#/more/accounts");
   await expect(page.getByRole("heading", { level: 1, name: "Счета" })).toBeFocused();
   // Вкладки — крупным заголовком, без «назад».

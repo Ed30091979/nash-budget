@@ -381,3 +381,82 @@ describe("справочники «Учёта» (подволна 2c)", () => {
     expect(resolveRoute({ name: "account", id: RESERVE }, { transaction: () => true })).toEqual({ route: { name: "account", id: RESERVE }, notFound: false });
   });
 });
+
+describe("маршруты 2d: фильтры «Операций» и период «Отчётов»", () => {
+  const TAG = "7e888888-8888-4888-8888-888888888882";
+  const MEMBER = "c6666666-6666-4666-8666-666666666601";
+
+  it("фильтры пишутся в каноническом порядке закрытыми типами и читаются обратно тем же маршрутом", () => {
+    const route: Route = { name: "operations", kind: "expense", member: MEMBER, tag: TAG, cat: CATEGORY, acc: ACCOUNT, to: "2026-10-31", from: "2026-10-01" };
+    const address = `#/operations?from=2026-10-01&to=2026-10-31&acc=${ACCOUNT}&cat=${CATEGORY}&tag=${TAG}&member=${MEMBER}&kind=expense`;
+    expect(formatRoute(route)).toBe(address);
+    expect(parseRoute(address)).toEqual({ route: { name: "operations", from: "2026-10-01", to: "2026-10-31", acc: ACCOUNT, cat: CATEGORY, tag: TAG, member: MEMBER, kind: "expense" }, notFound: false });
+    // Лист правки поверх отфильтрованной ленты — фильтры остаются в адресе под ним.
+    expect(formatRoute({ name: "operations", cat: CATEGORY, sheet: "entry", edit: OPERATION })).toBe(`#/operations?cat=${CATEGORY}&sheet=entry&edit=${OPERATION}`);
+    expect(withoutSheet({ name: "operations", cat: CATEGORY, sheet: "entry", edit: OPERATION })).toEqual({ name: "operations", cat: CATEGORY });
+    expect(formatRoute({ name: "reports", acc: ACCOUNT, to: "2026-10-15", from: "2026-10-01", period: "custom", view: "tags" }))
+      .toBe(`#/reports?view=tags&period=custom&from=2026-10-01&to=2026-10-15&acc=${ACCOUNT}`);
+  });
+
+  it("всё не своего типа — мимо адреса: свободный текст, чужой вид, день вне календаря, период задом наперёд", () => {
+    for (const route of [
+      { name: "operations", q: "2400" },
+      { name: "operations", search: "кофе" },
+      { name: "operations", cat: "Продукты" },
+      { name: "operations", kind: "покупка" },
+      { name: "operations", from: "2026-02-30" },
+      { name: "operations", from: "1899-12-31" },
+      { name: "operations", from: "2026-10-31", to: "2026-10-01" },
+      // Период «Операций» — словом из перечня или днями, но не тем и другим сразу (LOW-11).
+      { name: "operations", period: "year" },
+      { name: "operations", period: "all", from: "2026-10-01" },
+      { name: "operations", period: "all", to: "2026-10-31" },
+      { name: "reports", view: "chart" },
+      { name: "reports", period: "week" },
+      { name: "reports", month: "2026-10" },
+      { name: "reports", cat: CATEGORY },
+      { name: "more", from: "2026-10-01" },
+    ]) expect(() => formatRoute(route as unknown as Route), JSON.stringify(route)).toThrow();
+    // Чтение: чужой ключ уходит молча, значение не своего типа — «Запись не найдена» без него.
+    expect(parseRoute(`#/operations?q=2400&cat=${CATEGORY}`)).toEqual({ route: { name: "operations", cat: CATEGORY }, notFound: false });
+    expect(parseRoute("#/operations?kind=кофе")).toEqual({ route: { name: "operations" }, notFound: true });
+    expect(parseRoute("#/operations?from=2026-10-31&to=2026-10-01&kind=income")).toEqual({ route: { name: "operations", kind: "income" }, notFound: true });
+    expect(parseRoute("#/reports?view=income&period=month&from=2026-09-01")).toEqual({ route: { name: "reports", view: "income", period: "month", from: "2026-09-01" }, notFound: false });
+    // «Вся история»: слово из перечня; вместе с днями дни уходят, слово остаётся.
+    expect(formatRoute({ name: "operations", period: "all", acc: ACCOUNT })).toBe(`#/operations?period=all&acc=${ACCOUNT}`);
+    expect(parseRoute(`#/operations?acc=${ACCOUNT}&period=all`)).toEqual({ route: { name: "operations", period: "all", acc: ACCOUNT }, notFound: false });
+    expect(parseRoute("#/operations?period=all&from=2026-10-01&to=2026-10-31")).toEqual({ route: { name: "operations", period: "all" }, notFound: true });
+    expect(parseRoute("#/operations?period=month")).toEqual({ route: { name: "operations" }, notFound: true });
+    // «Вся история» — фильтр, а не вкладка: на вкладку «Операции» — снова текущий месяц.
+    expect(isTab({ name: "operations", period: "all" })).toBe(false);
+    expect(screenKey({ name: "operations", period: "all" })).toBe("#/operations");
+  });
+
+  it("лента с фильтром — не вкладка: кладётся поверх «Отчётов»; экран тот же при любом фильтре и периоде", () => {
+    expect(isTab({ name: "operations" })).toBe(true);
+    expect(isTab({ name: "operations", cat: CATEGORY })).toBe(false);
+    expect(isTab({ name: "reports", view: "income", period: "year" })).toBe(true);
+    expect(parentRoute({ name: "operations", cat: CATEGORY })).toEqual(ROOT_ROUTE);
+    expect(screenKey({ name: "operations", cat: CATEGORY, sheet: "entry", edit: OPERATION })).toBe("#/operations");
+    expect(screenKey({ name: "reports", view: "tags", period: "quarter" })).toBe("#/reports");
+    expect(leftBehind({ name: "operations" }, { name: "operations", cat: CATEGORY })).toBeNull();
+    expect(leftBehind({ name: "reports" }, { name: "operations", cat: CATEGORY })).toBe("screen");
+    expect(leftBehind({ name: "operations", cat: CATEGORY, sheet: "entry", edit: OPERATION }, { name: "operations", cat: CATEGORY })).toBe("sheet");
+  });
+
+  it("запись фильтра, которой в бюджете нет, уходит из адреса с «Запись не найдена», остальные остаются", () => {
+    const records = {
+      transaction: () => true,
+      account: (id: string) => sameRecordId(ACCOUNT, id),
+      category: (id: string) => (sameRecordId(CATEGORY, id) ? "expense" as const : null),
+      tag: () => false,
+      member: () => true,
+    };
+    expect(resolveRoute({ name: "operations", acc: ACCOUNT, cat: CATEGORY, member: MEMBER }, records)).toEqual({ route: { name: "operations", acc: ACCOUNT, cat: CATEGORY, member: MEMBER }, notFound: false });
+    expect(resolveRoute({ name: "operations", acc: RESERVE, cat: CATEGORY, tag: TAG }, records)).toEqual({ route: { name: "operations", cat: CATEGORY }, notFound: true });
+    expect(resolveRoute({ name: "reports", acc: RESERVE, period: "year" }, records)).toEqual({ route: { name: "reports", period: "year" }, notFound: true });
+    // Лист правки над такой лентой: несуществующая операция закрывает лист, фильтр уходит.
+    expect(resolveRoute({ name: "operations", tag: TAG, sheet: "entry", edit: OPERATION }, { ...records, transaction: () => false }))
+      .toEqual({ route: { name: "operations" }, notFound: true });
+  });
+});

@@ -4,7 +4,7 @@ import {
   G002_INITIAL_OPERATION_COUNT,
   makeG002BackupBuffer,
 } from "./canonical-budget";
-import { amountField, entrySheet, leaveDialog, reachAmount, recordExpense, startDemo, tile } from "./sheet";
+import { amountField, entrySheet, leaveDialog, reachAmount, recordExpense, showWholeHistory, startDemo, tile } from "./sheet";
 
 const INITIAL_FLEXIBLE_REMAINING = /27\s*000\s*₽/u;
 const UPDATED_FLEXIBLE_REMAINING = /18\s*000\s*₽/u;
@@ -18,12 +18,14 @@ function expectNavigationSecurityHeaders(response: Response | null) {
   expect(response?.headers()["x-frame-options"]).toBe("DENY");
 }
 
-/** История операций — вкладка «Операции» нижней навигации. */
+/** История операций — вкладка «Операции» нижней навигации, за весь период: G-002 — июль 2026. */
 async function openHistory(page: Page) {
   const history = page.getByRole("region", { name: "Операции" });
-  if (await history.count()) return;
-  await page.getByRole("button", { name: "Операции", exact: true }).click();
-  await expect(history).toBeVisible();
+  if (!(await history.count())) {
+    await page.getByRole("button", { name: "Операции", exact: true }).click();
+    await expect(history).toBeVisible();
+  }
+  await showWholeHistory(page);
 }
 
 /** План на год — подэкран «Ещё»: отдельной вкладки «Год» в навигации из пяти мест нет. */
@@ -49,14 +51,15 @@ async function expectBudgetSnapshot(
 }
 
 async function expectAddedExpense(page: Page) {
-  // Строка истории называет категорию, дату с видом операции и сумму со знаком направления.
-  // Проверяется то, что видно в строке, а не порядок тегов внутри неё.
-  const row = page
+  // Строка «Операций» называет категорию и сумму со знаком направления, а день — заголовок её дня
+  // (2d, макет 08). Проверяется то, что видно, а не порядок тегов внутри строки.
+  const day = page
     .getByRole("region", { name: "Операции" })
-    .getByRole("listitem")
-    .filter({ hasText: /9\s*000\s*₽/u });
-  await expect(row).toContainText("2026-07-18");
+    .getByRole("region")
+    .filter({ has: page.getByRole("heading", { name: /^18\s+июля/u }) });
+  const row = day.getByRole("listitem").filter({ hasText: /9\s*000\s*₽/u });
   await expect(row).toContainText("Продукты");
+  await expect(row).toContainText("−9");
 }
 
 test("G-002 survives restore, offline nested navigation, and an explicit A to B update", async ({

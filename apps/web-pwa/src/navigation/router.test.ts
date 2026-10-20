@@ -565,3 +565,65 @@ describe("история остаётся правдой и впереди, и �
     }
   }, 20_000);
 });
+
+describe("роутер 2d: «Операции» с фильтром и «Отчёты»", () => {
+  const CATEGORY = "73333333-3333-4333-8333-333333333335";
+  const OPERATION = "7f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+
+  it("строка легенды кладёт ленту поверх «Отчётов», и «Назад» возвращает «Отчёты» с их периодом", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "reports", period: "quarter", view: "income" });
+    await go(router, { name: "operations", cat: CATEGORY, from: "2026-10-01", to: "2026-12-31" });
+    expect(frame.hashes).toEqual(["#/", "#/reports?view=income&period=quarter", `#/operations?from=2026-10-01&to=2026-12-31&cat=${CATEGORY}`]);
+    expectHonestHistory(frame);
+    await frame.press(-1);
+    expect(formatRoute(router.current())).toBe("#/reports?view=income&period=quarter");
+    // Вкладка «Операции» без фильтра — снова вкладка: «Назад» с неё — на «Обзор».
+    await go(router, { name: "operations" });
+    expect(frame.hashes.slice(0, frame.index + 1)).toEqual(["#/", "#/operations"]);
+  });
+
+  it("«‹ Отчёты» ленты из легенды: запись под ней — «Отчёты», переход к ней — назад по истории, без новой записи (LOW-6)", async () => {
+    const { frame, router } = started();
+    expect(router.beneath()).toBeNull();
+    await go(router, { name: "reports", period: "year" });
+    expect(router.beneath()).toEqual({ name: "overview" });
+    await go(router, { name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31" });
+    const beneath = router.beneath();
+    expect(beneath).toEqual({ name: "reports", period: "year" });
+    // Смена фильтра ленты заменяет её запись — «Отчёты» под ней остаются.
+    await go(router, { name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense" }, true);
+    expect(router.beneath()).toEqual({ name: "reports", period: "year" });
+    // Лист правки поверх ленты — тот же экран: под ним по-прежнему «Отчёты», и строка «‹ Отчёты» не пропадает.
+    await go(router, { name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense", sheet: "entry", edit: OPERATION });
+    expect(router.beneath()).toEqual({ name: "reports", period: "year" });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "operations", cat: CATEGORY, from: "2026-01-01", to: "2026-12-31", kind: "expense" });
+    // «‹ Отчёты» — переход к записи под лентой: история едет назад, ленты впереди не прибавляется.
+    await go(router, beneath!);
+    expect(formatRoute(router.current())).toBe("#/reports?period=year");
+    expect(frame.index).toBe(1);
+    expectHonestHistory(frame);
+    await frame.press(-1);
+    expect(routeKey(router.current())).toBe("#/");
+    // Вкладка «Операции» — над «Обзором»: «‹ Отчёты» у неё нет.
+    await go(router, { name: "operations" });
+    expect(router.beneath()).toEqual({ name: "overview" });
+  });
+
+  it("смена фильтра заменяет запись, лист правки — поверх, его закрытие возвращает фильтр", async () => {
+    const { frame, router } = started();
+    await go(router, { name: "operations" });
+    await go(router, { name: "operations", cat: CATEGORY }, true);
+    await go(router, { name: "operations", cat: CATEGORY, kind: "expense" }, true);
+    expect(frame.hashes.slice(0, frame.index + 1)).toEqual(["#/", `#/operations?cat=${CATEGORY}&kind=expense`]);
+    await go(router, { name: "operations", cat: CATEGORY, kind: "expense", sheet: "entry", edit: OPERATION });
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "operations", cat: CATEGORY, kind: "expense" });
+    expectHonestHistory(frame);
+    await frame.press(-1);
+    expect(routeKey(router.current())).toBe("#/");
+  });
+});

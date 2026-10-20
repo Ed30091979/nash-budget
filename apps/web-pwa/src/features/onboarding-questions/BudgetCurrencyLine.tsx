@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { baseCurrencyLock, baseCurrencyOf, setBaseCurrency, type BudgetState, type CurrencyCode } from "@family-budget/domain";
-import { CurrencySelect, currencyName } from "../../components/CurrencySelect";
+import { CurrencyPicker, currencyName } from "../../components/CurrencyPicker";
 import { useFormDraft } from "../../navigation/draft-guard";
 import { currencySign } from "../rates/RateQuickSheet";
 import { NON_BASE_CURRENCIES, ratesErrorText } from "../rates/rates-model";
@@ -70,7 +70,7 @@ export function BudgetCurrencyLine({ budget, write, busy = false }: BudgetCurren
           type="button"
           aria-label="Поменять валюту бюджета"
           aria-disabled={busy || undefined}
-          onClick={() => { if (busy) return; setChoice(current); setEditing(true); window.setTimeout(() => document.getElementById(selectId)?.focus(), 0); }}
+          onClick={() => { if (busy) return; setChoice(current); setEditing(true); window.setTimeout(() => document.getElementById(`${selectId}-${current}`)?.focus(), 0); }}
         >
           Поменять
         </button>
@@ -80,8 +80,9 @@ export function BudgetCurrencyLine({ budget, write, busy = false }: BudgetCurren
   return (
     <div className="q-currency-form">
       <div className="field">
-        <label htmlFor={selectId}>Валюта бюджета</label>
-        <CurrencySelect id={selectId} value={choice} disabled={saving} exclude={NON_BASE_CURRENCIES} describedBy="q-currency-digits" onChange={setChoice} />
+        {/* Чипы частых и «Другая» с поиском (дизайн 5.0, R3): системного списка нет. */}
+        <span className="dir-label" id="q-currency-label">Валюта бюджета</span>
+        <CurrencyPicker id={selectId} labelledBy="q-currency-label" value={choice} disabled={saving} exclude={NON_BASE_CURRENCIES} describedBy="q-currency-digits" onChange={setChoice} />
         <p className="field-hint" id="q-currency-digits">Только валюты с двумя знаками после запятой: лимиты и итоги считаются в сотых долях.</p>
       </div>
       {error === null ? null : <p className="field-error" role="alert">{error}</p>}

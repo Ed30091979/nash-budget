@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { filtersOfRoute, parseSearch, routeOfFilters, type FeedFilters } from "../features/feed/feed-model";
 import { MonthSwitch } from "../features/overview/MonthSwitch";
 import { createRouter } from "./router";
 import { formatRoute, parseRoute, QUERY_GRAMMAR, type Route, type RouteName } from "./routes";
@@ -499,5 +500,81 @@ describe("адрес — только маршрут: история, котор
       createRouter({ window: link }).start();
       expectHonestHistory(link);
     }
+  });
+});
+
+describe("адрес — только маршрут: строка поиска «Операций» (2d)", () => {
+  /** Что человек набрал в поиске: сумма, комментарий, метка и имя — свободный текст целиком. */
+  const SEARCH = "2400 кофе у Маши #дача";
+  const PIECES = ["2400", "2 400", "кофе", "Маши", "дача", "%D0", "q=", "search", "query"];
+  const leaks = (frame: FakeBrowser) => {
+    const written = JSON.stringify(frame.entries);
+    return PIECES.filter((piece) => written.includes(piece));
+  };
+
+  it("у «Операций» и «Отчётов» — только закрытые типы: день, UUID, значение из перечня; ключа для текста нет", () => {
+    for (const name of ["operations", "reports"] as const) {
+      for (const [key, spec] of Object.entries(QUERY_GRAMMAR[name]) as [string, { readonly kind: string }][]) {
+        expect(["uuid", "day", "enum"], `${name}.${key}`).toContain(spec.kind);
+        expect(["q", "search", "query", "text", "note", "amount", "name"], `${name}.${key}`).not.toContain(key);
+      }
+    }
+    for (const field of ["q", "search", "query", "text", "note", "amount"]) {
+      expect(() => formatRoute({ name: "operations", [field]: SEARCH } as unknown as Route), field).toThrow();
+      expect(() => formatRoute({ name: "reports", [field]: SEARCH } as unknown as Route), field).toThrow();
+    }
+    // Набранный руками адрес со строкой поиска — без неё.
+    expect(parseRoute(`#/operations?q=${encodeURIComponent(SEARCH)}&kind=expense`)).toEqual({ route: { name: "operations", kind: "expense" }, notFound: false });
+    // Фильтры ленты в адрес пишет модель — и в ней поля для строки поиска нет вовсе.
+    const smuggled = { ...filtersOfRoute({ cat: CATEGORY }), query: SEARCH, search: parseSearch(SEARCH) } as unknown as FeedFilters;
+    expect(routeOfFilters(smuggled)).toEqual({ cat: CATEGORY });
+  });
+
+  it("сеанс ленты — поиск, фильтры, лист правки, «Отчёты», «Назад», перезагрузка: в адресе и в истории ни строки поиска, ни её следа", async () => {
+    const { frame, router } = started();
+    const feedRoute = (filters: FeedFilters) => ({ name: "operations", ...routeOfFilters({ ...filters, query: SEARCH } as FeedFilters) }) as Route;
+    const check = () => {
+      expectHonestHistory(frame);
+      expect(leaks(frame)).toEqual([]);
+    };
+    // Вкладка, набранный поиск (он — в памяти экрана, роутер его не видит), фильтр заменой записи.
+    await goSettled(router, frame, { name: "operations" });
+    check();
+    router.navigate(feedRoute({ categoryIds: [CATEGORY], from: "2026-10-01", to: "2026-10-31" }), { replace: true });
+    await settle();
+    check();
+    // Лист правки поверх отфильтрованной ленты и его закрытие: фильтры — снова в адресе.
+    await go(router, { ...router.current(), sheet: "entry", edit: OPERATION } as Route);
+    check();
+    router.back();
+    await settle();
+    expect(router.current()).toEqual({ name: "operations", from: "2026-10-01", to: "2026-10-31", cat: CATEGORY });
+    check();
+    // «Отчёты» → строка легенды → «Назад»: «Отчёты» с их периодом; затем «Назад» с вкладки — «Обзор».
+    await go(router, { name: "reports", period: "quarter" });
+    await go(router, feedRoute({ categoryIds: [CATEGORY], from: "2026-10-01", to: "2026-12-31" }));
+    check();
+    await frame.press(-1);
+    expect(formatRoute(router.current())).toBe("#/reports?period=quarter");
+    await frame.press(-1);
+    check();
+    // Перезагрузка на отфильтрованной ленте: фильтры читаются из адреса, строки поиска там нет.
+    await go(router, feedRoute({ tagIds: [CATEGORY] }));
+    createRouter({ window: frame }).start();
+    check();
+    expect(frame.hash).toBe(`#/operations?tag=${CATEGORY}`);
+  });
+
+  it("исходник экрана: строка поиска — `useState` экрана, и ни один переход её не несёт", () => {
+    const screen = readFileSync(new URL("../features/feed/FeedScreen.tsx", import.meta.url), "utf8");
+    expect(screen).toContain('const [search, setSearch] = useState("");');
+    // Единственный выход экрана в адрес — `onFilters`, и он получает ключи фильтров из модели.
+    const exits = [...screen.matchAll(/\bonFilters\(([^)]*)\)/gu)].map((match) => match[1] ?? "");
+    expect(exits.length).toBeGreaterThan(0);
+    for (const exit of exits) expect(exit).not.toMatch(/search|parsed|deferred|query/u);
+    expect(screen).not.toMatch(/\b(?:navigate|replace|history|sessionStorage|localStorage)\b[^\n]*search/u);
+    // Оболочка ведёт ленту только по адресу: «filters={route}», без своего хранилища строки поиска.
+    const routes = readFileSync(new URL("../app/routes.tsx", import.meta.url), "utf8");
+    expect(routes).toMatch(/<FeedScreen\s+budget=\{budget\}\s+today=\{app\.today\}\s+filters=\{route\}/u);
   });
 });

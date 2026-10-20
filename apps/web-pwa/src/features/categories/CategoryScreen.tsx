@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { moveCategory, type BudgetState, type Category, type CategoryGroup } from "@family-budget/domain";
+import { useEffect, useRef, useState } from "react";
+import type { BudgetState, Category, CategoryGroup } from "@family-budget/domain";
 import { categoryVisual, type CategoryTone } from "../../category-visual";
-import { TitleBar } from "../../components/TitleBar";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { FormSheet } from "../../components/FormSheet";
 import { useFocusAfterRender } from "../../components/focus-after-render";
 import { Icon } from "../../components/Icon";
 import { CATEGORY_ICON_CHOICES, IconPicker } from "../../components/IconPicker";
 import { useBaseCurrency } from "../../components/Money";
-import { ReorderControls, type ReorderDirection } from "../../components/ReorderControls";
+import { OptionCards } from "../../components/OptionCards";
 import { TileSquare } from "../../components/tiles/Tile";
 import { TonePicker } from "../../components/TonePicker";
 import { softHyphenate } from "../../hyphenation";
@@ -19,13 +19,13 @@ import { currencySign } from "../rates/RateQuickSheet";
 import {
   archiveCategoryWithLimits,
   categoryArchiveText,
-  categoryPositionWords,
   CATEGORY_NAME_MAX_LENGTH,
   categoryDraftDiffers,
   categoryDraftOf,
   categoryFormError,
-  categoryPosition,
+  categoryPreviewWords,
   categorySave,
+  nextMonthWord,
   planMonthWord,
   restoreCategory,
   type CategoryFormDraft,
@@ -50,15 +50,15 @@ export interface CategoryFormViewProps {
   readonly error: CategoryFormError | null;
   readonly busy: boolean;
   readonly onPatch: (patch: Partial<CategoryFormDraft>) => void;
-  readonly onSubmit: () => void;
 }
 
 /**
- * Форма категории без состояния: название, группа (у расходов), лимит месяца плана (у активной
- * категории расходов), цвет и иконка. Плитка над формой показывает, какой категория станет на
- * «Обзоре», — с набранным именем, иконкой и тоном.
+ * Разделы листа категории (дизайн 5.0, макет 13) без состояния: образец — квадрат с набранными
+ * именем, значком и тоном и «22 000 из 30 000 ₽ в октябре»; название; лимит месяца плана с одной
+ * строкой подсказки (у активной категории расходов); цвет со словами; значки; группа карточками 2×2
+ * (у расходов).
  */
-export function CategoryFormView({ budget, category, draft, error, busy, onPatch, onSubmit }: CategoryFormViewProps) {
+export function CategoryFormView({ budget, category, draft, error, busy, onPatch }: CategoryFormViewProps) {
   const currency = useBaseCurrency();
   const expense = category.type === "expense";
   const groups = groupChoicesFor(category.type);
@@ -66,22 +66,25 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
   const tone: CategoryTone = draft.tone ?? derived.tone;
   const icon = draft.icon ?? derived.icon;
   const month = planMonthWord(budget);
+  const next = nextMonthWord(budget);
+  const name = draft.name.trim() === "" ? category.name : draft.name;
   const fieldError = (field: CategoryFormError["field"]) => (error?.field === field ? error.message : null);
   const describedBy = (field: CategoryFormError["field"], hint?: string) => {
     const ids = [hint, fieldError(field) === null ? undefined : `${FIELD_IDS[field]}-error`].filter(Boolean).join(" ");
     return ids === "" ? undefined : ids;
   };
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    onSubmit();
-  };
   return (
-    <form className="manage-form" onSubmit={submit} noValidate aria-describedby={error?.field === "form" ? CATEGORY_FORM_ERROR_ID : undefined}>
-      <div className={`tile ${expense ? "tile-expense" : "tile-income"} manage-preview`} aria-hidden="true">
+    <>
+      {/* Образец: имя для глаза — с мягкими переносами и скрыто от диктора, для слуха — целое. */}
+      <div className="card dir-preview">
         <TileSquare icon={icon} tone={tone} />
-        <span className="tile-name"><bdi dir="auto">{softHyphenate(draft.name.trim() === "" ? category.name : draft.name)}</bdi></span>
+        <span className="dir-preview-copy">
+          <span className="dir-preview-name" aria-hidden="true"><bdi dir="auto">{softHyphenate(name)}</bdi></span>
+          <span className="sr-only"><bdi dir="auto">{name.trim()}</bdi>: </span>
+          <span className="dir-preview-note">{categoryPreviewWords(budget, category, currency)}</span>
+        </span>
       </div>
-      <div className="field">
+      <div className="field dir-field">
         <label htmlFor="category-name">Название</label>
         <input
           id="category-name"
@@ -96,43 +99,47 @@ export function CategoryFormView({ budget, category, draft, error, busy, onPatch
         />
         <FieldError id="category-name" message={fieldError("name")} />
       </div>
-      {groups.length > 1 ? (
-        <div className="field">
-          <label htmlFor="category-group">Группа</label>
-          <select id="category-group" value={draft.group} disabled={busy} aria-describedby={describedBy("group")} onChange={(event) => onPatch({ group: event.target.value as CategoryGroup })}>
-            {groups.map((group) => <option key={group.key} value={group.key}>{group.title}</option>)}
-          </select>
-          <FieldError id="category-group" message={fieldError("group")} />
-        </div>
-      ) : null}
       {expense && category.active && month !== null ? (
-        <div className="field">
-          <label htmlFor="category-limit">Лимит на {month}, {currencySign(currency)} — не обязательно</label>
-          <input
-            id="category-limit"
-            inputMode="decimal"
-            autoComplete="off"
-            maxLength={24}
-            placeholder="Без лимита"
-            value={draft.limit}
-            disabled={busy}
-            aria-invalid={fieldError("limit") === null ? undefined : true}
-            aria-describedby={describedBy("limit", "category-limit-hint")}
-            onChange={(event) => onPatch({ limit: event.target.value })}
-          />
-          <p className="field-hint" id="category-limit-hint">Пусто — без лимита. Лимит стоит в плане месяца и переносится в следующий, когда его откроете.</p>
+        <div className="field dir-field">
+          <label htmlFor="category-limit">Лимит на {month}<span className="sr-only">, {currencySign(currency)} — не обязательно</span></label>
+          <span className="dir-money-field">
+            <input
+              id="category-limit"
+              inputMode="decimal"
+              autoComplete="off"
+              maxLength={24}
+              placeholder="Без лимита"
+              value={draft.limit}
+              disabled={busy}
+              aria-invalid={fieldError("limit") === null ? undefined : true}
+              aria-describedby={describedBy("limit", "category-limit-hint")}
+              onChange={(event) => onPatch({ limit: event.target.value })}
+            />
+            <span className="dir-money-sign" aria-hidden="true">{currencySign(currency)}</span>
+          </span>
+          <p className="field-hint" id="category-limit-hint">Пусто — без лимита.{next === null ? "" : ` Лимит перейдёт и на ${next}.`}</p>
           <FieldError id="category-limit" message={fieldError("limit")} />
         </div>
       ) : null}
-      <div id="category-tone">
-        <TonePicker legend="Цвет" value={draft.tone} fallback={derived.tone} disabled={busy} onChange={(next) => onPatch({ tone: next })} />
+      <div id="category-tone" className="dir-field">
+        <TonePicker legend="Цвет" value={draft.tone} fallback={derived.tone} disabled={busy} onChange={(nextTone) => onPatch({ tone: nextTone })} />
       </div>
-      <div id="category-icon">
-        <IconPicker legend="Иконка" icons={CATEGORY_ICON_CHOICES} value={draft.icon} fallback={derived.icon} tone={tone} disabled={busy} onChange={(next) => onPatch({ icon: next })} />
+      <div id="category-icon" className="dir-field">
+        <IconPicker legend="Значок" icons={CATEGORY_ICON_CHOICES} value={draft.icon} fallback={derived.icon} tone={tone} disabled={busy} onChange={(nextIcon) => onPatch({ icon: nextIcon })} />
       </div>
-      {error?.field === "form" ? <p className="field-error" id={CATEGORY_FORM_ERROR_ID} role="alert" tabIndex={-1}>{error.message}</p> : null}
-      <button className="primary-button wide" type="submit" disabled={busy} aria-busy={busy}>Сохранить</button>
-    </form>
+      {groups.length > 1 ? <>
+        <OptionCards
+          id="category-group"
+          legend="Группа"
+          options={groups.map((group) => ({ value: group.key, label: group.title, id: `category-group-${group.key}` }))}
+          value={draft.group}
+          disabled={busy}
+          describedBy={describedBy("group")}
+          onChange={(group: CategoryGroup) => onPatch({ group })}
+        />
+        <FieldError id="category-group" message={fieldError("group")} />
+      </> : null}
+    </>
   );
 }
 
@@ -145,7 +152,7 @@ export interface CategoryScreenProps {
   readonly budget: BudgetState;
   readonly categoryId: string;
   readonly write: BudgetWriter;
-  /** К своему списку — расходов или доходов: родитель маршрута, вид списка — в адресе. */
+  /** Крестик и Esc — к своему списку, расходов или доходов: родитель маршрута, вид списка — в адресе. */
   readonly onBack: () => void;
   readonly onDone: (message: string) => void;
 }
@@ -154,9 +161,11 @@ const CATEGORY_ARCHIVE_ID = "category-archive";
 const CATEGORY_RESTORE_ID = "category-restore";
 
 /**
- * Категория или источник дохода, открытые для правки (`#/more/categories/<UUID>`). Черновик —
- * в реестре экрана; «Сохранить» — одна запись имени, оформления и лимита. Порядок в группе и архив —
- * отдельные записи сразу; архив спрашивает: категория уходит с «Обзора», а её операции остаются.
+ * Лист категории или источника дохода (дизайн 5.0, макет 13) — маршрут
+ * `#/more/categories/<UUID>?type=…` поверх своего списка. Черновик — в реестре экрана; «Сохранить» —
+ * одна запись имени, оформления, группы и лимита (лимит — переходами плана). Архив — отдельная
+ * запись сразу, с вопросом: категория уходит с «Обзора», её операции остаются, лимит открытых
+ * месяцев снимается, закрытые месяцы не меняются. Порядок в группе — режимом в списке.
  */
 export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: CategoryScreenProps) {
   const category = budget.categories.find((item) => item.id.toLowerCase() === categoryId.toLowerCase()) ?? null;
@@ -217,21 +226,22 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
       setBusy(false);
     }
   };
-  const { position, count } = categoryPosition(budget, category);
-  const move = (direction: ReorderDirection) => sideWrite(
-    (state) => moveCategory(state, category.id, direction),
-    `Теперь «${category.name}» — ${categoryPositionWords(category, direction === "up" ? position - 1 : position + 1, count)} в группе.`,
-  );
   const what = income ? "источник дохода" : "категорию";
 
   return (
-    <div className="manage-screen category-screen">
-      {/* К своему списку: вид списка записан в адресе категории, и «назад» ведёт к расходам или доходам. */}
-      <TitleBar back={{ label: income ? "Доходы" : "Расходы", onClick: onBack }} title={<bdi dir="auto">{category.name}</bdi>} />
-      <header className="manage-head">
-        <p>{income ? "Источник дохода" : "Категория расходов"}{category.active ? "" : " · в архиве"}</p>
-      </header>
-      <p className="manage-status" role="status">{notice}</p>
+    <FormSheet
+      id="category-sheet"
+      titleLevel={1}
+      title={income ? "Источник дохода" : "Категория"}
+      onClose={onBack}
+      busy={busy}
+      onSubmit={submit}
+      describedBy={error?.field === "form" ? CATEGORY_FORM_ERROR_ID : undefined}
+      footer={<>
+        {error?.field === "form" ? <p className="field-error" id={CATEGORY_FORM_ERROR_ID} role="alert" tabIndex={-1}>{error.message}</p> : null}
+        <button className="primary-button wide dir-save" type="submit" disabled={busy} aria-busy={busy}>Сохранить</button>
+      </>}
+    >
       <CategoryFormView
         budget={budget}
         category={category}
@@ -242,29 +252,21 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
           setDraft((current) => (current === null ? current : { ...current, ...patch }));
           if (error !== null && error.field !== "form") setError(null);
         }}
-        onSubmit={submit}
       />
-      {category.active ? (
-        <section className="manage-group" aria-labelledby="category-order-title">
-          <h2 id="category-order-title" className="list-kicker">Место в группе</h2>
-          <p className="field-hint">{categoryPositionWords(category, position, count)} — в этом порядке плитки стоят на «Обзоре» и в выборе при записи.</p>
-          <ReorderControls id={`category-${category.id}`} name={category.name} position={position} count={count} busy={busy} onMove={move} />
-        </section>
-      ) : null}
-      <section className="manage-group" aria-labelledby="category-archive-title">
-        <h2 id="category-archive-title" className="list-kicker">Архив</h2>
+      <section className="dir-archive" aria-label="Архив">
         {category.active ? <>
-          <p className="field-hint">Удалить {what} нельзя: прошлые месяцы ссылаются на неё. В архиве она уходит с «Обзора» и из выбора при записи, а её операции остаются в «Операциях» и отчётах.</p>
-          <button id={CATEGORY_ARCHIVE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) setAsking(true); }}>
-            <span className="icon-label"><Icon name="archive" size={20} />Убрать в архив</span>
+          <button id={CATEGORY_ARCHIVE_ID} className="quiet-button dir-danger" type="button" aria-disabled={busy || undefined} onClick={() => { if (!busy) setAsking(true); }}>
+            <span className="icon-label"><Icon name="archive" size={24} />Убрать в архив</span>
           </button>
+          <p className="field-hint">Удалить {what} нельзя: прошлые месяцы ссылаются на {income ? "него" : "неё"}. В архиве {income ? "он" : "она"} уходит с «Обзора» и из выбора при записи, а операции остаются в «Операциях» и отчётах.</p>
         </> : <>
-          <p className="field-hint">{income ? "Источник" : "Категория"} в архиве: на «Обзоре» и в выборе при записи {income ? "его" : "её"} нет, операции — на месте.</p>
           <button id={CATEGORY_RESTORE_ID} className="secondary-button" type="button" aria-disabled={busy || undefined} onClick={() => void sideWrite((state) => restoreCategory(state, category.id), `«${category.name}» снова на «Обзоре» и в выборе.`, CATEGORY_ARCHIVE_ID)}>
             Вернуть из архива
           </button>
+          <p className="field-hint">{income ? "Источник" : "Категория"} в архиве: на «Обзоре» и в выборе при записи {income ? "его" : "её"} нет, операции — на месте.</p>
         </>}
       </section>
+      <p className="sheet-status" role="status">{notice}</p>
       {asking ? (
         <ConfirmDialog
           title={`Убрать «${category.name}» в архив?`}
@@ -278,6 +280,6 @@ export function CategoryScreen({ budget, categoryId, write, onBack, onDone }: Ca
           }}
         />
       ) : null}
-    </div>
+    </FormSheet>
   );
 }

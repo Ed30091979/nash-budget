@@ -1,4 +1,4 @@
-import { accountsInOrder, type BudgetState } from "@family-budget/domain";
+import { accountsInOrder, baseCurrencyOf, type BudgetState } from "@family-budget/domain";
 import { accountIcon } from "../../category-visual";
 import { Icon } from "../../components/Icon";
 import { QuestionSheet } from "./QuestionSheet";
@@ -41,7 +41,7 @@ export function AccountsQuestion({ budget, onNo, onYes, onLater }: AccountsQuest
           <ul aria-labelledby="q-accounts-have">
             {accounts.map((account) => (
               <li key={account.id} className="q-mini">
-                <span className="icon-plate q-mini-plate" aria-hidden="true"><Icon name={accountIcon(account)} size={24} /></span>
+                <span className="icon-plate q-mini-plate" aria-hidden="true"><Icon name={accountIcon(account, baseCurrencyOf(budget))} size={24} /></span>
                 <bdi dir="auto">{account.name}</bdi>
               </li>
             ))}

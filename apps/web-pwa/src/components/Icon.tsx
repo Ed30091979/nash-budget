@@ -109,6 +109,22 @@ const GLYPHS = {
      перевода: долг — это кто-то, а перевод остаётся за `arrow-left-right`. */
   repeat: <><path d="m17 2 4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="m7 22-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></>,
   "user-round": <><circle cx="12" cy="8" r="5" /><path d="M20 21a8 8 0 0 0-16 0" /></>,
+  /* ── Дизайн 5.0, R3: справочники. «Другая» валюта и поиск по списку валют; режим «Изменить
+     порядок» — его кнопка, «Выше / Ниже» стрелками и ручка перетаскивания при точном указателе. ── */
+  search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>,
+  "arrow-up-down": <><path d="m21 16-4 4-4-4" /><path d="M17 20V4" /><path d="m3 8 4-4 4 4" /><path d="M7 4v16" /></>,
+  "arrow-up": <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>,
+  "arrow-down": <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>,
+  "grip-vertical": <><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></>,
+  /* Знак валюты на подложке счёта в чужой для бюджета валюте (макет v5 12): к `dollar-sign` и `euro`
+     — иена и юань, тенге и рубль. */
+  yen: <><path d="M12 9.5V21m0-11.5L6 3m6 6.5L18 3" /><path d="M6 15h12" /><path d="M6 11h12" /></>,
+  tenge: <><path d="M6 4h12" /><path d="M6 9h12" /><path d="M12 9v12" /></>,
+  ruble: <><path d="M6 11h8a4 4 0 0 0 0-8H9v18" /><path d="M6 15h8" /></>,
+
+  /* ── Дизайн 5.0, 2d: операции и отчёты. Поиск «Операций» — тот же `search`, что у R3 выше (один
+     глиф на оба экрана); шеврон чипа фильтра, открывающего лист. ── */
+  "chevron-down": <path d="m6 9 6 6 6-6" />,
 } satisfies Readonly<Record<string, ReactElement>>;
 
 export type IconName = keyof typeof GLYPHS;

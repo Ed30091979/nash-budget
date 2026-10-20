@@ -45,14 +45,16 @@ export function TitleBar({ back, title, titleId, titleRef, titleFocusable, actio
 }
 
 /** Действие строки заголовка: глиф 24 в цели 48, имя — словами (иконка не бывает единственным носителем смысла). */
-export function TitleBarAction({ icon, label, onClick, disabled }: {
+export function TitleBarAction({ icon, label, onClick, disabled, id }: {
   readonly icon: "plus" | "pencil";
   readonly label: string;
   readonly onClick: () => void;
   readonly disabled?: boolean;
+  /** Куда вернуть фокус, когда то, что действие открыло, закрылось («+» курсов, R3). */
+  readonly id?: string;
 }) {
   return (
-    <button className="icon-button" type="button" aria-label={label} disabled={disabled} onClick={onClick}>
+    <button id={id} className="icon-button" type="button" aria-label={label} disabled={disabled} onClick={onClick}>
       <Icon name={icon} size={24} />
     </button>
   );

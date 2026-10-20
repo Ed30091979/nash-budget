@@ -35,13 +35,13 @@ export function AddCategorySheet({ budget, type, onChange, onDone, onChoose, onC
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const gate = useRef(createOperationsSubmissionGate());
+  // Кто открыл лист — до первой отрисовки: эффект листа ставит фокус в поле имени раньше, чем
+  // сработал бы эффект здесь, и «открывшим» оказалось бы само поле (R3: «+ Своя» в «Категориях»).
+  const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null));
 
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => {
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
-    };
-  }, []);
+  useEffect(() => () => {
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }, [opener]);
 
   const run = (change: (state: BudgetState) => BudgetState, done: () => void) => {
     void gate.current.run(async () => {

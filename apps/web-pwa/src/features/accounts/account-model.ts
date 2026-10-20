@@ -6,8 +6,10 @@ import {
   AccountValidationError,
   baseCurrencyOf,
   calculateHoldings,
+  convertMinor,
   createAccount,
   currencyExponent,
+  findRate,
   isSupportedCurrency,
   MAX_MONEY_MINOR,
   updateAccount,
@@ -16,11 +18,16 @@ import {
   type AccountType,
   type BudgetState,
   type CurrencyCode,
+  type ExchangeRate,
 } from "@family-budget/domain";
 import { accountIcon, accountTone, iconOfKey, toneOfKey, type CategoryTone } from "../../category-visual";
+import { currencyShortName } from "../../components/CurrencyPicker";
 import type { IconName } from "../../components/Icon";
-import { parseMoney } from "../../money";
+import { formatDay } from "../../date-words";
+import { formatMoney, parseMoney } from "../../money";
 import { writeFailureText } from "../../write/useBudgetWrite";
+import { currencySign } from "../rates/RateQuickSheet";
+import { formatRateValue, ratePer } from "../rates/rate-input";
 
 /**
  * Счета (план волны 2, §1.5): данные списка и формы, без React. Экран рисует то, что здесь
@@ -38,14 +45,24 @@ export const ACCOUNT_TYPE_WORDS: Readonly<Record<AccountType, string>> = {
 
 export { ACCOUNT_NAME_MAX_LENGTH };
 
-/** Форма счёта так, как её набирают: остаток — текстом, знак — отдельной отметкой. */
+/**
+ * Форма счёта так, как её набирают: остаток — текстом, знак — отдельной отметкой.
+ *
+ * Дизайн 5.0 (макет 12): поле — «Сколько сейчас на счёте». У нового счёта это и есть начальный
+ * остаток; у записанного — остаток на сегодня, и его правка сдвигает начальный остаток на ту же
+ * разницу (`AccountTarget.offsetMinor`): остатки всех прошлых дней сдвигаются вместе с ним, и форма
+ * говорит это суммой, как в 2c.
+ */
 export interface AccountFormDraft {
   readonly name: string;
   readonly type: AccountType;
   readonly currency: CurrencyCode;
-  /** Начальный остаток без знака, как набран: «12 500», «1250,50». Пусто — ноль. */
+  /**
+   * Сколько на счёте сейчас, как набрано: «12 500», «1250,50». Пусто — ноль. Долг записанного счёта
+   * приходит в поле со знаком — «−1500» (ревью R3, M-1): набранное поверх число заменяет и знак.
+   */
   readonly opening: string;
-  /** Остаток ниже нуля — долг по карте. */
+  /** Остаток ниже нуля — долг по карте: отметка для набранного без минуса. */
   readonly negative: boolean;
   /** Иконка; `null` — «Авто», по виду счёта. */
   readonly icon: IconName | null;
@@ -81,14 +98,33 @@ export function blankAccountDraft(state: Pick<BudgetState, "household">): Accoun
   return { name: "", type: "current", currency: baseCurrencyOf(state), opening: "", negative: false, icon: null, tone: null, includeInTotal: true };
 }
 
-/** Форма записанного счёта: ключи оформления — только те, что эта сборка знает. */
-export function accountDraftOf(account: Account): AccountFormDraft {
+/**
+ * Сколько движений по счёту набралось к сегодняшнему дню: остаток сегодня минус начальный. Правка
+ * «Сколько сейчас» пишет начальный остаток как набранное минус эта разница; без представимого
+ * остатка разницы нет — поле правит сам начальный остаток.
+ */
+export function accountOffset(state: BudgetState, account: Account, today: string): number {
+  const balance = calculateHoldings(state, today).accountBalancesMinor[account.id];
+  return balance === undefined || balance === null ? 0 : balance - account.openingBalanceMinor;
+}
+
+/** Знак долга в поле — типографский минус: `parseOpening` читает и его, и дефис. */
+const MINUS = "\u2212";
+
+/**
+ * Форма записанного счёта: ключи оформления — только те, что эта сборка знает. `offsetMinor` —
+ * движения к сегодняшнему дню (`accountOffset`): поле показывает остаток сегодня. Долг — минусом в
+ * самом поле, а отметка «долг» снята: иначе набранное поверх «1500» число молча записалось бы долгом
+ * (ревью R3, M-1).
+ */
+export function accountDraftOf(account: Account, offsetMinor = 0): AccountFormDraft {
+  const shown = account.openingBalanceMinor + offsetMinor;
   return {
     name: account.name,
     type: account.type,
     currency: account.currency,
-    opening: account.openingBalanceMinor === 0 ? "" : minorToInput(account.openingBalanceMinor, account.currency),
-    negative: account.openingBalanceMinor < 0,
+    opening: shown === 0 ? "" : `${shown < 0 ? MINUS : ""}${minorToInput(shown, account.currency)}`,
+    negative: false,
     icon: iconOfKey(Object.hasOwn(account, "icon") ? account.icon : undefined),
     tone: toneOfKey(Object.hasOwn(account, "color") ? account.color : undefined),
     includeInTotal: account.includeInTotal !== false,
@@ -98,10 +134,12 @@ export function accountDraftOf(account: Account): AccountFormDraft {
 export type OpeningInput = { readonly kind: "amount"; readonly minor: number } | { readonly kind: "error"; readonly message: string };
 
 /**
- * Начальный остаток из поля: пусто и ноль — ноль; иначе положительная сумма с не большим числом
- * знаков, чем у валюты счёта, и знак — из отметки «долг». Минус, набранный в поле, тоже понят.
+ * Остаток из поля: пусто и ноль — ноль; иначе сумма с не большим числом знаков, чем у валюты счёта,
+ * и знак — минусом в поле или отметкой «долг». `limit` — предел по модулю: у нового счёта поле и
+ * есть начальный остаток; у записанного (`null`) поле — остаток сегодня, и предел проверяется у
+ * начального остатка, который из него выйдет (`shiftRefusal`).
  */
-export function parseOpening(draft: Pick<AccountFormDraft, "opening" | "negative" | "currency">): OpeningInput {
+export function parseOpening(draft: Pick<AccountFormDraft, "opening" | "negative" | "currency">, limit: number | null = MAX_MONEY_MINOR): OpeningInput {
   let text = draft.opening.trim();
   let negative = draft.negative;
   if (/^[-−]/u.test(text)) {
@@ -115,16 +153,32 @@ export function parseOpening(draft: Pick<AccountFormDraft, "opening" | "negative
   } catch (error) {
     return { kind: "error", message: error instanceof Error ? error.message : "Введите сумму числом." };
   }
-  if (minor > MAX_MONEY_MINOR) return { kind: "error", message: "Начальный остаток — сумма не больше ста миллионов по модулю." };
+  if (limit !== null && minor > limit) return { kind: "error", message: "Начальный остаток — сумма не больше ста миллионов по модулю." };
   return { kind: "amount", minor: negative ? -minor : minor };
+}
+
+/** Поле «Сколько сейчас» не тронуто: тот же текст и та же отметка, что при открытии. */
+function openingUntouched(draft: AccountFormDraft, pristine: AccountFormDraft): boolean {
+  return draft.opening.trim() === pristine.opening.trim() && draft.negative === pristine.negative;
+}
+
+/**
+ * Набранный остаток сегодня, который сдвинул бы начальный за предел суммы, — отказ словами о сдвиге
+ * и о том, сколько можно указать (ревью R3, LOW-1); иначе `null`.
+ */
+export function shiftRefusal(shownMinor: number, offsetMinor: number, currency: CurrencyCode): string | null {
+  const opening = shownMinor - offsetMinor;
+  if (Math.abs(opening) <= MAX_MONEY_MINOR) return null;
+  const bound = opening > 0 ? `не больше ${formatMoney(MAX_MONEY_MINOR + offsetMinor, currency)}` : `не меньше ${formatMoney(-MAX_MONEY_MINOR + offsetMinor, currency)}`;
+  return `Слишком большой сдвиг: начальный остаток, от которого считается этот, ушёл бы за предел суммы. Сейчас на счёте можно указать ${bound}.`;
 }
 
 /** Отличается ли форма от снимка при открытии: остаток — по сумме, а не по написанию. */
 export function accountDraftDiffers(left: AccountFormDraft, right: AccountFormDraft): boolean {
   if (left.name.trim() !== right.name.trim() || left.type !== right.type || left.currency !== right.currency
     || left.icon !== right.icon || left.tone !== right.tone || left.includeInTotal !== right.includeInTotal) return true;
-  const a = parseOpening(left);
-  const b = parseOpening(right);
+  const a = parseOpening(left, null);
+  const b = parseOpening(right, null);
   if (a.kind === "amount" && b.kind === "amount") return a.minor !== b.minor;
   return left.opening.trim() !== right.opening.trim() || left.negative !== right.negative;
 }
@@ -132,19 +186,35 @@ export function accountDraftDiffers(left: AccountFormDraft, right: AccountFormDr
 /**
  * Правка счёта — только то, что человек изменил против снимка: поле, которое за это время поменяло
  * другое устройство, а здесь не трогали, остаётся тем, что пришло (D-031: последняя запись целого
- * счёта побеждает, и лишнее поле в правке переписало бы чужое).
+ * счёта побеждает, и лишнее поле в правке переписало бы чужое). `shownMinor` — набранное «Сколько
+ * сейчас» (`null` — поле не тронуто), `offsetMinor` — движения к сегодняшнему дню: начальный остаток
+ * пишется, только если набранное изменилось, и равен набранному минус движения.
  */
-export function accountPatch(draft: AccountFormDraft, pristine: AccountFormDraft, openingMinor: number): AccountPatch {
-  const pristineOpening = parseOpening(pristine);
+export function accountPatch(draft: AccountFormDraft, pristine: AccountFormDraft, shownMinor: number | null, offsetMinor = 0): AccountPatch {
+  const pristineShown = parseOpening(pristine, null);
+  const openingChanged = shownMinor !== null && (pristineShown.kind !== "amount" || pristineShown.minor !== shownMinor);
   return {
     ...(draft.name.trim() !== pristine.name.trim() ? { name: draft.name } : {}),
     ...(draft.type !== pristine.type ? { type: draft.type } : {}),
     ...(draft.currency !== pristine.currency ? { currency: draft.currency } : {}),
-    ...(pristineOpening.kind !== "amount" || pristineOpening.minor !== openingMinor ? { openingBalanceMinor: openingMinor } : {}),
+    ...(openingChanged ? { openingBalanceMinor: shownMinor - offsetMinor } : {}),
     ...(draft.icon !== pristine.icon ? { icon: draft.icon } : {}),
     ...(draft.tone !== pristine.tone ? { color: draft.tone } : {}),
     ...(draft.includeInTotal !== pristine.includeInTotal ? { includeInTotal: draft.includeInTotal } : {}),
   };
+}
+
+/** Записанный счёт, открытый в форме: снимок полей при открытии и движения к сегодняшнему дню. */
+export interface AccountTarget {
+  readonly account: Account;
+  readonly pristine: AccountFormDraft;
+  /** `accountOffset` при открытии: им проверяется набранное до записи; без него поле правит сам начальный остаток. */
+  readonly offsetMinor?: number;
+  /**
+   * Сегодня: с ним движения пересчитываются на самой записи, по состоянию, в которое она ляжет, —
+   * операция, пришедшая синхронизацией, пока лист открыт, не сбивает набранное (ревью R3, LOW-2).
+   */
+  readonly today?: string;
 }
 
 export type AccountSave =
@@ -153,37 +223,68 @@ export type AccountSave =
 
 /**
  * Что записать по форме: новый счёт или правку записанного. Ошибка поля, которую видно без записи
- * (остаток не число), — сразу; всё остальное решает домен на настоящем состоянии.
+ * (остаток не число, сдвиг за предел), — сразу; всё остальное решает домен на настоящем состоянии.
+ * Нетронутое поле «Сколько сейчас» у правки не разбирается и не пишется (ревью R3, LOW-1).
  */
 export function accountSave(
   draft: AccountFormDraft,
-  target: { readonly account: Account; readonly pristine: AccountFormDraft } | null,
+  target: AccountTarget | null,
   makeId: () => string = () => crypto.randomUUID(),
 ): AccountSave {
+  if (target !== null) return accountEdit(draft, target);
   const opening = parseOpening(draft);
   if (opening.kind === "error") return { kind: "error", error: { field: "opening", message: opening.message } };
-  if (target === null) {
-    let createdId: string | null = null;
-    return {
-      kind: "change",
-      change: (state) => {
-        const created = createAccount(state, {
-          name: draft.name,
-          type: draft.type,
-          currency: draft.currency,
-          openingBalanceMinor: opening.minor,
-          ...(draft.icon === null ? {} : { icon: draft.icon }),
-          ...(draft.tone === null ? {} : { color: draft.tone }),
-          includeInTotal: draft.includeInTotal,
-        }, makeId);
-        createdId = created.account.id;
-        return created.state;
-      },
-      created: () => createdId,
-    };
+  let createdId: string | null = null;
+  return {
+    kind: "change",
+    change: (state) => {
+      const created = createAccount(state, {
+        name: draft.name,
+        type: draft.type,
+        currency: draft.currency,
+        openingBalanceMinor: opening.minor,
+        ...(draft.icon === null ? {} : { icon: draft.icon }),
+        ...(draft.tone === null ? {} : { color: draft.tone }),
+        includeInTotal: draft.includeInTotal,
+      }, makeId);
+      createdId = created.account.id;
+      return created.state;
+    },
+    created: () => createdId,
+  };
+}
+
+/**
+ * Правка записанного счёта. Набранное «Сколько сейчас» проверяется по снимку движений сразу, а пишется
+ * по движениям того состояния, в которое ложится запись: начальный остаток — набранное минус они.
+ */
+
+function accountEdit(draft: AccountFormDraft, target: AccountTarget): AccountSave {
+  let shown: number | null = null;
+  if (!openingUntouched(draft, target.pristine)) {
+    const opening = parseOpening(draft, null);
+    if (opening.kind === "error") return { kind: "error", error: { field: "opening", message: opening.message } };
+    const before = parseOpening(target.pristine, null);
+    if (before.kind !== "amount" || before.minor !== opening.minor) shown = opening.minor;
   }
-  const patch = accountPatch(draft, target.pristine, opening.minor);
-  return { kind: "change", change: (state) => updateAccount(state, target.account.id, patch), created: () => null };
+  const snapshot = target.offsetMinor ?? 0;
+  if (shown !== null) {
+    const refusal = shiftRefusal(shown, snapshot, draft.currency);
+    if (refusal !== null) return { kind: "error", error: { field: "opening", message: refusal } };
+  }
+  const id = target.account.id;
+  return {
+    kind: "change",
+    change: (state) => {
+      if (shown === null) return updateAccount(state, id, accountPatch(draft, target.pristine, null));
+      const live = state.accounts.find((account) => account.id === id);
+      const offset = live === undefined || target.today === undefined ? snapshot : accountOffset(state, live, target.today);
+      const refusal = shiftRefusal(shown, offset, draft.currency);
+      if (refusal !== null) throw new AccountValidationError("invalid_opening_balance", "openingBalanceMinor", refusal);
+      return updateAccount(state, id, accountPatch(draft, target.pristine, shown, offset));
+    },
+    created: () => null,
+  };
 }
 
 const FIELD_OF: Readonly<Record<AccountValidationError["field"], AccountFormField>> = {
@@ -225,6 +326,8 @@ export interface AccountRow {
   readonly tone: CategoryTone | null;
   /** Остаток на сегодня в валюте счёта; `null` — не представим. */
   readonly balanceMinor: number | null;
+  /** Тот же остаток в базовой валюте — у счёта в другой валюте с курсом на сегодня; иначе `null`. */
+  readonly baseMinor: number | null;
   /** «Карта или счёт · USD · вне итога» */
   readonly meta: string;
   /** Место среди активных, с единицы; у архивного — 0. */
@@ -237,13 +340,17 @@ export interface AccountsList {
 }
 
 export function accountsList(state: BudgetState, today: string): AccountsList {
-  const balances = calculateHoldings(state, today).accountBalancesMinor;
+  const holdings = calculateHoldings(state, today);
+  const balances = holdings.accountBalancesMinor;
   const base = baseCurrencyOf(state);
+  // Остаток в базе — тот, которым его оценивает итог (`calculateHoldings`): у счёта вне итога тоже.
+  const inBase = (account: Account): number | null => (account.currency === base ? null : holdings.accountBalancesInBaseMinor[account.id] ?? null);
   const row = (account: Account, position: number): AccountRow => ({
     account,
-    icon: accountIcon(account),
+    icon: accountIcon(account, base),
     tone: accountTone(account),
     balanceMinor: balances[account.id] ?? null,
+    baseMinor: inBase(account),
     meta: [ACCOUNT_TYPE_WORDS[account.type], account.currency === base ? null : account.currency, account.includeInTotal === false ? "вне итога" : null]
       .filter((part): part is string => part !== null)
       .join(" · "),
@@ -254,4 +361,76 @@ export function accountsList(state: BudgetState, today: string): AccountsList {
     active: ordered.filter((account) => account.active).map((account, index) => row(account, index + 1)),
     archived: ordered.filter((account) => !account.active).map((account) => row(account, 0)),
   };
+}
+
+/** Курс, по которому «Всего на счетах» оценивает валюту: «доллары — по курсу 92,50 ₽ от 15 октября». */
+export interface TotalRate {
+  readonly currency: CurrencyCode;
+  readonly rate: ExchangeRate;
+}
+
+/**
+ * «Всего на счетах» над списком (макет 11): итог в базовой валюте — тот же, что у итога «Обзора»
+ * (`calculateHoldings`, счета с `includeInTotal !== false`, архивные тоже), — курсы, по которым он
+ * оценил чужие валюты, и счета, которые оценить не смог: их итог называет, а не выбрасывает молча.
+ */
+export interface AccountsTotal {
+  readonly totalInBaseMinor: number;
+  readonly base: CurrencyCode;
+  readonly rates: readonly TotalRate[];
+  readonly unvalued: readonly { readonly name: string; readonly currency: CurrencyCode }[];
+}
+
+export function accountsTotal(state: BudgetState, today: string): AccountsTotal {
+  const holdings = calculateHoldings(state, today);
+  const base = baseCurrencyOf(state);
+  const unvalued = new Set(holdings.unvaluedAccountIds);
+  const counted = accountsInOrder(state.accounts).filter((account) => account.includeInTotal !== false);
+  const currencies = [...new Set(counted.filter((account) => account.currency !== base && !unvalued.has(account.id)).map((account) => account.currency))];
+  return {
+    totalInBaseMinor: holdings.totalInBaseMinor,
+    base,
+    rates: currencies.flatMap((currency) => {
+      const rate = findRate(state.exchangeRates ?? [], currency, base, today);
+      return rate === undefined ? [] : [{ currency, rate }];
+    }),
+    unvalued: counted.filter((account) => unvalued.has(account.id)).map((account) => ({ name: account.name, currency: account.currency })),
+  };
+}
+
+/** «92,50 ₽» или «18,40 ₽ за 100» — курс так, как его набирают, со знаком базы. */
+function rateValueWords(rate: ExchangeRate): string {
+  const per = ratePer(rate.currency);
+  const value = `${formatRateValue(rate.rate, rate.currency, rate.baseCurrency, per)}\u00a0${currencySign(rate.baseCurrency)}`;
+  return per === 1 ? value : `${value} за\u00a0${per}`;
+}
+
+/** «доллар — по курсу 92,50 ₽ от 15 октября»: строка под «Всего на счетах». */
+export function totalRateWords({ currency, rate }: TotalRate): string {
+  return `${currencyShortName(currency).toLocaleLowerCase("ru-RU")} — по курсу ${rateValueWords(rate)} от ${formatDay(rate.date)}`;
+}
+
+/** Набранный остаток в базовой валюте и слова о нём. */
+export interface AccountEstimate {
+  readonly inBaseMinor: number;
+  /** «≈ 111 000 ₽ по курсу 92,50 ₽ от 15 октября» */
+  readonly words: string;
+}
+
+/**
+ * Пересчёт набранного остатка в базу (макет 12): «≈ 111 000 ₽ по курсу 92,50 ₽ от 15 октября». У
+ * счёта в базовой валюте пересчёта нет; без курса на сегодня — `null`, и форма говорит о курсе словами.
+ */
+export function accountEstimate(state: BudgetState, currency: CurrencyCode, minor: number, today: string): AccountEstimate | null {
+  const base = baseCurrencyOf(state);
+  if (currency === base) return null;
+  const rate = findRate(state.exchangeRates ?? [], currency, base, today);
+  if (rate === undefined) return null;
+  let inBase: number;
+  try {
+    inBase = convertMinor(minor, rate.rate);
+  } catch {
+    return null;
+  }
+  return { inBaseMinor: inBase, words: `≈ ${formatMoney(inBase, base)} по курсу ${rateValueWords(rate)} от ${formatDay(rate.date)}` };
 }

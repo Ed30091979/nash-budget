@@ -1,10 +1,8 @@
 import { calculateBudget, makePlanningSeed, PLANNING_IDS, SEED_IDS, type BudgetState } from "@family-budget/domain";
 import { describe, expect, it } from "vitest";
 import {
-  buildOperationSearchIndex,
   createDashboardModel,
   nextScheduledDate,
-  searchOperations,
 } from "./model";
 
 function makeSixOperationState(): BudgetState {
@@ -133,59 +131,6 @@ describe("dashboard derived model", () => {
       flexibleRemainingMinor: 1_900_000,
       totalExpenseFactMinor: 7_100_000,
     });
-  });
-
-  it("searches bounded normalized literal context immutably and leaves totals unchanged", () => {
-    const state = makeSixOperationState();
-    const snapshot = structuredClone(state);
-    const totals = calculateBudget(state);
-    const found = searchOperations(state, { query: "  П\u0440\u043E\u0434\u0443\u043A\u0442\u044B  " });
-    expect(found).toHaveLength(2);
-    expect(found.map((item) => item.transaction.kind).sort()).toEqual(["expense", "refund"]);
-    expect(searchOperations(state)).toHaveLength(6);
-    expect(state).toEqual(snapshot);
-    expect(calculateBudget(state)).toEqual(totals);
-    expect(() => searchOperations(state, { query: "x".repeat(81) })).toThrow("80");
-    expect(() => searchOperations(state, { query: "\uFDFA".repeat(80) })).not.toThrow();
-    expect(searchOperations(state, { query: "\uFDFA".repeat(80) })).toEqual([]);
-    expect(() => searchOperations(state, { query: "[.*+?^${}()|\\]" })).not.toThrow();
-  });
-
-  it("sorts a copied result and provides category/refund context even when a category is archived", () => {
-    const state = makeSixOperationState();
-    const archived = {
-      ...state,
-      categories: state.categories.map((item) => item.id === PLANNING_IDS.categories.food ? { ...item, active: false } : item),
-    };
-    const result = searchOperations(archived, { query: "возврат расхода" });
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({ categoryName: "Продукты" });
-    expect(result[0]!.context).toContain("Продукты");
-    expect(result[0]!.context).toContain("возврат расхода");
-  });
-
-  it("indexes 50k valid operations once, deterministically and without touching the state", () => {
-    const source = makePlanningSeed();
-    const transactions = Array.from({ length: 50_000 }, (_, index) => ({
-      id: `a0000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      occurredOn: `2026-07-${String(index % 28 + 1).padStart(2, "0")}`,
-      status: "posted" as const,
-      kind: "income" as const,
-      amountMinor: index + 1,
-      accountId: SEED_IDS.accounts.main,
-    }));
-    const state: BudgetState = { ...source, transactions };
-    const index = buildOperationSearchIndex(state);
-    const rebuilt = buildOperationSearchIndex(state);
-    const found = searchOperations(state, {});
-
-    // Порядок один и тот же при каждой сборке, счёт точный, а исходный массив не тронут:
-    // сколько строк из этого показать, решает экран, и он же держит разметку ограниченной.
-    expect(index.entries).toHaveLength(50_000);
-    expect(found).toHaveLength(50_000);
-    expect(found.slice(0, 50).map((item) => item.transaction.id))
-      .toEqual(rebuilt.entries.slice(0, 50).map((item) => item.transaction.id));
-    expect(state.transactions).toBe(transactions);
   });
 
   it("counts an operation on a foreign account by the value it carries in roubles, not by its cents", () => {

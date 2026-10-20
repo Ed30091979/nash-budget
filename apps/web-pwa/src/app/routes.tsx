@@ -15,7 +15,7 @@ import type { FamilyController } from "../features/family";
 import type { ImportMemory } from "../features/import";
 import { ImportScreen } from "../features/import";
 import { sheetOpeningOf, type SheetOpening } from "../features/entry/sheet-address";
-import { HistoryScreen, type HistoryMembers } from "../features/operations";
+import { FeedScreen } from "../features/feed/FeedScreen";
 import { AddCategorySheet } from "../features/overview/AddCategorySheet";
 import { currentMonth, defaultAccountOf } from "../features/overview/overview-model";
 import { OverviewScreen } from "../features/overview/OverviewScreen";
@@ -30,7 +30,8 @@ import { AccountsScreen } from "../features/accounts/AccountsScreen";
 import { RatesScreen } from "../features/rates/RatesScreen";
 import { ratesNote } from "../features/rates/rates-model";
 import { YearScreen, type AnnualPlan } from "../features/plan-year/YearScreen";
-import { ReportsScreen, type BudgetMetrics } from "../features/reports/ReportsScreen";
+import { ReportsScreen } from "../features/reports/ReportsScreen";
+import { reportsFieldsForMonth } from "../features/reports/report-model";
 import type { Route } from "../navigation/routes";
 import { plural } from "../plural";
 import type { PeriodClock } from "../reach";
@@ -46,12 +47,9 @@ export interface AppRouteContext {
   /** День семьи по её календарю (`localToday`): один на все экраны и на лист ввода. */
   readonly today: string;
   readonly plan: AnnualPlan;
-  readonly metrics: BudgetMetrics;
   readonly clock: PeriodClock;
   readonly paydays: readonly number[];
   readonly categoryById: Map<string, BudgetState["categories"][number]>;
-  /** «Кто записал» в «Операциях»: участники семьи и выбранный фильтр (память сессии). */
-  readonly members: HistoryMembers;
   readonly monthToOpen: string | null;
   readonly openingMonth: boolean;
   readonly openMonth: (month: string) => Promise<void>;
@@ -60,6 +58,8 @@ export interface AppRouteContext {
   readonly navigate: (route: Route) => void;
   /** Кнопка «назад» экрана: к родителю маршрута. */
   readonly back: () => void;
+  /** Маршрут записи истории под текущей: «‹ Отчёты» у ленты, открытой из «Отчётов». */
+  readonly beneath: Route | null;
   /** Тот же экран в другом виде (список расходов или доходов): запись истории заменяется, а не копится. */
   readonly replace: (route: Route) => void;
   /** Лист ввода поверх экрана, на котором стоишь: с плиток, с «+», из «Операций» (`sheet-address.ts`). */
@@ -165,7 +165,8 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
       onAddCategory={setAdding}
       onAddAccount={() => navigate({ name: "account-new" })}
       onPlan={() => navigate({ name: "plan-month" })}
-      onReports={() => navigate({ name: "reports" })}
+      // «Расходы» — к «Отчётам» за тот же месяц: итог там тот же (ревью 2b, MEDIUM-8).
+      onReports={() => navigate({ name: "reports", ...reportsFieldsForMonth(month ?? thisMonth, today) })}
       onEdit={(row) => navigate(row === "accounts" ? { name: "accounts" } : { name: "categories", type: "expense" })}
       coach={showCoach ? <CoachMark target={`category:${coachTarget}`} onDismiss={() => void firstRunStore().update(finishCoach)} /> : null}
       hints={<HintCards budget={budget} today={today} lastSuccessfulBackup={app.lastSuccessfulBackup} inFamily={app.family.inFamily} syncAvailable={app.family.serverUrl !== null} onAction={hintAction} />}
@@ -188,24 +189,80 @@ function OverviewRoute({ app, month, sheetOpen }: { readonly app: AppRouteContex
 }
 
 /**
+ * «Обзор» под листом счёта, открытым вопросом первого запуска «Есть ещё места…»: та же картинка, куда
+ * вернут крестик и «Сохранить» (ревью R3, LOW-4). Он выключен вместе со всем вокруг листа, поэтому
+ * без вопросов, подсказок и действий — только плитки текущего месяца.
+ */
+function OverviewUnderSheet({ app }: { readonly app: AppRouteContext }) {
+  const { budget, today, plan, clock, monthToOpen, openingMonth } = app;
+  const idle = () => undefined;
+  return (
+    <OverviewScreen
+      budget={budget}
+      today={today}
+      month={currentMonth(today)}
+      onMonth={idle}
+      clock={clock}
+      flexiblePlanMinor={plan.currentMonth.flexiblePlanMinor}
+      // Семейная новость — момент настоящего «Обзора» (потолок моментов): под листом её нет.
+      familyNews={[]}
+      monthToOpen={monthToOpen}
+      openingMonth={openingMonth}
+      onOpenMonth={idle}
+      onOpenSheet={idle}
+      onAddCategory={idle}
+      onAddAccount={idle}
+      onPlan={idle}
+      onReports={idle}
+      onEdit={idle}
+    />
+  );
+}
+
+/**
  * Экран маршрута. Плашки задержки и тревоги ключа стоят над ним и принадлежат оболочке, лист ввода
  * — поверх него (`EntrySheetHost` в оболочке).
  *
- * Раскладка 2b (план волны 2, §4): «Обзор» — месяц и плитки, «Операции» — прежняя «Вся история»
- * до подволны 2d, «+» — лист ввода поверх вкладки, «Отчёты» — итоги и расходы по категориям,
- * «Ещё» — прежний список с планом месяца и планом на год.
+ * Раскладка 2d (план волны 2, §4): «Обзор» — месяц и плитки, «Операции» — лента по дням с поиском и
+ * фильтрами, «+» — лист ввода поверх вкладки, «Отчёты» — кольцо, легенда и столбцы по месяцам,
+ * «Ещё» — справочники, планы и данные.
  */
 export function RouteView({ route, app }: { readonly route: Route; readonly app: AppRouteContext }) {
   const {
-    budget, plan, metrics, paydays, categoryById, members, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
+    budget, plan, paydays, categoryById, navigate, back, openSheet, openEdit, write, budgetRef, storageHealth, isIos,
     isStandalone, lastSuccessfulBackup, recordBackup, setMessage, persistClear, publishEmpty, importMemory, family,
     familyScreen, syncIndicator,
   } = app;
   return <>
           {route.name === "overview" ? <OverviewRoute app={app} month={route.month} sheetOpen={route.sheet !== undefined} /> : null}
-          {/* «Операции» — вкладка: строка открывает операцию в листе ввода, и адрес это называет. */}
-          {route.name === "operations" ? <HistoryScreen budget={budget} members={members} onEdit={openEdit} onAdd={() => openSheet({})} /> : null}
-          {route.name === "reports" ? <ReportsScreen budget={budget} metrics={metrics} /> : null}
+          {/* «Операции» — вкладка: фильтры в адресе, смена фильтра заменяет запись истории; строка
+              открывает операцию в листе ввода поверх ленты, и строка поиска экрана при этом остаётся.
+              Лента поверх «Отчётов» (строка легенды; лист правки поверх неё — тот же экран) — со строкой
+              «‹ Отчёты»: назад к той же их записи истории. */}
+          {route.name === "operations" ? (
+            <FeedScreen
+              budget={budget}
+              today={app.today}
+              filters={route}
+              onFilters={(filters) => app.replace({ name: "operations", ...filters })}
+              onEdit={openEdit}
+              onAdd={() => openSheet({ op: "expense" })}
+              onImport={() => navigate({ name: "import" })}
+              {...(app.beneath?.name === "reports" ? { back: { label: "Отчёты", onClick: () => navigate(app.beneath!) } } : {})}
+            />
+          ) : null}
+          {/* «Отчёты»: вкладка и период — тот же экран (замена записи), строка легенды — «Операции»
+              с фильтром поверх «Отчётов», и «Назад» возвращает сюда с тем же периодом. */}
+          {route.name === "reports" ? (
+            <ReportsScreen
+              budget={budget}
+              today={app.today}
+              fields={route}
+              onFields={(fields) => app.replace({ name: "reports", ...fields })}
+              onFeed={(filters) => navigate({ name: "operations", ...filters })}
+              onAdd={(kind) => openSheet({ op: kind })}
+            />
+          ) : null}
           {route.name === "more" ? <MoreScreen
             budget={budget}
             storageHealth={storageHealth}
@@ -279,29 +336,37 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
               onMessage={setMessage}
             />
           ) : null}
-          {route.name === "category" ? (
+          {route.name === "category" ? <>
+            {/* Лист категории (дизайн 5.0, макет 13) — поверх своего списка: лист первым, чтобы `h1`
+                маршрута был его заголовком; список под затемнением выключен. */}
             <CategoryScreen
               key={route.id}
               budget={budget}
               categoryId={route.id}
               write={write}
               // К своему списку — родителю маршрута: вид списка записан в адресе категории, и
-              // запись истории под формой — этот список (ревью 2c, MEDIUM-1).
+              // запись истории под листом — этот список (ревью 2c, MEDIUM-1).
               onBack={back}
               onDone={(message) => { setMessage(message); back(); }}
             />
-          ) : null}
+            <div className="dir-under" inert aria-hidden="true">
+              <CategoriesScreen background budget={budget} type={route.type ?? "expense"} write={write} onBack={back} onType={() => undefined} onOpen={() => undefined} onMessage={() => undefined} />
+            </div>
+          </> : null}
           {route.name === "tags" ? <TagsScreen budget={budget} write={write} onBack={back} /> : null}
           {/* Заглушки до подволны 2e: пустое состояние той же анатомии, что у меток (R2). */}
           {route.name === "debts" || route.name === "goals" || route.name === "recurring" ? <PlaceholderScreen budget={budget} kind={route.name} onBack={back} /> : null}
-          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} /> : null}
+          {route.name === "rates" ? <RatesScreen budget={budget} today={app.today} write={write} onBack={back} onNewAccount={() => navigate({ name: "account-new" })} /> : null}
           {route.name === "account" || route.name === "account-new" ? (() => {
             // Форма с видом из адреса открыта вопросом первого запуска «Есть ещё места…» с «Обзора»:
-            // и «назад», и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
+            // и крестик, и заведённый счёт возвращают туда, где ждёт следующий вопрос (роутер вернётся
             // по истории), а не в список счетов (ревью R2, L-5).
             const fromQuestion = route.name === "account-new" && route.type !== undefined;
             const leave = () => (fromQuestion ? navigate({ name: "overview" }) : back());
-            return (
+            // Лист счёта (дизайн 5.0, макет 12) — поверх списка: лист первым, чтобы `h1` маршрута был
+            // его заголовком; список под затемнением выключен вместе со всем вокруг листа. Из вопроса
+            // первого запуска под листом — «Обзор», куда лист и вернёт.
+            return <>
               <AccountScreen
                 key={route.name === "account" ? route.id : "new"}
                 budget={budget}
@@ -310,10 +375,14 @@ export function RouteView({ route, app }: { readonly route: Route; readonly app:
                 {...(route.name === "account-new" && route.type !== undefined ? { initialType: route.type } : {})}
                 write={write}
                 onBack={leave}
-                {...(fromQuestion ? { backLabel: "Обзор" } : {})}
                 onDone={(message) => { setMessage(message); leave(); }}
               />
-            );
+              <div className="dir-under" inert aria-hidden="true">
+                {fromQuestion
+                  ? <OverviewUnderSheet app={app} />
+                  : <AccountsScreen background budget={budget} today={app.today} write={write} onBack={back} onOpen={() => undefined} onCreate={() => undefined} />}
+              </div>
+            </>;
           })() : null}
   </>;
 }

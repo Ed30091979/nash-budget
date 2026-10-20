@@ -9,7 +9,7 @@
 import { expect, test } from "./fixtures";
 import { addDays } from "@family-budget/domain";
 import { demoBudget, dollarExpenseDay, DOLLARS_NAME, restoreBudget, withDollarAccount, withDollarExpenseAtOldRate } from "./budgets";
-import { amountField, entrySheet, goToOverview, loadDemo, submitButton, tile, toast } from "./sheet";
+import { amountField, entrySheet, goToOverview, loadDemo, showWholeHistory, submitButton, tile, toast } from "./sheet";
 
 test("курса нет — «Задать курс» в листе: Enter и кнопка его записывают, оценка встаёт под суммой, расход записывается", async ({ page }) => {
   await loadDemo(page);
@@ -59,6 +59,8 @@ test("правка операции в долларах оценивает её 
   const before = await tile(page, "Продукты").getAttribute("aria-label");
 
   await page.getByRole("button", { name: "Операции", exact: true }).click();
+  // Пять дней назад — бывает и прошлый месяц, а лента по умолчанию — текущий: вся история.
+  await showWholeHistory(page);
   const day = dollarExpenseDay();
   await page.getByRole("button", { name: `Изменить операцию «Расход 10\u00a0$ от ${day}»` }).click();
   const sheet = entrySheet(page);
