@@ -10,6 +10,7 @@ import type { TileDrag } from "../../components/tiles/Tile";
 import { TileGrid } from "../../components/tiles/TileGrid";
 import { monthName } from "../../date-words";
 import type { PeriodClock } from "../../reach";
+import { periodLabel } from "../feed/feed-model";
 import { MonthSwitch } from "./MonthSwitch";
 import { overviewModel, reachLineModel, UNCATEGORIZED_INCOME_NAME } from "./overview-model";
 import { isDragSource, isPicked, pick, pickHintParts, PICK_IDLE, type HintPart, type PickEvent, type PickState, type PickTile, type SheetRequest } from "./pick-model";
@@ -236,6 +237,11 @@ export function OverviewScreen({
 
       <section className="tile-section" aria-labelledby="overview-expenses">
         <RowHead id="overview-expenses" title="Расходы" row="expenses" onEdit={onEdit} />
+        {/* План с окном не на весь месяц (копия, другое устройство): плитки считаются по окну, итог
+            «Расходы» в шапке — по всему месяцу; окно названо, чтобы числа не спорили молча (LOW-2). */}
+        {model.planWindow === null ? null : (
+          <p className="overview-note">Траты и лимиты плиток — за {periodLabel(model.planWindow.from, model.planWindow.to, today)}: так задан план месяца. «Расходы» вверху — за весь месяц.</p>
+        )}
         <TileGrid label="Категории расходов" layout="grid">
           {model.categories.map((tile) => {
             const key: PickTile = { kind: "category", id: tile.id };

@@ -6,7 +6,7 @@ import { softHyphenate } from "../../hyphenation";
 import { formatMoney } from "../../money";
 import { buildDemoBudgetState } from "../../onboarding/demo";
 import { reportModel, reportsFieldsForMonth } from "../reports/report-model";
-import { overviewModel } from "./overview-model";
+import { overviewModel, reachLineModel } from "./overview-model";
 import { periodClock } from "../../reach";
 import { MonthSwitch } from "./MonthSwitch";
 import { OverviewScreen, PickHintText, type OverviewScreenProps } from "./OverviewScreen";
@@ -200,6 +200,34 @@ describe("«Обзор» и «Отчёты»: «Расходы» месяца �
     expect(calculateBudget(narrow).expensesMinor).toBe(7_100_000 - 4_500_000 - 440_000);
     // Месяц без плана — тот же календарный итог, что и «Отчёты» за него.
     expect(overviewModel(narrow, "2026-09", today).spentMinor).toBe(reportModel(narrow, reportsFieldsForMonth("2026-09", today), today).totalMinor);
+  });
+
+  it("окно 7–20 октября названо на экране: «лимиты на 7–20 октября» в карточке и слова над плитками (LOW-2)", () => {
+    const today = "2026-10-19";
+    const demo = buildDemoBudgetState(today);
+    const narrow: BudgetState = { ...demo, budgets: demo.budgets.map((budget) => (budget.id === demo.activeBudgetId ? { ...budget, startDate: "2026-10-07", endDate: "2026-10-20" } : budget)) };
+    expect(overviewModel(narrow, "2026-10", today).planWindow).toEqual({ from: "2026-10-07", to: "2026-10-20" });
+    expect(reachLineModel(narrow, 5_300_000).window).toEqual({ from: "2026-10-07", to: "2026-10-20" });
+    // Плитки — по окну: аренда 5-го и покупки до 7-го в них не входят, итог шапки — весь месяц.
+    const model = overviewModel(narrow, "2026-10", today);
+    expect(model.categories.reduce((sum, tile) => sum + tile.spentMinor, 0)).toBe(calculateBudget(narrow).expensesMinor);
+    expect(model.spentMinor).toBe(7_100_000);
+    const props = {
+      ...propsFor(narrow),
+      today,
+      month: "2026-10",
+      clock: periodClock({ startDate: "2026-10-07", endDate: "2026-10-20" }, [], today),
+      flexiblePlanMinor: 5_300_000,
+    };
+    const text = plain(renderToStaticMarkup(<OverviewScreen {...props} />));
+    expect(text).toMatch(/лимиты на 7–20 октября: [\d ]+ из [\d ]+ ₽/u);
+    expect(text).toContain("Траты и лимиты плиток — за 7–20 октября: так задан план месяца. «Расходы» вверху — за весь месяц.");
+    // План на весь календарный месяц — окна не называют.
+    expect(overviewModel(demo, "2026-10", today).planWindow).toBeNull();
+    const plainProps = { ...propsFor(demo), today, month: "2026-10", clock: periodClock({ startDate: "2026-10-01", endDate: "2026-10-31" }, [], today), flexiblePlanMinor: 5_300_000 };
+    const calendar = plain(renderToStaticMarkup(<OverviewScreen {...plainProps} />));
+    expect(calendar).toMatch(/лимиты: [\d ]+ из [\d ]+ ₽/u);
+    expect(calendar).not.toContain("Траты и лимиты плиток");
   });
 });
 

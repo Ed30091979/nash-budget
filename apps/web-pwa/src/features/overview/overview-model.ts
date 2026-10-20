@@ -87,8 +87,28 @@ export interface UnvaluedAccount {
   readonly archived: boolean;
 }
 
+/**
+ * Окно плана, которое не равно календарному месяцу (копия или другое устройство: «7–20 октября»).
+ * Лимиты, «Можно тратить» и траты на плитках категорий считаются по окну, а итог «Расходы» и
+ * «Отчёты» — по календарю, и экран называет окно словами, чтобы числа не спорили молча (ревью 2d,
+ * LOW-2). `null` — план и есть календарный месяц или плана нет.
+ */
+export interface PlanWindow {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** Окно бюджета, если оно не календарный месяц его начала. */
+export function planWindowOf(budget: { readonly startDate: string; readonly endDate: string } | undefined): PlanWindow | null {
+  if (budget === undefined) return null;
+  const month = monthOfDate(budget.startDate);
+  return budget.startDate === monthStartDate(month) && budget.endDate === monthEndDate(month) ? null : { from: budget.startDate, to: budget.endDate };
+}
+
 export interface OverviewModel {
   readonly month: string;
+  /** Окно плана этого месяца, когда оно не календарный месяц: плитки категорий считаются по нему. */
+  readonly planWindow: PlanWindow | null;
   readonly baseCurrency: CurrencyCode;
   /** День, на который считаются остатки: сегодня или последний день прошедшего месяца. */
   readonly asOf: string;
@@ -244,6 +264,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
 
   return {
     month,
+    planWindow: planWindowOf(budget),
     baseCurrency,
     asOf,
     totalInBaseMinor: holdings.totalInBaseMinor,
@@ -288,6 +309,8 @@ export interface ReachLineModel {
   readonly flexibleSpentMinor: number;
   /** Есть ли у месяца плана хоть один повседневный лимит: без них «можно» не из чего считать. */
   readonly hasLimits: boolean;
+  /** Окно плана, когда оно не календарный месяц: «лимиты на 7–20 октября». */
+  readonly window: PlanWindow | null;
 }
 
 export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): ReachLineModel {
@@ -302,5 +325,6 @@ export function reachLineModel(state: BudgetState, flexiblePlanMinor: number): R
     limitsMinor: flexiblePlanMinor,
     flexibleSpentMinor,
     hasLimits: limited.length > 0,
+    window: planWindowOf(budget),
   };
 }
