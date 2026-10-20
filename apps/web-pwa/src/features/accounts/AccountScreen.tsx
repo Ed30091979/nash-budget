@@ -85,8 +85,10 @@ export function AccountFormView({ budget, today, account, draft, pristine, error
   const lock = currencyLock(budget, account);
   const base = baseCurrencyOf(budget);
   const own = useMemo(() => [...new Set(budget.accounts.map((item) => item.currency))], [budget.accounts]);
-  const opening = parseOpening(draft);
-  const saved = parseOpening(pristine);
+  // У записанного счёта поле — остаток сегодня: предел суммы проверяется у начального остатка при записи.
+  const limit = account === null ? undefined : null;
+  const opening = parseOpening(draft, limit);
+  const saved = parseOpening(pristine, limit);
   const shift = account !== null && opening.kind === "amount" && saved.kind === "amount" ? opening.minor - saved.minor : 0;
   const fieldError = (field: AccountFormError["field"]) => (error?.field === field ? error.message : null);
   const described = (field: AccountFormError["field"], ...hints: (string | undefined)[]) => {
@@ -247,7 +249,8 @@ const ACCOUNT_RESTORE_ID = "account-restore";
 export function AccountScreen({ budget, today, accountId, initialType, write, onBack, onDone }: AccountScreenProps) {
   const account = accountId === null ? null : budget.accounts.find((item) => item.id.toLowerCase() === accountId.toLowerCase()) ?? null;
   // Снимок при открытии — не пересчитывается от бюджета: правка с другого устройства не делает
-  // форму «грязной» и не стирает набранное. Движения к сегодняшнему дню — того же снимка.
+  // форму «грязной» и не стирает набранное. Движения к сегодняшнему дню — того же снимка: по ним
+  // поле показывает остаток и проверяется до записи, а сама запись пересчитывает их (ревью R3, LOW-2).
   const [offset] = useState(() => (account === null ? 0 : accountOffset(budget, account, today)));
   const [pristine] = useState<AccountFormDraft>(() => (account === null
     ? { ...blankAccountDraft(budget), ...(initialType === undefined ? {} : { type: initialType }) }
@@ -279,7 +282,7 @@ export function AccountScreen({ budget, today, accountId, initialType, write, on
   };
   const submit = () => {
     if (busy) return;
-    const plan = accountSave(draft, account === null ? null : { account, pristine, offsetMinor: offset });
+    const plan = accountSave(draft, account === null ? null : { account, pristine, offsetMinor: offset, today });
     if (plan.kind === "error") {
       fail(plan.error);
       return;

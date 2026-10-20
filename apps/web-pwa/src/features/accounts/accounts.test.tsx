@@ -74,10 +74,11 @@ describe("форма счёта: модель", () => {
     expect(blankAccountDraft(state())).toEqual({ name: "", type: "current", currency: "RUB", opening: "", negative: false, icon: null, tone: null, includeInTotal: true });
   });
 
-  it("записанный счёт — в форму: остаток без разрядов и знака, знак — отметкой, ключи — только известные", () => {
+  it("записанный счёт — в форму: остаток без разрядов, долг — минусом в поле, ключи — только известные", () => {
     const dollars = state().accounts.find((account) => account.id === DOLLARS)!;
     expect(accountDraftOf(dollars)).toEqual({ name: "Доллары", type: "cash", currency: "USD", opening: "500", negative: false, icon: "dollar-sign", tone: "lilac", includeInTotal: true });
-    expect(accountDraftOf({ ...dollars, openingBalanceMinor: -125_050, icon: "coins-stack", color: "toString" })).toMatchObject({ opening: "1250,50", negative: true, icon: null, tone: null });
+    // Долг — минусом в самом поле, отметка снята: набранное поверх число заменяет и знак (ревью R3, M-1).
+    expect(accountDraftOf({ ...dollars, openingBalanceMinor: -125_050, icon: "coins-stack", color: "toString" })).toMatchObject({ opening: "\u22121250,50", negative: false, icon: null, tone: null });
     expect(minorToInput(1_234_567, "RUB")).toBe("12345,67");
     expect(minorToInput(1500, "JPY")).toBe("1500");
     expect(minorToInput(1_000, "KWD")).toBe("1");
@@ -369,4 +370,95 @@ describe("тон и иконка счёта — на «Обзоре»", () => {
     const plain = renderToStaticMarkup(<AccountTile tile={tiles.find((tile) => tile.id === MAIN)!} pressed={false} onPick={vi.fn()} />);
     expect(plain).toContain('<span class="tile-square account" aria-hidden="true">');
   });
+});
+
+describe("ревью R3: «Сколько сейчас», имя строки в базе, глиф валюты", () => {
+  const FOOD = PLANNING_IDS.categories.food;
+  let serial = 0;
+  const spend = (accountId: string, amountMinor: number, occurredOn: string, kind: "expense" | "income" = "expense") => ({
+    id: `e2c00000-0000-4000-8000-${String(700_000_000_000 + serial++).padStart(12, "0")}`,
+    kind,
+    status: "posted" as const,
+    occurredOn,
+    amountMinor,
+    accountId,
+    // Доход без категории — законное состояние (D-026).
+    ...(kind === "expense" ? { categoryId: FOOD } : {}),
+  }) as BudgetState["transactions"][number];
+  /** Основной счёт с начальным `opening` и операциями `transactions` — других движений нет. */
+  const withMain = (opening: number, transactions: BudgetState["transactions"]): BudgetState => {
+    const budget = state();
+    return { ...budget, transactions, accounts: budget.accounts.map((account) => (account.id === MAIN ? { ...account, openingBalanceMinor: opening } : account)) };
+  };
+  const mainOf = (budget: BudgetState) => budget.accounts.find((account) => account.id === MAIN)!;
+  const todayOf = (budget: BudgetState) => accountsList(budget, TODAY).active.find((row) => row.account.id === MAIN)!.balanceMinor;
+  /** Лист открыт на сегодня: снимок формы и движений — как у `AccountScreen`. */
+  const open = (budget: BudgetState) => {
+    const account = mainOf(budget);
+    const offsetMinor = accountOffset(budget, account, TODAY);
+    const pristine = accountDraftOf(account, offsetMinor);
+    return { account, offsetMinor, pristine, target: { account, pristine, offsetMinor, today: TODAY } };
+  };
+
+  it("M-1: долг сегодня −1 500 ₽ — в поле «−1500» без отметки «долг»; набранное заново 50 000 записывается плюсом", () => {
+    const budget = withMain(0, [spend(MAIN, 150_000, "2026-07-10")]);
+    expect(todayOf(budget)).toBe(-150_000);
+    const { pristine, target } = open(budget);
+    expect(pristine).toMatchObject({ opening: "−1500", negative: false });
+    expect(parseOpening(pristine)).toEqual({ kind: "amount", minor: -150_000 });
+    expect(accountDraftDiffers(pristine, pristine)).toBe(false);
+    // Человек стёр поле и набрал остаток карты: знак ушёл вместе с прежним текстом.
+    const save = accountSave({ ...pristine, opening: "50000" }, target);
+    expect(save.kind).toBe("change");
+    if (save.kind !== "change") return;
+    expect(todayOf(save.change(budget))).toBe(5_000_000);
+    // Долг по-прежнему набирается минусом в поле или отметкой.
+    for (const draft of [{ ...pristine, opening: "-2000" }, { ...pristine, opening: "2000", negative: true }]) {
+      const debt = accountSave(draft, target);
+      expect(debt.kind === "change" ? todayOf(debt.change(budget)) : debt).toBe(-200_000);
+    }
+    // Лист показывает то же: минус в поле, отметка снята.
+    const sheet = renderToStaticMarkup(<AccountScreen budget={budget} today={TODAY} accountId={MAIN} write={{ run: vi.fn() }} onBack={vi.fn()} onDone={vi.fn()} />);
+    expect(sheet).toMatch(/<input id="account-opening"[^>]* value="−1500"/u);
+    expect(sheet).toMatch(/<input id="account-negative" type="checkbox"\/>/u);
+  });
+
+  it("LOW-1: остаток сегодня больше ста миллионов не мешает правке имени — нетронутое поле не разбирается и не пишется", () => {
+    const budget = withMain(9_000_000_000, [spend(MAIN, 2_000_000_000, "2026-07-01", "income")]);
+    expect(todayOf(budget)).toBe(11_000_000_000);
+    const { pristine, target } = open(budget);
+    const save = accountSave({ ...pristine, name: "Переименован" }, target);
+    expect(save.kind).toBe("change");
+    if (save.kind !== "change") return;
+    expect(mainOf(save.change(budget))).toMatchObject({ name: "Переименован", openingBalanceMinor: 9_000_000_000 });
+    // И набранное сверх ста миллионов годится, пока начальный остаток в пределе: 115 млн − 20 млн = 95 млн.
+    const more = accountSave({ ...pristine, opening: "115000000" }, target);
+    expect(more.kind === "change" ? todayOf(more.change(budget)) : more).toBe(11_500_000_000);
+  });
+
+  it("LOW-1: сдвиг за предел начального остатка — отказ у поля словами о сдвиге и о том, сколько можно указать", () => {
+    const budget = withMain(0, [spend(MAIN, 5_000_000_000, "2026-07-01")]);
+    expect(todayOf(budget)).toBe(-5_000_000_000);
+    const { pristine, target } = open(budget);
+    const save = accountSave({ ...pristine, opening: "60000000" }, target);
+    expect(save).toEqual({
+      kind: "error",
+      error: { field: "opening", message: "Слишком большой сдвиг: начальный остаток, от которого считается этот, ушёл бы за предел суммы. Сейчас на счёте можно указать не больше 50\u00a0000\u00a0000\u00a0₽." },
+    });
+    const low = accountSave({ ...pristine, opening: "-160000000" }, target);
+    expect(low.kind === "error" ? low.error.message : low).toMatch(/можно указать не меньше −150\u00a0000\u00a0000\u00a0₽\.$/u);
+  });
+
+  it("LOW-2: движение, пришедшее синхронизацией, пока лист открыт, не сбивает набранное — сдвиг считается на записи", () => {
+    const budget = withMain(1_000_000, []);
+    const { pristine, target } = open(budget);
+    const save = accountSave({ ...pristine, opening: "20000" }, target);
+    // Пока набирали, другое устройство записало трату 300 ₽ по этому счёту.
+    const synced = { ...budget, transactions: [spend(MAIN, 30_000, "2026-07-19")] };
+    expect(save.kind === "change" ? todayOf(save.change(synced)) : save).toBe(2_000_000);
+    // Нетронутое поле — остаток с пришедшей тратой, без записи начального.
+    const rename = accountSave({ ...pristine, name: "Карта" }, target);
+    expect(rename.kind === "change" ? todayOf(rename.change(synced)) : rename).toBe(970_000);
+  });
+
 });

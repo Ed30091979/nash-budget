@@ -432,6 +432,30 @@ test("«Сколько сейчас на счёте»: правка остатк
   await expect(page.getByRole("button", { name: new RegExp(`^Карта: ${(before + 1000).toLocaleString("ru-RU").replace(/\s/gu, "\\s")}\\s₽`, "u") })).toBeVisible();
 });
 
+test("остаток ниже нуля — в поле минусом, отметка «долг» снята: набранное заново число записывается плюсом (ревью R3, M-1)", async ({ page }) => {
+  await loadDemo(page);
+  await openMore(page, "Счета");
+  await page.getByRole("button", { name: "Новый счёт" }).click();
+  const sheet = formSheet(page);
+  await sheet.getByLabel("Название").fill("Кредитка");
+  await sheet.getByLabel(/^Сколько сейчас на счёте/u).fill("1500");
+  await sheet.getByLabel("Остаток ниже нуля — долг по карте").check();
+  await sheet.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(toast(page, "Счёт «Кредитка» заведён.")).toBeVisible();
+  const row = page.getByRole("button", { name: /^Кредитка: /u });
+  await expect(row).toHaveAttribute("aria-label", /^Кредитка: [\u2212-]1\s500\s₽, /u);
+  await row.click();
+  const field = sheet.getByLabel(/^Сколько сейчас на счёте/u);
+  await expect(field).toHaveValue("\u22121500");
+  await expect(sheet.getByLabel("Остаток ниже нуля — долг по карте")).not.toBeChecked();
+  // Остаток карты набран заново поверх поля: знак ушёл вместе с прежним текстом.
+  await field.fill("50000");
+  await expect(sheet.getByRole("status").filter({ hasText: "сдвинутся" })).toHaveText(/сдвинутся на \+51\s500\s₽\.$/u);
+  await sheet.getByRole("button", { name: "Сохранить", exact: true }).click();
+  await expect(toast(page, "Счёт «Кредитка» сохранён.")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Кредитка: 50\s000\s₽, /u })).toBeVisible();
+});
+
 test("режим «Изменить порядок»: стрелки у каждого счёта с фокусом на той же кнопке, край говорит «нет», мышью — перетаскивание за ручку", async ({ page }) => {
   await loadDemo(page);
   await openMore(page, "Счета");
