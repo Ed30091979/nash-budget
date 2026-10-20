@@ -1,4 +1,5 @@
 import { expect, test as base, type BrowserContext, type Page } from "@playwright/test";
+import { defaultE2EToday, installE2EClock } from "./clock";
 
 /**
  * Ни одного системного окна: `confirm`, `alert`, `prompt` и «Покинуть страницу?» прогон считает
@@ -18,7 +19,14 @@ export function watchDialogs(context: BrowserContext, seen: string[]): void {
   context.on("page", watch);
 }
 
-export const test = base.extend<{ nativeDialogs: string[] }>({
+export const test = base.extend<{ nativeDialogs: string[]; today: string }>({
+  /** День прогона (`e2e/clock.ts`): канонический или `E2E_TODAY`; тест просит свой `test.use({ today })`. */
+  today: [defaultE2EToday(), { option: true }],
+  /** Часы каждой страницы теста стоят на утре этого дня, а не на настоящих часах машины. */
+  context: async ({ context, today }, use) => {
+    await installE2EClock(context, today);
+    await use(context);
+  },
   nativeDialogs: [
     async ({ context }, use) => {
       const seen: string[] = [];

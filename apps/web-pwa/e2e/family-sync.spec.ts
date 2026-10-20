@@ -12,6 +12,7 @@
  * дно горизонта `13 191 ₽` в сентябре 2026.
  */
 import type { APIRequestContext, BrowserContext, Locator, Page, Route } from "@playwright/test";
+import { installE2EClock } from "./clock";
 import { expect, test, watchDialogs } from "./fixtures";
 
 import {
@@ -310,13 +311,16 @@ test("при недоступном сервере приложение оста
  * пометка снята, и тест обязан проходить. Оба браузерных контекста созданы тестом сам, поэтому
  * системные окна в них ловятся явно (`watchDialogs`), как и в странице по умолчанию.
  */
-test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL, nativeDialogs }) => {
+test("два клиента одной семьи сходятся до копейки", async ({ browser, baseURL, nativeDialogs, today }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
 
   const annaContext = await browser.newContext();
   const borisContext = await browser.newContext();
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
+  // Свои контексты — свои часы, но день тот же, что у всего прогона (`e2e/clock.ts`).
+  await installE2EClock(annaContext, today);
+  await installE2EClock(borisContext, today);
   try {
     let anna = await annaContext.newPage();
     let boris = await borisContext.newPage();
@@ -529,12 +533,15 @@ function holdFirstDeliveryUntilRestart(context: BrowserContext, syncOrigin: stri
  * правильными, следующий круг ничего нового не находил, и экран до перезапуска показывал бюджет
  * без чужой покупки — со «синхронизировано» в шапке и без семейной новости (прогон проверки 2b).
  */
-test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs }) => {
+test("приём, применённый снятым кругом, доходит до экрана", async ({ browser, baseURL, nativeDialogs, today }) => {
   if (!baseURL) throw new Error("Playwright baseURL is required.");
   const annaContext = await browser.newContext();
   const borisContext = await browser.newContext();
   watchDialogs(annaContext, nativeDialogs);
   watchDialogs(borisContext, nativeDialogs);
+  // Свои контексты — свои часы, но день тот же, что у всего прогона (`e2e/clock.ts`).
+  await installE2EClock(annaContext, today);
+  await installE2EClock(borisContext, today);
   try {
     const anna = await annaContext.newPage();
     const firstBoris = await borisContext.newPage();

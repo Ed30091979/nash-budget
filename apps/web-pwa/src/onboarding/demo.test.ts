@@ -7,6 +7,7 @@ import {
   categoryNameKey,
   DEFAULT_CATEGORIES,
   HOUSEHOLD_ID,
+  householdPaydays,
   makePlanningSeed,
   monthOfDate,
   PLANNING_IDS,
@@ -18,8 +19,8 @@ import { describe, expect, it } from "vitest";
 import { prepareBudgetState } from "../backup";
 import { categoryVisual } from "../category-visual";
 import { paydayDays, periodClock } from "../reach";
-import { reachLineModel } from "../features/overview/overview-model";
-import { buildDemoBudgetState, CANONICAL_DEMO_MONTH, DEMO_IDS } from "./demo";
+import { overviewModel, reachLineModel } from "../features/overview/overview-model";
+import { buildDemoBudgetState, CANONICAL_DEMO_MONTH, DEMO_IDS, demoHoldingsRule } from "./demo";
 
 /** Дни, на которых демо проверяется: разный отступ от канонического июля и разное число месяца. */
 const DAYS = ["2026-07-04", "2026-09-04", "2026-09-30", "2026-12-01", "2027-02-28", "2031-01-15"];
@@ -236,6 +237,33 @@ describe("демонстрационный бюджет", () => {
       .sort((left, right) => left.sortOrder - right.sortOrder)
       .map((category) => categoryVisual(category).tone);
     expect(limitTones.some((tone, index) => index > 0 && tone === limitTones[index - 1])).toBe(false);
+  });
+
+  it("правило дня (demo.ts): в любой день 31-дневного месяца и февраля — те же 71 000 и 27 000, «На счетах» по выплатам и курсу, «Хватает до» — до следующей", () => {
+    // Октябрь (31 день), февраль обычного года (28) и високосного (29): каждый день месяца. Прогон
+    // e2e стоит на 19 октября (`e2e/clock.ts`), а здесь держится всё, что демо обещает на любой день.
+    const months = [["2026-10", 31], ["2027-02", 28], ["2028-02", 29]] as const;
+    for (const [month, length] of months) {
+      for (let date = 1; date <= length; date += 1) {
+        const today = `${month}-${String(date).padStart(2, "0")}`;
+        const demo = buildDemoBudgetState(today);
+        const plan = calculateAnnualPlan(demo, month, 24);
+        const model = overviewModel(demo, month, today);
+        // «Расходы» и «Можно тратить» — канонические в любой день: сцена прижата к сегодняшнему числу.
+        expect(model.spentMinor, `${today}: «Расходы»`).toBe(7_100_000);
+        expect(reachLineModel(demo, plan.currentMonth.flexiblePlanMinor).safeToSpendMinor, `${today}: «Можно тратить»`).toBe(2_700_000);
+        // «На счетах» растёт ровно на выплаты, которые уже пришли: аванс 5-го, получка 20-го.
+        expect(model.totalInBaseMinor, `${today}: «На счетах»`).toBe(demoHoldingsRule(today));
+        // 554 000 ₽ — между 15-м и 19-м; до 15-го доллары по 91,80 (на 840 ₽ дешевле), до 5-го нет аванса.
+        expect(demoHoldingsRule(today), today).toBe(date < 5 ? 48_316_000 : date < 15 ? 55_316_000 : date < 20 ? 55_400_000 : 66_400_000);
+        // «Хватает до» меряет до ближайшей названной выплаты: 5-е, 20-е, а с 20-го — 5-е следующего.
+        const incomeDates = demo.transactions.filter((item) => item.kind === "income" && item.status === "posted").map((item) => item.occurredOn);
+        const clock = periodClock(demo.budgets[0]!, incomeDates, today, householdPaydays(demo));
+        const next = date < 5 ? `${month}-05` : date < 20 ? `${month}-20` : `${month === "2026-10" ? "2026-11" : month.replace(/-02$/u, "-03")}-05`;
+        expect(clock.inPeriod, today).toBe(true);
+        expect(clock.payday.date, `${today}: следующая выплата`).toBe(next);
+      }
+    }
   });
 
   it("проходит ту же проверку состояния, что и восстановленная резервная копия", () => {

@@ -11,6 +11,9 @@ import type { BudgetState } from "@family-budget/domain";
 import { expect, test } from "./fixtures";
 import { designTouchTargetMinimum } from "../src/design-contract";
 import { demoBudget, restoreBudget } from "./budgets";
+import { CANONICAL_E2E_DAY, e2eNow } from "./clock";
+import { demoHoldingsRule } from "../src/onboarding/demo";
+import { formatMoney } from "../src/money";
 import { applyFontScale } from "./font-scale";
 import { amountField, entrySheet, goToOverview, loadDemo, measureSheetTargets, recordExpense, tile, toast } from "./sheet";
 
@@ -360,9 +363,9 @@ test("на 320 pt и при ×2.7 ничего не выезжает за экр
 test("месяц плана закрыт — «Открыть …» залитой кнопкой в одну строку, на телефоне и на широком экране", async ({ page }) => {
   await loadDemo(page);
   // Демо строит план на текущий месяц; через два месяца он закрыт, и строка предлагает открыть новый.
-  const later = new Date();
+  const later = e2eNow();
   later.setMonth(later.getMonth() + 2, 10);
-  await page.clock.install({ time: later });
+  await page.clock.setSystemTime(later);
   for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
     await page.setViewportSize(viewport);
     await page.reload();
@@ -388,24 +391,43 @@ async function totalText(page: Page, label: string): Promise<string> {
   return (await total.innerText()).replace(/[\u00a0\u202f\s]+/gu, " ").trim();
 }
 
-test("три итога на демо — 554 000 · 71 000 · 27 000; каждый ведёт туда, где число раскладывается", async ({ page }) => {
-  // Дизайн 5.0, §d: «На счетах» — к счетам, «Расходы» — к отчётам (тот же расход, ревью 2b,
-  // MEDIUM-8), «Можно тратить» — к плану месяца. Лимиты — в карточке: «лимиты: 26 000 из 53 000 ₽».
+/*
+ * Числа макетов v5 и приёмки сняты 19 октября 2026 года: на этот день тест и встаёт сам, а не берёт
+ * день прогона. Демо считает от сегодня (правило дня — `demo.ts`): 20-го «На счетах» уже 664 000 ₽.
+ */
+test.describe("канонический день демо — 19 октября", () => {
+  test.use({ today: CANONICAL_E2E_DAY });
+
+  test("три итога на демо — 554 000 · 71 000 · 27 000; каждый ведёт туда, где число раскладывается", async ({ page }) => {
+    // Дизайн 5.0, §d: «На счетах» — к счетам, «Расходы» — к отчётам (тот же расход, ревью 2b,
+    // MEDIUM-8), «Можно тратить» — к плану месяца. Лимиты — в карточке: «лимиты: 26 000 из 53 000 ₽».
+    await loadDemo(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await totalText(page, "На счетах")).toBe("На счетах 554 000 ₽");
+    expect(await totalText(page, "Расходы")).toBe("Расходы 71 000 ₽");
+    expect(await totalText(page, "Можно тратить")).toBe("Можно тратить 27 000 ₽");
+    const card = page.locator(".reach-card");
+    await expect(card).toHaveClass(/reaches/u);
+    await expect(card.locator(".reach-title")).toHaveText(/^Хватает до 20\sоктября$/u);
+    await expect(card.locator(".reach-caption")).toHaveText(/^лимиты: 26\s000 из 53\s000\s₽$/u);
+    for (const [label, address, heading] of [["На счетах", "#/more/accounts", "Счета"], ["Расходы", "#/reports", "Отчёты"], ["Можно тратить", "#/more/plan-month", "План месяца"]] as const) {
+      await goToOverview(page);
+      await page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") }).click();
+      expect(await hash(page), label).toBe(address);
+      await expect(page.getByRole("heading", { level: 1, name: heading })).toBeFocused();
+    }
+  });
+});
+
+test("итоги демо в день прогона следуют правилу дня: «Расходы» и «Можно тратить» — те же, «На счетах» — по выплатам и курсу", async ({ page, today }) => {
+  // День — любой (`E2E_TODAY` сдвигает его на весь прогон): экран обязан совпасть с правилом, записанным
+  // в `demo.ts`, а не с числами одного дня.
   await loadDemo(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(await totalText(page, "На счетах")).toBe("На счетах 554 000 ₽");
+  const holdings = formatMoney(demoHoldingsRule(today)).replace(/[\u00a0\u202f\s]+/gu, " ");
+  expect(await totalText(page, "На счетах")).toBe(`На счетах ${holdings}`);
   expect(await totalText(page, "Расходы")).toBe("Расходы 71 000 ₽");
   expect(await totalText(page, "Можно тратить")).toBe("Можно тратить 27 000 ₽");
-  const card = page.locator(".reach-card");
-  await expect(card).toHaveClass(/reaches/u);
-  await expect(card.locator(".reach-title")).toHaveText(/^Хватает до \d+\s\S+$/u);
-  await expect(card.locator(".reach-caption")).toHaveText(/^лимиты: 26\s000 из 53\s000\s₽$/u);
-  for (const [label, address, heading] of [["На счетах", "#/more/accounts", "Счета"], ["Расходы", "#/reports", "Отчёты"], ["Можно тратить", "#/more/plan-month", "План месяца"]] as const) {
-    await goToOverview(page);
-    await page.locator(".totals-strip").getByRole("button", { name: new RegExp(`^${label}`, "u") }).click();
-    expect(await hash(page), label).toBe(address);
-    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeFocused();
-  }
 });
 
 test("месяц и итоги закреплены при прокрутке; при крупном шрифте — в потоке", async ({ page }) => {

@@ -3,7 +3,7 @@ import { addDays, PLANNING_IDS, type BudgetState } from "@family-budget/domain";
 import { serializeBackup } from "@family-budget/storage";
 import { prepareBudgetState } from "../src/backup";
 import { buildDemoBudgetState, DEMO_IDS } from "../src/onboarding/demo";
-import { localToday } from "../src/reach";
+import { e2eNow, e2eToday } from "./clock";
 
 /**
  * Бюджеты прогона, которых нет в демо: счёт в долларах без курса, операция «в ожидании». Они
@@ -16,13 +16,13 @@ export const DOLLARS_ID = "e2b00000-0000-4000-8000-0000000000d1";
 export const DOLLARS_NAME = "Доллары";
 
 /**
- * Демо на сегодняшний день прогона — без своих долларов и меток: счёт «Доллары», курсы USD, покупка
+ * Демо на день прогона (`e2e/clock.ts`) — без своих долларов и меток: счёт «Доллары», курсы USD, покупка
  * долларов с карты и метки «отпуск» и «дача» убраны. Прогоны про счёт в другой валюте, отсутствующий
  * курс и справочник меток заводят их сами (`withDollarAccount`, экран «Метки»), а у демо макетов v5
  * всё это уже есть.
  */
 export function demoBudget(): BudgetState {
-  const { exchangeRates: _rates, tags: _tags, ...demo } = buildDemoBudgetState();
+  const { exchangeRates: _rates, tags: _tags, ...demo } = buildDemoBudgetState(e2eToday());
   const dollars = DEMO_IDS.accounts.dollars;
   return {
     ...demo,
@@ -51,14 +51,14 @@ export function withPendingExpense(state: BudgetState): BudgetState {
     ...state,
     transactions: [
       ...state.transactions,
-      { id: PENDING_EXPENSE_ID, kind: "expense", status: "pending", occurredOn: localToday(new Date()), amountMinor: 543_200, accountId: main, categoryId: PLANNING_IDS.categories.food },
+      { id: PENDING_EXPENSE_ID, kind: "expense", status: "pending", occurredOn: e2eToday(), amountMinor: 543_200, accountId: main, categoryId: PLANNING_IDS.categories.food },
     ],
   };
 }
 
 /** День расхода в долларах — пять дней назад: курс 92,50 был до него, 100,00 задан в тот же день позже. */
 export function dollarExpenseDay(): string {
-  return addDays(localToday(new Date()), -5);
+  return addDays(e2eToday(), -5);
 }
 
 /**
@@ -87,7 +87,7 @@ export async function restoreBudget(page: Page, state: BudgetState): Promise<voi
   await page.locator("#backup-file").setInputFiles({
     name: "family-budget-e2e.json",
     mimeType: "application/json",
-    buffer: Buffer.from(serializeBackup(prepareBudgetState(state), { createdAt: new Date().toISOString() }), "utf8"),
+    buffer: Buffer.from(serializeBackup(prepareBudgetState(state), { createdAt: e2eNow().toISOString() }), "utf8"),
   });
   await expect(page.getByRole("status").filter({ hasText: "Резервная копия восстановлена." })).toBeVisible();
 }
