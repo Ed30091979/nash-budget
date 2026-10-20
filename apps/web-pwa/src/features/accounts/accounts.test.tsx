@@ -30,6 +30,7 @@ import {
 } from "./account-model";
 import { AccountFormView, AccountScreen } from "./AccountScreen";
 import { AccountsScreen, accountRowLabel } from "./AccountsScreen";
+import { accountIcon, CATEGORY_ICON_NAMES } from "../../category-visual";
 
 const MAIN = SEED_IDS.accounts.main;
 const SAVINGS = SEED_IDS.accounts.savings;
@@ -484,4 +485,25 @@ describe("ревью R3: «Сколько сейчас», имя строки в
     expect(rename.kind === "change" ? todayOf(rename.change(synced)) : rename).toBe(970_000);
   });
 
+  it("LOW-5: «Авто» у счёта в чужой валюте — знак валюты ($, €, ¥, ₸, ₽), иначе — по виду; выбранный глиф — первым", () => {
+    expect(accountIcon({ type: "savings", currency: "USD" }, "RUB")).toBe("dollar-sign");
+    expect(accountIcon({ type: "cash", currency: "EUR" }, "RUB")).toBe("euro");
+    expect(accountIcon({ type: "current", currency: "CNY" }, "RUB")).toBe("yen");
+    expect(accountIcon({ type: "current", currency: "JPY" }, "RUB")).toBe("yen");
+    expect(accountIcon({ type: "reserve", currency: "KZT" }, "RUB")).toBe("tenge");
+    expect(accountIcon({ type: "current", currency: "RUB" }, "KZT")).toBe("ruble");
+    // В базовой валюте и в валюте без своего глифа — по виду.
+    expect(accountIcon({ type: "savings", currency: "RUB" }, "RUB")).toBe("piggy-bank");
+    expect(accountIcon({ type: "savings", currency: "USD" }, "USD")).toBe("piggy-bank");
+    expect(accountIcon({ type: "cash", currency: "GEL" }, "RUB")).toBe("banknote");
+    expect(accountIcon({ type: "savings", currency: "USD", icon: "target" }, "RUB")).toBe("target");
+    for (const glyph of ["yen", "tenge", "ruble"]) expect(CATEGORY_ICON_NAMES).toContain(glyph);
+    // Строка списка, плитка «Обзора» и «Авто» листа — тот же знак.
+    const seed = state();
+    const plain = { ...seed, accounts: seed.accounts.map((account) => (account.id === DOLLARS ? { id: DOLLARS, name: "Доллары", type: "savings" as const, currency: "USD", openingBalanceMinor: 50_000, active: true } : account)) };
+    expect(accountsList(plain, TODAY).active.find((row) => row.account.id === DOLLARS)!.icon).toBe("dollar-sign");
+    const fresh = blankAccountDraft(plain);
+    const sheet = renderToStaticMarkup(<AccountFormView budget={plain} today={TODAY} account={null} draft={{ ...fresh, type: "savings", currency: "USD" }} pristine={fresh} error={null} busy={false} onPatch={vi.fn()} />);
+    expect(sheet).toMatch(/<div class="card dir-preview" aria-hidden="true"><span class="tile-square account"[^>]*><svg[^>]*><use href="#glyph-dollar-sign"/u);
+  });
 });

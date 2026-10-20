@@ -227,7 +227,7 @@ export function overviewModel(state: BudgetState, month: string, today: string):
     id: account.id,
     name: account.name,
     currency: account.currency,
-    icon: accountIcon(account),
+    icon: accountIcon(account, baseCurrency),
     tone: accountTone(account),
     balanceMinor: holdings.accountBalancesMinor[account.id] ?? null,
     includeInTotal: account.includeInTotal !== false,

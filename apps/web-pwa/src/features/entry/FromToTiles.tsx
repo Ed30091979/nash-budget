@@ -1,5 +1,5 @@
 import { Icon } from "../../components/Icon";
-import type { BudgetState } from "@family-budget/domain";
+import { baseCurrencyOf, type BudgetState } from "@family-budget/domain";
 import { accountIcon, categoryVisual } from "../../category-visual";
 import { softHyphenate } from "../../hyphenation";
 import { endpoints, type EntryDraft } from "./entry-model";
@@ -58,7 +58,7 @@ export function FromToTiles({ budget, draft, onPick }: {
     const chosenAccount = side === "from" ? fromAccount : toAccount;
     const visual = categoryVisualOf(side === "from" ? fromCategory : toCategory);
     const plate = isAccount ? "account" : `tone-${visual.tone}`;
-    const glyph = isAccount ? (chosenAccount === undefined ? "wallet" : accountIcon(chosenAccount)) : visual.icon;
+    const glyph = isAccount ? (chosenAccount === undefined ? "wallet" : accountIcon(chosenAccount, baseCurrencyOf(budget))) : visual.icon;
     // Имя — с мягкими переносами, как на любой плитке (ревью 2b, раунд 3, NEW-2), и потому только для
     // глаза: что выбрано, диктор слышит из доступного имени, где U+00AD нет.
     const content = <>

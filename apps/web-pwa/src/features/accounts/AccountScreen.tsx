@@ -95,7 +95,7 @@ export function AccountFormView({ budget, today, account, draft, pristine, error
     const ids = [...hints, fieldError(field) === null ? undefined : `${FIELD_IDS[field]}-error`].filter(Boolean).join(" ");
     return ids === "" ? undefined : ids;
   };
-  const fallbackIcon: IconName = accountIcon({ type: draft.type, currency: draft.currency });
+  const fallbackIcon: IconName = accountIcon({ type: draft.type, currency: draft.currency }, base);
   const fallbackTone: CategoryTone = "neutral";
   const sign = currencySign(draft.currency);
   const foreign = draft.currency !== base;

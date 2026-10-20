@@ -181,7 +181,7 @@ export function accountTone(account: AccountLike): CategoryTone | null {
   return toneOfKey(ownField(account, "color"));
 }
 
-/** Глиф счёта по его виду: карта, наличные, копилка, резерв. Ключ семьи (D-036) — первым. */
+/** Глиф счёта по его виду: карта, наличные, копилка, резерв. */
 const ACCOUNT_ICONS: ReadonlyMap<string, IconName> = new Map<string, IconName>([
   ["current", "credit-card"],
   ["cash", "banknote"],
@@ -189,8 +189,31 @@ const ACCOUNT_ICONS: ReadonlyMap<string, IconName> = new Map<string, IconName>([
   ["reserve", "shield"],
 ]);
 
-export function accountIcon(account: AccountLike): IconName {
-  return iconOfKey(ownField(account, "icon")) ?? ACCOUNT_ICONS.get(account.type) ?? "wallet";
+/**
+ * Знак валюты глифом: у счёта в чужой для бюджета валюте «Авто» — её знак, как «Доллары» с $ на
+ * макетах v5 06, 11 и 12 (ревью R3, LOW-5). Валюта без своего глифа — по виду счёта.
+ */
+const CURRENCY_ICONS: ReadonlyMap<string, IconName> = new Map<string, IconName>([
+  ["USD", "dollar-sign"],
+  ["AUD", "dollar-sign"],
+  ["CAD", "dollar-sign"],
+  ["HKD", "dollar-sign"],
+  ["NZD", "dollar-sign"],
+  ["SGD", "dollar-sign"],
+  ["EUR", "euro"],
+  ["CNY", "yen"],
+  ["JPY", "yen"],
+  ["KZT", "tenge"],
+  ["RUB", "ruble"],
+]);
+
+/**
+ * Глиф счёта: ключ семьи (D-036) — первым; без него у счёта в чужой для бюджета валюте (`base` —
+ * базовая валюта) — знак этой валюты, иначе — вид: карта, наличные, копилка, резерв.
+ */
+export function accountIcon(account: AccountLike, base: string): IconName {
+  const sign = account.currency === base ? undefined : CURRENCY_ICONS.get(account.currency);
+  return iconOfKey(ownField(account, "icon")) ?? sign ?? ACCOUNT_ICONS.get(account.type) ?? "wallet";
 }
 
 /** Имена глифов, которые карта обещает интерфейсу. Спрайт обязан содержать каждое. */
@@ -199,6 +222,7 @@ export const CATEGORY_ICON_NAMES: readonly IconName[] = [
     ...[...BY_NAME.values()].map((visual) => visual.icon),
     ...[...BY_GROUP.values()].map((visual) => visual.icon),
     ...ACCOUNT_ICONS.values(),
+    ...CURRENCY_ICONS.values(),
   ]),
 ];
 

@@ -116,6 +116,11 @@ const GLYPHS = {
   "arrow-up": <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>,
   "arrow-down": <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>,
   "grip-vertical": <><circle cx="9" cy="12" r="1" /><circle cx="9" cy="5" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="19" r="1" /></>,
+  /* Знак валюты на подложке счёта в чужой для бюджета валюте (макет v5 12): к `dollar-sign` и `euro`
+     — иена и юань, тенге и рубль. */
+  yen: <><path d="M12 9.5V21m0-11.5L6 3m6 6.5L18 3" /><path d="M6 15h12" /><path d="M6 11h12" /></>,
+  tenge: <><path d="M6 4h12" /><path d="M6 9h12" /><path d="M12 9v12" /></>,
+  ruble: <><path d="M6 11h8a4 4 0 0 0 0-8H9v18" /><path d="M6 15h8" /></>,
 } satisfies Readonly<Record<string, ReactElement>>;
 
 export type IconName = keyof typeof GLYPHS;

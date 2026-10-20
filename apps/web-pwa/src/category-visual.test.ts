@@ -125,10 +125,12 @@ describe("иконка и тон категории", () => {
   });
 
   it("даёт счёту глиф по виду, а ключ семьи — только из спрайта", () => {
-    expect(accountIcon({ type: "cash", currency: "RUB" })).toBe("banknote");
-    expect(accountIcon({ type: "savings", currency: "RUB" })).toBe("piggy-bank");
-    expect(accountIcon({ type: "current", currency: "USD", icon: "wallet" })).toBe("wallet");
-    expect(accountIcon({ type: "current", currency: "USD", icon: "constructor" })).toBe("credit-card");
-    expect(accountIcon({ type: "toString" as "cash", currency: "RUB" })).toBe("wallet");
+    expect(accountIcon({ type: "cash", currency: "RUB" }, "RUB")).toBe("banknote");
+    expect(accountIcon({ type: "savings", currency: "RUB" }, "RUB")).toBe("piggy-bank");
+    expect(accountIcon({ type: "current", currency: "USD", icon: "wallet" }, "RUB")).toBe("wallet");
+    expect(accountIcon({ type: "current", currency: "USD", icon: "constructor" }, "USD")).toBe("credit-card");
+    // Чужой ключ у счёта в чужой валюте — знак валюты, а не пустая подложка.
+    expect(accountIcon({ type: "current", currency: "USD", icon: "constructor" }, "RUB")).toBe("dollar-sign");
+    expect(accountIcon({ type: "toString" as "cash", currency: "RUB" }, "RUB")).toBe("wallet");
   });
 });

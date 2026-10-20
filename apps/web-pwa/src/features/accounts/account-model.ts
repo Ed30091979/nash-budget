@@ -347,7 +347,7 @@ export function accountsList(state: BudgetState, today: string): AccountsList {
   const inBase = (account: Account): number | null => (account.currency === base ? null : holdings.accountBalancesInBaseMinor[account.id] ?? null);
   const row = (account: Account, position: number): AccountRow => ({
     account,
-    icon: accountIcon(account),
+    icon: accountIcon(account, base),
     tone: accountTone(account),
     balanceMinor: balances[account.id] ?? null,
     baseMinor: inBase(account),
