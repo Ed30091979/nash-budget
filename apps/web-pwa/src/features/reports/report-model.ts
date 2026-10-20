@@ -4,6 +4,7 @@ import {
   calculatePeriodBreakdown,
   currencyExponent,
   dayIndex,
+  MIN_LOCAL_DATE,
   monthEndDate,
   monthOfDate,
   monthStartDate,
@@ -13,7 +14,7 @@ import {
   type PeriodBreakdown,
 } from "@family-budget/domain";
 import { categoryVisual, type CategoryTone } from "../../category-visual";
-import type { OperationsFilterFields, ReportPeriod, ReportsFields, ReportView } from "../../navigation/routes";
+import { sameRecordId, type OperationsFilterFields, type ReportPeriod, type ReportsFields, type ReportView } from "../../navigation/routes";
 import { plural } from "../../plural";
 import { monthLabel, periodLabel } from "../feed/feed-model";
 
@@ -31,6 +32,13 @@ import { monthLabel, periodLabel } from "../feed/feed-model";
 /** Секторов кольца — не больше шести, остальное — одним сектором «Остальное». */
 export const DONUT_TOP = 6;
 
+export interface PreviousPeriod {
+  readonly from: string;
+  readonly to: string;
+  /** «в сентябре», «в III квартале», «в 2025 году», «за предыдущие 15 дней». */
+  readonly inWords: string;
+}
+
 export interface ReportPeriodModel {
   readonly kind: ReportPeriod;
   readonly from: string;
@@ -39,12 +47,24 @@ export interface ReportPeriodModel {
   readonly label: string;
   /** «за октябрь», «за IV квартал», «за 2026 год», «за 1–15 октября». */
   readonly forWords: string;
-  /** Прошлый период той же длины — с чем сравнивать. */
-  readonly previous: { readonly from: string; readonly to: string; readonly inWords: string };
+  /**
+   * Прошлый период той же длины — с чем сравнивать. `null` — он начался бы раньше календаря
+   * приложения (`MIN_LOCAL_DATE`, 1900-01-01): записей там не бывает, и считать его нельзя — расчёт
+   * за такие дни отказывает (ревью 2d, HIGH-1).
+   */
+  readonly previous: PreviousPeriod | null;
   /** Сегодня внутри периода: период ещё не кончился. */
   readonly ongoing: boolean;
-  /** Месяцы столбцов «По месяцам». */
+  /** Месяцы столбцов «По месяцам» — только месяцы календаря приложения. */
   readonly months: readonly string[];
+}
+
+/** Первый месяц календаря приложения: столбцов раньше него не бывает. */
+const FIRST_MONTH = MIN_LOCAL_DATE.slice(0, 7);
+
+/** Прошлый период, если он целиком в календаре приложения; иначе сравнивать не с чем. */
+function previousPeriod(from: string, to: string, inWords: string): PreviousPeriod | null {
+  return from < MIN_LOCAL_DATE ? null : { from, to, inWords };
 }
 
 const MONTH_PREPOSITIONAL = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"] as const;
@@ -73,8 +93,9 @@ function monthsBetween(first: string, last: string): string[] {
   return months;
 }
 
+/** Последние `count` месяцев до `last` включительно — но не раньше начала календаря. */
 function lastMonths(last: string, count: number): string[] {
-  return monthsBetween(shiftMonth(last, -(count - 1)), last);
+  return monthsBetween(shiftMonth(last, -(count - 1)), last).filter((month) => month >= FIRST_MONTH);
 }
 
 function yearAccusative(month: string, today: string): string {
@@ -104,7 +125,7 @@ export function resolveReportPeriod(fields: ReportsFields, today: string): Repor
         kind, from, to,
         label: words.label,
         forWords: `за ${words.label}`,
-        previous: { from: monthStartDate(previousFirst), to: monthEndDate(shiftMonth(previousFirst, 2)), inWords: `в ${quarterWords(previousFirst, today).prepositional}` },
+        previous: previousPeriod(monthStartDate(previousFirst), monthEndDate(shiftMonth(previousFirst, 2)), `в ${quarterWords(previousFirst, today).prepositional}`),
         ongoing: today >= from && today <= to,
         months: lastMonths(last, 6),
       };
@@ -118,7 +139,7 @@ export function resolveReportPeriod(fields: ReportsFields, today: string): Repor
         kind, from, to,
         label: `${year} год`,
         forWords: `за ${year} год`,
-        previous: { from: `${previousYear}-01-01`, to: `${previousYear}-12-31`, inWords: `в ${previousYear} году` },
+        previous: previousPeriod(`${previousYear}-01-01`, `${previousYear}-12-31`, `в ${previousYear} году`),
         ongoing: today >= from && today <= to,
         months: monthsBetween(`${year}-01`, `${year}-12`),
       };
@@ -136,7 +157,7 @@ export function resolveReportPeriod(fields: ReportsFields, today: string): Repor
         kind, from, to,
         label,
         forWords: `за ${label.charAt(0).toLowerCase()}${label.slice(1)}`,
-        previous: { from: addDays(previousTo, -(days - 1)), to: previousTo, inWords: `за ${days === 1 ? "предыдущий день" : `предыдущие ${plural(days, ["день", "дня", "дней"])}`}` },
+        previous: previousPeriod(addDays(previousTo, -(days - 1)), previousTo, `за ${days === 1 ? "предыдущий день" : `предыдущие ${plural(days, ["день", "дня", "дней"])}`}`),
         ongoing: today >= from && today <= to,
         months: months.length > 12 ? months.slice(-12) : months,
       };
@@ -150,7 +171,7 @@ export function resolveReportPeriod(fields: ReportsFields, today: string): Repor
         kind, from, to,
         label: monthLabel(month, today),
         forWords: `за ${yearAccusative(month, today)}`,
-        previous: { from: monthStartDate(previous), to: monthEndDate(previous), inWords: yearPrepositional(previous, today) },
+        previous: previousPeriod(monthStartDate(previous), monthEndDate(previous), yearPrepositional(previous, today)),
         ongoing: today >= from && today <= to,
         months: lastMonths(month, 6),
       };
@@ -280,10 +301,15 @@ export interface ReportBar {
   readonly current: boolean;
 }
 
+/**
+ * Сравнение с прошлым периодом той же длины; `inWords` — когда он был («в сентябре»).
+ * `calendar-start` — прошлый период начался бы раньше календаря приложения: сравнить не с чем.
+ */
 export type ReportComparison =
-  | { readonly kind: "less" | "more"; readonly differenceMinor: number }
-  | { readonly kind: "same" }
-  | { readonly kind: "nothing-before" };
+  | { readonly kind: "less" | "more"; readonly differenceMinor: number; readonly inWords: string }
+  | { readonly kind: "same"; readonly inWords: string }
+  | { readonly kind: "nothing-before"; readonly inWords: string }
+  | { readonly kind: "calendar-start" };
 
 export interface ReportModel {
   readonly view: ReportView;
@@ -292,7 +318,8 @@ export interface ReportModel {
   readonly breakdown: PeriodBreakdown;
   /** Итог вкладки: расходы за вычетом возвратов, доходы или расходы с метками. */
   readonly totalMinor: number;
-  readonly previousMinor: number;
+  /** Итог прошлого периода той же вкладки; `null` — прошлого периода в календаре нет. */
+  readonly previousMinor: number | null;
   readonly comparison: ReportComparison;
   /** Заголовок-вывод карточки (DESIGN §6: график начинается с вывода); `null` — показать нечего. */
   readonly headline: string | null;
@@ -321,11 +348,15 @@ function sideTotals(breakdown: PeriodBreakdown, view: ReportView): number {
 export function reportModel(state: BudgetState, fields: ReportsFields, today: string): ReportModel {
   const view = fields.view ?? "expense";
   const period = resolveReportPeriod(fields, today);
-  const accounts = fields.acc === undefined ? {} : { accountIds: [fields.acc] };
+  // Адрес пишет UUID строчными, а бюджет хранит его так, как он пришёл: счёт ищется без учёта
+  // регистра, и в расчёт идёт хранимый идентификатор (ревью 2d, MEDIUM-1).
+  const accountId = fields.acc === undefined ? undefined : state.accounts.find((account) => sameRecordId(account.id, fields.acc!))?.id ?? fields.acc;
+  const accounts = accountId === undefined ? {} : { accountIds: [accountId] };
   const breakdown = calculatePeriodBreakdown(state, { from: period.from, to: period.to, ...accounts });
-  const previous = calculatePeriodBreakdown(state, { from: period.previous.from, to: period.previous.to, ...accounts });
+  // Прошлый период до начала календаря не считается вовсе: расчёт за такие дни отказывает.
+  const previous = period.previous === null ? null : calculatePeriodBreakdown(state, { from: period.previous.from, to: period.previous.to, ...accounts });
   const totalMinor = sideTotals(breakdown, view);
-  const previousMinor = sideTotals(previous, view);
+  const previousMinor = previous === null ? null : sideTotals(previous, view);
   const categories = new Map(state.categories.map((category) => [category.id, category]));
   const tags = new Map((state.tags ?? []).map((tag) => [tag.id, tag]));
   const days = { from: period.from, to: period.to, ...(fields.acc === undefined ? {} : { acc: fields.acc }) };
@@ -395,10 +426,11 @@ export function reportModel(state: BudgetState, fields: ReportsFields, today: st
   }));
 
   const empty = view === "tags" ? tagRows.length === 0 : positive.length === 0 && table.length === 0;
-  const comparison: ReportComparison = previousMinor === 0
-    ? { kind: "nothing-before" }
-    : totalMinor === previousMinor ? { kind: "same" }
-      : { kind: totalMinor < previousMinor ? "less" : "more", differenceMinor: Math.abs(totalMinor - previousMinor) };
+  const comparison: ReportComparison = period.previous === null || previousMinor === null
+    ? { kind: "calendar-start" }
+    : previousMinor === 0 ? { kind: "nothing-before", inWords: period.previous.inWords }
+      : totalMinor === previousMinor ? { kind: "same", inWords: period.previous.inWords }
+        : { kind: totalMinor < previousMinor ? "less" : "more", differenceMinor: Math.abs(totalMinor - previousMinor), inWords: period.previous.inWords };
 
   let headline: string | null = null;
   if (!empty) {

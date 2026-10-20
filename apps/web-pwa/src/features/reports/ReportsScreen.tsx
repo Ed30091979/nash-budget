@@ -175,7 +175,10 @@ export function ReportsScreen({ budget, today, fields, onFields, onFeed, onAdd }
   </div>;
 }
 
-/** «71 000 ₽ за октябрь — на 8 400 ₽ меньше, чем в сентябре». */
+/**
+ * «71 000 ₽ за октябрь — на 8 400 ₽ меньше, чем в сентябре». Прошлый период, который начался бы
+ * раньше календаря приложения, не считается, и это сказано словами (ревью 2d, HIGH-1).
+ */
 function Comparison({ model }: { readonly model: ReportModel }) {
   const { period, comparison } = model;
   const words = viewWords(model.view);
@@ -183,11 +186,16 @@ function Comparison({ model }: { readonly model: ReportModel }) {
     <p className="report-compare">
       <Money value={model.totalMinor} currency={model.baseCurrency} /> {period.forWords}
       {comparison.kind === "less" || comparison.kind === "more" ? <>
-        {" — на "}<Money value={comparison.differenceMinor} currency={model.baseCurrency} />{comparison.kind === "less" ? " меньше" : " больше"}, чем {period.previous.inWords}
-      </> : comparison.kind === "same" ? <>{" — столько же, сколько "}{period.previous.inWords}</> : <>; {period.previous.inWords} {words.genitive} не было</>}
+        {" — на "}<Money value={comparison.differenceMinor} currency={model.baseCurrency} />{comparison.kind === "less" ? " меньше" : " больше"}, чем {comparison.inWords}
+      </> : comparison.kind === "same" ? <>{" — столько же, сколько "}{comparison.inWords}</>
+        : comparison.kind === "nothing-before" ? <>; {comparison.inWords} {words.genitive} не было</>
+          : <>; {CALENDAR_START_WORDS}</>}
     </p>
   );
 }
+
+/** Сравнить не с чем: прошлый период начался бы раньше 1900 года, а записей там не бывает. */
+export const CALENDAR_START_WORDS = "сравнить не с чем — записи ведутся с 1900 года";
 
 /** Метки полосами: операция с двумя метками входит в обе, поэтому доли в сумме бывают больше 100 %. */
 function TagsCard({ model, onFeed }: { readonly model: ReportModel; readonly onFeed: (filters: OperationsFilterFields) => void }) {

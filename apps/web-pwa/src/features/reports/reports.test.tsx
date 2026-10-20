@@ -42,7 +42,7 @@ describe("«Отчёты»: период", () => {
       from: "2026-10-01", to: "2026-12-31", label: "IV квартал", forWords: "за IV квартал",
       previous: { from: "2026-07-01", to: "2026-09-30", inWords: "в III квартале" },
     });
-    expect(resolveReportPeriod({ period: "quarter", from: "2026-02-10" }, TODAY).previous.inWords).toBe("в IV квартале 2025");
+    expect(resolveReportPeriod({ period: "quarter", from: "2026-02-10" }, TODAY).previous?.inWords).toBe("в IV квартале 2025");
     expect(resolveReportPeriod({ period: "year" }, TODAY)).toMatchObject({ from: "2026-01-01", to: "2026-12-31", label: "2026 год", previous: { inWords: "в 2025 году" } });
     expect(resolveReportPeriod({ period: "year" }, TODAY).months).toHaveLength(12);
     expect(resolveReportPeriod({ period: "custom", from: "2026-10-01", to: "2026-10-15" }, TODAY)).toMatchObject({
@@ -82,7 +82,7 @@ describe("«Отчёты» на G-003: август 2026", () => {
     // Строка легенды ведёт в «Операции» с категорией и днями периода.
     expect(model.segments[1]?.feed).toEqual({ from: "2026-08-01", to: "2026-08-31", cat: G003.state.categories[1]!.id });
     // Июль пуст: сравнить не с чем — и это сказано, а не «на 2 056 338 больше».
-    expect(model.comparison).toEqual({ kind: "nothing-before" });
+    expect(model.comparison).toEqual({ kind: "nothing-before", inWords: "в июле" });
   });
 
   it("метки: T1 «Отпуск» 506 338, T2 «Дом» 1 550 000, T3 «Старое» — доход 12 000 000; две метки — в обеих, доли больше 100 %", () => {

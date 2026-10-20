@@ -59,6 +59,7 @@ import { createAppBudgetSaveCoordinator } from "./budget-store";
 import { ConfirmDialog, draftLeaveQuestion } from "../components/ConfirmDialog";
 import { createDraftRegistry, DraftRegistryProvider, type DraftEntry, type DraftLayer, type DraftRegistry } from "../navigation/draft-guard";
 import { RouteView, type AppRouteContext } from "./routes";
+import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { createRouter, memoryRouterWindow } from "../navigation/router";
 import { leftBehind, parseRoute, resolveRoute, routeKey, ROUTE_NOT_FOUND_MESSAGE, sameRecordId, sameRoute, screenKey, withoutSheet, type Route } from "../navigation/routes";
 import { EntrySheetHost } from "../features/entry/EntrySheetHost";
@@ -802,7 +803,10 @@ export default function App() {
               </div>
             </section>
           ) : null}
-          <RouteView route={route} app={routeContext} />
+          {/* Экран, упавший при отрисовке, — спокойный экран с «На «Обзор»», а не белая страница (ревью 2d, HIGH-1). */}
+          <RouteErrorBoundary routeKey={routeKey(route)} onHome={() => navigate({ name: "overview" })}>
+            <RouteView route={route} app={routeContext} />
+          </RouteErrorBoundary>
         </div>
       </main>
 
